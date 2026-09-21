@@ -388,7 +388,7 @@ function BlizzardAPI.AbilityInRange(spellID, unit)
     local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
     if slot and C_ActionBar and C_ActionBar.IsActionInRange then
         local s = C_ActionBar.IsActionInRange(slot, unit or "target")
-        if s ~= nil and not (IsSecretValue and IsSecretValue(s)) and s == true then return true end
+        if not (IsSecretValue and IsSecretValue(s)) and s == true then return true end
     end
     return false
 end

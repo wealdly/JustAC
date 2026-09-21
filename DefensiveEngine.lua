@@ -266,6 +266,8 @@ end
 ResolveHealthState = function()
     local isLow
     healthBand, healthBandSource, healthBandEscalated = BAND_HEALTHY, "none", false
+    -- Dead or a ghost: zero health reads as the panic band, and nothing here can help.
+    if UnitIsDeadOrGhost("player") then return false end
     -- 1) DIRECT: one call, short-circuiting at the first boundary it crosses, so a
     -- healthy player costs three gates and a dying one costs one. nil if ANY
     -- boundary could not be answered - a partial band is not a band.
@@ -416,35 +418,12 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     DefensiveEngine.RegisterDefensivesForTracking(addon)
 end
 
--- Enables 12.0 compatibility when C_Spell.GetSpellCooldown returns secrets
+-- Called whenever the defensive lists change. Readiness is an engine read now, so the only
+-- per-list state left is the base-cooldown cache behind the "hold-worthy" test.
 function DefensiveEngine.RegisterDefensivesForTracking(addon)
-    if not BlizzardAPI or not BlizzardAPI.RegisterSpellForTracking then return end
-
+    if not BlizzardAPI then return end
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
-
-    if BlizzardAPI.ClearTrackedDefensives then
-        BlizzardAPI.ClearTrackedDefensives()
-    end
-
-    -- Register all defensive spell lists, seeding local CD entries as we go.
-    -- Seeding covers defensives already on cooldown at login/spec-change: without
-    -- it, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event, so IsSpellReady
-    -- fails-open for unflagged spells. OOC-only (safe to call always).
-    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
-        local spellList = DefensiveEngine.GetClassSpellList(addon, cfg.listKey)
-        if spellList then
-            for _, entry in ipairs(spellList) do
-                -- Only register positive entries (spells) - negative entries are items
-                if entry and entry > 0 then
-                    BlizzardAPI.RegisterSpellForTracking(entry, "defensive")
-                    if BlizzardAPI.SeedLocalCooldownIfActive then
-                        BlizzardAPI.SeedLocalCooldownIfActive(entry)
-                    end
-                end
-            end
-        end
-    end
 
     -- Cache base cooldowns OOC so the "hold-worthy" test (long-CD panic button vs rotational
     -- heal) is a pure table read in combat - never a live/secret GetSpellBaseCooldown call.
@@ -667,12 +646,11 @@ local function EvalDefensiveSpell(entry, profile, locActive, now)
     elseif isProcced then
         m.isProcced, m.realProc = true, true
     else
-        -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
-        -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
+        -- Cooldown check via centralized IsSpellReady (engine cooldown state).
         -- Under loss of control the castability check is skipped: the CC
         -- reports every spell uncastable, which would collapse the ready vs
         -- on-CD split and shuffle the whole queue the moment a stun lands.
-        -- IsSpellReady is local CD tracking, so it stays honest while CC'd -
+        -- IsSpellReady reads cooldown state only, so it stays honest while CC'd -
         -- the order holds and the renderer greys the icons on its own.
         if not BlizzardAPI.IsSpellReady(resolvedID) then
             m.unusable, m.noResources = true, false
@@ -688,7 +666,11 @@ local function EvalDefensiveSpell(entry, profile, locActive, now)
             -- queue, surfaced at any health level. Unlike real procs this only
             -- applies to READY buttons - the ready/resource checks above ran.
             for _, auraID in ipairs(hint.floatAuras) do
-                if BlizzardAPI.IsAuraActive("player", auraID) then
+                -- The aura cache only scans HELPFUL auras and learns nothing new in combat,
+                -- and these triggers are debuffs gained mid-fight (stagger) - so ask the
+                -- game directly too. nil when the aura is secret: then no float, as before.
+                local ok, live = pcall(C_UnitAuras.GetPlayerAuraBySpellID, auraID)
+                if BlizzardAPI.IsAuraActive("player", auraID) or (ok and live ~= nil) then
                     m.isProcced = true
                     break
                 end
@@ -1227,7 +1209,7 @@ local emergencyHeldUntil = 0    -- sticky hold: the low-flags flap at the
 local EMERGENCY_MEMO = 0.1
 local EMERGENCY_HOLD_SECONDS = 8
 
---- First spell in `ladder` that is known and ready (local CD tracking).
+--- First spell in `ladder` that is known and ready.
 local function FirstReadyInLadder(ladder)
     if not ladder then return nil end
     for i = 1, #ladder do

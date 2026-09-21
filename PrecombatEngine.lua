@@ -827,7 +827,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
         if hurt and ReadableBool(UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")) ~= true
             and not HasProccedHeal() then
             -- Prefer the class's own cheap heal (spammable; resource regens OOC).
-            -- Ready-check via the local cooldown tracker (never secret); usability
+            -- Ready-check via IsSpellReady (engine cooldown state); usability
             -- fails OPEN because resource state can be secret even out of combat -
             -- worst case an out-of-mana click errors and mana is back in seconds.
             local heal = SpellDB.GetKnownTopoffHeal and SpellDB.GetKnownTopoffHeal()

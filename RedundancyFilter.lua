@@ -491,6 +491,10 @@ function RedundancyFilter.PruneExpiredActivations()
 
     -- Hoist outside the loop: same result for every iteration
     local auraAPIAvailable = BlizzardAPI and not BlizzardAPI.AreAurasSecret()
+    -- While auras are secret (all of combat) every entry below ends at "keep", so the walk -
+    -- a form, stealth, pet and mount-journal lookup per cast spell, on every cache
+    -- invalidation - can remove nothing. Expiry in combat is ActivationLive + the game's pick.
+    if not auraAPIAvailable then return end
 
     -- Check each tracked activation
     for spellID, timestamp in pairs(inCombatActivations) do
@@ -695,12 +699,19 @@ RefreshAuraCache = function()
     if aurasAreSecret then
         -- Populate from instance maps maintained by OnUnitAuraUpdate (addedAuras/removedAuraInstanceIDs).
         -- This avoids 40 pcall(GetAuraDataByIndex) calls that would all return secret fields.
+        local now = GetTime()
         for instanceID, spellID in pairs(instanceToSpellMap) do
-            cachedAuras.byID[spellID] = true
             local timing = instanceToTimingMap[instanceID]
-            if timing then cachedAuras.auraInfo[spellID] = timing end
-            local name = instanceToNameMap[instanceID]
-            if name then cachedAuras.byName[name] = spellID end
+            -- Removals never arrive in combat, so a buff carried into the fight has to be
+            -- aged out by the expiry it was snapshotted with - or a pre-pull Shield Block
+            -- read "present" (and parked its spell) for the whole fight.
+            local expiry = timing and timing.expirationTime
+            if not (expiry and expiry > 0 and now >= expiry) then
+                cachedAuras.byID[spellID] = true
+                if timing then cachedAuras.auraInfo[spellID] = timing end
+                local name = instanceToNameMap[instanceID]
+                if name then cachedAuras.byName[name] = spellID end
+            end
         end
         -- Flag for trusted cache merge (covers auras not in instance maps)
         cachedAuras.hasSecrets = true
@@ -859,11 +870,33 @@ RefreshAuraCache = function()
     return cachedAuras
 end
 
+-- A cast remembered as "buff still up". Aura removals never reach us in combat, so the
+-- memory needs its own way out besides the game's pick (NoteSpellRecommended): a spell the
+-- game never recommends - a barrier, Rune Tap, a racial on a custom list - otherwise read
+-- "already active" until combat ended, long after the buff broke. The spell's OWN cooldown
+-- is that way out: once it has finished, the cooldown no longer holds the spell back and
+-- the memory must not either. Spells with no cooldown (raid buffs, forms) stay latched.
+-- ponytail: a buff that outlasts its cooldown (a 60s barrier on a 25s cooldown) is re-offered
+-- early; key on the aura's static duration if that shows in play.
+local function ActivationLive(spellID)
+    local at = inCombatActivations[spellID]
+    if not at then return false end
+    if (GetTime() - at) > ACTIVATION_PICK_GRACE
+       and BlizzardAPI.PeekBaseCooldownSeconds and BlizzardAPI.PeekBaseCooldownSeconds(spellID) > 0
+       and BlizzardAPI.IsSpellOnCooldown and not BlizzardAPI.IsSpellOnCooldown(spellID)
+       -- a charge still recharging is a cooldown too (the ignore-GCD read misses it)
+       and BlizzardAPI.IsSpellAtMaxCharges and BlizzardAPI.IsSpellAtMaxCharges(spellID) then
+        inCombatActivations[spellID] = nil
+        return false
+    end
+    return true
+end
+
 -- Check if player has a buff by spell ID
 local function HasBuffBySpellID(spellID)
     if not spellID then return false end
     
-    if inCombatActivations[spellID] then return true end
+    if ActivationLive(spellID) then return true end
     
     local auras = RefreshAuraCache()
     return auras.byID and auras.byID[spellID]
@@ -885,7 +918,7 @@ local function IsInPandemicWindow(spellID)
         -- 1) Buff is gone → allow recast (return true)
         -- 2) Buff exists via inCombatActivations but timing data is secret → just cast, full duration
         -- Check inCombatActivations to distinguish: if we KNOW it's active, don't allow refresh
-        if inCombatActivations[spellID] then
+        if ActivationLive(spellID) then
             return false  -- Just cast in combat, assume full duration remaining
         end
         return true  -- No aura info and not tracked → allow
@@ -1228,6 +1261,10 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                 end
                 return true, "already in that form/stance"
             end
+            -- Not in it, and that is the whole answer: falling through asked the aura
+            -- snapshot, which still held the form the fight was pulled in (shift Cat ->
+            -- Bear and Cat Form read "already active" until combat ended).
+            return false
         else
             -- Fallback: spell not in FormCache mapping - compare localized spell name
             -- directly against the active form name (both strings are from the game,

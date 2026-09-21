@@ -50,8 +50,7 @@ function SpellSearch.BuildSpellbookCache()
                     -- The forms this button can take are not in the spellbook, so they
                     -- ride in on their button: searchable by their own name, labelled
                     -- with what they are a form of.
-                    local SDB = LibStub("JustAC-SpellDB", true)
-                    local forms = SDB and SDB.GetTransformForms and SDB.GetTransformForms(spellInfo.spellID)
+                    local forms = SpellDB and SpellDB.GetTransformForms and SpellDB.GetTransformForms(spellInfo.spellID)
                     for _, formID in ipairs(forms or {}) do
                         local formInfo = C_Spell.GetSpellInfo(formID)
                         if formInfo and formInfo.name and not spellbookCache[formID] then
@@ -420,8 +419,7 @@ function SpellSearch.DisplayInfo(id)
         or (C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id))
     if not info then return end
     -- A form listed by itself is inactive most of the time; say so, or the row reads as broken.
-    local SDB = LibStub("JustAC-SpellDB", true)
-    local base = SDB and SDB.GetTransformBase and SDB.GetTransformBase(id)
+    local base = SpellDB and SpellDB.GetTransformBase and SpellDB.GetTransformBase(id)
     local baseInfo = base and BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(base)
     if baseInfo and baseInfo.name then
         return string.format("%s  |cff888888(%s)|r", info.name,

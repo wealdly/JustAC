@@ -22,7 +22,6 @@ local IsMounted = IsMounted
 local GetShapeshiftFormID = GetShapeshiftFormID
 local UnitExists = UnitExists
 local UnitCanAttack = UnitCanAttack
-local UnitGUID = UnitGUID
 local wipe = wipe
 local type = type
 local ipairs = ipairs
@@ -200,6 +199,7 @@ end
 local proccedSpells = {}
 local normalSpells = {}
 local cooldownSpells = {}
+local sunkSet = {}   -- [displayID] = true for this build's cooldownSpells (burst cue veto)
 local addedSpellIDs = {}
 local recommendedSpells = {}
 -- Scratch set for gap-closer suppression marks (filtered by Always Show pins
@@ -228,13 +228,13 @@ local pickWindowsBuf = {}
 --     An ST pick during AoE is common (the multi spells are cooling down - exactly
 --     when the pick lies about target count); a multi pick on few targets is rare.
 --     So multi evidence outlives the pick; ST picks alone don't clear it.
---   executeLatchGUID: enemy health only drops, so an execute reveal holds for the
---     rest of that target's life instead of flickering off while the execute
---     spell itself cools down.
+--   executeLatch: an execute reveal holds for the rest of that target's life instead
+--     of flickering off while the execute spell itself cools down. A flag, not the
+--     target's GUID - that is secret for NPCs in combat, so a GUID latch never set.
 -- Both cleared on combat exit (and the latch on target change).
 local STICKY_CTX_SECONDS = 8
 local stickyArch, stickyRange, stickyTime = nil, nil, 0
-local executeLatchGUID = nil
+local executeLatch = false
 
 -- Snapshot of the last build's context (post latch/sticky), for /jac inspect rank.
 local lastCtx = {}
@@ -517,12 +517,12 @@ function SpellQueue.IsHeldByHold(spellID)
     return HeldByUserHold(spellID, displayID, BlizzardAPI.IsSpellReady(displayID))
 end
 
--- Resolve display ID, check dedup, mark both IDs as claimed.
--- Returns displayID on success, nil if already claimed.
 -- Custom-list entries that are a transform FORM: [form id] = the button it belongs to.
 -- Rebuilt with the custom list; empty for Blizzard's pool.
 local formEntryBase = {}
 
+-- Resolve display ID, check dedup, mark both IDs as claimed.
+-- Returns displayID on success, nil if already claimed.
 local function ClaimSpellID(spellID, addedSpellIDs)
     if addedSpellIDs[spellID] then return nil end
     local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
@@ -753,8 +753,7 @@ SpellQueue.IsUnusableNonResource = IsUnusableNonResource  -- shared with /jac wh
 --- context-live by design (melee sink, execute float) - the red tint explains the move.
 local function IsConfirmedOutOfRange(spellID)
     -- Fail open: nil (unknown) leaves the order alone; only a confirmed false sinks.
-    local inRange = BlizzardAPI and (BlizzardAPI.AbilityInRange or BlizzardAPI.SpellInRange)
-    return (inRange and inRange(spellID)) == false
+    return BlizzardAPI.AbilityInRange(spellID) == false
 end
 SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac why
 
@@ -801,7 +800,7 @@ local function SimcBuffWindowActive(gates)
     for i = 1, #gates do
         local g = gates[i]
         if g.t == "buff" and not g.neg and g.id
-           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id) then
+           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id, g.dur) then
             return true
         end
     end
@@ -1086,9 +1085,6 @@ local function SimcStackGateBlocks(gates)
 end
 SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simcgates)
 
---- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
---- Both call sites use this rather than the individual blockers, so a new gate
---- type cannot be wired into one and forgotten at the other.
 -- Stealth gate (`stealthed.rogue`, or a SimC variable that is purely stealth states). The
 -- game answers IsStealthed plainly in combat, and it covers Stealth, Vanish, Shadow Dance,
 -- Subterfuge, Prowl and Shadowmeld - the same set SimC means. neg = "not while stealthed".
@@ -1103,6 +1099,9 @@ local function SimcStealthGateBlocks(gates)
     return false
 end
 
+--- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
+--- Both call sites use this rather than the individual blockers, so a new gate
+--- type cannot be wired into one and forgotten at the other.
 local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
     if not gates then return false end
     -- skipResource: an explicit Hold Until dial replaces the imported resource
@@ -1125,7 +1124,7 @@ local function SimcNegativeBuffBlocks(gates)
     for i = 1, #gates do
         local g = gates[i]
         if g.t == "buff" and g.neg and g.id
-           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id) then
+           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id, g.dur) then
             return true
         end
     end
@@ -1203,6 +1202,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local leadsMode = b.myListLeads and simcMode
     local pickID = leadsMode and b.primarySpellID or nil
     local pickDisplay = pickID and (BlizzardAPI.GetDisplaySpellID(pickID) or pickID) or nil
+    local anyTimeable = false   -- leads mode: did anything the addon can time make the front?
     rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying =
         ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, ctxDying
 
@@ -1247,10 +1247,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- bucket on readiness so it sinks with the other cooldowns (still glowing)
                     -- until usable again. This does NOT undo mid-combat reset detection: for a
                     -- flat cooldown IsSpellReady reads the authoritative isActive, so a real
-                    -- proc-driven CD *reset* reports ready and keeps its proc slot.
-                    -- ponytail: charge-refund procs are unreadable in combat (charges secret),
-                    -- so IsSpellReady falls back to stale local charge counts and such a proc
-                    -- could sink early. Rare; exempt charge spells here if one ever regresses.
+                    -- proc-driven CD *reset* reports ready and keeps its proc slot. Charge
+                    -- refunds too: isActive is false the moment any charge is banked.
                     local ready = BlizzardAPI.IsSpellReady(displayID)
                     -- "Hold Until" dial (charged / points / percent): treat a held ability
                     -- exactly like one that isn't ready - sink it, never drop it. It keeps
@@ -1304,6 +1302,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- ...and never one the game says cannot be cast (wrong form, stealth,
                     -- a missing cast condition). Without this the capped-charge promotion
                     -- seated Shadow Dance at the front from stealth, where it is barred.
+                    -- Same rule as IsUnusableNonResource, on the read already taken above.
                     local castBarred = usable == false and not notEnough
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
@@ -1321,25 +1320,24 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- is up" is not a reason to lead while Shadow Dance is down - and an
                     -- unmet positive window never sinks an entry, so without this it led on
                     -- static rank over the Shadow Dance the game was asking for.
+                    local windowUp = simcRec and (SimcBuffWindowActive(simcRec.gates)
+                        or GateInPickWindows(simcRec.gates, pickWindows)) or false
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
-                             or (HasPositiveBuffGate(simcRec.gates)
-                                 and not SimcBuffWindowActive(simcRec.gates)
-                                 and not GateInPickWindows(simcRec.gates, pickWindows)))
+                             or (HasPositiveBuffGate(simcRec.gates) and not windowUp))
                     if not bypassProcs and ready and not starved and not held and not locLocked
                        and not castBarred
                        and (BlizzardAPI.IsSpellProcced(displayID)
                             or (not leadBarred and chargeCapped)
                             or (not leadBarred and powerCapped and IsSpenderSpell(displayID))
-                            or (simcRec and not leadBarred
-                                and (SimcBuffWindowActive(simcRec.gates)
-                                     or GateInPickWindows(simcRec.gates, pickWindows))
+                            or (windowUp and not leadBarred
                                 and not SimcNegativeBuffBlocks(simcRec.gates)
                                 and not SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
+                        if not leadBarred then anyTimeable = true end
                     elseif sinkCooldowns and (not ready or starved or held or locLocked
                            or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet))
                            or castBarred
@@ -1351,10 +1349,12 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- refresh window (DotTracker), and a proc still wins (checked above).
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
+                        sunkSet[displayID] = true
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
                         normalRank[normalCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
+                        if not leadBarred then anyTimeable = true end
                     end
                 else
                     -- Undo claim if filters rejected
@@ -1367,14 +1367,31 @@ local function CategorizeAndAssembleRotation(rotationList, b)
         end
     end
 
+    -- My List Leads with nothing timeable at the front: every candidate is one only the game
+    -- can time, so whichever led would do so on static order alone. The game's pick is the
+    -- answer then - even when the list omits it or it sank waiting for resources. Measured:
+    -- a list without Eviscerate led with Backstab and Shuriken Storm at 7 combo points for
+    -- 20 seconds while the game asked for Eviscerate throughout.
+    local pickLeads = nil
+    if leadsMode and not anyTimeable and spellCount == 0 and pickDisplay and pickDisplay > 0
+       and not SpellQueue.IsSpellBlacklisted(pickID, blacklist, true)
+       -- ...but never a pick the game itself greys out (it asks for Shadow Dance from stealth)
+       and not IsUnusableNonResource(pickDisplay) then
+        spellCount = 1
+        recommendedSpells[1] = pickDisplay
+        pickLeads = pickDisplay
+    end
+
     -- Procs stay the highest-priority bucket; normal follows; both ordered by context
     -- rank. Cooldown (not-ready) spells trail, unranked.
     spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
     for i = 1, cooldownCount do
         if spellCount >= maxIcons then break end
-        spellCount = spellCount + 1
-        recommendedSpells[spellCount] = cooldownSpells[i]
+        if cooldownSpells[i] ~= pickLeads then   -- a sunk pick was just seated at the front
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = cooldownSpells[i]
+        end
     end
     return spellCount
 end
@@ -1405,7 +1422,12 @@ end
 --- the coordinator's OOC visibility early-return so a stale latch never
 --- survives into the next fight (evade-reset mobs return at full health).
 function SpellQueue._ClearSituationMemory()
-    stickyArch, stickyRange, executeLatchGUID = nil, nil, nil
+    stickyArch, stickyRange, executeLatch = nil, nil, false
+end
+
+--- New target: whatever the old one revealed about its health no longer applies.
+function SpellQueue.OnTargetChanged()
+    executeLatch = false
 end
 
 --- Stage E - context inference: the AC pick's archetype/range/role/execute
@@ -1467,20 +1489,16 @@ function SpellQueue._StageContext(b)
     -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
     local stickyApplied, executeLatched = false, false
     if inCombat then
-        -- UnitGUID("target") is SECRET for NPCs in combat (see DotTracker header);
-        -- treat a secret GUID as no-GUID so the latch never compares a secret.
-        local targetGUID = UnitGUID("target")
-        if targetGUID and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(targetGUID) then
-            targetGUID = nil
-        end
-        if ctxExecute and targetGUID then
-            executeLatchGUID = targetGUID
-        elseif executeLatchGUID then
-            if targetGUID == executeLatchGUID then
-                ctxExecute = true
-                executeLatched = true
+        if ctxExecute then
+            executeLatch = true
+        elseif executeLatch then
+            -- Released by a confirmed read above the widest execute window (a healed
+            -- player target); unknown keeps it, as does anything inside the window.
+            if UnitExists("target") and BlizzardAPI.IsUnitHealthBelow
+               and BlizzardAPI.IsUnitHealthBelow("target", 35) ~= false then
+                ctxExecute, executeLatched = true, true
             else
-                executeLatchGUID = nil
+                executeLatch = false
             end
         end
         if ctxArch == "aoe" or ctxArch == "cleave" then
@@ -1503,7 +1521,7 @@ function SpellQueue._StageContext(b)
         end
     else
         stickyArch, stickyRange = nil, nil
-        executeLatchGUID = nil
+        executeLatch = false
     end
     -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
     -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
@@ -1626,7 +1644,11 @@ function SpellQueue._StageBurstCue(b)
                    -- cooldown" is not "castable": Shadow Dance cannot be used from
                    -- stealth, and the cue was seating it anyway (at slot 1 with My List
                    -- Leads). Fails open - only a confirmed non-resource "no" blocks.
-                   and not IsUnusableNonResource(display) then
+                   and not IsUnusableNonResource(display)
+                   -- ...and the tail's own verdict: held by the user, unaffordable, locked
+                   -- out or gate-blocked entries were just sunk, so cueing them to slot 2
+                   -- gave one spell two opposite answers in the same build.
+                   and not sunkSet[display] then
                     local rec = RotationImport and RotationImport.GetEntry
                         and RotationImport.GetEntry(tid, simcCtx)
                     local called = false
@@ -1793,10 +1815,6 @@ function SpellQueue._StageResolveSource(b)
         if newList then
             for i = 1, #newList do lastSetupList[i] = newList[i] end
         end
-        -- Clear prior rotation registrations; re-registered just below.
-        if BlizzardAPI.ClearTrackedRotationSpells then
-            BlizzardAPI.ClearTrackedRotationSpells()
-        end
         -- Resolve Always Show pins once per list rebuild (cold): the pin lives
         -- on the user's STORED id, but queue entries may be normalized to a
         -- known variant and gap-closer marks carry base+override forms - key
@@ -1856,29 +1874,6 @@ function SpellQueue._StageResolveSource(b)
                                 end
                             end
                         end
-                    end
-                end
-            end
-        end
-        if cachedRotationList and BlizzardAPI.RegisterSpellForTracking then
-            for i = 1, #cachedRotationList do
-                local sid = cachedRotationList[i]
-                if sid and sid > 0 then
-                    BlizzardAPI.RegisterSpellForTracking(sid, "rotation")
-                    local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
-                    if displaySid ~= sid then BlizzardAPI.RegisterSpellForTracking(displaySid, "rotation") end
-                end
-            end
-            -- Seed local CD entries for spells already on cooldown at login/spec-change.
-            -- Without this, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event,
-            -- so IsSpellReady fails-open for unflagged spells. OOC-only (safe to call always).
-            if BlizzardAPI.SeedLocalCooldownIfActive then
-                for i = 1, #cachedRotationList do
-                    local sid = cachedRotationList[i]
-                    if sid and sid > 0 then
-                        BlizzardAPI.SeedLocalCooldownIfActive(sid)
-                        local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
-                        if displaySid ~= sid then BlizzardAPI.SeedLocalCooldownIfActive(displaySid) end
                     end
                 end
             end
@@ -1973,6 +1968,14 @@ end
 --- Stage A - position 1: the spread-DoT signal, stale local-CD expiry, and
 --- Blizzard's primary pick inserted with caster/blacklist awareness plus the
 --- highlight-lookahead fallback.
+-- The game never recommends a redundant spell, so its pick expires the redundancy filter's
+-- "buff still up" memory (cooldowns keep no local memory to expire).
+local function NotePick(id)
+    if RedundancyFilter and RedundancyFilter.NoteSpellRecommended then
+        RedundancyFilter.NoteSpellRecommended(id)
+    end
+end
+
 function SpellQueue._StagePrimary(b)
     local profile, primarySpellID = b.profile, b.primarySpellID
     local blacklist, addedSpellIDs = b.blacklist, b.addedSpellIDs
@@ -2012,19 +2015,10 @@ function SpellQueue._StagePrimary(b)
     -- AC never recommends an uncastable spell: expire any stale local CD/charge
     -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
     -- can't keep sinking this spell in later builds.
-    if primarySpellID and primarySpellID > 0 and BlizzardAPI.NoteSpellRecommended then
-        BlizzardAPI.NoteSpellRecommended(primarySpellID)
+    if primarySpellID and primarySpellID > 0 then
+        NotePick(primarySpellID)
         local primaryDisplay = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-        if primaryDisplay ~= primarySpellID then
-            BlizzardAPI.NoteSpellRecommended(primaryDisplay)
-        end
-        -- Same oracle for the redundancy filter's "buff still up" memory.
-        if RedundancyFilter and RedundancyFilter.NoteSpellRecommended then
-            RedundancyFilter.NoteSpellRecommended(primarySpellID)
-            if primaryDisplay ~= primarySpellID then
-                RedundancyFilter.NoteSpellRecommended(primaryDisplay)
-            end
-        end
+        if primaryDisplay ~= primarySpellID then NotePick(primaryDisplay) end
     end
 
     if myListLeads then
@@ -2145,6 +2139,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(displacedPrimary)
     wipe(burstCueSpells)
     wipe(cooldownSpells)
+    wipe(sunkSet)
     local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local hideItems = profile.hideItemAbilities
 

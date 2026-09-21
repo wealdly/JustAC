@@ -6,7 +6,7 @@
 --
 -- Key functions added by each submodule:
 --   SpellQuery.lua        → GetAddon, GetProfile, GetDebugMode, GetSpellInfo, IsSpellUsable
---   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
+--   CooldownTracking.lua  → IsSpellReady, IsSpellOnCooldown, IsBuffWindowActive
 --   SecretValues.lua      → GetAuras, RefreshFeatureAvailability, IsProcFeatureAvailable
 -- (IsSecretValue, Unsecret, AreCooldownsSecret, AreAurasSecret are defined here in the root.)
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
@@ -86,22 +86,14 @@ function BlizzardAPI.OnActionUsableChanged(changes)
     for _, change in ipairs(changes) do
         slotUsabilityCache[change.slot] = change
     end
-    -- NOTE: CheckUsabilityFlips no longer clears flat localCooldowns:
-    -- IsUsableAction returns true even on cooldown, so usable=true is not a
-    -- reliable CD-expiry signal. It is still called for charge recovery hints.
-    if BlizzardAPI.CheckUsabilityFlips then
-        BlizzardAPI.CheckUsabilityFlips(changes)
-    end
+    -- Deliberately NOT a cooldown or charge signal: a slot flips usable on energy ticks,
+    -- target swaps and "not enough mana", none of which mean a charge came back.
 end
 
 --- Wipe slot usability cache (call when slot content changes, e.g. bar page
 --- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
 function BlizzardAPI.InvalidateSlotUsabilityCache()
     wipe(slotUsabilityCache)
-    -- Also invalidate the reverse slot→spell map behind the usable-flip charge hints
-    if BlizzardAPI.InvalidateReverseSlotMap then
-        BlizzardAPI.InvalidateReverseSlotMap()
-    end
 end
 
 --- Returns the action bar usability state for a spell, or nil if unavailable.

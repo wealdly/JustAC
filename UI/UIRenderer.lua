@@ -368,11 +368,10 @@ end
 -- Logic layer: all readiness decisions use cached OOC data (CooldownTracking).
 local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0, isActive = false }
--- Scratch structs for the two numeric cooldown sources in UpdateButtonCooldowns -
--- consumed synchronously within one call, so one reusable table each replaces a
--- fresh allocation per icon per cooldown tick.
+-- Scratch struct for the one numeric cooldown source in UpdateButtonCooldowns (items) -
+-- consumed synchronously within one call, so one reusable table replaces a fresh
+-- allocation per icon per cooldown tick.
 local itemCooldownScratch  = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
-local localCooldownScratch = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 
 -- Release stage for an EMPOWERED cast, as a Roman numeral, or nil.
 --
@@ -446,7 +445,7 @@ local function UpdateButtonCooldowns(button)
     -- structs whose isActive/duration objects the engine renders for us.
     local cooldownInfo, chargeInfo
     -- True when cooldownInfo carries our own non-secret start/duration numbers
-    -- (item or local-cache source) rather than a secret/slot struct - drives the
+    -- (an item) rather than a secret/slot struct - drives the
     -- duration-object construction below.
     local ciFromNumbers = false
 
@@ -463,25 +462,14 @@ local function UpdateButtonCooldowns(button)
         cooldownInfo = ci
         ciFromNumbers = true
     elseif cooldownID then
-        -- No direct slot (modifier-macro / off-bar): source the swipe from our own
-        -- non-secret local cooldown tracking. These numbers are modifier-independent
-        -- and readable in combat, so the swipe persists after the modifier is released
-        -- instead of flickering. Fall back to the spell API only when the spell isn't
-        -- locally tracked (best-effort; isActive is NeverSecret, duration renders via
-        -- the secret-safe duration object below).
-        local lStart, lDuration = BlizzardAPI.GetLocalCooldown(cooldownID)
-        if not lStart then lStart, lDuration = BlizzardAPI.GetLocalCooldown(id) end
-        -- Engine-truth guard: only trust the local cooldown if the spell is actually on
-        -- a real cooldown right now. An override/combo transform (Templar Strike ->
-        -- Templar Slash) can leave a stale local CD from the base that the action bar
-        -- doesn't show; the ignore-GCD duration-object probe (secret-safe) catches it.
+        -- No direct slot (modifier-macro / off-bar): the spell's own cooldown. isActive is
+        -- NeverSecret and the swipe renders from the spell's duration object below - both
+        -- independent of what a macro currently resolves to, so the swipe holds steady
+        -- across a modifier press. Engine-truth guard first: an override/combo transform
+        -- (Templar Strike -> Templar Slash) can report the base's cooldown on a button
+        -- the action bar shows ready; the ignore-GCD probe catches it.
         if BlizzardAPI.IsSpellOnCooldown and not BlizzardAPI.IsSpellOnCooldown(cooldownID or id) then
             cooldownInfo = nil
-        elseif lStart and lDuration and lDuration > 0 then
-            local ci = localCooldownScratch
-            ci.startTime, ci.duration, ci.isActive = lStart, lDuration, true
-            cooldownInfo = ci
-            ciFromNumbers = true
         elseif C_Spell_GetSpellCooldown then
             local ok, result = pcall(C_Spell_GetSpellCooldown, cooldownID)
             if ok and result then cooldownInfo = result end
@@ -545,7 +533,7 @@ local function UpdateButtonCooldowns(button)
         -- Charge spells at 0 charges: the action-bar/spell MAIN cooldown API doesn't
         -- report the recharge (it lives in the charge layer / edge ring), so the dark
         -- "greyout" swipe Blizzard shows at 0 charges is otherwise missing from our
-        -- queue. Detect 0 charges via non-secret local charge tracking and promote the
+        -- queue. Detect 0 charges (engine read, see IsChargeSpellOnCooldown) and promote the
         -- recharge to the main swipe (which owns the clipped dark sweep; our charge
         -- widget is edge-only). The edge ring is suppressed below when depleted.
         local chargeDepleted = not isItem and cooldownID
@@ -577,7 +565,7 @@ local function UpdateButtonCooldowns(button)
                 -- re-apply fresh if/when it next takes over.
                 button._cdStart, button._cdDuration = nil, nil
             elseif ciFromNumbers then
-                -- Item / local-cache numbers: re-apply only when the timing changes, so
+                -- Item numbers: re-apply only when the timing changes, so
                 -- the swipe set while the slot existed continues across the modifier
                 -- transition instead of being rebuilt (and restarted) every tick.
                 if button._cdStart ~= ci.startTime or button._cdDuration ~= ci.duration then
@@ -601,8 +589,7 @@ local function UpdateButtonCooldowns(button)
         else
             -- isActive tracks REAL cooldowns, so a pure GCD window lands here on icons
             -- whose swipe source can't see the GCD: macro-driven slots are never
-            -- "direct" (their resolved spell changes with modifiers), and the
-            -- local-numbers path only carries real CDs. IsSpellOnGCD (NeverSecret,
+            -- "direct" (their resolved spell changes with modifiers). IsSpellOnGCD (NeverSecret,
             -- true exactly during a pure GCD window; never for off-GCD abilities)
             -- gates rendering the GCD from the spell's own duration object instead
             -- of clearing - so macro/off-bar icons keep the GCD sweep.
@@ -1199,27 +1186,8 @@ local function SetDefensiveIconVisible(defensiveIcon, visible)
     defensiveIcon._defVisible = visible and true or false
 end
 
---- True if casting this spell starts no global cooldown, so the next ability can be
---- pressed immediately. Static client data (never a secret read, so this is combat-safe).
---- The table is keyed on BASE spell ids, so an override/form variant is resolved first -
---- otherwise a transformed ability would silently lose its marker. Unknown id -> false:
---- a missing marker is harmless, a wrong one tells the player to clip a real GCD.
-local offGcdCache = {}
 local function IsOffGCDSpell(spellID)
-    if not spellID then return false end
-    local hit = offGcdCache[spellID]
-    if hit ~= nil then return hit end
-    local CD = LibStub("JustAC-CooldownData", true)
-    local result = false
-    if CD and CD.IsOffGCD then
-        result = CD.IsOffGCD(spellID)
-        if not result and BlizzardAPI and BlizzardAPI.ResolveBaseSpellID then
-            local base = BlizzardAPI.ResolveBaseSpellID(spellID)
-            result = base and CD.IsOffGCD(base) or false
-        end
-    end
-    offGcdCache[spellID] = result
-    return result
+    return BlizzardAPI and BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(spellID) or false
 end
 
 -- Move-cast marker classification. A spell is castable while moving when it is

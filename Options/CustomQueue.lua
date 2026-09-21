@@ -45,7 +45,7 @@ local function GetSpecKey()
     return nil
 end
 
---- Shared hidden check: true when custom queue is NOT enabled for current spec.
+--- True when custom queue is NOT enabled for current spec.
 local function IsCustomQueueOff(addon)
     local profile = addon:GetProfile()
     local specKey = GetSpecKey()
@@ -151,6 +151,22 @@ local function SnapshotRotation(addon, specKey)
     cq.spells = {}
     for i, spellID in ipairs(rotationSpells) do
         cq.spells[i] = spellID
+    end
+    -- The game hands its pool over in spell-id order, which reads as nonsense in a list the
+    -- user is about to reorder (Eviscerate at step 8, poisons at 2-4) and IS the order with
+    -- Context Ordering off. Seed it as a priority instead: theorycraft rank, then the game's
+    -- own step order, then id. Unranked entries (poisons, utility) fall to the bottom.
+    local RI = LibStub("JustAC-RotationImport", true)
+    if RI then
+        local function key(id)
+            local rec = RI.GetEntry and RI.GetEntry(id, "st")
+            return (rec and rec.rank) or (1000 + ((RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999))
+        end
+        table.sort(cq.spells, function(x, y)
+            local kx, ky = key(x), key(y)
+            if kx ~= ky then return kx < ky end
+            return x < y
+        end)
     end
 
     return true
@@ -371,34 +387,28 @@ function CustomQueue.CreateTabArgs(addon)
                         order = 11,
                         fontSize = "small",
                     },
-                myListLeads = {
-                    type = "toggle",
-                    name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
-                    desc = L["My List Leads desc"],
-                    order = 11.5,
-                    width = "full",
-                    disabled = function()
-                        local profile = addon:GetProfile()
-                        local specKey = GetSpecKey()
-                        local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
-                        return not (cq and cq.enabled)
-                    end,
-                    get = function()
-                        local profile = addon:GetProfile()
-                        local specKey = GetSpecKey()
-                        local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
-                        return (cq and cq.myListLeads == true) or false
-                    end,
-                    set = function(_, val)
-                        local profile = addon:GetProfile()
-                        local specKey = GetSpecKey()
-                        if not profile or not specKey then return end
-                        local cq = profile.customQueue and profile.customQueue[specKey]
-                        if not cq then return end
-                        cq.myListLeads = val or nil
-                        addon:ForceUpdateAll()
-                    end,
-                },
+                    myListLeads = {
+                        type = "toggle",
+                        name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
+                        desc = L["My List Leads desc"],
+                        order = 11.5,
+                        width = "full",
+                        get = function()
+                            local profile = addon:GetProfile()
+                            local specKey = GetSpecKey()
+                            local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+                            return (cq and cq.myListLeads == true) or false
+                        end,
+                        set = function(_, val)
+                            local profile = addon:GetProfile()
+                            local specKey = GetSpecKey()
+                            if not profile or not specKey then return end
+                            local cq = profile.customQueue and profile.customQueue[specKey]
+                            if not cq then return end
+                            cq.myListLeads = val or nil
+                            addon:ForceUpdateAll()
+                        end,
+                    },
                     -- Dynamic spell entries added by UpdateCustomQueueOptions
                 },
             },

@@ -1197,7 +1197,7 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
 
     addon:Print("")
 
-    addon:Print("5. C_Spell.GetSpellCooldown (raw isOnGCD + local CD tracking):")
+    addon:Print("5. C_Spell.GetSpellCooldown (raw isOnGCD / isActive):")
     if C_Spell and C_Spell.GetSpellCooldown then
         local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
         if ok and cd then
@@ -1230,32 +1230,14 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
     end
 
     addon:Print("")
-    addon:Print("6. Local CD tracking (JustAC in-combat timer):")
-    if BlizzardAPI and BlizzardAPI.IsSpellOnLocalCooldown then
-        local localCD = BlizzardAPI.IsSpellOnLocalCooldown(spellID)
-        addon:Print("   IsSpellOnLocalCooldown: " .. (localCD and "|cffff6600true (CD active)|r" or "|cff00ff00false (no local CD)|r"))
-    else
-        addon:Print("   |cffff0000BlizzardAPI.IsSpellOnLocalCooldown not available|r")
-    end
+    addon:Print("6. Readiness (engine reads):")
     if BlizzardAPI and BlizzardAPI.IsSpellReady then
-        local ready = BlizzardAPI.IsSpellReady(spellID)
-        addon:Print("   IsSpellReady: " .. (ready and "|cff00ff00true (ready)|r" or "|cffff6600false (on CD)|r"))
+        local ready, why = BlizzardAPI.IsSpellReady(spellID)
+        addon:Print("   IsSpellReady: " .. (ready and "|cff00ff00true (ready)|r" or "|cffff6600false (on CD)|r")
+            .. "  - " .. tostring(why))
     end
-    if BlizzardAPI and BlizzardAPI.DebugTrackingState then
-        local cat, maxCh, curCh, localCD = BlizzardAPI.DebugTrackingState(spellID)
-        addon:Print("   Tracked: " .. (cat and ("|cff00ff00" .. tostring(cat) .. "|r") or "|cffff0000NO (not registered)|r"))
-        if maxCh then
-            addon:Print("   Charge cache: maxCharges=" .. tostring(maxCh) ..
-                (curCh and (", current=" .. tostring(curCh)) or "") .. ", localCD=" .. tostring(localCD))
-        else
-            addon:Print("   Charge cache: |cffff6600none|r, localCD=" .. tostring(localCD))
-        end
-        local displayID = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID)
-        if displayID and displayID ~= spellID then
-            local dcat = BlizzardAPI.DebugTrackingState(displayID)
-            addon:Print("   (display ID " .. tostring(displayID) .. " tracked: " ..
-                (dcat and ("|cff00ff00" .. tostring(dcat) .. "|r") or "|cffff0000NO|r") .. ")")
-        end
+    if BlizzardAPI and BlizzardAPI.IsSpellOnCooldown then
+        addon:Print("   IsSpellOnCooldown (ignore-GCD probe): " .. tostring(BlizzardAPI.IsSpellOnCooldown(spellID)))
     end
     local SpellDB = LibStub("JustAC-SpellDB", true)
     if SpellDB and SpellDB.IsInterruptOnCooldown then
@@ -1289,7 +1271,7 @@ function DebugCommands.InterruptDiagnostics(addon)
         local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
         local name = (spellInfo and spellInfo.name) or "?"
 
-        local localCD = BlizzardAPI and BlizzardAPI.IsSpellOnLocalCooldown and BlizzardAPI.IsSpellOnLocalCooldown(sid)
+        local localCD = BlizzardAPI and BlizzardAPI.IsSpellOnCooldown and BlizzardAPI.IsSpellOnCooldown(sid)
         local ready = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(sid)
         local intCD = SpellDB and SpellDB.IsInterruptOnCooldown and SpellDB.IsInterruptOnCooldown(sid)
         local usable = BlizzardAPI and BlizzardAPI.IsSpellUsable and BlizzardAPI.IsSpellUsable(sid, stype ~= "cc")
@@ -1996,7 +1978,7 @@ function DebugCommands.GateDiagnostics(addon)
                 local ok = BAPI.IsSpellProcced and BAPI.IsSpellProcced(e.id)
                 parts[#parts + 1] = "proc=" .. (ok and "|cff00ff00Y|r" or "|cff888888n|r")
             elseif g.t == "buff" then
-                local ok = BAPI.IsBuffWindowActive and BAPI.IsBuffWindowActive(g.id)
+                local ok = BAPI.IsBuffWindowActive and BAPI.IsBuffWindowActive(g.id, g.dur)
                 local viaPick = pickWindows and pickWindows[g.id]
                 local state = ok and "|cff00ff00up|r"
                     or (viaPick and "|cff00ff00up(pick)|r" or "|cff888888--|r")
@@ -4306,11 +4288,7 @@ end
 --- plate with its secrecy, so the one that fails is visible. Run it IN COMBAT with a pack.
 function DebugCommands.EnemyCountProbe(addon)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function tag(v)
-        if v == nil then return "nil" end
-        if issecretvalue and issecretvalue(v) then return "|cffff6600SECRET|r" end
-        return tostring(v)
-    end
+    local tag = SafeSecret
     addon:Print(string.format("|cff00ccff== enemy count ==|r  GetEngagedEnemyCount=%s  combat=%s",
         tostring(BAPI and BAPI.GetEngagedEnemyCount and BAPI.GetEngagedEnemyCount()),
         tostring(UnitAffectingCombat("player"))))
@@ -4384,7 +4362,8 @@ local function PickLogSample()
     local rec = lead and RI and RI.GetEntry and RI.GetEntry(lead)
     -- When the game's pick is NOT what we lead with, say why the pick lost its place:
     -- R not ready, S cannot afford, H held by a user dial, T its DoT is already up,
-    -- B blacklisted, "-" none of these (it was simply outranked or is not in the pool).
+    -- B blacklisted, O out of range, U unusable for a non-resource reason, P the LEAD has a
+    -- proc overlay, "-" none of these. @N = the pick's own slot in the queue (0 = absent).
     local why = ""
     if lead and lead ~= pick then
         local shown = BAPI.GetDisplaySpellID and BAPI.GetDisplaySpellID(pick) or pick
@@ -4396,10 +4375,21 @@ local function PickLogSample()
                 .. ((SQ.IsHeldByHold and SQ.IsHeldByHold(shown)) and "H" or "")
                 .. ((DT and DT.IsDotActiveOnCurrentTarget and DT.IsDotActiveOnCurrentTarget(shown)) and "T" or "")
                 .. ((SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(pick)) and "B" or "")
-            why = " why=" .. (why ~= "" and why or "-")
+                .. ((SQ.IsConfirmedOutOfRange and SQ.IsConfirmedOutOfRange(shown)) and "O" or "")
+                .. ((SQ.IsUnusableNonResource and SQ.IsUnusableNonResource(shown)) and "U" or "")
+                .. ((BAPI.IsSpellProcced and BAPI.IsSpellProcced(lead)) and "P" or "")
+            -- Where the pick actually sits: @N in the visible queue, @0 when it is not there at all.
+            local at = 0
+            for i = 2, #queue do
+                if queue[i] == pick or queue[i] == shown then at = i break end
+            end
+            why = " why=" .. (why ~= "" and why or "-") .. "@" .. at
         end
     end
-    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s",
+    -- Slot 2 is where the default mode shows what the ADDON adds to the game's pick.
+    local second = type(queue) == "table" and queue[2] or nil
+    if type(second) ~= "number" or issecretvalue(second) then second = nil end
+    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s second=%s",
         tostring(SDB.GetSpecKey and SDB.GetSpecKey() or "?"),
         pick,
         (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
@@ -4408,7 +4398,7 @@ local function PickLogSample()
         n(BAPI.GetPowerBand and BAPI.GetPowerBand("player", POWER_BANDS)),
         n(UnitExists("target") and BAPI.GetHealthBand and BAPI.GetHealthBand("target", HEALTH_BANDS) or nil),
         n(lead), (rec and rec.delegated) and "D" or (rec and "" or "?"), why,
-        tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"))
+        tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"), n(second))
     if payload == lastPickPayload then return end
     lastPickPayload = payload
     _G.JustACGlobal = _G.JustACGlobal or {}

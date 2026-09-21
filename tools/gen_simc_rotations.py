@@ -512,6 +512,14 @@ def flatten(lists, k, resolve, unresolved, varmap):
         stealth = [g for g in kept["gates"] if g["t"] == "stealth"]
         if stealth and not any(g in e["gates"] for g in stealth):
             kept["gates"] = [g for g in kept["gates"] if g["t"] != "stealth"]
+        # Same principle for every other gate, when the later line is one we read IN FULL
+        # (not delegated): SimC casts the spell there without the first line's condition, so
+        # that condition is not a requirement. First-wins shipped Summon Demonic Tyrant as
+        # "exactly 5 shards" - its later line is unconditional - and it sat sunk all fight.
+        # A delegated later line proves nothing (its own conditions are unknown), so the
+        # first line's gates stand.
+        if not e.get("delegated"):
+            kept["gates"] = [g for g in kept["gates"] if g in e["gates"]]
         if kept.get("empower") != e.get("empower"):
             # Same spell, DIFFERENT release tier. SimC chooses between those lines on
             # conditions this generator could not classify - Eternity Surge picks its tier by
@@ -525,10 +533,28 @@ def flatten(lists, k, resolve, unresolved, varmap):
 
 
 # --- emit --------------------------------------------------------------------
+# [spell id] = base aura seconds (SpellMisc.DurationIndex -> SpellDuration), filled in main().
+# Player buffs are secret in combat, so the runtime times a buff window from the player's
+# own cast of the gate's spell; this is the window's length.
+AURA_SECS = {}
+
+
+def load_aura_secs(bridge):
+    idx = {int(r["ID"]): int(float(r["Duration"] or 0)) for r in bridge._rows("SpellDuration")}
+    for r in bridge._rows("SpellMisc"):
+        if (r.get("DifficultyID") or "0") != "0":
+            continue
+        ms = idx.get(int(r.get("DurationIndex") or 0), 0)
+        if 0 < ms <= 120000:          # a window, not a permanent form/stance or an hour-long buff
+            AURA_SECS[int(r["SpellID"])] = max(1, round(ms / 1000))
+
+
 def gate_lua(g):
     parts = ['t="%s"' % g["t"]]
     if g.get("id"):
         parts.append("id=%d" % g["id"])
+    if g["t"] == "buff" and AURA_SECS.get(g.get("id")):
+        parts.append("dur=%d" % AURA_SECS[g["id"]])
     if g.get("res"):
         parts.append('res="%s"' % g["res"])
     if g.get("op"):
@@ -841,6 +867,8 @@ def main():
         only = sys.argv[sys.argv.index("--spec") + 1]
 
     bridge = SimcBridge(CSV_DIR)
+    load_aura_secs(bridge)
+    assert AURA_SECS.get(5217) == 10, "Tiger's Fury base duration missing: SpellMisc/SpellDuration columns moved"
     # Base cooldowns (ms) for the burst-anchor floor: procs/pseudo buffs have no
     # cooldown row and mini-CDs fall under MIN_ANCHOR_CD_MS. Charge-based majors
     # (Zenith: 2 charges @ 90s) carry their real weight in ChargeRecoveryTime,
@@ -881,14 +909,17 @@ def main():
         STEALTH_VARS.update(stealth_vars(varmap))
 
         tier_lists = {ctx: flatten(lists, k, resolve, unresolved, varmap) for ctx, k in TIERS}
-        # dedup: keep st; keep aoe if != st; keep cleave only if distinct from both
+        # dedup: keep st; keep aoe if != st; keep cleave only if its fallback would differ
         contexts = {}
         st = tier_lists["st"]
         contexts["st"] = st
         if list_sig(tier_lists["aoe"]) != list_sig(st):
             contexts["aoe"] = tier_lists["aoe"]
         cl = tier_lists["cleave"]
-        if list_sig(cl) != list_sig(st) and list_sig(cl) != list_sig(contexts.get("aoe", [])):
+        # Compare against what the runtime fallback (cleave -> aoe -> st) would resolve to:
+        # a cleave list equal to st must still ship when aoe differs, or two targets rank
+        # by the AoE priority.
+        if list_sig(cl) != list_sig(contexts.get("aoe", st)):
             contexts["cleave"] = cl
 
         anchors = burst_anchors(text, resolve, cds, unresolved)
