@@ -1759,9 +1759,7 @@ end
 local FindSpellOverrideByID = FindSpellOverrideByID
 
 --- Check whether an interrupt/CC spell is on a real cooldown (not just GCD).
---- Delegates to BlizzardAPI.IsSpellReady() which handles the full 12.0 fallback
---- chain: isOnGCD → OOC duration → local cooldown tracking → action bar usability.
---- Interrupt spells are registered for local CD tracking in ResolveInterruptSpells().
+--- Delegates to BlizzardAPI.IsSpellReady() (engine cooldown state, plain in combat).
 --- Fail-open: returns false (spell ready) if anything errors.
 function SpellDB.IsInterruptOnCooldown(spellID)
     local api = GetBlizzardAPI()
@@ -1802,7 +1800,7 @@ end
 --- Each entry: { spellID, type = "interrupt"|"cc", mech, reach, radius }.
 --- Rebuilt on every call (spec change, SPELLS_CHANGED, surface creation); callers cache.
 -- Shared resolver: build sorted {spellID, type, ...} entries for the abilities of the
--- given kinds that THIS character knows, each registered for local CD tracking.
+-- given kinds that THIS character knows.
 local function ResolveAbilitiesByKind(kindSet)
     local BlizzardAPI = GetBlizzardAPI()
     if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
@@ -1819,11 +1817,6 @@ local function ResolveAbilitiesByKind(kindSet)
                     spellID = resolvedID, type = meta.kind,
                     mech = meta.mech, reach = meta.reach, radius = meta.radius, pri = meta.pri,
                 }
-                -- Register for local cooldown tracking so IsSpellReady() can detect
-                -- CD state in combat (isOnGCD is nil for most interrupt spells).
-                if BlizzardAPI.RegisterSpellForTracking then
-                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
-                end
             end
         end
     end
@@ -1863,9 +1856,6 @@ function SpellDB.ResolveSootheSpells()
             end
             if not gated then
                 result[#result + 1] = { spellID = resolvedID, type = "soothe", reach = meta.reach }
-                if BlizzardAPI.RegisterSpellForTracking then
-                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
-                end
             end
         end
     end

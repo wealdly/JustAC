@@ -181,21 +181,22 @@ local function IsTargetCastInterruptible(nameplate)
     local evtActive, evtInterruptible, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
     local bar, barSource = FindVisibleCastBar(nameplate)
 
-    -- No bar: confirm a cast via API (unless event tracker already says "no cast").
-    if not bar then
-        local spell
-        if evtActive or not evtKnown then
-            spell = UnitCastingInfo("target")
-            -- Spell name is secret in 12.0 combat; a secret value IS non-nil → cast exists.
-            if not BlizzardAPI.IsSecretValue(spell) and not spell then
-                spell = UnitChannelInfo("target")
-            end
-        end
+    -- Confirm the cast via API (unless event tracker already says "no cast") - bar or no
+    -- bar. A visible bar is not proof: the frame stays shown through its fade-out after
+    -- the cast stopped or was kicked, and the slot kept offering a stun on a mob that was
+    -- no longer casting.
+    local spell
+    if evtActive or not evtKnown then
+        spell = UnitCastingInfo("target")
+        -- Spell name is secret in 12.0 combat; a secret value IS non-nil → cast exists.
         if not BlizzardAPI.IsSecretValue(spell) and not spell then
-            return false, false, nil, true
+            spell = UnitChannelInfo("target")
         end
-        barSource = "api"
     end
+    if not BlizzardAPI.IsSecretValue(spell) and not spell then
+        return false, false, nil, true
+    end
+    if not bar then barSource = "api" end
 
     -- Event tracker is definitive (real boolean, never secret).
     if evtKnown then
@@ -327,7 +328,8 @@ local function IsReachable(entry)
         local within = SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(radius)
         if within ~= nil then return within end
         -- Unproven: "too far" (keep failing closed) vs "no probe can ever say".
-        return (SpellDB.CanProveWithin and SpellDB.CanProveWithin(radius)) and false or nil
+        if SpellDB.CanProveWithin and SpellDB.CanProveWithin(radius) then return false end
+        return nil
     end
     -- Tri-state read (BlizzardAPI.SpellInRange owns the required-unit-arg finding that
     -- was first measured here). Fail OPEN: nil (unknown) → assume reachable.

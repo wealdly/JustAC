@@ -16,7 +16,7 @@ local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
 if not RotationImport then return end
 
 -- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
--- entry = { id = <spellID>, gates = { {t="buff",id=..,neg=bool}, {t="cd"}, {t="dot",id=..},
+-- entry = { id = <spellID>, gates = { {t="buff",id=..,dur=secs|nil,neg=bool}, {t="cd"}, {t="dot",id=..},
 --           {t="execute",pct=..}, {t="health",pct=..}, {t="power",..}, {t="resource",..},
 --           {t="stack",id=..,op=..,n=..}, {t="stealth",neg=bool} }, delegated = bool,
 --           empower = <release stage for an empowered cast, absent for everything else> }

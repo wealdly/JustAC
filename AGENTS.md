@@ -68,7 +68,7 @@ Note `Options/Core.lua` loads LAST of the `Options/*` files: the panels resolve
 | `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v20 |
 | `RotationImport.lua` | Alternate rotation source (gated import lookup + burst anchors) | `GetRotation()`, `HasRotation()`, `RegisterGated()`, `GetBurstTriggers()` | v1 |
 | `BlizzardAPI.lua` | Root: secret value primitives, live secrecy gates, version detection | `IsSecretValue()`, `Unsecret()`, `AreCooldownsSecret()`, `AreAurasSecret()`, `GetActionBarUsability()` | v36 |
-| `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `RegisterSpellForTracking()`, `IsSpellOnLocalCooldown()` | v13 |
+| `BlizzardAPI/CooldownTracking.lua` | Cooldown / charge / buff-window state from engine reads (no local cooldown model) | `IsSpellReady()`, `IsSpellOnCooldown()`, `IsChargeSpellOnCooldown()`, `IsBuffWindowActive()`, `NoteOwnCast()` | v13 |
 | `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `GetFeatureAvailability()` | v2 |
 | `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v2 |
 | `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v14 |

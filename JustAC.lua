@@ -1888,6 +1888,7 @@ function JustAC:OnTargetChanged()
     if SpellQueue and SpellQueue.InvalidateRotationCache then
         SpellQueue.InvalidateRotationCache(true)
     end
+    if SpellQueue and SpellQueue.OnTargetChanged then SpellQueue.OnTargetChanged() end
     -- DoT tracking is current-target only; the new target starts fresh.
     if DotTracker and DotTracker.Reset then
         DotTracker.Reset()
@@ -2005,6 +2006,7 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         KeyPressDetector.FlashSpell(self, spellID)
     end
 
+    if BlizzardAPI and BlizzardAPI.NoteOwnCast then BlizzardAPI.NoteOwnCast(spellID) end
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
     end

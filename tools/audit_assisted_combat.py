@@ -78,9 +78,7 @@ def lua_id_set(text):
 def insertable_by_spec():
     """Mirror of RotationImport.GetInsertable + the pool filter in BlizzardAPI/SpellQuery.lua."""
     non_offensive = lua_id_set((REPO / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
-    ri = (REPO / "RotationImport.lua").read_text(encoding="utf-8")
-    block = ri[ri.index("NEVER_INSERT = {"):]
-    never = lua_id_set(block[:block.index("\n}")])
+    never = never_insert()
     sd = (REPO / "SpellDB.lua").read_text(encoding="utf-8")
     gap_block = sd[sd.index("SpellDB.CLASS_GAPCLOSER_DEFAULTS = {"):]
     gap_block = gap_block[:gap_block.index("\n}")]
@@ -102,7 +100,7 @@ def insertable_by_spec():
 
 
 def audit_insertion():
-    names = {int(r["ID"]): r["Name_lang"] for r in load("SpellName")}
+    names = spell_names()
     rot, simc = rotations(), insertable_by_spec()
     label = lambda ids: ", ".join(f"{names.get(i, '?')} ({i})" for i in ids) or "-"
     total = back = 0
@@ -218,7 +216,7 @@ def audit_healers():
     pins = {"priest_discipline": "PRIEST_1", "priest_holy": "PRIEST_2", "paladin_holy": "PALADIN_1",
             "shaman_restoration": "SHAMAN_3", "evoker_preservation": "EVOKER_2", "monk_mistweaver": "MONK_2"}
     rot = rotations()
-    slug = lambda n: re.sub(r"[^a-z0-9]+", "_", n.lower().replace("'", "")).strip("_")
+    from simc_bridge import slug
     for apl, key in sorted(pins.items()):
         path = REPO / "tools" / "simc-apl" / f"{apl}.simc"
         if not path.exists():

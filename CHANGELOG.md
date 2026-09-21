@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-09-20
+
+### Improved
+- **Cooldowns and charges are read straight from the game** instead of being timed by the addon. A reset, refund or cooldown-reduction effect shows immediately, an ability with no charges never shows as ready (and no longer pops back on an energy tick or target swap), and cooldown swipes on macro and off-bar icons are exact in every language.
+- **Buff windows are tracked from your own casts.** The game hides your buffs from addons during combat, so abilities meant for a window (or meant to wait until one ends) used to react only when the game's own suggestion revealed it. They now react the moment you open the window - Secret Technique right after Shadow Dance, for example - and shapeshift forms are read directly.
+- Resetting a custom priority list now fills it in priority order instead of an arbitrary one.
+
+### Fixed
+- Rotation priorities no longer hold an ability back on a condition that only one of its priority lines asks for (Summon Demonic Tyrant waiting for exactly five shards, for example). Priority data refreshed.
+- With two enemies, eight specs were ranked by their area priority instead of their two-target one.
+- A self-buff or barrier the game never recommends (Ice Barrier, Rune Tap, a racial on a custom list) is offered again once its cooldown is over, instead of reading "already active" until combat ends.
+- Buffs you pulled with are no longer treated as still up after they expire mid-fight, and shapeshifting mid-fight no longer leaves the form you pulled in marked as active.
+- The execute phase stays on for the rest of a target's life instead of flickering while the execute ability is on cooldown.
+- The burst-ready cue no longer pulls forward an ability the queue has just moved to the back (held, unaffordable, locked out).
+- The interrupt slot stops offering a stun the moment the enemy cast ends, instead of lingering while the cast bar fades. A point-blank crowd-control ability that is proven out of reach now drops out of the slot instead of showing dimmed.
+- Big heals are held correctly even when first seen mid-combat, and cooldown lengths refresh after a talent change.
+- The defensive cluster no longer appears in emergency order while you are dead.
+- My List Leads: when nothing on your list can be timed by the addon right now, the game's own suggestion leads - even if your list leaves that ability out or it is waiting on resources - instead of a filler taking the front on list order alone.
+
 ## [5.5.0] - 2026-09-20
 
 ### Added

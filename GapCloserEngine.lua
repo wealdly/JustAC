@@ -107,14 +107,6 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
     end
 
     -- Cooldown check: don't suggest spells on CD
-    -- Ensure spell is registered for local CD tracking (idempotent after first call)
-    if BlizzardAPI.RegisterSpellForTracking then
-        BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser")
-        -- Seed local CD on first registration so pre-existing CDs are detected
-        if BlizzardAPI.SeedLocalCooldownIfActive then
-            BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
-        end
-    end
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Range check: reject only if the ability is confirmed OUT of reach (e.g. target beyond
@@ -122,8 +114,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
     -- the BASE range, so it rejected a stealth teleport (5yd by spell, 25yd in stealth) at
     -- every distance a gap closer is for, and the stealth path below never returned it.
     -- Self-targeted spells (Sprint) and unknowns read nil -> pass; only a confirmed false rejects.
-    local inRange = BlizzardAPI.AbilityInRange or BlizzardAPI.SpellInRange
-    if inRange and inRange(spellID) == false then
+    if BlizzardAPI.AbilityInRange(spellID) == false then
         return nil
     end
 
@@ -186,21 +177,6 @@ function GapCloserEngine.InitializeGapClosers(addon)
     local existing = profile.gapClosers.classSpells[specKey]
     if not existing or #existing == 0 then
         SeedDefaults(profile, specKey, false)
-    end
-
-    -- Register gap-closer spells for local CD tracking and seed pre-existing CDs.
-    -- Mirrors DefensiveEngine.RegisterDefensivesForTracking pattern.
-    local spellList = profile.gapClosers.classSpells[specKey]
-    if spellList and BlizzardAPI.RegisterSpellForTracking then
-        for _, sid in ipairs(spellList) do
-            if sid and sid > 0 then
-                local resolvedID = BlizzardAPI.ResolveSpellID(sid)
-                BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser")
-                if BlizzardAPI.SeedLocalCooldownIfActive then
-                    BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
-                end
-            end
-        end
     end
 end
 
