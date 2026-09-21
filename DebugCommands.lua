@@ -174,6 +174,7 @@ local INSPECT_TOPICS = {
     { "maintlog",    "MaintenanceLog",           "[on|off|clear]", "Record maintenance state 1/s to SavedVariables" },
     { "enemies",     "EnemyCountProbe",          nil,  "Why the direct enemy count reads what it reads (run in combat with a pack)" },
     { "overrides",   "OverrideApiDiff",          nil,  "Spellbook walk: where FindSpellOverrideByID and C_Spell.GetOverrideSpell disagree" },
+    { "window",      "FightWindowDump",          "[selftest]", "The last abilities the game served and you used this fight, and what they imply" },
     { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
@@ -879,6 +880,12 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     else
         addon:Print("  Not in this queue build - it may be the AC slot itself (position 1 is unreadable in combat), "
             .. "or a duplicate of a spell already shown.")
+    end
+    local FW = LibStub("JustAC-FightWindow", true)
+    local stuck = FW and FW.StuckSeconds and (FW.StuckSeconds(effectiveID) or FW.StuckSeconds(displayID))
+    if stuck then
+        addon:Print(string.format("  |cffffcc00Stuck pick|r - the game asked for this for %.0fs this session while "
+            .. "you pressed other things and never pressed it. Is it on your bars and bound?", stuck))
     end
     addon:Print("==============================")
 end
@@ -4355,6 +4362,28 @@ function DebugCommands.OverrideApiDiff(addon)
         end
     end
     addon:Print(string.format("override diff: %d spellbook entries checked, %d differ", n, diffs))
+-- Fight window (/jac inspect window [selftest])
+--------------------------------------------------------------------------------
+function DebugCommands.FightWindowDump(addon, arg)
+    local FW = LibStub("JustAC-FightWindow", true)
+    if not FW then addon:Print("fight window not loaded") return end
+    if arg == "selftest" then
+        addon:Print("fight window selftest: " .. (FW.SelfTest() and "|cff00ff00pass|r" or "|cffff0000FAIL|r"))
+        return
+    end
+    local arch, range = FW.MultiContext()
+    addon:Print("|cff00ccff== fight window ==|r  multi-target context: "
+        .. (arch and (arch .. "/" .. tostring(range)) or "none"))
+    local rows = 0
+    FW.ForEach(function(age, kind, id, tag)
+        rows = rows + 1
+        local info = id and id > 0 and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+        addon:Print(string.format("  -%4.1fs  %s  %s%s", age,
+            kind == "S" and "|cff00ff00served|r" or kind == "U" and "used  " or "|cff888888target|r",
+            kind == "T" and "" or ((info and info.name or "?") .. " (" .. tostring(id) .. ")"),
+            tag and ("  [" .. tag .. "]") or ""))
+    end)
+    if rows == 0 then addon:Print("  (empty - it fills in combat and clears when the fight ends)") end
 end
 
 --------------------------------------------------------------------------------
@@ -4419,8 +4448,10 @@ local function PickLogSample()
     end
     -- Slot 2 is where the default mode shows what the ADDON adds to the game's pick.
     local second = type(queue) == "table" and queue[2] or nil
+    -- The context the queue actually ranked with; "*" = carried by the fight window.
+    local ctxState = SQ and SQ.DebugContextState and SQ.DebugContextState()
     if type(second) ~= "number" or issecretvalue(second) then second = nil end
-    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s second=%s",
+    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s second=%s ctx=%s%s",
         tostring(SDB.GetSpecKey and SDB.GetSpecKey() or "?"),
         pick,
         (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
@@ -4429,7 +4460,8 @@ local function PickLogSample()
         n(BAPI.GetPowerBand and BAPI.GetPowerBand("player", POWER_BANDS)),
         n(UnitExists("target") and BAPI.GetHealthBand and BAPI.GetHealthBand("target", HEALTH_BANDS) or nil),
         n(lead), (rec and rec.delegated) and "D" or (rec and "" or "?"), why,
-        tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"), n(second))
+        tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"), n(second),
+        tostring(ctxState and ctxState.arch or "-"), (ctxState and ctxState.stickyApplied) and "*" or "")
     if payload == lastPickPayload then return end
     lastPickPayload = payload
     _G.JustACGlobal = _G.JustACGlobal or {}

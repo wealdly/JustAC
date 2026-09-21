@@ -73,6 +73,7 @@ Note `Options/Core.lua` loads LAST of the `Options/*` files: the panels resolve
 | `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v2 |
 | `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v14 |
 | `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v11 |
+| `FightWindow.lua` | Last abilities the game served / the player used this fight: multi-target context from recent picks, stuck-pick detection. Context and safeguards only - never evidence for leading over the pick (`Documentation/SAFE_LEAD_PLAN.md`) | `Served()`, `Used()`, `MultiContext()`, `StuckSeconds()`, `SelfTest()` | v1 |
 | `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v25 |
 | `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v38 |
 | `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v45 |

@@ -67,6 +67,7 @@ BlizzardAPI\StateHelpers.lua
 
 # State / Cache  (BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter → SpellQueue)
 FormCache.lua
+FightWindow.lua
 MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
