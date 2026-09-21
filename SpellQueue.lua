@@ -224,16 +224,16 @@ local normalRank = {}
 local pickWindowsBuf = {}
 
 -- Situation memory: the AC pick churns faster than the situation it reveals.
---   stickyArch/-Range: last multi-target (aoe/cleave) pick, held STICKY_CTX_SECONDS.
---     An ST pick during AoE is common (the multi spells are cooling down - exactly
---     when the pick lies about target count); a multi pick on few targets is rare.
---     So multi evidence outlives the pick; ST picks alone don't clear it.
+--   multi-target context: FightWindow.MultiContext - two multi-target picks among the last
+--     six typed ones. An ST pick during AoE is common (the multi spells are cooling down -
+--     exactly when the pick lies about target count), so multi evidence outlives the pick;
+--     it takes a run of single-target picks to clear it. Replaced a fixed 8s hold after ANY
+--     multi pick, which flipped three times as often on recorded fights.
 --   executeLatch: an execute reveal holds for the rest of that target's life instead
 --     of flickering off while the execute spell itself cools down. A flag, not the
 --     target's GUID - that is secret for NPCs in combat, so a GUID latch never set.
 -- Both cleared on combat exit (and the latch on target change).
-local STICKY_CTX_SECONDS = 8
-local stickyArch, stickyRange, stickyTime = nil, nil, 0
+local FightWindow = LibStub("JustAC-FightWindow", true)
 local executeLatch = false
 
 -- Snapshot of the last build's context (post latch/sticky), for /jac inspect rank.
@@ -1422,12 +1422,14 @@ end
 --- the coordinator's OOC visibility early-return so a stale latch never
 --- survives into the next fight (evade-reset mobs return at full health).
 function SpellQueue._ClearSituationMemory()
-    stickyArch, stickyRange, executeLatch = nil, nil, false
+    executeLatch = false
+    if FightWindow then FightWindow.Reset() end
 end
 
 --- New target: whatever the old one revealed about its health no longer applies.
 function SpellQueue.OnTargetChanged()
     executeLatch = false
+    if FightWindow then FightWindow.TargetChanged() end
 end
 
 --- Stage E - context inference: the AC pick's archetype/range/role/execute
@@ -1443,6 +1445,11 @@ function SpellQueue._StageContext(b)
         ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
         ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
         ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
+    end
+    -- The pick's OWN tags go into the fight window, before the enemy count promotes them.
+    if FightWindow and inCombat then
+        FightWindow.Served(primarySpellID and primarySpellID > 0 and primarySpellID or nil,
+            now, ctxArch, ctxRange)
     end
     -- Execute phase, DETECTED rather than inferred. The line above only learns of
     -- execute range when AC happens to pick an execute spell; a target-health
@@ -1486,7 +1493,7 @@ function SpellQueue._StageContext(b)
         ctxDying = BlizzardAPI.IsUnitHealthBelow("target", DYING_TARGET_PCT) == true
     end
     -- Temporal smoothing of the revealed context (see module-state comment):
-    -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
+    -- latch execute per target, carry multi-target evidence across recent picks.
     local stickyApplied, executeLatched = false, false
     if inCombat then
         if ctxExecute then
@@ -1501,27 +1508,19 @@ function SpellQueue._StageContext(b)
                 executeLatch = false
             end
         end
-        if ctxArch == "aoe" or ctxArch == "cleave" then
-            stickyArch, stickyRange, stickyTime = ctxArch, ctxRange, now
-        elseif stickyArch then
-            -- An UNTYPED pick (a cooldown, a buff - no single/multi-target profile) says
-            -- nothing about the pack, so it must not age the memory of one. Only a typed
-            -- single-target pick is evidence the situation changed. Measured: the game
-            -- picked Shadow Dance for ~25s in a pack, the hold expired after 8, and the
-            -- queue ranked the rest of that window with no context at all.
-            -- ...unless the direct count says exactly one enemy is engaged: that IS evidence,
-            -- so the memory ages normally instead of surviving a whole single-target fight.
-            if ctxArch == nil and enemies ~= 1 then stickyTime = now end
-            if now - stickyTime <= STICKY_CTX_SECONDS then
-                ctxArch, ctxRange = stickyArch, stickyRange
+        -- Recent picks outlive the current one: an UNTYPED pick (a cooldown, a buff) says
+        -- nothing about the pack and is skipped by the window, so it cannot age the memory
+        -- of one (measured: the game picked Shadow Dance for ~25s in a pack).
+        if ctxArch ~= "aoe" and ctxArch ~= "cleave" and FightWindow then
+            local wArch, wRange = FightWindow.MultiContext()
+            if wArch then
+                ctxArch, ctxRange = wArch, wRange
                 stickyApplied = true
-            else
-                stickyArch, stickyRange = nil, nil
             end
         end
     else
-        stickyArch, stickyRange = nil, nil
         executeLatch = false
+        if FightWindow then FightWindow.Reset() end
     end
     -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
     -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →

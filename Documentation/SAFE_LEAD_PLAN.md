@@ -145,7 +145,12 @@ replaces a Wait only.
 
 ## Phases
 
-0. **Fight window + its two standalone wins** (ships without Safe Lead; no option):
+0. **Fight window + its two standalone wins** (ships without Safe Lead; no option).
+   **BUILT 2026-09-21** on branch `safe-lead` - `FightWindow.lua`, `/jac inspect window
+   [selftest]`, pick log field `ctx=` (`*` = carried by the window). Two deliberate gaps:
+   the count is still promote-only (W1's "overrule downward" waits for a measurement on a
+   spec whose two-target priority really differs), and the stuck-pick hint is `/jac why` only
+   (a chat line needs locale keys - fold into the next locale pass).
    - the ring buffer, fed from the existing pick stage and the existing own-cast hook
      (`BlizzardAPI.NoteOwnCast` already sees every cast);
    - **W1** context: the sticky timer becomes window evidence. Verify with the pick log that

@@ -2007,6 +2007,8 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     end
 
     if BlizzardAPI and BlizzardAPI.NoteOwnCast then BlizzardAPI.NoteOwnCast(spellID) end
+    local FightWindow = LibStub("JustAC-FightWindow", true)
+    if FightWindow and UnitAffectingCombat("player") then FightWindow.Used(spellID) end
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
     end
