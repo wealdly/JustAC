@@ -43,6 +43,22 @@ def extract(name, text):
     return text[start:m.end()].replace("local function", "function", 1)
 
 
+# Gate types the queue deliberately has no evaluator for. Anything else appearing in the
+# generated data without a branch in GateVerdict is a gate that silently does nothing -
+# which is how a cooldown condition sat inert for as long as it did.
+UNEVALUATED = {"dot"}
+
+
+def check_coverage():
+    data = (SRC.parent / "Data" / "SimcRotations.lua").read_text(encoding="utf-8")
+    emitted = set(re.findall(r't="([a-z]+)"', data))
+    handled = set(re.findall(r't == "([a-z]+)"', SRC.read_text(encoding="utf-8")))
+    missing = sorted(emitted - handled - UNEVALUATED)
+    if missing:
+        print("  FAIL gate types in the data with no evaluator: %s" % ", ".join(missing))
+    return 1 if missing else 0
+
+
 def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
@@ -79,7 +95,8 @@ def main():
     if got is not True:
         bad += 1
         print("  FAIL nested: got %s, want True  (%s)" % (got, nested))
-    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 1, bad))
+    bad += check_coverage()
+    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2, bad))
     return 1 if bad else 0
 
 
