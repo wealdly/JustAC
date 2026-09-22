@@ -84,13 +84,6 @@ end
 --- The "Context ordering" select for positions 2+: Off / Match Blizzard's pick (the
 --- context-aware heuristic) / SimC priority (imported theorycraft order). The SimC
 --- tier only appears where we have data for the current spec.
---- Is there an imported priority for this spec? Without one the runtime falls back to the
---- pick-matching heuristic, so turning literal ordering OFF must restore to that.
-local function hasSimc()
-    local RI = LibStub("JustAC-RotationImport", true)
-    return (RI and RI.HasRotation and RI.HasRotation()) or false
-end
-
 --- Copy the current Blizzard rotation into cq.baseline. Returns the rotation
 --- list (never empty), or nil when unavailable.
 local function snapshotBaseline(cq)
@@ -103,6 +96,8 @@ local function snapshotBaseline(cq)
     end
     return rotationSpells
 end
+
+CustomQueue.SnapshotBaseline = snapshotBaseline   -- shared with the priority list widget
 
 --- Snapshot the current Blizzard rotation into the profile (baseline + spells).
 --- Returns true if snapshot was taken, false if no rotation available.
@@ -123,18 +118,8 @@ local function SnapshotRotation(addon, specKey)
     -- user is about to reorder (Eviscerate at step 8, poisons at 2-4) and IS the order with
     -- Context Ordering off. Seed it as a priority instead: theorycraft rank, then the game's
     -- own step order, then id. Unranked entries (poisons, utility) fall to the bottom.
-    local RI = LibStub("JustAC-RotationImport", true)
-    if RI then
-        local function key(id)
-            local rec = RI.GetEntry and RI.GetEntry(id, "st")
-            return (rec and rec.rank) or (1000 + ((RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999))
-        end
-        table.sort(cq.spells, function(x, y)
-            local kx, ky = key(x), key(y)
-            if kx ~= ky then return kx < ky end
-            return x < y
-        end)
-    end
+    local PL = LibStub("JustAC-PriorityList", true)
+    if PL and PL.SortByPriority then PL.SortByPriority(cq.spells, "simc") end
 
     return true
 end
@@ -221,12 +206,14 @@ function CustomQueue.CreateTabArgs(addon)
                         width = "full",
                         get = function()
                             local profile = addon:GetProfile()
-                            return (profile and profile.contextOrder) == "off"
+                            return (profile and profile.orderExact) == true
                         end,
                         set = function(_, val)
                             local profile = addon:GetProfile()
                             if not profile then return end
-                            profile.contextOrder = val and "off" or (hasSimc() and "simc" or "ac")
+                            -- Its OWN field: stored in contextOrder it fought the tab strip,
+                            -- which reads that field to say which source is live.
+                            profile.orderExact = val or nil
                             InvalidateRotationCache()
                             addon:ForceUpdateAll()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end

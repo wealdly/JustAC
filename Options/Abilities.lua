@@ -56,6 +56,10 @@ local function SpellSettings(profile, id, create)
     return d.spellSettings[id]
 end
 
+--- The per-ability settings store, shared with the priority list widget so one accessor
+--- owns the sparse-table rules.
+Abilities.SpellSettings = SpellSettings
+
 -- Overt per-spec declaration: "I want the game's assist itself to skip this ability"
 -- (which the engine only does for spells with no visible action-bar button). A separate
 -- store from the blacklist VALUE deliberately: the blacklist says "don't show it to me",

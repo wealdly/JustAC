@@ -1599,6 +1599,8 @@ function SpellQueue._StageTail(b)
     -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
     -- priority, the default - falls back to "ac" below when no data for this spec).
     local contextOrder = profile.contextOrder or "simc"
+    -- "Use my order exactly" is a separate setting from which list is in use.
+    if profile.orderExact then contextOrder = "off" end
     -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
     local simcCtx = (b.ctxArch == "aoe" and "aoe") or (b.ctxArch == "cleave" and "cleave") or "st"
     if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
