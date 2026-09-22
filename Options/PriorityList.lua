@@ -280,11 +280,28 @@ function PriorityList.Rows(addon, source)
     --- The game's own list never includes what we inserted into the pool; the baseline has
     --- to mean the same thing whichever source happens to be live.
     local function poolFor(src)
-        local out = {}
+        local out, have = {}, {}
         for _, id in ipairs((BAPI.GetRotationSpells and BAPI.GetRotationSpells()) or {}) do
             local inserted = BAPI.IsInsertedSpell and BAPI.IsInsertedSpell(id)
             if not PriorityList.IsUpkeep(id) and not (src == "blizzard" and inserted) then
                 out[#out + 1] = id
+                have[id] = true
+                local base = BAPI.ResolveSpellID and BAPI.ResolveSpellID(id)
+                if base then have[base] = true end
+            end
+        end
+        -- The theorycraft preview has to show what that ORDER would do, and part of what
+        -- it does is offer abilities the game never recommends at all. Those only reach
+        -- the live pool while theorycraft is the live source, so reading the pool alone
+        -- made this tab change with a setting it exists to help you decide - and made it
+        -- identical to the Blizzard tab whenever the game's own order was in use.
+        if src ~= "blizzard" and RI and RI.GetInsertable then
+            for _, raw in ipairs(RI.GetInsertable() or {}) do
+                local id = (BAPI.ResolveKnownSpellID and BAPI.ResolveKnownSpellID(raw)) or raw
+                if id and not have[id] and not PriorityList.IsUpkeep(id) then
+                    out[#out + 1] = id
+                    have[id] = true
+                end
             end
         end
         return out
