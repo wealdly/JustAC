@@ -313,18 +313,21 @@ local function MakeTab(parent, label)
     slices[2]:SetPoint("LEFT", slices[1], "RIGHT")
     slices[2]:SetPoint("RIGHT", slices[3], "LEFT")
     tab.slices = slices
+    -- "This is the one the queue is using." Anchored to the LABEL, not to a corner of the
+    -- tab: the label shifts a pixel when a tab is selected, and a corner-pinned dot drifted
+    -- away from the text and read as floating debris above the strip.
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
-    tab.liveDot:SetSize(5, 5)
-    tab.liveDot:SetPoint("TOPRIGHT", -8, -5)
+    tab.liveDot:SetSize(6, 6)
+    tab.liveDot:SetPoint("RIGHT", tab:GetFontString(), "LEFT", -5, 0)
     tab.liveDot:SetColorTexture(unpack(GREEN))
-    local width = (tab:GetFontString() and tab:GetFontString():GetStringWidth() or 40) + 44
+    local width = (tab:GetFontString() and tab:GetFontString():GetStringWidth() or 40) + 50
     tab:SetWidth(width)
     function tab:SetSelected(on)
         for _, t in ipairs(self.slices) do t:SetTexture(on and ACTIVE_TAB or INACTIVE_TAB) end
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
         -- Blizzard's art draws the selected tab two pixels taller; matching it is what
         -- makes the strip read as tabs rather than buttons.
-        self:GetFontString():SetPoint("CENTER", 0, on and -1 or -2)
+        self:GetFontString():SetPoint("CENTER", self.liveDot:IsShown() and 5 or 0, on and -1 or -2)
     end
     return tab
 end
@@ -542,8 +545,8 @@ function methods:Refresh()
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
+        tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
-        tab.liveDot:SetShown(key == live)
     end
 
     -- Position 1. The row the whole panel exists to explain: with the list leading it is
