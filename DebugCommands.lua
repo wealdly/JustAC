@@ -8778,9 +8778,17 @@ function DebugCommands.SimcGateProbe(addon, arg)
         local e = list[i]
         local gates = e and e.gates
         if gates then
-            local parts = {}
-            for gi = 1, #gates do
-                local g = gates[gi]
+            -- Each gate describes itself, so a GROUP can describe its members the same
+            -- way. Without this a nested condition printed nothing and its whole entry
+            -- silently vanished from the probe.
+            local DescribeGate
+            DescribeGate = function(g)
+                if g.t == "any" or g.t == "all" then
+                    local sub = {}
+                    for k = 1, #(g.g or {}) do sub[#sub + 1] = DescribeGate(g.g[k]) or "?" end
+                    if #sub == 0 then return nil end
+                    return "(" .. table.concat(sub, g.t == "any" and " or " or " and ") .. ")"
+                end
                 if g.t == "power" then
                     -- Ask the RUNTIME for the threshold rather than recomputing it -
                     -- a probe that mirrors the logic drifts from it.
@@ -8791,18 +8799,18 @@ function DebugCommands.SimcGateProbe(addon, arg)
                     if SQ.PowerGateThreshold then pctVal, pt = SQ.PowerGateThreshold(g) end
                     local below = pctVal and BAPI.IsUnitPowerBelow
                         and BAPI.IsUnitPowerBelow("player", pctVal, pt)
-                    parts[#parts + 1] = string.format("%s%s%s%d [max=%s -> %s%%] below=%s",
+                    return string.format("%s%s%s%d [max=%s -> %s%%] below=%s",
                         g.res, g.deficit and ".deficit" or "", g.op, g.n,
                         tostring(pt and UnitPowerMax("player", pt)),
                         pctVal and string.format("%.1f", pctVal) or "-", tostring(below))
                 elseif g.t == "execute" and g.pct then
-                    parts[#parts + 1] = string.format("target.hp%s%d below=%s", g.op, g.pct,
+                    return string.format("target.hp%s%d below=%s", g.op, g.pct,
                         tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("target", g.pct)))
                 elseif g.t == "health" and g.pct then
-                    parts[#parts + 1] = string.format("my.hp%s%d below=%s", g.op, g.pct,
+                    return string.format("my.hp%s%d below=%s", g.op, g.pct,
                         tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("player", g.pct)))
                 elseif g.t == "stealth" then
-                    parts[#parts + 1] = string.format("%sstealthed [now %s]", g.neg and "!" or "",
+                    return string.format("%sstealthed [now %s]", g.neg and "!" or "",
                         tostring(IsStealthed and IsStealthed() or false))
                 elseif g.t == "stack" and g.id and g.n then
                     -- Ask the runtime's own verdict, then show the raw ">= n" read
@@ -8812,7 +8820,7 @@ function DebugCommands.SimcGateProbe(addon, arg)
                     local holds = SQ._StackHolds and SQ._StackHolds(unit, g)
                     local atN = BAPI.GetAuraStackAtLeast and BAPI.GetAuraStackAtLeast(unit, g.id, g.n)
                     local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(g.id)
-                    parts[#parts + 1] = string.format("%s(%s).stack%s%d [>=%d is %s] holds=%s",
+                    return string.format("%s(%s).stack%s%d [>=%d is %s] holds=%s",
                         (info and info.name) or tostring(g.id), unit,
                         g.op, g.n, g.n, tostring(atN), tostring(holds))
                 elseif g.t == "resource" then
@@ -8822,10 +8830,15 @@ function DebugCommands.SimcGateProbe(addon, arg)
                     elseif g.deficit then
                         value = nil
                     end
-                    parts[#parts + 1] = string.format("%s%s%s%d [is=%s]", g.res,
+                    return string.format("%s%s%s%d [is=%s]", g.res,
                         g.deficit and ".deficit" or "", g.op, g.n,
                         (g.res == resName) and tostring(value) or "other resource")
                 end
+                return nil
+            end
+            local parts = {}
+            for gi = 1, #gates do
+                parts[#parts + 1] = DescribeGate(gates[gi])
             end
             if #parts > 0 then
                 shown = shown + 1

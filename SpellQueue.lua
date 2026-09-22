@@ -937,27 +937,6 @@ local function ResourceGateHolds(g, resCount, resMax)
     return nil
 end
 
--- True when a resource gate is present, EVALUABLE, and NOT satisfied - the entry is not worth
--- surfacing yet (Shred once you are already at 5 combo points, Hand of Gul'dan under 3 shards).
--- The count is plain frame state from BlizzardAPI.GetClassResourcePoints, never a secret read.
--- Unknown - bar hidden (and therefore frozen), secret, or a different resource than this gate
--- names - FAILS OPEN (false), so the entry keeps its previous delegated behaviour rather than
--- being buried on a guess.
-local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
-    if not gates or not resCount then return false end
-    for i = 1, #gates do
-        local g = gates[i]
-        if g.t == "resource" and g.res == resName and g.op and g.n then
-            -- `.deficit` asks how much ROOM is left (max - current). For countable
-            -- resources both numbers are plain - the point-widget read returns
-            -- current AND max - so this is ordinary arithmetic and needs no gate.
-            -- Unknown max -> skip this one rather than guess (fails open).
-            if ResourceGateHolds(g, resCount, resMax) == false then return true end
-        end
-    end
-    return false
-end
-
 -- SimC resource token -> Enum.PowerType, resolved lazily so a missing Enum can
 -- never break file load. Only CONTINUOUS resources belong here; the countable
 -- ones (combo points, chi, shards...) have their own exact read above.
@@ -1007,45 +986,6 @@ function SpellQueue.PowerGateThreshold(g)
     return (g.deficit and (100 * (max - g.n) / max) or (100 * g.n / max)), pt
 end
 
-local function SimcPowerGateBlocks(gates)
-    if not gates or not BlizzardAPI.IsUnitPowerBelow then return false end
-    for i = 1, #gates do
-        local g = gates[i]
-        if g.t == "power" and g.op and g.n and g.res then
-            local pct, pt = SpellQueue.PowerGateThreshold(g)
-            if pct and ThresholdGateBlocks(g, BlizzardAPI.IsUnitPowerBelow("player", pct, pt)) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
---- Health threshold gates. "execute" asks about the TARGET (its percentage comes
---- from SimC's APLs, the only place per-spell execute thresholds exist - DB2 has
---- no health-threshold column); "health" asks the same question of the PLAYER,
---- which defensive APL lines lean on. One loop, since only the unit differs.
---- No target = no opinion on execute gates (fail open).
-local function SimcHealthGateBlocks(gates)
-    if not gates or not BlizzardAPI.IsUnitHealthBelow then return false end
-    local haveTarget = UnitExists("target") and UnitCanAttack("player", "target")
-    for i = 1, #gates do
-        local g = gates[i]
-        if g.pct and g.op then
-            local unit
-            if g.t == "execute" then
-                unit = (haveTarget and not g.neg) and "target" or nil
-            elseif g.t == "health" then
-                unit = "player"
-            end
-            if unit and ThresholdGateBlocks(g, BlizzardAPI.IsUnitHealthBelow(unit, g.pct)) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
 --- Aura-STACK gates. The count is secret, but the engine renders it only at or
 --- above a minimum we name, so "at least N" is the one question available - and
 --- every SimC comparison reduces to one or two of them. `=` is the only form that
@@ -1079,93 +1019,123 @@ local function StackHolds(unit, g)
     return not a
 end
 
-local function SimcStackGateBlocks(gates)
-    if not (gates and BlizzardAPI.GetAuraStackAtLeast) then return false end
-    for i = 1, #gates do
-        local g = gates[i]
-        if g.t == "stack" and g.id and g.op and g.n then
-            -- `tgt` gates read the TARGET's debuff; no target means no opinion.
-            local unit = g.tgt and "target" or "player"
-            if not g.tgt or UnitExists("target") then
-                if StackHolds(unit, g) == false then return true end
-            end
-        end
-    end
-    return false
-end
 SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simcgates)
 
 -- Stealth gate (`stealthed.rogue`, or a SimC variable that is purely stealth states). The
 -- game answers IsStealthed plainly in combat, and it covers Stealth, Vanish, Shadow Dance,
 -- Subterfuge, Prowl and Shadowmeld - the same set SimC means. neg = "not while stealthed".
-local function SimcStealthGateBlocks(gates)
-    for i = 1, #gates do
-        local g = gates[i]
-        if g.t == "stealth" then
-            local stealthed = IsStealthed and IsStealthed() or false
-            if (g.neg and stealthed) or (not g.neg and not stealthed) then return true end
+--- ONE gate's verdict: true (holds), false (does not), nil (cannot tell). Every gate
+--- question in the queue reduces to this plus three-valued and/or, which is what lets a
+--- GROUP nest: an `any` holds the moment a member holds and fails only when every member
+--- fails, an `all` is its mirror, and either stays nil while a member is unreadable. That
+--- keeps an imported condition whole - `(low runic power | low-ish with the buff up)` used
+--- to be thrown away for having a bracket in it.
+---
+--- `strict` is the difference between the two readings the queue needs. SINKING an entry
+--- fails open, so a buff, cooldown or dot - none of which have a blocker we trust - reads
+--- as nil and buries nothing. SEATING one in slot 1 demands proof, so there a buff window
+--- we cannot see is a definite no.
+local gateCtx = {}   -- reused: this runs per entry per build and must not allocate
+
+local function GateVerdict(g, ctx)
+    local t = g.t
+    if t == "any" or t == "all" then
+        local members, unknown, decisive = g.g, false, (t == "any")
+        -- No members is not "everyone agreed": an empty `any` would read as false and
+        -- bury the entry. The generator never emits one, which is why it must be said.
+        if not members or #members == 0 then return nil end
+        for i = 1, #members do
+            local v = GateVerdict(members[i], ctx)
+            if v == nil then
+                unknown = true
+            elseif v == decisive then
+                return v              -- one true settles an `any`, one false an `all`
+            end
         end
+        if unknown then return nil end
+        return not decisive           -- nothing decided it, so every member agreed
     end
-    return false
+
+    if t == "stealth" then
+        local stealthed = (IsStealthed and IsStealthed()) and true or false
+        return (g.neg == true) ~= stealthed
+    end
+    if t == "resource" then
+        if ctx.skipResource then return nil end
+        if not (ctx.resCount and g.res == ctx.resName and g.op and g.n) then return nil end
+        return ResourceGateHolds(g, ctx.resCount, ctx.resMax)
+    end
+    if t == "power" or t == "execute" or t == "health" then
+        -- `=` and `!=` are not thresholds: no opinion rather than a wrong one.
+        if not (g.op == ">=" or g.op == ">" or g.op == "<" or g.op == "<=") then return nil end
+        local below
+        if t == "power" then
+            if ctx.skipResource then return nil end
+            local pct, pt = SpellQueue.PowerGateThreshold(g)
+            below = pct and BlizzardAPI.IsUnitPowerBelow
+                and BlizzardAPI.IsUnitPowerBelow("player", pct, pt)
+        else
+            local unit
+            if t == "health" then
+                unit = "player"
+            elseif UnitExists("target") and UnitCanAttack("player", "target") and not g.neg then
+                unit = "target"
+            end
+            below = unit and g.pct and BlizzardAPI.IsUnitHealthBelow
+                and BlizzardAPI.IsUnitHealthBelow(unit, g.pct)
+        end
+        if below == nil then return nil end
+        return not ThresholdGateBlocks(g, below)
+    end
+    if t == "stack" then
+        if not (g.id and g.op and g.n and BlizzardAPI.GetAuraStackAtLeast) then return nil end
+        if g.tgt and not UnitExists("target") then return nil end
+        return StackHolds(g.tgt and "target" or "player", g)
+    end
+    if t == "buff" then
+        if not ctx.strict then return nil end
+        local up = g.id and BlizzardAPI.IsBuffWindowActive
+            and BlizzardAPI.IsBuffWindowActive(g.id, g.dur)
+        if g.neg then
+            -- "not during X" is provable only for a window we could have opened
+            -- ourselves (it has a duration) and did not. A secret aura has no route.
+            if not g.dur then return false end
+            return not up
+        end
+        return up and true or false
+    end
+    if ctx.strict then return false end   -- cd / dot / unknown: never confirmed
+    return nil
 end
+SpellQueue._GateVerdict = GateVerdict          -- diagnostics (/jac inspect simcgates)
 
 --- The STRICT reading of a gate list, for leading rather than sinking: true only when every
---- gate is positively confirmed to hold. The blockers above fail OPEN (unknown = does not
---- block), which is right for sinking an entry and wrong for seating one in slot 1. Anything
---- unreadable - a secret buff with no own-cast window, a hidden class bar, a `cd` or `dot`
---- gate (no evaluator) - is "not confirmed". Safe Lead evidence only; not on the build path.
+--- gate is positively confirmed to hold. The blocking reading fails OPEN (unknown does not
+--- block), which is right for sinking an entry and wrong for seating one in slot 1.
+--- Safe Lead evidence only; not on the build path.
 local function GatesConfirmed(gates, resCount, resName, resMax)
     if not gates then return true end
+    gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
+    gateCtx.skipResource, gateCtx.strict = false, true
     for i = 1, #gates do
-        local g = gates[i]
-        local t = g.t
-        if t == "buff" then
-            local up = g.id and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id, g.dur)
-            if g.neg then
-                -- "not during X" confirmed only when X is a window we could have opened
-                -- ourselves (has a duration) and we did not: secret aura, no other route.
-                if not g.dur or up then return false end
-            elseif not up then
-                return false
-            end
-        elseif t == "resource" then
-            if not (resCount and g.res == resName and g.op and g.n)
-               or ResourceGateHolds(g, resCount, resMax) ~= true then return false end
-        elseif t == "power" then
-            local pct, pt = SpellQueue.PowerGateThreshold(g)
-            local below = pct and BlizzardAPI.IsUnitPowerBelow and BlizzardAPI.IsUnitPowerBelow("player", pct, pt)
-            if below == nil or ThresholdGateBlocks(g, below) then return false end
-        elseif t == "execute" or t == "health" then
-            local unit = t == "health" and "player"
-                or (UnitExists("target") and UnitCanAttack("player", "target") and not g.neg and "target") or nil
-            local below = unit and g.pct and BlizzardAPI.IsUnitHealthBelow and BlizzardAPI.IsUnitHealthBelow(unit, g.pct)
-            if below == nil or ThresholdGateBlocks(g, below) then return false end
-        elseif t == "stack" then
-            local unit = g.tgt and "target" or "player"
-            if (g.tgt and not UnitExists("target")) or StackHolds(unit, g) ~= true then return false end
-        elseif t == "stealth" then
-            local stealthed = IsStealthed and IsStealthed() or false
-            if (g.neg and stealthed) or (not g.neg and not stealthed) then return false end
-        else
-            return false   -- cd / dot / unknown: no evaluator, so never confirmed
-        end
+        if GateVerdict(gates[i], gateCtx) ~= true then return false end
     end
     return true
 end
 SpellQueue._GatesConfirmed = GatesConfirmed
 
---- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
---- Both call sites use this rather than the individual blockers, so a new gate
---- type cannot be wired into one and forgotten at the other.
+--- Every evaluable SimC gate in ONE call. Any single gate KNOWN not to hold blocks; one we
+--- cannot read never does.
+--- skipResource: an explicit Hold Until dial replaces the imported resource and power
+--- conditions for that spell; window/health/stack gates still apply.
 local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
     if not gates then return false end
-    -- skipResource: an explicit Hold Until dial replaces the imported resource
-    -- and power conditions for that spell; window/health/stack gates still apply.
-    return (not skipResource and (SimcResourceGateBlocks(gates, resCount, resName, resMax)
-                or SimcPowerGateBlocks(gates)))
-        or SimcHealthGateBlocks(gates)
-        or SimcStackGateBlocks(gates)
-        or SimcStealthGateBlocks(gates)
+    gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
+    gateCtx.skipResource, gateCtx.strict = skipResource and true or false, false
+    for i = 1, #gates do
+        if GateVerdict(gates[i], gateCtx) == false then return true end
+    end
+    return false
 end
 SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
 

@@ -333,6 +333,68 @@ def classify_atom(atom, resolve):
     return None, True  # time / prev_gcd / variable / compound -> delegate
 
 
+# Brackets used to end a condition's life. `classify_atom` delegates anything holding a
+# `(` or a `|`, and `classify_if` delegates a whole line whose top level is a disjunction,
+# so a condition every part of which we can read was thrown away for its shape alone. A
+# compound becomes a nested GROUP instead, and the runtime walks it.
+#
+# The rule for a group is all-or-nothing: one member we cannot read makes the whole group
+# unreadable, and the line delegates exactly as before. That includes a member that needs
+# no gate of its own - a talent or a target count - because inside an OR such a member is a
+# live ALTERNATIVE, and dropping it would state a condition stricter than the source.
+MAX_GROUP_DEPTH = 4
+
+
+def group_member_ok(g):
+    """Mirrors what the runtime can actually decide. A gate the runtime has no evaluator
+    for is harmless at the top of a flat list, where it simply never blocks, but inside a
+    group it is poison: the group's verdict would rest on members we cannot tell apart.
+    `cd` carries no subject at all, so an OR of two different cooldowns would emit two
+    identical members and claim to mean something."""
+    t = g.get("t")
+    if t in ("any", "all"):
+        return all(group_member_ok(x) for x in g["g"])
+    if t == "stealth":
+        return True
+    if t == "buff":
+        return bool(g.get("id"))
+    if t in ("resource", "power"):
+        return bool(g.get("res") and g.get("op") and g.get("n") is not None)
+    if t in ("execute", "health"):
+        return bool(g.get("op") and g.get("pct") is not None)
+    if t == "stack":
+        return bool(g.get("id") and g.get("op") and g.get("n") is not None)
+    return False          # cd, dot, anything new: no evaluator, so no opinion
+
+
+def classify_group(kind, parts, resolve, depth):
+    out = []
+    for part in parts:
+        gate, delegated = classify_expr(part, resolve, depth + 1)
+        if delegated or gate is None or not group_member_ok(gate):
+            return None, True
+        out.append(gate)
+    if len(out) == 1:
+        return out[0], False        # a pointless bracket, not a group
+    return {"t": kind, "g": out}, False
+
+
+def classify_expr(expr, resolve, depth=0):
+    """(gate|None, delegated) for an expression of any shape, nesting as needed."""
+    expr = _strip_parens(expr.strip())
+    if not expr:
+        return None, False
+    if depth >= MAX_GROUP_DEPTH:
+        return None, True
+    alts = split_or(expr)
+    if len(alts) > 1:
+        return classify_group("any", alts, resolve, depth)
+    atoms = split_and(expr)
+    if len(atoms) > 1:
+        return classify_group("all", atoms, resolve, depth)
+    return classify_atom(expr, resolve)
+
+
 def classify_if(expr, resolve):
     # SimC binds `&` tighter than `|`, so a depth-0 `|` makes the WHOLE expression a
     # disjunction and the atoms either side of it are ALTERNATIVES. split_and would hand
@@ -341,10 +403,13 @@ def classify_if(expr, resolve):
     # is a different shape: `(a|b)&c` really does require c, and classify_atom already
     # delegates the parenthesized atom on its own.
     if has_top_level_or(expr):
+        gate, delegated = classify_expr(expr, resolve)
+        if gate and not delegated:
+            return [gate], False
         return [], True
     gates, delegated = [], False
     for atom in split_and(expr):
-        g, d = classify_atom(atom, resolve)
+        g, d = classify_expr(atom, resolve)
         if g:
             gates.append(g)
         delegated = delegated or d
@@ -713,6 +778,10 @@ def load_aura_secs(bridge):
 
 def gate_lua(g):
     parts = ['t="%s"' % g["t"]]
+    # A group carries members instead of a subject: `g={...}` holds the nested gates and
+    # the type says how to combine them ("any" = or, "all" = and).
+    if g.get("g"):
+        return '{t="%s",g={%s}}' % (g["t"], ",".join(gate_lua(x) for x in g["g"]))
     if g.get("id"):
         parts.append("id=%d" % g["id"])
     if g["t"] == "buff" and AURA_SECS.get(g.get("id")):
@@ -882,6 +951,21 @@ def spec_from_filename(name, bridge):
 
 
 def _selftest():
+    # nested groups: readable throughout -> one gate; one unreadable member -> delegate
+    def r(tok):
+        return {"x": 101, "y": 202}.get(tok)
+    g, d = classify_if("buff.x.up|buff.y.up", r)
+    assert not d and g == [{"t": "any", "g": [{"t": "buff", "id": 101, "neg": False},
+                                              {"t": "buff", "id": 202, "neg": False}]}], g
+    g, d = classify_if("stealthed.rogue&(buff.x.up|buff.y.up)", r)
+    assert not d and len(g) == 2 and g[1]["t"] == "any", g
+    # a member needing no gate of its own is still an alternative: do not silently drop it
+    assert classify_if("talent.foo|buff.x.up", r) == ([], True)
+    # unknown token anywhere in the group -> the whole line delegates, as before
+    assert classify_if("buff.x.up|buff.nope.up", r) == ([], True)
+    # a bracket around a single atom is not a group
+    assert classify_if("(buff.x.up)", r) == ([{"t": "buff", "id": 101, "neg": False}], False)
+
     # count_fails: bare top-level count atom drops the entry off the wrong tier;
     # an OR-embedded count is not a hard gate and must be kept.
     assert count_fails("active_enemies>=3", 1) and not count_fails("active_enemies>=3", 3)
@@ -1030,13 +1114,21 @@ def _selftest():
     # An unresolved dot delegates rather than emitting an id-less gate the runtime can't use.
     assert classify_atom("dot.x.ticking", lambda t: None) == (None, True)
     # PRECEDENCE GUARD. `&` binds tighter than `|`, so a depth-0 `|` makes the whole line a
-    # disjunction: split_and hands back atoms from BOTH branches and emitting them together
-    # invents a requirement the source never states.
+    # disjunction: split_and hands back atoms from BOTH branches, and emitting them together
+    # would invent a requirement the source never states. The disjunction is kept as a group
+    # with that structure intact - never flattened into the gate list beside it.
     ids = {"a": 1, "b": 2, "c": 3}.get
-    assert classify_if("buff.a.up&buff.b.up|buff.c.up", ids) == ([], True)
-    # A parenthesized OR is not top level - `c` really is required alongside it.
+    assert classify_if("buff.a.up&buff.b.up|buff.c.up", ids) == ([{"t": "any", "g": [
+        {"t": "all", "g": [{"t": "buff", "id": 1, "neg": False},
+                           {"t": "buff", "id": 2, "neg": False}]},
+        {"t": "buff", "id": 3, "neg": False}]}], False)
+    # A parenthesized OR is not top level - `c` really is required alongside it, and the
+    # bracket is now kept as a group instead of costing the line its gates.
     g, d = classify_if("(buff.a.up|buff.b.up)&buff.c.up", ids)
-    assert g == [{"t": "buff", "id": 3, "neg": False}] and d
+    assert not d and g == [
+        {"t": "any", "g": [{"t": "buff", "id": 1, "neg": False},
+                           {"t": "buff", "id": 2, "neg": False}]},
+        {"t": "buff", "id": 3, "neg": False}], g
 
     # Empower tier: parsed off the mod, serialized, and part of the dedup signature. The
     # last two are what a dropped key looks like - the data still generates, just without
