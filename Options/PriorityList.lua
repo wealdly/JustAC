@@ -481,7 +481,7 @@ function methods:Refresh()
     local rows = PriorityList.Rows(self.addon, source)
     local width = self.frame:GetWidth() or 560
     local y = -(TAB_H + HEAD_H + PIN_H + GAP)
-    local openRow, detailShown = nil, false
+    local detailShown = false
     local start = leads and 1 or 2
 
     for i = 1, #rows do
@@ -523,7 +523,7 @@ function methods:Refresh()
         -- The open ability's settings belong under IT, inside the list - not below the
         -- whole table, where the row they belong to has scrolled out of sight.
         if editable and PriorityList.selected == data.id then
-            openRow, detailShown = row, true
+            detailShown = true
             self.detail:ClearAllPoints()
             self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
             self.detail:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", 0, y)
