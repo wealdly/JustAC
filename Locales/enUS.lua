@@ -309,6 +309,7 @@ L["Only Suggest For Real Gaps desc"] = "Only suggest a gap closer when the targe
 -- Burst-ready cue
 L["Burst Ready Cue"] = "Burst-Ready Cue"
 L["Burst Ready Cue desc"] = "Purple glow on your spec's major cooldown when a burst window is called for - the signal to start your burst.\n\nIn combat, the cued cooldown moves up to the slot after Blizzard's pick (added there if it isn't in your list, even past a per-ability hold) - under every ordering preset, Fixed source order included; when Blizzard's pick is the cooldown itself, the first slot glows instead.\n\nIt stays dark when the one enemy still fighting you is nearly dead - bosses excepted, since that is exactly when you should be spending everything."
+L["Burst"] = "Burst"
 L["Burst Triggers"] = "Burst Triggers"
 L["Burst Triggers desc"] = "Which spells get the burst-ready cue. The default list comes from SimulationCraft's own burst-window markers for your spec (or curated class defaults where none exist). Add spells below to use your own list instead. Your own triggers light up whenever they're ready."
 L["Burst Triggers Active"] = "Active (%s):"
