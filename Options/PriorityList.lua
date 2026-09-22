@@ -750,8 +750,9 @@ local function BuildDetail(widget, parent)
     d.hold.frame:SetParent(d)
     -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
     d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -20, 0)
-    -- 22 clears the dropdown art's own left cap.
-    d.holdLabel:SetPoint("LEFT", holdHost, "LEFT", 22, 0)
+    -- The dropdown art's left cap eats the first 16 or so, so this is the inset past it
+    -- rather than from the frame edge.
+    d.holdLabel:SetPoint("LEFT", holdHost, "LEFT", 30, 0)
     d.holdLabel:SetJustifyH("LEFT")
     d.holdLabel:SetWordWrap(false)
     d.hold.frame:Show()
