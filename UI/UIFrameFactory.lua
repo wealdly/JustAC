@@ -611,8 +611,17 @@ end
 local ASSIST_RING_IDLE = "UI-HUD-RotationHelper-Inactive"
 local ASSIST_RING_LIT = "UI-HUD-RotationHelper-Active"
 local ASSIST_RING_FX = "UI-HUD-RotationHelper-Active-FX"
+local ASSIST_RING_FX_MASK = "UI-HUD-RotationHelper-Active-FX-Mask"
 -- A standard action button edge, which is what the atlas was drawn against.
 local ACTION_BUTTON_EDGE = 45
+
+--- An atlas's own size as a multiple of an action button, width and height kept apart.
+--- Forcing one ratio onto both stretches any atlas that is not square.
+local function AtlasScale(atlas, fallback)
+    local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+    if not (info and info.width and info.height) then return fallback, fallback end
+    return info.width / ACTION_BUTTON_EDGE, info.height / ACTION_BUTTON_EDGE
+end
 
 local function AddAssistRing(button, size)
     if not (C_Texture and C_Texture.GetAtlasInfo
@@ -624,9 +633,8 @@ local function AddAssistRing(button, size)
     -- The game draws this at the ATLAS's own size on a standard action button, so it
     -- bleeds well past the edge. Reproduced as a ratio rather than a fixed size, since
     -- our icon size is a setting: the ring keeps the same proportions at any of them.
-    local info = C_Texture.GetAtlasInfo(ASSIST_RING_IDLE)
-    local ratio = (info and info.width and info.width / ACTION_BUTTON_EDGE) or 1.25
-    f:SetSize(size * ratio, size * ratio)
+    local rw, rh = AtlasScale(ASSIST_RING_IDLE, 1.25)
+    f:SetSize(size * rw, size * rh)
     f:SetPoint("CENTER", button, "CENTER")
     f.idle = f:CreateTexture(nil, "ARTWORK")
     f.idle:SetAllPoints(f)
@@ -644,11 +652,28 @@ local function AddAssistRing(button, size)
         local glow = lit:CreateTexture(nil, "ARTWORK")
         glow:SetAtlas(ASSIST_RING_FX)
         glow:SetPoint("CENTER")
-        -- The game gives the glow 100px inside a 128px frame and scales it to 0.8, so it
-        -- covers 0.625 of the ring. Same fraction here, of whatever the ring came out.
-        glow:SetSize(size * ratio * 0.625, size * ratio * 0.625)
+        -- The game gives the glow 100px inside a 128px frame at 0.8 scale, so it covers
+        -- 0.625 of the ring. Same fraction here, in each direction separately.
+        local gw, gh = AtlasScale(ASSIST_RING_FX, 1.0)
+        local glowH = size * rh * 0.625
+        glow:SetSize(glowH * (gw / gh), glowH)
         glow:SetAlpha(0.6)
-        glow:SetBlendMode("ADD")   -- so its black areas add nothing and need no mask
+        glow:SetBlendMode("ADD")
+        -- The mask is NOT optional, which I had assumed it was on the grounds that
+        -- additive blending makes black invisible. It does, but the art carries a soft
+        -- falloff rather than hard black, and the wrap mode is the point: outside the
+        -- mask, CLAMPTOBLACKADDITIVE contributes nothing, so the square stops existing
+        -- as it turns. Built from the atlas file directly because the wrap modes can
+        -- only be given to SetTexture, and SetAtlas has nowhere to put them.
+        local mi = C_Texture.GetAtlasInfo(ASSIST_RING_FX_MASK)
+        if mi and mi.file then
+            local mask = lit:CreateMaskTexture()
+            mask:SetTexture(mi.file, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetTexCoord(mi.leftTexCoord, mi.rightTexCoord,
+                mi.topTexCoord, mi.bottomTexCoord)
+            mask:SetAllPoints(glow)
+            glow:AddMaskTexture(mask)
+        end
         local anim = lit:CreateAnimationGroup()
         anim:SetLooping("REPEAT")
         local rot = anim:CreateAnimation("Rotation")
