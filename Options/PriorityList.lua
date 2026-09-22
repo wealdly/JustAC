@@ -202,10 +202,10 @@ end
 --- Where the abilities BEING SHOWN would sit in the game's own order. Ranking the same
 --- set both ways is the only comparison that means anything: measured against the whole
 --- pool, a short list reads as "everything moved up" when nothing moved at all.
-local function BlizzardPositions(shown)
+local function PositionsIn(shown, order)
     local ids = {}
     for i, id in ipairs(shown) do ids[i] = id end
-    PriorityList.SortByPriority(ids, "blizzard")
+    PriorityList.SortByPriority(ids, order)
     local out = {}
     for i, id in ipairs(ids) do
         if out[id] == nil then out[id] = i end
@@ -257,11 +257,13 @@ function PriorityList.Rows(addon, source)
     if known then
         for _, id in ipairs(poolFor("blizzard")) do known[id] = true end
     end
+    -- Theorycraft rank, counted over the rows on screen for the same reason.
+    local rankOf = PositionsIn(ids, "simc")
     local shownKnown = {}
     for _, id in ipairs(ids) do
         if not known or known[id] then shownKnown[#shownKnown + 1] = id end
     end
-    local base = known and BlizzardPositions(shownKnown) or nil
+    local base = known and PositionsIn(shownKnown, "blizzard") or nil
     local haveBase = base ~= nil
     for i = 1, #ids do
         local id = ids[i]
@@ -274,7 +276,7 @@ function PriorityList.Rows(addon, source)
             id = id,
             name = name or tostring(id),
             icon = icon or 134400,
-            rank = rec and rec.rank or nil,
+            rank = (rec and rec.rank) and rankOf[id] or nil,
             upkeep = PriorityList.IsUpkeep(id),
             -- vs the game's own order: how far this source moves it, or that the game
             -- does not offer it at all.
