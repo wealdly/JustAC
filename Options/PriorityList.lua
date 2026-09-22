@@ -888,8 +888,6 @@ function methods:Refresh()
     -- offer is copying the order you are looking at into a list of your own.
     self.starting = (source ~= "custom") and not haveList
     self.useThis:SetShown(not self.disabled and self.starting)
-    self.useThis:SetText(L["Priority Start From"])
-    self.useThis:SetWidth(120)
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
@@ -980,12 +978,11 @@ local function Constructor()
         prev = tab
     end
 
-    widget.useThis = MakeButton(frame, "", "", function()
-        PriorityList.StartFrom(widget.addon, widget:Source())
-    end, 120)
+    widget.useThis = MakeButton(frame, L["Priority Start From"], L["Priority Start From desc"],
+        function() PriorityList.StartFrom(widget.addon, widget:Source()) end, 120)
     onPane(widget.useThis)
     widget.useThis:SetHeight(TAB_H - 5)
-    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -2)
+    widget.useThis:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
 
     StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] = StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] or {
         text = L["Priority Clear Confirm"],
@@ -1020,7 +1017,7 @@ local function Constructor()
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
-    widget.clear:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
+    widget.clear:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
 
     -- Column header. Its moving labels are re-anchored in Refresh, so a name column that
     -- resizes with the panel cannot drift away from its heading.
