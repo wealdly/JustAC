@@ -29,7 +29,7 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
+local ROW_H, PIN_H, TAB_H, DETAIL_H, HEAD_H = 26, 26, 24, 44, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- The pinned row is about the game's own assist, so it wears the assist's emblem: the
 -- circling arrow the one-button helper puts on an action button. An atlas, so there is no
@@ -842,7 +842,7 @@ local methods = {}
 function methods:OnAcquire()
     self.addon = Addon()
     self.disabled = false
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + 10)
     self:SetWidth(560)
     self:Refresh()
 end
@@ -934,6 +934,7 @@ function methods:Refresh()
     self.pin.icon:SetShown(art ~= nil)
     self.pin.ring:SetShown((art and art.ring and art.icon) and true or false)
     self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
+    self.pin.num:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.title:SetText(pinTitle)
     self.pin.title:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.note:SetText(pinNote)
@@ -941,7 +942,7 @@ function methods:Refresh()
     Tooltip(self.pin, pinTitle .. "|n|n" .. pinNote)
 
     local rows = PriorityList.Rows(self.addon, source)
-    local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
+    local y = -(TAB_H + HEAD_H + PIN_H + 4)
     local detailShown = false
 
     for i = 1, #rows do
@@ -952,7 +953,7 @@ function methods:Refresh()
         row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
         row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
         row.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.035 or 0)
-        row.idx:SetText(i)
+        row.idx:SetText(i + 1)
         row.icon:SetTexture(data.icon)
         row.name:SetText(data.name)
         row.cond:SetText(data.cond or "")
@@ -1020,7 +1021,7 @@ function methods:Refresh()
     end
 
     -- +10: the pane's own top and bottom border insets.
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + 10 + (#rows * ROW_H)
         + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
     self.refreshing = nil
 end
@@ -1194,21 +1195,27 @@ local function Constructor()
 
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
-    pin:SetHeight(PIN_H - GAP)
+    pin:SetHeight(PIN_H)
     pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + HEAD_H + 4))
     pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + HEAD_H + 4))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
-    -- No number: this row is not a position in the list below, it is the row that owns
-    -- the moment before it. The padlock stands where the numbers run and says so.
-    pin.lock = pin:CreateTexture(nil, "ARTWORK")
-    pin.lock:SetSize(12, 14)
-    pin.lock:SetTexture(LOCK_TEXTURE)
-    pin.lock:SetPoint("CENTER", pin, "LEFT", 16, 0)
+    -- This row IS position 1, so it says so, on the same centre line every row number
+    -- uses. The padlock rides the icon corner rather than sharing the number column,
+    -- which is 20px wide and cannot hold both without pushing the number off that line.
+    pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    pin.num:SetPoint("LEFT", pin, "LEFT", 6, 0)
+    pin.num:SetWidth(20)
+    pin.num:SetJustifyH("CENTER")
+    pin.num:SetText("1")
     -- The icon column, so the emblem lines up with every ability icon below it.
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetSize(16, 16)
     pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
+    pin.lock = pin:CreateTexture(nil, "OVERLAY")
+    pin.lock:SetSize(9, 11)
+    pin.lock:SetTexture(LOCK_TEXTURE)
+    pin.lock:SetPoint("BOTTOMLEFT", pin.icon, "BOTTOMLEFT", -3, -2)
     -- The ring the assist paints ON an action button, over the icon, as in game.
     pin.ring = pin:CreateTexture(nil, "OVERLAY")
     pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
