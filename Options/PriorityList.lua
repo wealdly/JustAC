@@ -138,6 +138,7 @@ function PriorityList.StartFrom(addon, source)
     local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
     if CustomQueue and CustomQueue.SnapshotBaseline then CustomQueue.SnapshotBaseline(cq) end
     cq.enabled = true
+    PriorityList.view = "custom"
     PriorityList.selected = nil
     PriorityList.Changed(addon)
 end
@@ -636,6 +637,10 @@ local function AcquireRow(self, index)
         GameTooltip:SetText(self.tipName or "", 1, 1, 1)
         if self.canDrag then
             GameTooltip:AddLine(L["Priority Drag Hint"], 0.62, 0.79, 0.50)
+            if self.dragLoose then
+                GameTooltip:AddLine(string.format(L["Priority Drag Loose"], L["Order Exact"]),
+                    1, 0.82, 0, true)
+            end
         end
         for _, line in ipairs(PriorityList.DetailLines(self.id)) do
             GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
@@ -812,7 +817,7 @@ function methods:Refresh()
             or tab.baseLabel)
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
-        Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Preview Tip"])
+        Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Use Tip"])
     end
 
     -- Position 1. The row the whole panel exists to explain: with the list leading it is
@@ -857,6 +862,7 @@ function methods:Refresh()
         end
         for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
         row.canDrag = editable
+        row.dragLoose = editable and not profile.orderExact
         row:Show()
         y = y - ROW_H
 
@@ -878,16 +884,12 @@ function methods:Refresh()
         self.detail.spellID = nil   -- so reopening the same row rebuilds its dial
     end
 
-    -- Actions. Previewing a source you do not use offers to take it; your own list offers
-    -- to start over. Both are the same button slot, so the strip never grows.
+    -- One action. Selecting a tab already switches the queue, so the only thing left to
+    -- offer is copying the order you are looking at into a list of your own.
     self.starting = (source ~= "custom") and not haveList
-    -- Never offer to switch TO an empty list: the queue would silently keep using the
-    -- game's pool while every label claimed otherwise, and the next spec change would
-    -- backfill the whole pool as a list the player never built.
-    self.useThis:SetShown(not self.disabled
-        and (self.starting or (source ~= live and (source ~= "custom" or haveList))))
-    self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
-    self.useThis:SetWidth(self.starting and 120 or 82)
+    self.useThis:SetShown(not self.disabled and self.starting)
+    self.useThis:SetText(L["Priority Start From"])
+    self.useThis:SetWidth(120)
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
@@ -946,9 +948,9 @@ local function Constructor()
     widget.OnPane = onPane
     widget.content = content
 
-    -- Tab strip: the source the list is showing. Switching tabs PREVIEWS a source;
-    -- committing is the separate button, so a comparison never changes the queue by
-    -- accident.
+    -- Tab strip: the source the queue is using. Selecting a tab SWITCHES to it. There
+    -- is no separate commit step: the player opened this to change what the queue
+    -- does, and a preview that needed a second click made every edit look inert.
     local defs = {
         { "blizzard", L["Priority Tab Blizzard"] },
         { "simc", L["Priority Tab Simc"] },
@@ -963,10 +965,15 @@ local function Constructor()
         tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
         tab:SetScript("OnClick", function()
             PriorityList.view = key
-            -- The add button and the open row's settings live in the options table, and
-            -- both key off the previewed source: repainting the widget alone left them
-            -- answering for the tab the player just left.
-            PriorityList.Changed(widget.addon)
+            -- An empty list is the one thing that cannot go live: the queue would fall
+            -- back to the game's pool while every label claimed otherwise. That tab
+            -- stays a look, with its own hint saying how to fill it.
+            local cq = CustomQueueFor(widget.addon and widget.addon:GetProfile())
+            if key ~= "custom" or (cq and cq.spells and #cq.spells > 0) then
+                PriorityList.SetLiveSource(widget.addon, key)   -- calls Changed itself
+            else
+                PriorityList.Changed(widget.addon)
+            end
         end)
         tab.baseLabel = label
         widget.tabs[key] = tab
@@ -974,14 +981,8 @@ local function Constructor()
     end
 
     widget.useThis = MakeButton(frame, "", "", function()
-        local source = widget:Source()
-        PriorityList.view = nil   -- before Changed: the rebuild reads it
-        if widget.starting then
-            PriorityList.StartFrom(widget.addon, source)
-        else
-            PriorityList.SetLiveSource(widget.addon, source)
-        end
-    end, 82)
+        PriorityList.StartFrom(widget.addon, widget:Source())
+    end, 120)
     onPane(widget.useThis)
     widget.useThis:SetHeight(TAB_H - 5)
     widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -2)
