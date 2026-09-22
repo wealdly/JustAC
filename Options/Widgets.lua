@@ -29,6 +29,14 @@ end
 W.NotifyChange = notifyChange
 
 -- Full nameplate-overlay cluster rebuild (most overlay tweaks need it).
+--- Mark an option that can make the queue WORSE, not merely different. Three places had
+--- grown their own wording for this, so one warning looked like three kinds of warning.
+--- Blizzard's own alert glyph, so nothing new ships with it.
+local RISKY_GLYPH = "|TInterface\\DialogFrame\\UI-Dialog-Icon-AlertNew:14:14:0:-1|t "
+function W.risky(name)
+    return RISKY_GLYPH .. name
+end
+
 function W.rebuildNPO(addon)
     local NPO = LibStub("JustAC-UINameplateOverlay", true)
     if NPO then NPO.Destroy(addon); NPO.Create(addon) end

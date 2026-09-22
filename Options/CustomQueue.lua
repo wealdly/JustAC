@@ -208,7 +208,7 @@ function CustomQueue.CreateTabArgs(addon)
                     -- the consequence should be readable without hovering anything.
                     orderExact = {
                         type = "toggle",
-                        name = L["Order Exact"],
+                        name = W.risky(L["Order Exact"]),
                         desc = L["Order Exact desc"],
                         order = 10,
                         width = "full",
@@ -328,40 +328,53 @@ function CustomQueue.CreateTabArgs(addon)
                 name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
                 order = 1,
                 args = {
-                    myListLeads = {
-                        type = "toggle",
-                        name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
-                        desc = L["My List Leads desc"],
+                    leadMode = {
+                        type = "select",
+                        name = W.risky(L["Lead Mode"]),
+                        desc = L["Lead Mode desc"],
                         -- Sunk below the list on purpose: it is a rarely-useful expert
-                        -- switch, and sitting above the list it read as a headline feature.
+                        -- setting, and sitting above the list it read as a headline feature.
                         order = 40,
                         width = "full",
-                        -- Only your own list can contest the game's pick, so on any
-                        -- other tab this switch has nothing to act on and nothing on
-                        -- screen would answer it. Greyed there, not silently inert.
-                        disabled = function()
-                            local PL = LibStub("JustAC-PriorityList", true)
-                            if not (PL and PL.CurrentSource) then return true end
+                        values = function()
+                            local v = { off = L["Lead Off"], safe = L["Lead Safe"] }
+                            -- Leading with a list needs a list, so that answer only
+                            -- appears once there is one to lead with.
                             local profile = addon:GetProfile()
                             local specKey = GetSpecKey()
                             local cq = profile and specKey and profile.customQueue
                                 and profile.customQueue[specKey]
-                            return PL.CurrentSource(profile) ~= "custom"
-                                or not (cq and cq.spells and #cq.spells > 0)
+                            if cq and cq.spells and #cq.spells > 0 then
+                                v.mylist = L["Lead My List"]
+                            end
+                            return v
                         end,
-                        get = function()
+                        sorting = function()
                             local profile = addon:GetProfile()
                             local specKey = GetSpecKey()
-                            local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
-                            return (cq and cq.myListLeads == true) or false
+                            local cq = profile and specKey and profile.customQueue
+                                and profile.customQueue[specKey]
+                            if cq and cq.spells and #cq.spells > 0 then
+                                return { "off", "safe", "mylist" }
+                            end
+                            return { "off", "safe" }
+                        end,
+                        get = function()
+                            local SQ = LibStub("JustAC-SpellQueue", true)
+                            -- The queue owns the reading, including what a pre-dropdown
+                            -- save meant, so the panel cannot drift from the behaviour.
+                            return (SQ and SQ.LeadMode and SQ.LeadMode(addon:GetProfile())) or "off"
                         end,
                         set = function(_, val)
                             local profile = addon:GetProfile()
                             local specKey = GetSpecKey()
-                            if not profile or not specKey then return end
-                            local cq = profile.customQueue and profile.customQueue[specKey]
-                            if not cq then return end
-                            cq.myListLeads = val or nil
+                            if not (profile and specKey) then return end
+                            profile.customQueue = profile.customQueue or {}
+                            profile.customQueue[specKey] = profile.customQueue[specKey]
+                                or { enabled = false, spells = {} }
+                            local cq = profile.customQueue[specKey]
+                            cq.leadMode = (val ~= "off") and val or nil
+                            cq.myListLeads = nil   -- migrated: the dropdown is the setting now
                             -- Through Changed, not ForceUpdateAll: this decides what the
                             -- position-1 row says, and only a rebuild repaints the widget.
                             local PL = LibStub("JustAC-PriorityList", true)
@@ -430,7 +443,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     if not spellListGroup then return end
 
     local spellListArgs = spellListGroup.args
-    local staticKeys = { myListLeads = true, priorityList = true }
+    local staticKeys = { leadMode = true, priorityList = true }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local specKey = GetSpecKey()

@@ -255,6 +255,24 @@ local cachedRotationList = nil
 -- actually differs or a FULL invalidation demanded it. Target swaps re-query the
 -- list defensively but the rotation is spec-level, so their setup rebuilds were
 -- pure waste (heavy in tab-target fights).
+--- Who owns slot 1 for this spec. Three answers to ONE question, so they live in one
+--- setting: the game (the default and the safe answer), your own list's first ready
+--- entry, or an ability the GAME itself has given evidence for while it waits.
+--- Pre-dropdown saves carried a boolean; it reads as the middle answer.
+function SpellQueue.LeadMode(profile)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local cq = specKey and profile and profile.customQueue and profile.customQueue[specKey]
+    if not cq then return "off" end
+    local mode = cq.leadMode
+    if mode == nil and cq.myListLeads == true then mode = "mylist" end
+    if mode == "mylist" then
+        -- Leading with a list needs a list that is actually in use.
+        local usable = cq.enabled and cq.spells and #cq.spells > 0
+        return usable and "mylist" or "off"
+    end
+    return mode == "safe" and "safe" or "off"
+end
+
 local rotationSetupForced = true
 local lastSetupList = {}
 local lastSetupUseCustom = nil
@@ -1746,6 +1764,38 @@ function SpellQueue._StageBurstCue(b)
     b.spellCount = spellCount
 end
 
+--- Safe Lead: put an ability the GAME has given evidence for into slot 1, while the
+--- game is waiting. Deliberately the narrowest version of the rule - only over a WAIT,
+--- never over a real recommendation - because a wait costs nothing to displace and a
+--- recommendation does. The evidence classes that survive a wait are the two that
+--- cannot be pooling: an ability the game never offers at all, and one sitting on
+--- capped charges. SafeLeadCandidate does the judging, including the strict reading of
+--- every gate; this only decides whether to ask and then performs the swap.
+---
+--- The wait icon rides down to slot 2 rather than being dropped, the same way the
+--- gap-closer injection leaves it, so the player still sees that the assist wants to
+--- wait - and the game's own highlight follows it there.
+local safeLeadID
+function SpellQueue._ApplySafeLead(b)
+    safeLeadID = nil
+    if b.leadMode ~= "safe" then return end
+    if lastSpellIDs[1] ~= SpellQueue.WAIT_SENTINEL or #lastSpellIDs < 2 then return end
+    local id = SpellQueue.SafeLeadCandidate()
+    if not id or id == lastSpellIDs[1] then return end
+    for i = #lastSpellIDs, 1, -1 do
+        if lastSpellIDs[i] == id then table.remove(lastSpellIDs, i) end
+    end
+    table.insert(lastSpellIDs, 1, id)
+    safeLeadID = id
+    displacedPrimary[SpellQueue.WAIT_SENTINEL] = true
+end
+
+--- Is slot 1 ours rather than the game's, as of the last build? The renderer marks it,
+--- so a queue that disagrees with the game's own highlight reads as intent.
+function SpellQueue.IsSafeLead(spellID)
+    return safeLeadID ~= nil and spellID == safeLeadID
+end
+
 --- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
 --- copy into lastSpellIDs (the shared return buffer).
 function SpellQueue._StageFinalize(b)
@@ -1779,6 +1829,8 @@ function SpellQueue._StageFinalize(b)
             end
         end
     end
+    -- Last, so the candidate judges the finished queue.
+    SpellQueue._ApplySafeLead(b)
 end
 
 --- Stage D - rotation-source resolution: the cached positions-2+ list (user
@@ -2024,13 +2076,9 @@ function SpellQueue._StagePrimary(b)
     -- surfaces at position 1. The wait sentinel is skipped with it: with the list
     -- leading there is always a next-best suggestion to show. The dot-spread
     -- arrow is a slot-1-is-AC concept, so it sleeps in this mode too.
-    local myListLeads
-    do
-        local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-        local cq = specKey and profile.customQueue and profile.customQueue[specKey]
-        myListLeads = (cq and cq.enabled and cq.myListLeads == true
-            and cq.spells and #cq.spells > 0) and true or false
-    end
+    local leadMode = SpellQueue.LeadMode(profile)
+    local myListLeads = leadMode == "mylist"
+    b.leadMode = leadMode
     b.myListLeads = myListLeads
 
     -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on

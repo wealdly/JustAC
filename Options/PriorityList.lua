@@ -31,6 +31,19 @@ local CreateFrame = CreateFrame
 
 local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
+-- The pinned row is about the game's own assist, so it wears the assist's emblem: the
+-- circling arrow the one-button helper puts on an action button. An atlas, so there is no
+-- art to ship and no path to get wrong; the padlock stays as the fallback.
+local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
+local assistAtlasOK, assistAtlasTried
+local function HasAssistAtlas()
+    if not assistAtlasTried then
+        assistAtlasTried = true
+        assistAtlasOK = (C_Texture and C_Texture.GetAtlasInfo
+            and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
+    end
+    return assistAtlasOK
+end
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
 -- condition, so a wider panel widens both instead of only one.
@@ -873,7 +886,11 @@ function methods:Refresh()
     local source, live = self:Source(), PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
     local haveList = cq and cq.spells and #cq.spells > 0
-    local leads = source == "custom" and haveList and cq.myListLeads == true
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local leadMode = (SQ and SQ.LeadMode and SQ.LeadMode(profile)) or "off"
+    -- Only your own list contests the row; Safe Lead replaces the game's pick from
+    -- whichever order is live, so it gets its own reading rather than borrowing one.
+    local leads = source == "custom" and haveList and leadMode == "mylist"
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
@@ -888,11 +905,25 @@ function methods:Refresh()
 
     -- Position 1. The row the whole panel exists to explain: with the list leading it is
     -- contested, otherwise it is simply the game's and the list below starts at 2.
-    self.pin.lock:SetVertexColor(unpack(leads and GOLD or GREEN))
-    self.pin.title:SetText(leads and L["Priority Pin Contested"] or L["Priority Pin Blizzard"])
-    self.pin.title:SetTextColor(unpack(leads and GOLD or GREEN))
-    self.pin.note:SetText(leads and L["Priority Pin Contested Note"] or L["Priority Pin Blizzard Note"])
-    self.pin.bg:SetColorTexture(leads and 0.20 or 0.11, leads and 0.16 or 0.20, 0.09, 1)
+    local pinTitle, pinNote, pinGold = L["Priority Pin Blizzard"], L["Priority Pin Blizzard Note"], false
+    if leads then
+        pinTitle, pinNote, pinGold = L["Priority Pin Contested"], L["Priority Pin Contested Note"], true
+    elseif leadMode == "safe" then
+        pinTitle, pinNote, pinGold = L["Priority Pin Safe"], L["Priority Pin Safe Note"], true
+    end
+    if HasAssistAtlas() then
+        -- The emblem carries its own colour; only the padlock stand-in is tinted.
+        self.pin.lock:SetAtlas(ASSIST_ATLAS)
+        self.pin.lock:SetSize(16, 16)
+        self.pin.lock:SetVertexColor(1, 1, 1)
+    else
+        self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
+    end
+    self.pin.title:SetText(pinTitle)
+    self.pin.title:SetTextColor(unpack(pinGold and GOLD or GREEN))
+    self.pin.note:SetText(pinNote)
+    self.pin.bg:SetColorTexture(pinGold and 0.20 or 0.11, pinGold and 0.16 or 0.20, 0.09, 1)
+    Tooltip(self.pin, pinTitle .. "|n|n" .. pinNote)
 
     local rows = PriorityList.Rows(self.addon, source)
     local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
@@ -1166,6 +1197,7 @@ local function Constructor()
     pin.note:SetPoint("RIGHT", -6, 0)
     pin.note:SetJustifyH("LEFT")
     pin.note:SetWordWrap(false)
+    pin:EnableMouse(true)   -- the note is clipped by design; the tooltip carries the rest
     onPane(pin)
     widget.pin = pin
 
