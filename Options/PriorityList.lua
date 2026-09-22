@@ -338,7 +338,7 @@ local function MakeTab(parent, label)
     tab.liveDot:SetSize(10, 10)
     tab.liveDot:SetPoint("RIGHT", tab:GetFontString(), "LEFT", -4, 0)
     -- Blizzard's own round status indicator: a flat colour swatch read as a stray square.
-    tab.liveDot:SetTexture("Interface\COMMON\Indicator-Green")
+    tab.liveDot:SetTexture("Interface\\COMMON\\Indicator-Green")
     --- Label plus how many abilities that source holds. Re-measured because the count
     --- changes as a list is edited.
     function tab:SetLabel(text)
@@ -364,7 +364,7 @@ local function BuildDetail(widget, parent)
     d:SetHeight(DETAIL_H)
     d.bg = d:CreateTexture(nil, "BACKGROUND")
     d.bg:SetAllPoints()
-    d.bg:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
+    d.bg:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
     d.edge = d:CreateTexture(nil, "ARTWORK")
     d.edge:SetPoint("TOPLEFT")
     d.edge:SetPoint("BOTTOMLEFT")
@@ -581,7 +581,7 @@ function methods:Refresh()
     self.pin.title:SetText(leads and L["Priority Pin Contested"] or L["Priority Pin Blizzard"])
     self.pin.title:SetTextColor(unpack(leads and GOLD or GREEN))
     self.pin.note:SetText(leads and L["Priority Pin Contested Note"] or L["Priority Pin Blizzard Note"])
-    self.pin.bg:SetColorTexture(leads and 0.17 or 0.11, leads and 0.14 or 0.18, 0.09, 0.55)
+    self.pin.bg:SetColorTexture(leads and 0.20 or 0.11, leads and 0.16 or 0.20, 0.09, 1)
 
     local rows = PriorityList.Rows(self.addon, source)
     -- Share the free width between the two text columns rather than fixing the condition
@@ -599,7 +599,7 @@ function methods:Refresh()
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
         row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
-        row.bg:SetColorTexture(0, 0, 0, (i % 2 == 0) and 0.18 or 0.08)
+        row.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.035 or 0)
         row.idx:SetText(i + (leads and 0 or 1))
         row.icon:SetTexture(data.icon)
         row.name:SetText(data.name)
@@ -676,12 +676,16 @@ local function Constructor()
         tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 3, right = 3, top = 5, bottom = 3 },
     })
-    body:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
+    body:SetBackdropColor(0.09, 0.085, 0.07, 1)
     body:SetBackdropBorderColor(0.4, 0.4, 0.4)
     widget.body = body
 
     local content = CreateFrame("Frame", nil, frame)
     content:SetAllPoints()
+    -- Above the tabs, below the rows: the pane is what hides each tab's lower edge, and
+    -- the rows must still draw on top of the pane.
+    body:SetFrameLevel(frame:GetFrameLevel() + 2)
+    content:SetFrameLevel(body:GetFrameLevel() + 1)
     widget.content = content
 
     -- Tab strip: the source the list is showing. Switching tabs PREVIEWS a source;
@@ -697,8 +701,8 @@ local function Constructor()
         local key, label = def[1], def[2]
         local tab = MakeTab(frame, label)
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
-            prev and -6 or 6, prev and 0 or -2)
-        tab:SetFrameLevel(body:GetFrameLevel() + 2)
+            prev and -6 or 6, prev and 0 or -5)
+        tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
         tab:SetScript("OnClick", function()
             PriorityList.view = key
             widget:Refresh()
