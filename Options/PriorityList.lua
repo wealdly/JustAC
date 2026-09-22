@@ -26,7 +26,7 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 54, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -430,7 +430,13 @@ end
 --- uses, so the strip belongs to the panel instead of imitating it.
 local TAB_PAD = 22
 
---- One tab: an opaque fill and a border on three sides. The open side faces the pane.
+--- How far each of the top pixel rows is inset. Rounded corners with no art of their
+--- own: the top rows step inward and the border traces the same staircase, which reads
+--- as a curve at UI scale and keeps the flat one-pixel look the rest of the panel has.
+local CORNER = { 2, 1 }
+
+--- One tab: an opaque fill and a border on three sides, with a rounded top. The open
+--- side faces the pane.
 local function MakeTab(parent, label)
     local tab = CreateFrame("Button", nil, parent)
     tab:SetHeight(TAB_H)
@@ -438,22 +444,43 @@ local function MakeTab(parent, label)
     tab:SetHighlightFontObject("GameFontHighlightSmall")
     tab:SetText(label)
 
-    tab.fill = tab:CreateTexture(nil, "BACKGROUND")
-    tab.fill:SetAllPoints()
+    -- Fill: one inset strip per stepped row, then the body below them.
+    tab.fills = {}
+    for r = 1, #CORNER do
+        local t = tab:CreateTexture(nil, "BACKGROUND")
+        t:SetPoint("TOPLEFT", CORNER[r], -(r - 1))
+        t:SetPoint("TOPRIGHT", -CORNER[r], -(r - 1))
+        t:SetHeight(1)
+        tab.fills[#tab.fills + 1] = t
+    end
+    local body = tab:CreateTexture(nil, "BACKGROUND")
+    body:SetPoint("TOPLEFT", 0, -#CORNER)
+    body:SetPoint("BOTTOMRIGHT")
+    tab.fills[#tab.fills + 1] = body
 
-    local function edge(p1, p2, w, h)
+    local function edge(p1, p2, x, y, w, h)
         local t = tab:CreateTexture(nil, "BORDER")
-        t:SetPoint(p1)
-        t:SetPoint(p2)
+        t:SetPoint(p1, x or 0, y or 0)
+        if p2 then t:SetPoint(p2, -(x or 0), y or 0) end
         if w then t:SetWidth(w) end
         if h then t:SetHeight(h) end
         return t
     end
-    tab.edges = {
-        edge("TOPLEFT", "TOPRIGHT", nil, 1),
-        edge("TOPLEFT", "BOTTOMLEFT", 1, nil),
-        edge("TOPRIGHT", "BOTTOMRIGHT", 1, nil),
-    }
+    -- Top run, then one border pixel per step down each side, then the two verticals
+    -- starting below the last step.
+    tab.edges = { edge("TOPLEFT", "TOPRIGHT", CORNER[1], 0, nil, 1) }
+    for r = 1, #CORNER do
+        local inner = CORNER[r + 1] or 0
+        tab.edges[#tab.edges + 1] = edge("TOPLEFT", nil, inner, -r, CORNER[r] - inner, 1)
+        tab.edges[#tab.edges + 1] = edge("TOPRIGHT", nil, -inner, -r, CORNER[r] - inner, 1)
+    end
+    for _, side in ipairs({ { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+        local t = tab:CreateTexture(nil, "BORDER")
+        t:SetPoint(side[1], 0, -#CORNER)
+        t:SetPoint(side[2])
+        t:SetWidth(1)
+        tab.edges[#tab.edges + 1] = t
+    end
 
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
     tab.liveDot:SetSize(10, 10)
@@ -471,11 +498,17 @@ local function MakeTab(parent, label)
 
     function tab:SetSelected(on)
         -- Selected shares the pane's exact colour so the two read as one surface.
-        self.fill:SetColorTexture(0.09, 0.085, 0.07, on and 1 or 0)
-        if not on then self.fill:SetColorTexture(0.045, 0.043, 0.036, 1) end
+        for _, f in ipairs(self.fills) do
+            if on then
+                f:SetColorTexture(0.09, 0.085, 0.07, 1)
+            else
+                f:SetColorTexture(0.045, 0.043, 0.036, 1)
+            end
+        end
         for _, e in ipairs(self.edges) do
             e:SetColorTexture(0.42, 0.40, 0.34, on and 1 or 0.55)
         end
+        self:SetFrameLevel(self.paneLevel + (on and 1 or -1))
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
         self:GetFontString():SetPoint("CENTER", self.liveDot:IsShown() and 6 or 0, 0)
     end
@@ -927,12 +960,20 @@ local function Constructor()
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     body:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 3, right = 3, top = 5, bottom = 3 },
+        tile = true, tileSize = 16,
     })
     body:SetBackdropColor(0.09, 0.085, 0.07, 1)
-    body:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    for _, pts in ipairs({
+        { "TOPLEFT", "TOPRIGHT", nil, 1 }, { "BOTTOMLEFT", "BOTTOMRIGHT", nil, 1 },
+        { "TOPLEFT", "BOTTOMLEFT", 1, nil }, { "TOPRIGHT", "BOTTOMRIGHT", 1, nil },
+    }) do
+        local t = body:CreateTexture(nil, "OVERLAY")
+        t:SetPoint(pts[1])
+        t:SetPoint(pts[2])
+        if pts[3] then t:SetWidth(pts[3]) end
+        if pts[4] then t:SetHeight(pts[4]) end
+        t:SetColorTexture(0.42, 0.40, 0.34, 1)
+    end
     widget.body = body
 
     local content = CreateFrame("Frame", nil, frame)
@@ -960,7 +1001,7 @@ local function Constructor()
         local tab = MakeTab(frame, label)
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
             prev and 3 or 8, prev and 0 or -3)
-        tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
+        tab.paneLevel = body:GetFrameLevel()
         tab:SetScript("OnClick", function()
             PriorityList.view = key
             -- The add button and the open row's settings live in the options table, and
@@ -993,6 +1034,12 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        -- Put back what Show() raised it to, so the next popup out of this frame pool
+        -- (anyone's) is not left sitting above the whole UI.
+        OnHide = function(self)
+            self:SetFrameStrata("DIALOG")
+            self:SetToplevel(false)
+        end,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1002,7 +1049,14 @@ local function Constructor()
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         local dialog = StaticPopup_Show("JUSTAC_CLEAR_PRIORITY_LIST")
-        if dialog then dialog.data = widget end
+        if dialog then
+            dialog.data = widget
+            -- Popups live in DIALOG; the options window is a strata above it, so a
+            -- confirmation opened from here appeared behind the list it asks about.
+            dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+            dialog:SetFrameLevel(frame:GetFrameLevel() + 20)
+            dialog:SetToplevel(true)
+        end
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
