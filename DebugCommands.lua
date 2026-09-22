@@ -173,6 +173,7 @@ local INSPECT_TOPICS = {
     { "maintenance", "MaintenanceProbe",         nil,  "Can the tank maintenance slot bind its aura exactly? (in combat)" },
     { "maintlog",    "MaintenanceLog",           "[on|off|clear]", "Record maintenance state 1/s to SavedVariables" },
     { "enemies",     "EnemyCountProbe",          nil,  "Why the direct enemy count reads what it reads (run in combat with a pack)" },
+    { "overrides",   "OverrideApiDiff",          nil,  "Spellbook walk: where FindSpellOverrideByID and C_Spell.GetOverrideSpell disagree" },
     { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
@@ -4324,6 +4325,36 @@ function DebugCommands.EnemyCountProbe(addon)
     if shown == 0 then
         addon:Print("  |cffff6600no nameplate units at all|r - enemy nameplates are off, or none are in view")
     end
+end
+
+--------------------------------------------------------------------------------
+-- Override API diff (/jac inspect overrides): are the two override resolvers the same function?
+--------------------------------------------------------------------------------
+function DebugCommands.OverrideApiDiff(addon)
+    if not (C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and FindSpellOverrideByID
+            and C_Spell and C_Spell.GetOverrideSpell) then
+        addon:Print("override diff: API missing")
+        return
+    end
+    local n, diffs = 0, 0
+    for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local info = C_SpellBook.GetSpellBookSkillLineInfo(line)
+        if info then
+            for k = info.itemIndexOffset + 1, info.itemIndexOffset + info.numSpellBookItems do
+                local d = C_SpellBook.GetSpellBookItemInfo(k, Enum.SpellBookSpellBank.Player)
+                if d and d.spellID then
+                    n = n + 1
+                    local a = FindSpellOverrideByID(d.spellID)
+                    local b = C_Spell.GetOverrideSpell(d.spellID)
+                    if a ~= b then
+                        diffs = diffs + 1
+                        addon:Print(string.format("  DIFF %d %s  Find=%s  C_Spell=%s", d.spellID, tostring(d.name), tostring(a), tostring(b)))
+                    end
+                end
+            end
+        end
+    end
+    addon:Print(string.format("override diff: %d spellbook entries checked, %d differ", n, diffs))
 end
 
 --------------------------------------------------------------------------------

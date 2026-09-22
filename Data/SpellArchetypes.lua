@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell archetype data (GENERATED -- do not edit by hand).
--- Source: wago.tools DB2 build 12.1.0.69382. Regenerate with tools/gen_archetypes.sh.
+-- Source: wago.tools DB2 build 12.1.0.69875. Regenerate with tools/gen_archetypes.sh.
 -- Player class damage spells grouped by archetype; value = range; comment = name.
 -- Indirect-damage spells (triggered/cloned) are intentionally absent (neutral).
 -- Plus builder/spender roles: spender = costs an accumulator resource, builder =
@@ -10,7 +10,7 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 if not SpellDB or not SpellDB.RegisterArchetypes then return end
 
 SpellDB.RegisterArchetypes({
-    aoe = {  -- 809 spells (value = range)
+    aoe = {  -- 810 spells (value = range)
         [122] = "melee",  -- Frost Nova
         [1122] = "ranged",  -- Summon Infernal (via 22703)
         [1449] = "melee",  -- Arcane Explosion
@@ -773,6 +773,7 @@ SpellDB.RegisterArchetypes({
         [1263568] = "ranged",  -- Abomination Limb
         [1263752] = "melee",  -- Blood Mist
         [1263908] = "ranged",  -- Unseen Swipe
+        [1264093] = "melee",  -- Burning Cleave
         [1264110] = "melee",  -- Felstorm
         [1264129] = "ranged",  -- Meteor Shower
         [1264130] = "ranged",  -- Meteor Shower
@@ -821,7 +822,7 @@ SpellDB.RegisterArchetypes({
         [1309309] = "melee",  -- Goremaw's Bite
         [1310571] = "ranged",  -- Bloody Demise
     },
-    cleave = {  -- 186 spells (value = range)
+    cleave = {  -- 185 spells (value = range)
         [120] = "melee",  -- Cone of Cold
         [845] = "melee",  -- Cleave
         [6572] = "melee",  -- Revenge
@@ -1002,7 +1003,6 @@ SpellDB.RegisterArchetypes({
         [1262293] = "ranged",  -- Raptor Swipe
         [1262343] = "ranged",  -- Raptor Swipe
         [1263825] = "melee",  -- Consumption
-        [1264093] = "melee",  -- Burning Cleave
         [1264147] = "melee",  -- Revenge
         [1264379] = "melee",  -- Unravel
         [1264485] = "ranged",  -- Shadow Thrash
