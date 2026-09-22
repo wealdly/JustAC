@@ -35,23 +35,41 @@ local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- circling arrow the one-button helper puts on an action button. An atlas, so there is no
 -- art to ship and no path to get wrong; the padlock stays as the fallback.
 local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
-local assistArt, assistArtTried
---- The assist's own icon, and whether its ring overlay exists. Resolved once: neither
---- changes, and a build without either just leaves the padlock showing.
-local function AssistArt()
-    if assistArtTried then return assistArt end
-    assistArtTried = true
-    local icon
+local assistArt
+local ringAtlasOK, ringAtlasTried
+local function HasAssistAtlas()
+    if not ringAtlasTried then
+        ringAtlasTried = true
+        ringAtlasOK = (C_Texture and C_Texture.GetAtlasInfo
+            and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
+    end
+    return ringAtlasOK
+end
+
+local function IconOf(spellID)
+    local info = spellID and C_Spell and C_Spell.GetSpellInfo
+        and C_Spell.GetSpellInfo(spellID)
+    return info and info.iconID or nil
+end
+
+--- The icon this row's ring is drawn over. The assist's own action spell when the game
+--- will name it, which is stable and is the honest subject; failing that, whatever is in
+--- slot 1 right now, which is what the row is describing anyway. Not cached on failure:
+--- the action spell can resolve later in a session than the first time the panel opens.
+local function AssistIcon()
+    if assistArt then return assistArt end
     if C_AssistedCombat and C_AssistedCombat.GetActionSpell then
         local ok, sid = pcall(C_AssistedCombat.GetActionSpell)
-        local info = ok and sid and C_Spell and C_Spell.GetSpellInfo
-            and C_Spell.GetSpellInfo(sid)
-        icon = info and info.iconID or nil
+        assistArt = ok and IconOf(sid) or nil
+        if assistArt then return assistArt end
     end
-    local ring = (C_Texture and C_Texture.GetAtlasInfo
-        and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
-    if icon or ring then assistArt = { icon = icon, ring = ring } end
-    return assistArt
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
+    local first = type(queue) == "table" and queue[1] or nil
+    if type(first) ~= "number" or first <= 0 or (issecretvalue and issecretvalue(first)) then
+        return nil
+    end
+    return IconOf(first)
 end
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -921,15 +939,16 @@ function methods:Refresh()
     elseif leadMode == "safe" then
         pinTitle, pinNote, pinGold = L["Priority Pin Safe"], L["Priority Pin Safe Note"], true
     end
-    local art = AssistArt()
-    if art and art.icon then
+    local icon = AssistIcon()
+    if icon then
         -- A real icon carries its own colour; only the padlock stand-in is tinted.
-        self.pin.icon:SetTexture(art.icon)
+        self.pin.icon:SetTexture(icon)
         self.pin.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         self.pin.icon:SetVertexColor(1, 1, 1)
     end
-    self.pin.icon:SetShown((art and art.icon) and true or false)
-    self.pin.ring:SetShown((art and art.ring) and true or false)
+    -- The ring is an OVERLAY, so it only means anything with an icon beneath it.
+    self.pin.icon:SetShown(icon ~= nil)
+    self.pin.ring:SetShown(icon ~= nil and HasAssistAtlas())
     self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
     self.pin.num:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.title:SetText(pinTitle)
@@ -1214,9 +1233,9 @@ local function Constructor()
     -- softened so it reads as a mark on the icon instead of a sticker over it.
     pin.ring = pin:CreateTexture(nil, "OVERLAY", nil, 1)
     pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
-    pin.ring:SetSize(18, 18)
+    pin.ring:SetSize(22, 22)
     pin.ring:SetAtlas(ASSIST_ATLAS)
-    pin.ring:SetAlpha(0.85)
+    pin.ring:SetAlpha(1)
     pin.ring:Hide()
     -- Above the ring, not merely after it: same layer, and draw order within a layer
     -- is the sublevel, so the lock was being painted under the arc it sits beside.
