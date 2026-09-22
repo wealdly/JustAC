@@ -4434,6 +4434,8 @@ local function PickLogSample()
         waitWhy = casting and " w=cast" or (BAPI.IsSpellOnGCD and BAPI.IsSpellOnGCD(61304) and " w=gcd") or " w=idle"
     end
     -- Safe Lead dry run: what WOULD lead, and on which evidence class (plan phase 1).
+    -- A trailing "!" on that field means the swap actually HAPPENED this tick, which is
+    -- the difference between a proposal and the queue you were looking at.
     local slID, slCls = nil, nil
     do
         local SQ0 = LibStub("JustAC-SpellQueue", true)
@@ -4496,7 +4498,8 @@ local function PickLogSample()
         n(lead), (rec and rec.delegated) and "D" or (rec and "" or "?"), why,
         tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"), n(second),
         tostring(ctxState and ctxState.arch or "-"), (ctxState and ctxState.stickyApplied) and "*" or "",
-        slID and (tostring(slCls) .. ":" .. tostring(slID)) or "-", waitWhy)
+        slID and (tostring(slCls) .. ":" .. tostring(slID)) or "-",
+        ((SQ.IsSafeLead and lead and SQ.IsSafeLead(lead)) and "!" or "") .. waitWhy)
     if payload == lastPickPayload then return end
     lastPickPayload = payload
     _G.JustACGlobal = _G.JustACGlobal or {}
