@@ -334,6 +334,18 @@ function SpellSearch.AddSpellToList(addon, spellList, id)
     if not spellList then return false end
     if not id or id == 0 then return false end
 
+    -- Upkeep abilities (poisons, weapon imbues, long raid buffs) must never enter a
+    -- priority list. Out of combat the game reveals its buff demands ONE at a time and
+    -- holds every other pick until each is applied, so a list that owns the order sits on
+    -- the first one and the queue stops moving. The pre-combat reminder offers them
+    -- instead, which does not block anything.
+    local RF = LibStub("JustAC-RedundancyFilter", true)
+    if id > 0 and RF and RF.IsUpkeepSpell and RF.IsUpkeepSpell(id) then
+        local info = BlizzardAPI.GetCachedSpellInfo(id)
+        addon:Print(string.format(L["Upkeep Not Listable"], (info and info.name) or tostring(id)))
+        return false
+    end
+
     if id < 0 then
         -- Item entry: validate item exists
         local itemID = -id
