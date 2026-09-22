@@ -24,6 +24,9 @@ local PriorityList = LibStub:NewLibrary("JustAC-PriorityList", 1)
 if not PriorityList then return end
 
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+-- Loaded well before this file (see the TOC), so a file-scope capture is safe, and the
+-- confirmations below all need its popup raise.
+local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local CreateFrame = CreateFrame
 
 local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
@@ -455,23 +458,6 @@ local function Tooltip(frame, text)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
---- Popups live one frame strata below the options window, so a confirmation opened
---- from here appears behind the list it is asking about. Raised for the duration and
---- put back by the dialog's own OnHide, because the frame comes from a shared pool and
---- the next popup out of it may belong to anyone.
-local function Confirm(which, widget, data)
-    local dialog = StaticPopup_Show(which)
-    if not dialog then return end
-    dialog.data = data
-    dialog:SetFrameStrata("FULLSCREEN_DIALOG")
-    dialog:SetFrameLevel(widget.frame:GetFrameLevel() + 20)
-    dialog:SetToplevel(true)
-end
-
-local function RestoreStrata(dialog)
-    dialog:SetFrameStrata("DIALOG")
-    dialog:SetToplevel(false)
-end
 
 local function MakeButton(parent, label, tip, onClick, width)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -1044,7 +1030,10 @@ local function Constructor()
             -- The source is captured NOW: the tabs stay clickable behind a popup, and
             -- reading it again on accept would replace the list from whichever tab the
             -- player wandered to while the question was on screen.
-            Confirm("JUSTAC_REPLACE_PRIORITY_LIST", widget, { w = widget, src = source })
+            if UIFrameFactory then
+                UIFrameFactory.ShowPopupAbove("JUSTAC_REPLACE_PRIORITY_LIST",
+                    { w = widget, src = source })
+            end
         else
             PriorityList.StartFrom(widget.addon, source)
         end
@@ -1060,7 +1049,9 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        OnHide = RestoreStrata,
+        OnHide = function(self)
+            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
+        end,
         OnAccept = function(self)
             local d = self.data
             if d and d.w then PriorityList.StartFrom(d.w.addon, d.src) end
@@ -1080,7 +1071,9 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        OnHide = RestoreStrata,
+        OnHide = function(self)
+            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
+        end,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1089,7 +1082,9 @@ local function Constructor()
         end,
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
-        Confirm("JUSTAC_CLEAR_PRIORITY_LIST", widget, widget)
+        if UIFrameFactory then
+            UIFrameFactory.ShowPopupAbove("JUSTAC_CLEAR_PRIORITY_LIST", widget)
+        end
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)

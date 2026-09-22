@@ -3232,9 +3232,16 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        OnHide = function(self)
+            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
+        end,
     }
-    
-    StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, {id = id})
+
+    if UIFrameFactory then
+        UIFrameFactory.ShowPopupAbove("JUSTAC_HOTKEY_OVERRIDE", { id = id })
+    else
+        StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, { id = id })
+    end
 end
 
 function UIRenderer.SetCombatState(inCombat)
