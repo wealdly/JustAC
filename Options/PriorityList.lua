@@ -375,12 +375,11 @@ end
 --- only its single-target condition, which is the common case and all that fits; a
 --- different condition on two or more targets is exactly the kind of thing a player wants
 --- to check before reordering, so it belongs here rather than nowhere.
---- `leads` decides which slots these conditions are even consulted for, so it belongs
---- in the same tooltip: with your list leading, an entry can take the opening slot the
---- moment its conditions hold; without it, the game owns that slot whatever they say.
---- Deliberately silent on whether those conditions can MOVE an entry: the ordering
---- option below the list already says that, and this tooltip has scarcer things to say.
-function PriorityList.DetailLines(id, leads)
+--- Everything here is specific to the ability being pointed at. Which slots these
+--- conditions are consulted for, and whether they can move an entry at all, are facts
+--- about the whole LIST: the pinned first row says the one, the ordering option below
+--- says the other, and repeating either on every row buries what is actually scarce.
+function PriorityList.DetailLines(id)
     local out = {}
     if not id or id <= 0 then return out end
     if PriorityList.IsUpkeep(id) then
@@ -390,9 +389,6 @@ function PriorityList.DetailLines(id, leads)
     local RI = LibStub("JustAC-RotationImport", true)
     if not (RI and RI.GetEntry) then return out end
 
-    out[#out + 1] = leads
-        and { L["Priority Tip Slot Leads"], GOLD[1], GOLD[2], GOLD[3] }
-        or { L["Priority Tip Slot Game"], GREEN[1], GREEN[2], GREEN[3] }
 
     local contexts = {
         { "st", L["Priority Tip One"] },
@@ -699,7 +695,7 @@ local function AcquireRow(self, index)
         if self.canDrag then
             GameTooltip:AddLine(L["Priority Drag Hint"], 0.62, 0.79, 0.50)
         end
-        for _, line in ipairs(PriorityList.DetailLines(self.id, self.leadsNow)) do
+        for _, line in ipairs(PriorityList.DetailLines(self.id)) do
             GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
         end
         GameTooltip:Show()
@@ -919,7 +915,6 @@ function methods:Refresh()
         end
         for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
         row.canDrag = editable
-        row.leadsNow = leads
         row:Show()
         y = y - ROW_H
 
