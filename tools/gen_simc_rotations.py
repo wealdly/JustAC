@@ -23,7 +23,7 @@
 # isn't ranked and keeps AC's order (fail-safe). Curate core-spell misses in CURATED.
 #
 # Usage: python tools/gen_simc_rotations.py [--print] [--spec druid_feral]
-import re, os, sys, glob
+import re, os, sys, glob, itertools
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APL_DIR = os.path.join(ROOT, "tools", "simc-apl")
@@ -352,8 +352,36 @@ def classify_if(expr, resolve):
 
 
 # --- tier / context ----------------------------------------------------------
-_COUNT_ATOM = re.compile(r'(?:active_enemies|spell_targets(?:\.\w+)?|desired_targets)'
-                         r'\s*(>=|>|=|<=|<|!=)\s*(\d+)')
+_COUNT_TOKEN = re.compile(r'(?:active_enemies|spell_targets(?:\.\w+)?|desired_targets)')
+# The threshold is not always a literal. Subtlety's Black Powder asks for
+# `variable.targets>=(3-talent.potent_powder)`, so a digit-only pattern never matched it and
+# the area finisher stayed in the single-target list at every tier.
+_COUNT_ATOM = re.compile(_COUNT_TOKEN.pattern + r'\s*(>=|>|=|<=|<|!=)\s*(\S+)')
+_ARITH = re.compile(r'^[\d\s+*/().-]+$')
+_RHS_NAME = re.compile(r'[a-z_]+(?:\.[\w.]+)*')
+
+
+def _thresholds(rhs):
+    """Every value the right side of a count comparison can take, or None when it cannot be
+    pinned down. Talent-scaled thresholds are real, so the atom only rules a tier out when it
+    fails for EVERY value the threshold could hold - each talent is tried both ways."""
+    if _COUNT_TOKEN.search(rhs):
+        return None  # a count on both sides is not a threshold
+    names = sorted(set(_RHS_NAME.findall(rhs)), key=len, reverse=True)
+    if len(names) > 3:
+        return None
+    out = set()
+    for bits in itertools.product((0, 1), repeat=len(names)):
+        expr = rhs
+        for name, bit in zip(names, bits):
+            expr = expr.replace(name, str(bit))
+        if not _ARITH.fullmatch(expr):
+            return None
+        try:
+            out.add(int(eval(expr, {"__builtins__": {}})))  # arithmetic only, checked above
+        except (SyntaxError, ZeroDivisionError, ValueError, TypeError):
+            return None
+    return out or None
 
 
 def _count_ok(op, n, k):
@@ -361,42 +389,89 @@ def _count_ok(op, n, k):
             "<=": k <= n, "<": k < n, "!=": k != n}[op]
 
 
-def call_applies(cond, k):
-    """Does a call's target-count gate hold at k enemies? Non-target-count clauses
-    (hero tree / talent / variable) are ignored so those branches collapse in."""
-    for m in _COUNT_ATOM.finditer(cond):
-        if not _count_ok(m.group(1), int(m.group(2)), k):
-            return False
-    return True
+# A spec may never write a target count where the tier split can see it. It can alias the
+# count (Subtlety: `variable.targets = spell_targets.shuriken_storm`, then every line reads
+# `variable.targets>1`) or alias a whole comparison (`variable.aoe = spell_targets>=3`,
+# then `if=variable.aoe`). Either way the count belongs to the referencing line, so it is
+# substituted back in before the count is read. Set per spec by main(), like STEALTH_VARS.
+VARMAP = {}
+_VAR_REF = re.compile(r'variable\.(\w+)')
 
 
-def tier_excludes(expr, k):
-    """True when a TOP-LEVEL (&-joined, non-OR) atom of an entry's own if= is a bare
-    target-count comparison that fails at k enemies - so the entry does not apply at
-    this tier and must be dropped (an AoE-only spender must not leak into the ST list).
-    A count inside an OR (`active_enemies>3|buff.x.up`) is left in place: it is not a
-    necessary condition, so classify handles it as a normal/delegated gate."""
-    # `|` binds looser than `&`: in `A&B|C&active_enemies>=2` the count belongs to the
-    # second alternative only, and split_and would still surface it as a top-level atom.
-    # Same guard classify_if uses; without it Havoc's ST list misordered Annihilation
-    # and Guardian lost swipe_bear / heart_of_the_wild at every tier.
-    if has_top_level_or(expr):
+def expand_counts(expr, depth=3):
+    """Inline variable definitions. Parenthesised so the substituted value
+    keeps its own precedence inside the referencing condition."""
+    if depth <= 0 or "variable." not in expr:
+        return expr
+    def sub(m):
+        v = VARMAP.get(m.group(1))
+        if not v:
+            return m.group(0)
+        v = expand_counts(v, depth - 1)
+        # A bare alias goes in unwrapped: the comparison it is half of lives on the
+        # referencing line (`variable.targets>1`), and parens would hide it.
+        return v if _COUNT_TOKEN.fullmatch(v) else "(" + v + ")"
+    return _VAR_REF.sub(sub, expr)
+
+
+def _strip_parens(expr):
+    """Drop one wrapping pair, but only when it really wraps the whole expression -
+    `(A)&(B)` opens and closes too, and must not lose its top-level `&`."""
+    while expr.startswith("(") and expr.endswith(")"):
+        depth = 0
+        for i, ch in enumerate(expr):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0 and i < len(expr) - 1:
+                return expr
+        expr = expr[1:-1].strip()
+    return expr
+
+
+def split_or(expr):
+    """Top-level alternatives. `&` binds tighter than `|`, so this splits first."""
+    parts, depth, cur = [], 0, ""
+    for ch in expr:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "|" and depth == 0:
+            parts.append(cur); cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def count_fails(expr, k, expanded=False):
+    """True when the target count ALONE proves `expr` false at k enemies. Every other
+    kind of term has no opinion, so a condition is only ruled out when no talent, buff or
+    resource state could rescue it. That is the one question both callers ask: a call
+    whose gate is ruled out is not walked, and an entry whose own if= is ruled out does
+    not belong on this tier (an area spender must not leak into the single-target list)."""
+    if not expanded:
+        expr = expand_counts(expr)
+    expr = _strip_parens(expr.strip())
+    if not expr:
         return False
-    for atom in split_and(expr):
-        a = atom.strip().lstrip("!")
-        if "|" in a or "(" in a:
-            continue
-        m = _COUNT_ATOM.fullmatch(a)
-        if m and not _count_ok(m.group(1), int(m.group(2)), k):
-            return True
-    return False
+    alts = split_or(expr)
+    if len(alts) > 1:
+        return all(count_fails(a, k, True) for a in alts)   # every branch ruled out
+    atoms = split_and(expr)
+    if len(atoms) > 1:
+        return any(count_fails(a, k, True) for a in atoms)  # one necessary term ruled out
+    atom = atoms[0]
+    if atom.startswith("!"):
+        return False  # a negated count is satisfied by the tiers the bare one excludes
+    m = _COUNT_ATOM.fullmatch(atom)
+    if not m:
+        return False
+    ns = _thresholds(m.group(2))
+    return bool(ns) and all(not _count_ok(m.group(1), n, k) for n in ns)
 
 
 # --- flatten -----------------------------------------------------------------
 def make_entry(token, mods, resolve, unresolved, k):
     if token in SKIP or token.startswith("variable"):
         return None
-    if tier_excludes(mods.get("if", ""), k):
+    if count_fails(mods.get("if", ""), k):
         return None  # entry-level target-count gate excludes it at this tier
     sid = resolve(token)
     if not sid:
@@ -486,7 +561,7 @@ def flatten(lists, k, resolve, unresolved, varmap):
             cond = mods.get("if", "")
             if token in ("call_action_list", "run_action_list"):
                 target = mods.get("name")
-                if target and call_applies(cond, k):
+                if target and not count_fails(cond, k):
                     child = 1 if (defer or phase_gate(cond) or branch_defer(cond, varmap)) else 0
                     walk(target, child)
             else:
@@ -720,13 +795,28 @@ def spec_from_filename(name, bridge):
 
 
 def _selftest():
-    # tier_excludes: bare top-level count atom drops the entry off the wrong tier;
+    # count_fails: bare top-level count atom drops the entry off the wrong tier;
     # an OR-embedded count is not a hard gate and must be kept.
-    assert tier_excludes("active_enemies>=3", 1) and not tier_excludes("active_enemies>=3", 3)
-    assert tier_excludes("spell_targets<=2", 3) and not tier_excludes("spell_targets<=2", 1)
-    assert not tier_excludes("active_enemies>=3|buff.x.up", 1)     # OR -> not a hard gate, keep
-    assert tier_excludes("buff.x.up&active_enemies>=3", 1)         # AND count fails at k=1 -> drop
-    assert not tier_excludes("", 1) and not tier_excludes("buff.x.up", 1)
+    assert count_fails("active_enemies>=3", 1) and not count_fails("active_enemies>=3", 3)
+    assert count_fails("spell_targets<=2", 3) and not count_fails("spell_targets<=2", 1)
+    assert not count_fails("active_enemies>=3|buff.x.up", 1)     # OR -> not a hard gate, keep
+    assert count_fails("buff.x.up&active_enemies>=3", 1)         # AND count fails at k=1 -> drop
+    assert not count_fails("", 1) and not count_fails("buff.x.up", 1)
+    assert count_fails("active_enemies>=3|active_enemies>=4", 1)  # every branch ruled out
+    assert not count_fails("(active_enemies>=2|buff.x.up)&!buff.y.up", 1)  # rescued by the buff
+    assert not count_fails("!spell_targets.swipe_cat>4", 5)      # negated count: no opinion
+    # the count read through a variable, both shapes
+    VARMAP.update(targets="spell_targets.shuriken_storm", aoe="spell_targets.x>=3")
+    assert count_fails("variable.targets>1", 1) and not count_fails("variable.targets>1", 2)
+    assert count_fails("variable.aoe", 1) and not count_fails("variable.aoe", 3)
+    assert not count_fails("variable.aoe|buff.x.up", 1)
+    # a talent-scaled threshold rules the tier out only when every version of it fails
+    assert count_fails("variable.targets>=(3-talent.potent_powder)", 1)
+    assert not count_fails("variable.targets>=(3-talent.potent_powder)", 2)
+    assert not count_fails("spell_targets.x>=trinket.1.cooldown.duration", 1)   # unreadable
+    assert not count_fails("spell_targets.chain_lightning>?4", 1)               # max, not a test
+    VARMAP.clear()
+    assert not count_fails("variable.targets>1", 1)              # unknown variable: no opinion
     # phase_gate: opener/ender-only lines defer; anything with combat state does not.
     assert phase_gate("fight_remains<2") and phase_gate("time<4")
     assert phase_gate("fight_remains<8|gcd.max") and not phase_gate("buff.x.up&fight_remains<2")
@@ -905,6 +995,8 @@ def main():
         text = open(f, encoding="utf-8").read()
         lists = parse_apl(text)
         varmap = build_varmap(lists)
+        VARMAP.clear()
+        VARMAP.update(varmap)
         STEALTH_VARS.clear()
         STEALTH_VARS.update(stealth_vars(varmap))
 
