@@ -145,6 +145,7 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 - **pcall()** all WoW APIs that can fail
 - **All variables local** except `JustAC` global table
 - **Increment LibStub version** on breaking changes: `LibStub:NewLibrary("JustAC-Module", VERSION)`
+- **Never write `cond and nil or x`, `cond and false or x`, or any `a and b or c` where `b` can be `nil` or `false`.** Lua evaluates `true and nil` to `nil`, and `nil or c` to `c`, so the expression CANNOT produce the falsy value - it silently returns `c` every time. Use an explicit `if/else`. This has shipped as a bug three times: a default-on toggle that could not be unchecked (user-reported, see `Options/Abilities.lua`), the same again in the priority list's per-row settings, and an expand/collapse control that would not collapse. `grep -rn "and nil or\|and false or" --include=*.lua .` should only ever match comments warning about it.
 - **Never use em dashes (`—`) anywhere**: not in code, comments, locale strings, README, CHANGELOG, `UNRELEASED.md`, or any project file. Use a hyphen, colon, comma, or separate sentence instead.
 
 ## Cache Patterns
