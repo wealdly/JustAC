@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "Ripristina gli incantesimi di cura del fa
 L["Proc Priority"] = "Priorità dei proc"
 L["Proc Priority desc"] = "Quando scatta il proc, sposta questo incantesimo in testa alla coda. Togli la spunta per lasciarlo nella posizione configurata (continuerà comunque a brillare)."
 L["Always Show"] = "Mostra sempre"
-L["Custom Queue Cap Note"] = "%d abilità ma solo %d icone in coda: le voci che arretrano (in recupero, fuori gittata o con il loro danno nel tempo già attivo) potrebbero non entrare. Aumenta Icone max nella scheda Coda standard, oppure accorcia la lista."
 L["Always Show desc"] = "Non nascondere mai questa abilità: resta in coda anche quando il suo buff è già attivo o il suo danno nel tempo è in corso sul bersaglio. Può comunque arretrare mentre è in recupero o fuori gittata."
 
 -- Item settings (per-item aura link / combat hide)

@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "Begleiter-Heilzauber auf Klassen-Standard
 L["Proc Priority"] = "Proc-Priorität"
 L["Proc Priority desc"] = "Bei Auslösung diesen Zauber an den Anfang der Warteschlange stellen. Deaktivieren, um ihn an seiner konfigurierten Position zu belassen (leuchtet trotzdem)."
 L["Always Show"] = "Immer anzeigen"
-L["Custom Queue Cap Note"] = "%d Fähigkeiten, aber nur %d Warteschlangen-Symbole: Einträge, die zurückfallen (auf Abklingzeit, außer Reichweite oder mit laufendem Schaden-über-Zeit-Effekt), passen möglicherweise nicht mehr hinein. Erhöhe Max. Symbole im Reiter Standard-Warteschlange oder kürze die Liste."
 L["Always Show desc"] = "Diese Fähigkeit nie ausblenden: Sie bleibt in der Warteschlange, auch wenn ihr Buff bereits aktiv ist oder ihr Schaden-über-Zeit-Effekt auf dem Ziel läuft. Sie kann trotzdem nach hinten rutschen, während sie auf Abklingzeit oder außer Reichweite ist."
 
 -- Item settings (per-item aura link / combat hide)

@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "Réinitialiser les sorts de soin du famil
 L["Proc Priority"] = "Priorité proc"
 L["Proc Priority desc"] = "Quand déclenché, placer ce sort en tête de file. Décocher pour le maintenir à sa position configurée (il brillera quand même)."
 L["Always Show"] = "Toujours afficher"
-L["Custom Queue Cap Note"] = "%d capacités mais seulement %d icônes de file : les entrées qui reculent (en recharge, hors de portée, ou avec leur effet de dégâts sur la durée en cours) risquent de ne pas tenir. Augmentez Icônes max dans l'onglet File standard, ou réduisez la liste."
 L["Always Show desc"] = "Ne jamais masquer cette capacité : elle reste dans la file même si son buff est déjà actif ou si son effet de dégâts sur la durée est en cours sur la cible. Elle peut toutefois reculer vers la fin tant qu'elle est en recharge ou hors de portée."
 
 -- Item settings (per-item aura link / combat hide)

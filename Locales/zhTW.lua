@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "將寵物治療法術重設為職業預�
 L["Proc Priority"] = "觸發優先級"
 L["Proc Priority desc"] = "觸發時將此法術移至佇列前端。取消勾選以保持在設定的位置（仍會發光）。"
 L["Always Show"] = "始終顯示"
-L["Custom Queue Cap Note"] = "共 %d 個技能，但佇列圖示只有 %d 個：會後移的項目（冷卻中、超出射程，或持續傷害效果正在運作）可能顯示不下。請在標準佇列頁調高最大圖示數，或精簡清單。"
 L["Always Show desc"] = "永不隱藏此技能：即使其增益已生效，或其持續傷害效果正在目標身上運作，它也會留在佇列中。冷卻中或超出射程時，它仍可能後移。"
 
 -- Item settings (per-item aura link / combat hide)

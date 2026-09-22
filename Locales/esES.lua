@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "Restablecer hechizos de sanación de masc
 L["Proc Priority"] = "Prioridad de proc"
 L["Proc Priority desc"] = "Cuando se activa, mover este hechizo al frente de la cola. Desmarcar para mantenerlo en su posición (seguirá brillando)."
 L["Always Show"] = "Mostrar siempre"
-L["Custom Queue Cap Note"] = "%d habilidades pero solo %d iconos de cola: las entradas que retroceden (en recarga, fuera de alcance o con su efecto de daño periódico activo) puede que no quepan. Sube Iconos máx en la pestaña Cola estándar, o recorta la lista."
 L["Always Show desc"] = "Nunca ocultar esta habilidad: permanece en la cola incluso si su beneficio ya está activo o su efecto de daño periódico sigue en el objetivo. Aun así puede desplazarse hacia el final mientras esté en recarga o fuera de alcance."
 
 -- Item settings (per-item aura link / combat hide)
