@@ -592,6 +592,19 @@ end
 --------------------------------------------------------------------------------
 -- The widget
 --------------------------------------------------------------------------------
+--- A tooltip on a frame that already has its own OnEnter. Ace's widgets use theirs for
+--- the highlight, so replacing it would trade one for the other.
+local function TooltipHook(frame, title, body)
+    if not frame then return end
+    frame:HookScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(title, 1, 1, 1)
+        GameTooltip:AddLine(body, 0.82, 0.78, 0.70, true)
+        GameTooltip:Show()
+    end)
+    frame:HookScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
 local function Tooltip(frame, text)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -684,9 +697,10 @@ local function BuildDetail(widget, parent)
     d.edge:SetWidth(2)
     d.edge:SetColorTexture(unpack(GOLD))
 
-    local function checkbox(label, field, defaultOn, x)
+    local function checkbox(label, desc, field, defaultOn, x)
         local cb = AceGUI:Create("CheckBox")
         cb:SetLabel(label)
+        TooltipHook(cb.frame, label, desc)
         cb:SetWidth(150)
         cb.frame:SetParent(d)
         cb.frame:SetPoint("LEFT", d, "LEFT", x, 0)
@@ -710,13 +724,15 @@ local function BuildDetail(widget, parent)
         return cb
     end
 
-    d.always = checkbox(L["Always Show"], "alwaysShow", false, 40)
-    d.proc = checkbox(L["Custom Queue Procs First"], "procPriority", true, 190)
+    d.always = checkbox(L["Always Show"], L["Always Show desc"], "alwaysShow", false, 40)
+    d.proc = checkbox(L["Custom Queue Procs First"], L["Custom Queue Procs First desc"],
+        "procPriority", true, 190)
 
     -- The dial reuses the option control's own values/get/set, so the widget never owns a
     -- second copy of what the modes mean.
     d.hold = AceGUI:Create("Dropdown")
     d.hold:SetLabel(L["Hold Until"])
+    TooltipHook(d.hold.frame, L["Hold Until"], L["Hold Until desc"])
     d.hold:SetWidth(150)
     d.hold.frame:SetParent(d)
     -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
