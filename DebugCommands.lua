@@ -8809,6 +8809,12 @@ function DebugCommands.SimcGateProbe(addon, arg)
                 elseif g.t == "health" and g.pct then
                     return string.format("my.hp%s%d below=%s", g.op, g.pct,
                         tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("player", g.pct)))
+                elseif g.t == "cd" and g.id then
+                    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(g.id)
+                    return string.format("cd(%s) wants %s [running=%s]",
+                        (info and info.name) or tostring(g.id),
+                        g.neg and "running" or "ready",
+                        tostring(BAPI.IsSpellOnCooldown and BAPI.IsSpellOnCooldown(g.id)))
                 elseif g.t == "stealth" then
                     return string.format("%sstealthed [now %s]", g.neg and "!" or "",
                         tostring(IsStealthed and IsStealthed() or false))
