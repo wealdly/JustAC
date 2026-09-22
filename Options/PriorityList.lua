@@ -608,7 +608,9 @@ function methods:Refresh()
         row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
         row.cond:SetWidth(condW)
         row.rank:SetText(data.rank and ("#" .. data.rank) or "")
-        for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do b:SetShown(editable) end
+        for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do
+            b:SetEnabled(editable)
+        end
         row:Show()
         y = y - ROW_H
 
@@ -647,7 +649,7 @@ function methods:Refresh()
         self.head.cond:ClearAllPoints()
         self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
-        self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", editable and -104 or -6, 0)
+        self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -104, 0)
     end
 
     -- +10: the pane's own top and bottom border insets.
