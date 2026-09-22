@@ -627,7 +627,13 @@ local function AcquireRow(self, index)
         PriorityList.Changed(self.addon)
     end)
     row.edit = MakeButton(row, "...", L["Priority Edit Tip"], function()
-        PriorityList.selected = (PriorityList.selected == row.id) and nil or row.id
+        -- Explicit if/else, never `x and nil or y`: `true and nil` is nil and `nil or y`
+        -- is y, so that idiom can never produce nil - the open row could not be closed.
+        if PriorityList.selected == row.id then
+            PriorityList.selected = nil
+        else
+            PriorityList.selected = row.id
+        end
         PriorityList.Changed(self.addon)
     end)
     row.down = MakeButton(row, "v", L["Move down desc"], function()
