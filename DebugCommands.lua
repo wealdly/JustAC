@@ -4422,10 +4422,7 @@ local function PickLogSample()
     local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
     -- The assist's own wait placeholder comes back as a pick id (passive, timer icon
     -- 134377 - the renderer's WAIT test). For the log a wait is pick=0.
-    if pick and BAPI.IsPassiveSpell and BAPI.IsPassiveSpell(pick) then
-        local info = BAPI.GetCachedSpellInfo and BAPI.GetCachedSpellInfo(pick)
-        if info and info.iconID == 134377 then pick = nil end
-    end
+    if pick and BAPI.IsWaitPlaceholder and BAPI.IsWaitPlaceholder(pick) then pick = nil end
     if not pick and not inCombat then return end   -- a WAIT is a tick in combat
     -- What a wait means: mid-cast, GCD running, or truly nothing (pooling / all on cooldown).
     local waitWhy = ""
@@ -4436,18 +4433,15 @@ local function PickLogSample()
     -- Safe Lead dry run: what WOULD lead, and on which evidence class (plan phase 1).
     -- A trailing "!" on that field means the swap actually HAPPENED this tick, which is
     -- the difference between a proposal and the queue you were looking at.
-    local slID, slCls = nil, nil
-    do
-        local SQ0 = LibStub("JustAC-SpellQueue", true)
-        if SQ0 and SQ0.SafeLeadCandidate then slID, slCls = SQ0.SafeLeadCandidate() end
-    end
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local slID, slCls
+    if SQ and SQ.SafeLeadCandidate then slID, slCls = SQ.SafeLeadCandidate() end
     local cur, max, resName = nil, nil, nil
     if BAPI.GetClassResourcePoints then cur, max, resName = BAPI.GetClassResourcePoints() end
     local function n(v) return (type(v) == "number" and not issecretvalue(v)) and tostring(v) or "-" end
     -- What JustAC itself is leading with, and whether that entry is one only the game can
     -- time (delegated). With My List Leads on, lead ~= pick is normal; a DELEGATED lead that
     -- is not the pick is the queue promoting something it cannot know the moment for.
-    local SQ = LibStub("JustAC-SpellQueue", true)
     local RI = LibStub("JustAC-RotationImport", true)
     local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
     local lead = type(queue) == "table" and queue[1] or nil

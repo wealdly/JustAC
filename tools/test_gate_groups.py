@@ -20,16 +20,11 @@ from lupa import LuaRuntime  # type: ignore[import-not-found]
 
 SRC = Path(__file__).resolve().parent.parent / "SpellQueue.lua"
 
+# Only the two leaves the cases use need stubbing. Lua resolves globals at call time, so a
+# branch the cases never reach needs nothing behind it.
 PRELUDE = """
 stealthed = false
 function IsStealthed() return stealthed end
-function UnitExists() return false end
-function UnitCanAttack() return false end
-BlizzardAPI = {}
-SpellQueue = {}
-function ResourceGateHolds() return nil end
-function ThresholdGateBlocks() return false end
-function StackHolds() return nil end
 ctx = { strict = false }
 """
 
