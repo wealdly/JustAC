@@ -217,7 +217,9 @@ function Offensive.UpdateBurstTriggerOptions(addon)
     if not group then return end
     local args = group.args
 
-    local staticKeys = { info = true, active = true, clearTriggers = true }
+    -- Everything NOT named here is treated as a dynamic trigger row and deleted on the
+    -- next rebuild - which silently ate the burst-ready cue when it moved into this group.
+    local staticKeys = { info = true, active = true, clearTriggers = true, burstCueGlow = true }
     SpellSearch.ClearDynamicArgs(args, staticKeys)
 
     local SpellDB = LibStub("JustAC-SpellDB", true)
