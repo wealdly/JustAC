@@ -38,6 +38,10 @@ local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- already ships, and both are the same art a queue icon uses for its own empty slot.
 local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
 local BUTTON_ATLAS = "UI-HUD-ActionBar-IconFrame-Background"
+-- The button frame, drawn OVER the art. The background plate alone is invisible behind a
+-- filled icon, which is why seating the rows in it changed nothing to look at. The game
+-- draws this one a pixel proud of the button so it frames the art instead of covering it.
+local BUTTON_FRAME_ATLAS = "UI-HUD-ActionBar-IconFrame"
 
 local function HasAtlas(atlas)
     return (C_Texture and C_Texture.GetAtlasInfo
@@ -779,12 +783,18 @@ local function AcquireRow(self, index)
     row.slot:SetPoint("LEFT", row.idx, "RIGHT", 6, 0)
     if HasAtlas(BUTTON_ATLAS) then row.slot:SetAtlas(BUTTON_ATLAS) else row.slot:Hide() end
 
-    -- Inset inside the slot art, so the button reads as a frame around the ability
-    -- rather than a plate behind it.
     row.icon = row:CreateTexture(nil, "ARTWORK")
-    row.icon:SetPoint("TOPLEFT", row.slot, "TOPLEFT", 1, -1)
-    row.icon:SetPoint("BOTTOMRIGHT", row.slot, "BOTTOMRIGHT", -1, 1)
+    row.icon:SetAllPoints(row.slot)
     row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    row.frame = row:CreateTexture(nil, "OVERLAY")
+    row.frame:SetSize(18, 18)
+    row.frame:SetPoint("CENTER", row.slot, "CENTER")
+    if HasAtlas(BUTTON_FRAME_ATLAS) then
+        row.frame:SetAtlas(BUTTON_FRAME_ATLAS)
+    else
+        row.frame:Hide()
+    end
 
     -- Everything below is anchored and coloured ONCE: only the row's own position, its
     -- text and the two column widths change per refresh.
@@ -1199,6 +1209,14 @@ local function Constructor()
     pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
     pin.icon:SetShown(HasAtlas(BUTTON_ATLAS))
     if HasAtlas(BUTTON_ATLAS) then pin.icon:SetAtlas(BUTTON_ATLAS) end
+    pin.frame = pin:CreateTexture(nil, "ARTWORK", nil, 1)
+    pin.frame:SetSize(18, 18)
+    pin.frame:SetPoint("CENTER", pin.icon, "CENTER")
+    if HasAtlas(BUTTON_FRAME_ATLAS) then
+        pin.frame:SetAtlas(BUTTON_FRAME_ATLAS)
+    else
+        pin.frame:Hide()
+    end
     -- The ring the assist paints around an action button. Sized to the icon rather than
     -- to the atlas, which is drawn for a 36px button and sat proud of a 16px one, and
     -- softened so it reads as a mark on the icon instead of a sticker over it.
