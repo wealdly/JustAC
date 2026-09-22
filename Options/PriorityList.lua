@@ -1228,7 +1228,7 @@ local function Constructor()
     -- Above the ring, not merely after it: same layer, and draw order within a layer
     -- is the sublevel, so the lock was being painted under the arc it sits beside.
     pin.lock = pin:CreateTexture(nil, "OVERLAY", nil, 7)
-    pin.lock:SetSize(9, 11)
+    pin.lock:SetSize(12, 15)
     pin.lock:SetTexture(LOCK_TEXTURE)
     -- Top right: the ring covers the other corners.
     pin.lock:SetPoint("TOPRIGHT", pin.icon, "TOPRIGHT", 3, 2)
