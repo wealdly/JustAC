@@ -35,6 +35,29 @@ local GRAB_TAB_LENGTH = (UIHealthBar and UIHealthBar.GRAB_TAB_LENGTH) or 12
 --- has it the aura clears that row and sits one slot further out again. Non-tanks, and
 --- detached defensives (own frame, cannot collide), keep the original tight spacing.
 --- @return string point, string relativePoint, number yOffset
+--- Show a confirmation ABOVE the addon's own windows. Popups live in DIALOG, while the
+--- options window sits a strata higher AND raises itself whenever it is clicked - which
+--- is the click that asked the question - so a confirmation opened from the panel or
+--- from the queue appeared behind the thing it was asking about. Matching that strata
+--- was not enough; it has to be strictly above, and TOOLTIP is the only one that is.
+---
+--- Put back by RestorePopupStrata on hide: these frames come from a shared pool and the
+--- next popup out of it may belong to anyone.
+function UIFrameFactory.ShowPopupAbove(which, data, text1, text2)
+    if not StaticPopup_Show then return nil end
+    local dialog = StaticPopup_Show(which, text1, text2, data)
+    if not dialog then return nil end
+    dialog:SetFrameStrata("TOOLTIP")
+    dialog:SetToplevel(true)
+    return dialog
+end
+
+--- Hand the pooled popup frame back as we found it. Wire this to a dialog's OnHide.
+function UIFrameFactory.RestorePopupStrata(dialog)
+    dialog:SetFrameStrata("DIALOG")
+    dialog:SetToplevel(false)
+end
+
 function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
     local shift = 0
     -- Static reservation: no combat gate (this anchor is set once at creation), but a slot the
