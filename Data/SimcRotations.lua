@@ -402,7 +402,7 @@ RotationImport.RegisterGated({
     burst = {375087, 370553},  -- dragonrage tip_the_scales
     st = {
       {id=357210,gates={},delegated=true},  -- deep_breath
-      {id=375087,gates={},delegated=true},  -- dragonrage
+      {id=375087,gates={}},  -- dragonrage
       {id=1265872,gates={},delegated=true},  -- azure_sweep
       {id=359073,gates={},delegated=true},  -- eternity_surge
       {id=370553,gates={},delegated=true},  -- tip_the_scales
@@ -415,7 +415,7 @@ RotationImport.RegisterGated({
     },
     cleave = {
       {id=357210,gates={},delegated=true},  -- deep_breath
-      {id=375087,gates={},delegated=true},  -- dragonrage
+      {id=375087,gates={}},  -- dragonrage
       {id=1265872,gates={},delegated=true},  -- azure_sweep
       {id=359073,gates={},delegated=true},  -- eternity_surge
       {id=370553,gates={},delegated=true},  -- tip_the_scales
@@ -428,7 +428,7 @@ RotationImport.RegisterGated({
     },
     aoe = {
       {id=357210,gates={},delegated=true},  -- deep_breath
-      {id=375087,gates={},delegated=true},  -- dragonrage
+      {id=375087,gates={}},  -- dragonrage
       {id=1265872,gates={},delegated=true},  -- azure_sweep
       {id=359073,gates={},delegated=true},  -- eternity_surge
       {id=370553,gates={},delegated=true},  -- tip_the_scales
@@ -899,7 +899,7 @@ RotationImport.RegisterGated({
   ["ROGUE_2"] = {
     burst = {315341, 13750},  -- between_the_eyes adrenaline_rush
     st = {
-      {id=13750,gates={{t="buff",id=13750,dur=15,neg=true}},delegated=true},  -- adrenaline_rush
+      {id=13750,gates={{t="buff",id=13750,dur=15,neg=true}}},  -- adrenaline_rush
       {id=1277933,gates={},delegated=true},  -- preparation
       {id=381989,gates={},delegated=true},  -- keep_it_rolling
       {id=1214909,gates={},delegated=true},  -- roll_the_bones
@@ -914,7 +914,7 @@ RotationImport.RegisterGated({
       {id=193315,gates={}},  -- sinister_strike
     },
     aoe = {
-      {id=13750,gates={{t="buff",id=13750,dur=15,neg=true}},delegated=true},  -- adrenaline_rush
+      {id=13750,gates={{t="buff",id=13750,dur=15,neg=true}}},  -- adrenaline_rush
       {id=13877,gates={},delegated=true},  -- blade_flurry
       {id=1277933,gates={},delegated=true},  -- preparation
       {id=381989,gates={},delegated=true},  -- keep_it_rolling
@@ -1025,14 +1025,14 @@ RotationImport.RegisterGated({
       {id=470411,gates={}},  -- flame_shock
       {id=60103,gates={},delegated=true},  -- lava_lash
       {id=197214,gates={},delegated=true},  -- sundering
-      {id=384352,gates={},delegated=true},  -- doom_winds
+      {id=384352,gates={}},  -- doom_winds
       {id=187874,gates={},delegated=true},  -- crash_lightning
       {id=115356,gates={},delegated=true},  -- windstrike
-      {id=114051,gates={},delegated=true},  -- ascendance
+      {id=114051,gates={}},  -- ascendance
       {id=17364,gates={}},  -- stormstrike
       {id=452201,gates={},delegated=true},  -- tempest
       {id=188196,gates={},delegated=true},  -- lightning_bolt
-      {id=444995,gates={},delegated=true},  -- surging_totem
+      {id=444995,gates={}},  -- surging_totem
     },
     aoe = {
       {id=470057,gates={},delegated=true},  -- voltaic_blaze
@@ -1143,7 +1143,7 @@ RotationImport.RegisterGated({
       {id=442726,gates={}},  -- malevolence
       {id=17962,gates={{t="dot",id=445468}},delegated=true},  -- conflagrate
       {id=17877,gates={},delegated=true},  -- shadowburn
-      {id=152108,gates={},delegated=true},  -- cataclysm
+      {id=152108,gates={}},  -- cataclysm
       {id=80240,gates={},delegated=true},  -- havoc
       {id=116858,gates={}},  -- chaos_bolt
       {id=6353,gates={},delegated=true},  -- soul_fire
@@ -1158,7 +1158,7 @@ RotationImport.RegisterGated({
       {id=442726,gates={}},  -- malevolence
       {id=17962,gates={{t="dot",id=445468}},delegated=true},  -- conflagrate
       {id=17877,gates={},delegated=true},  -- shadowburn
-      {id=152108,gates={},delegated=true},  -- cataclysm
+      {id=152108,gates={}},  -- cataclysm
       {id=80240,gates={},delegated=true},  -- havoc
       {id=116858,gates={}},  -- chaos_bolt
       {id=6353,gates={},delegated=true},  -- soul_fire
