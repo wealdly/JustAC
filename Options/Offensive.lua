@@ -55,12 +55,6 @@ local function queueContentGroup(addon)
             -- "the game re-recommended a DoT that is already up" turned out not to mean
             -- "spread it" on every spec. The engine still honours profile.showDotSpreadArrow
             -- for anyone who set it before; nothing sets it now.
-            burstCueGlow = W.toggle(addon, "burstCueGlow", {
-                name = L["Burst Ready Cue"], desc = L["Burst Ready Cue desc"],
-                order = 5, width = "normal", default = true,
-                onSet = function() addon:ForceUpdate() end,
-                disabled = fullyDisabled,
-            }),
             casterFiller = {
                 type = "toggle",
                 name = "Caster Filler (This Spec)",
@@ -100,9 +94,18 @@ local function burstTriggerGroup(addon)
     return {
         type = "group",
         inline = true,
-        name = L["Burst Triggers"],
+        name = L["Burst"],
         order = 40,
         args = {
+            -- The cue and the triggers are one feature: the triggers say WHICH cooldowns,
+            -- the cue is how they announce themselves. Split across two groups, the cue read
+            -- as an unrelated queue setting.
+            burstCueGlow = W.toggle(addon, "burstCueGlow", {
+                name = L["Burst Ready Cue"], desc = L["Burst Ready Cue desc"],
+                order = 0.5, width = "full", default = true,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = fullyDisabled,
+            }),
             info = {
                 type = "description",
                 name = L["Burst Triggers desc"],
