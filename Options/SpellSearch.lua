@@ -949,7 +949,7 @@ end
 -------------------------------------------------------------------------------
 function SpellSearch.RebuildListSection(addon, argsTable, opts)
     local spellList = opts.spellList
-    if opts.emptyText and spellList and #spellList == 0 then
+    if opts.emptyText and not opts.onlyEntry and spellList and #spellList == 0 then
         argsTable.emptyNote = {
             type = "description",
             name = opts.emptyText,
