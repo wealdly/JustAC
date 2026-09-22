@@ -2354,9 +2354,17 @@ local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow
     local isBurstCue = SpellQueue.IsBurstCue and SpellQueue.IsBurstCue(spellID)
     if isBurstCue and showPrimaryGlow then return GLOW_BURST end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
-    if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
-    -- Spell displaced to position 2 by a gap-closer injection keeps its blue glow
-    -- so the player knows it is still Blizzard's next recommended cast.
+    -- Position 1 wears the game's own ring permanently, so it needs no crawl to say it is
+    -- position 1: the art already says it, in the game's own words. The crawl is kept for
+    -- the one thing the ring cannot express - that the slot is OURS rather than the
+    -- game's, because the lead setting put something there.
+    if position == 1 and showPrimaryGlow
+       and SpellQueue.LeadIsOurs and SpellQueue.LeadIsOurs() then
+        return GLOW_ASSISTED
+    end
+    -- A spell displaced to position 2 - by a gap-closer injection, or by the lead setting
+    -- taking the slot - keeps its blue glow, so the player knows it is still the game's
+    -- next recommended cast.
     local isDisplaced = SpellQueue.IsDisplacedPrimary and SpellQueue.IsDisplacedPrimary(spellID)
     if isDisplaced and showPrimaryGlow then return GLOW_ASSISTED end
     return GLOW_NONE
