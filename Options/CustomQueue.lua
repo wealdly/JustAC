@@ -433,6 +433,16 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         onlyEntry = PriorityList and (PriorityList.selected or 0) or nil,
     })
 
+    -- The add button belongs to YOUR list: on the read-only previews there is nothing to
+    -- add to. Its generated name ("Add <list name>...") also overran the row.
+    local addButton = spellListArgs["add_popup_customqueue"]
+    if addButton then
+        addButton.name = L["Priority Add"]
+        addButton.hidden = function()
+            return not PriorityList or PriorityList.CurrentSource(addon:GetProfile()) ~= "custom"
+        end
+    end
+
     -- Cap transparency: entries that sink (cooldown, out of range, active DoT)
     -- trail the ready ones, so a list longer than Max Icons silently pushes them
     -- off the end - the most common "my ability is missing" confusion.
