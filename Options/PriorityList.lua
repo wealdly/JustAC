@@ -731,12 +731,21 @@ local function BuildDetail(widget, parent)
     -- The dial reuses the option control's own values/get/set, so the widget never owns a
     -- second copy of what the modes mean.
     d.hold = AceGUI:Create("Dropdown")
-    d.hold:SetLabel(L["Hold Until"])
+    -- No label ON the widget: Ace stacks it above the control and grows the frame to 40,
+    -- which leaves the control itself sitting low against two checkboxes that are centred.
+    -- Labelled to the left instead, so all three read along one line.
+    d.hold:SetLabel("")
     TooltipHook(d.hold.frame, L["Hold Until"], L["Hold Until desc"])
+    d.holdLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    d.holdLabel:SetText(L["Hold Until"])
+    d.holdLabel:SetTextColor(unpack(INK_DIM))
     d.hold:SetWidth(150)
     d.hold.frame:SetParent(d)
     -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
     d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -20, 0)
+    -- Ace draws the control 15px left of its own frame, so the gap is measured from
+    -- there rather than from the frame edge.
+    d.holdLabel:SetPoint("RIGHT", d.hold.frame, "LEFT", -21, 0)
     d.hold.frame:Show()
 
     --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
