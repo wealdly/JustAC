@@ -371,15 +371,16 @@ local function BuildDetail(widget, parent)
     end
 
     d.always = checkbox(L["Always Show"], "alwaysShow", false, 40)
-    d.proc = checkbox(L["Custom Queue Procs First"], "procPriority", true, 200)
+    d.proc = checkbox(L["Custom Queue Procs First"], "procPriority", true, 190)
 
     -- The dial reuses the option control's own values/get/set, so the widget never owns a
     -- second copy of what the modes mean.
     d.hold = AceGUI:Create("Dropdown")
     d.hold:SetLabel(L["Hold Until"])
-    d.hold:SetWidth(170)
+    d.hold:SetWidth(150)
     d.hold.frame:SetParent(d)
-    d.hold.frame:SetPoint("LEFT", d, "LEFT", 360, -6)
+    -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
+    d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -8, -6)
     d.hold.frame:Show()
 
     --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
@@ -449,7 +450,7 @@ local function AcquireRow(self, index)
     row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     row.rank:SetWidth(40)
     row.rank:SetJustifyH("RIGHT")
-    row.rank:SetPoint("LEFT", row.cond, "RIGHT", 6, 0)
+
     row.rank:SetTextColor(unpack(BLUE))
 
     row.remove = MakeButton(row, "x", L["Remove"], function()
@@ -476,9 +477,12 @@ local function AcquireRow(self, index)
         PriorityList.Changed(self.addon)
     end)
     row.remove:SetPoint("RIGHT", -4, 0)
+    -- Anchored to the buttons, not to the text: a hidden frame keeps its position, so the
+    -- rank lands in the same place whether the row is editable or read-only.
     row.edit:SetPoint("RIGHT", row.remove, "LEFT", -2, 0)
     row.down:SetPoint("RIGHT", row.edit, "LEFT", -2, 0)
     row.up:SetPoint("RIGHT", row.down, "LEFT", -2, 0)
+    row.rank:SetPoint("RIGHT", row.up, "LEFT", -6, 0)
 
     self.rows[index] = row
     return row
