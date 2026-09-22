@@ -143,6 +143,38 @@ function PriorityList.StartFrom(addon, source)
     PriorityList.Changed(addon)
 end
 
+--- Add everything the source lists that your own list has not got yet, at the end, in
+--- the order the source has them. Your own order is left alone, and nothing is removed,
+--- so there is nothing to confirm and nothing to undo.
+function PriorityList.MergeFrom(addon, source)
+    local cq = CustomQueueFor(addon and addon:GetProfile())
+    if not (cq and cq.spells) then return 0 end
+    local have = {}
+    for _, id in ipairs(cq.spells) do have[id] = true end
+    local added = 0
+    for _, row in ipairs(PriorityList.Rows(addon, source)) do
+        if not have[row.id] and not row.upkeep then
+            cq.spells[#cq.spells + 1] = row.id
+            have[row.id] = true
+            added = added + 1
+        end
+    end
+    if added > 0 then
+        PriorityList.view = "custom"
+        PriorityList.SetLiveSource(addon, "custom")   -- calls Changed
+    end
+    if addon and addon.Print then
+        -- Say so either way: a button that can legitimately do nothing has to admit it,
+        -- or it reads as broken the one time your list already has everything.
+        if added > 0 then
+            addon:Print(string.format(L["Priority Merged"], added))
+        else
+            addon:Print(L["Priority Merge None"])
+        end
+    end
+    return added
+end
+
 --- Empty the list and hand the queue back to the game. Leaves the entries' own settings
 --- alone: those are ability-level and shared with the other lists.
 function PriorityList.ClearList(addon)
@@ -884,10 +916,13 @@ function methods:Refresh()
         self.detail.spellID = nil   -- so reopening the same row rebuilds its dial
     end
 
-    -- One action. Selecting a tab already switches the queue, so the only thing left to
-    -- offer is copying the order you are looking at into a list of your own.
-    self.starting = (source ~= "custom") and not haveList
-    self.useThis:SetShown(not self.disabled and self.starting)
+    -- One action, on the two orders you did not write: take this order into a list of
+    -- your own. With a list already there it adds what is missing instead of replacing
+    -- it, so the button can stay live without ever costing the player their work.
+    self.merging = (source ~= "custom") and haveList
+    self.useThis:SetShown(not self.disabled and source ~= "custom")
+    self.useThis:SetText(self.merging and L["Priority Merge"] or L["Priority Export"])
+    Tooltip(self.useThis, self.merging and L["Priority Merge desc"] or L["Priority Export desc"])
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
@@ -978,8 +1013,13 @@ local function Constructor()
         prev = tab
     end
 
-    widget.useThis = MakeButton(frame, L["Priority Start From"], L["Priority Start From desc"],
-        function() PriorityList.StartFrom(widget.addon, widget:Source()) end, 120)
+    widget.useThis = MakeButton(frame, "", "", function()
+        if widget.merging then
+            PriorityList.MergeFrom(widget.addon, widget:Source())
+        else
+            PriorityList.StartFrom(widget.addon, widget:Source())
+        end
+    end, 132)
     onPane(widget.useThis)
     widget.useThis:SetHeight(TAB_H - 5)
     widget.useThis:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
