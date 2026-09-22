@@ -610,32 +610,69 @@ end
 -- reason the ring is here at all: the slot should look like what it stands for.
 local ASSIST_RING_IDLE = "UI-HUD-RotationHelper-Inactive"
 local ASSIST_RING_LIT = "UI-HUD-RotationHelper-Active"
+local ASSIST_RING_FX = "UI-HUD-RotationHelper-Active-FX"
+-- A standard action button edge, which is what the atlas was drawn against.
+local ACTION_BUTTON_EDGE = 45
 
-local function AddAssistRing(button)
+local function AddAssistRing(button, size)
     if not (C_Texture and C_Texture.GetAtlasInfo
             and C_Texture.GetAtlasInfo(ASSIST_RING_IDLE)) then return end
     -- A CHILD FRAME, not a texture on the button, which is how the game builds it and is
     -- why nothing on the button can draw over the ring. A texture sits at some draw layer
     -- and the hotkey label sits above it; a child frame is above the whole button.
     local f = CreateFrame("Frame", nil, button)
-    -- Sized to the icon. The game lets its ring overhang the button, but our icons sit a
-    -- pixel apart by default and an overhanging ring would climb onto its neighbour.
-    f:SetAllPoints(button)
-    local ring = f:CreateTexture(nil, "ARTWORK")
-    ring:SetAllPoints(f)
-    ring:SetAtlas(ASSIST_RING_IDLE)
-    f.texture = ring
+    -- The game draws this at the ATLAS's own size on a standard action button, so it
+    -- bleeds well past the edge. Reproduced as a ratio rather than a fixed size, since
+    -- our icon size is a setting: the ring keeps the same proportions at any of them.
+    local info = C_Texture.GetAtlasInfo(ASSIST_RING_IDLE)
+    local ratio = (info and info.width and info.width / ACTION_BUTTON_EDGE) or 1.25
+    f:SetSize(size * ratio, size * ratio)
+    f:SetPoint("CENTER", button, "CENTER")
+    f.idle = f:CreateTexture(nil, "ARTWORK")
+    f.idle:SetAllPoints(f)
+    f.idle:SetAtlas(ASSIST_RING_IDLE)
+
+    -- The lit state is its own frame, as it is in the game: a brighter ring with a glow
+    -- turning behind it. Kept separate so the swap is a show/hide rather than a rebuild.
+    local lit = CreateFrame("Frame", nil, f)
+    lit:SetAllPoints(f)
+    lit:Hide()
+    local border = lit:CreateTexture(nil, "BORDER")
+    border:SetAllPoints(lit)
+    border:SetAtlas(ASSIST_RING_LIT)
+    if C_Texture.GetAtlasInfo(ASSIST_RING_FX) then
+        local glow = lit:CreateTexture(nil, "ARTWORK")
+        glow:SetAtlas(ASSIST_RING_FX)
+        glow:SetPoint("CENTER")
+        -- The game gives the glow 100px inside a 128px frame and scales it to 0.8, so it
+        -- covers 0.625 of the ring. Same fraction here, of whatever the ring came out.
+        glow:SetSize(size * ratio * 0.625, size * ratio * 0.625)
+        glow:SetAlpha(0.6)
+        glow:SetBlendMode("ADD")   -- so its black areas add nothing and need no mask
+        local anim = lit:CreateAnimationGroup()
+        anim:SetLooping("REPEAT")
+        local rot = anim:CreateAnimation("Rotation")
+        rot:SetTarget(glow)
+        rot:SetDuration(3)
+        rot:SetOrder(1)
+        rot:SetDegrees(-360)
+        rot:SetOrigin("CENTER", 0, 0)
+        lit.anim = anim
+    end
+    f.lit = lit
     button.AssistRing = f
 end
 
---- Swap the ring between its two states. Called on the combat edge, not per frame: it is
---- one texture swap on one icon. The lit state's pulsing glow is deliberately left out -
---- the game plays it on the ONE button it wants pressed, and a permanent mark that pulses
---- for the whole fight is a different thing entirely.
+--- Swap the ring between its two states, on the combat edge rather than per frame. The
+--- glow only turns while it is shown, so stopping it is not an optimisation, it is what
+--- keeps the animation from drifting out of phase with the art behind it.
 function UIFrameFactory.SetAssistRingCombat(icon, inCombat)
     local f = icon and icon.AssistRing
-    if f and f.texture then
-        f.texture:SetAtlas(inCombat and ASSIST_RING_LIT or ASSIST_RING_IDLE)
+    if not f then return end
+    f.idle:SetShown(not inCombat)
+    f.lit:SetShown(inCombat and true or false)
+    if f.lit.anim then
+        if inCombat then f.lit.anim:Play() else f.lit.anim:Stop() end
     end
 end
 
@@ -1886,7 +1923,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
     if not button then return nil end
-    if isFirstIcon then AddAssistRing(button) end
+    if isFirstIcon then AddAssistRing(button, actualIconSize) end
 
     -- Position based on orientation
     if orientation == "RIGHT" then
