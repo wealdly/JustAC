@@ -164,6 +164,24 @@ function PriorityList.PruneUpkeep(addon)
     return dropped
 end
 
+--- How many abilities a source holds, without the per-row name and icon lookups Rows()
+--- does. Cheap enough to ask for all three sources on every refresh.
+function PriorityList.CountFor(addon, source)
+    local profile = addon and addon:GetProfile()
+    if not (profile and SpecKey()) then return 0 end
+    if source == "custom" then
+        local cq = CustomQueueFor(profile)
+        return cq and cq.spells and #cq.spells or 0
+    end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+    local n = 0
+    for _, id in ipairs(pool or {}) do
+        if not PriorityList.IsUpkeep(id) then n = n + 1 end
+    end
+    return n
+end
+
 --- The entries of one source: { id, name, icon, rank, cond, gameTimed, upkeep }.
 function PriorityList.Rows(addon, source)
     local out = {}
@@ -317,11 +335,17 @@ local function MakeTab(parent, label)
     -- tab: the label shifts a pixel when a tab is selected, and a corner-pinned dot drifted
     -- away from the text and read as floating debris above the strip.
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
-    tab.liveDot:SetSize(6, 6)
-    tab.liveDot:SetPoint("RIGHT", tab:GetFontString(), "LEFT", -5, 0)
-    tab.liveDot:SetColorTexture(unpack(GREEN))
-    local width = (tab:GetFontString() and tab:GetFontString():GetStringWidth() or 40) + 50
-    tab:SetWidth(width)
+    tab.liveDot:SetSize(10, 10)
+    tab.liveDot:SetPoint("RIGHT", tab:GetFontString(), "LEFT", -4, 0)
+    -- Blizzard's own round status indicator: a flat colour swatch read as a stray square.
+    tab.liveDot:SetTexture("Interface\COMMON\Indicator-Green")
+    --- Label plus how many abilities that source holds. Re-measured because the count
+    --- changes as a list is edited.
+    function tab:SetLabel(text)
+        self:SetText(text)
+        self:SetWidth((self:GetFontString() and self:GetFontString():GetStringWidth() or 40) + 50)
+    end
+    tab:SetLabel(label)
     function tab:SetSelected(on)
         for _, t in ipairs(self.slices) do t:SetTexture(on and ACTIVE_TAB or INACTIVE_TAB) end
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
@@ -545,8 +569,10 @@ function methods:Refresh()
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
+        tab:SetLabel(string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon, key)))
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
+        Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Preview Tip"])
     end
 
     -- Position 1. The row the whole panel exists to explain: with the list leading it is
@@ -677,6 +703,7 @@ local function Constructor()
             PriorityList.view = key
             widget:Refresh()
         end)
+        tab.baseLabel = label
         widget.tabs[key] = tab
         prev = tab
     end
