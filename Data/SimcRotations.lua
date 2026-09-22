@@ -1025,14 +1025,14 @@ RotationImport.RegisterGated({
       {id=470411,gates={}},  -- flame_shock
       {id=60103,gates={},delegated=true},  -- lava_lash
       {id=197214,gates={},delegated=true},  -- sundering
-      {id=384352,gates={}},  -- doom_winds
+      {id=384352,gates={},delegated=true},  -- doom_winds
       {id=187874,gates={},delegated=true},  -- crash_lightning
       {id=115356,gates={},delegated=true},  -- windstrike
-      {id=114051,gates={}},  -- ascendance
+      {id=114051,gates={},delegated=true},  -- ascendance
       {id=17364,gates={}},  -- stormstrike
       {id=452201,gates={},delegated=true},  -- tempest
       {id=188196,gates={},delegated=true},  -- lightning_bolt
-      {id=444995,gates={}},  -- surging_totem
+      {id=444995,gates={},delegated=true},  -- surging_totem
     },
     aoe = {
       {id=470057,gates={},delegated=true},  -- voltaic_blaze
@@ -1073,7 +1073,7 @@ RotationImport.RegisterGated({
       {id=980,gates={},delegated=true},  -- agony
       {id=172,gates={},delegated=true},  -- corruption
       {id=1257052,gates={{t="resource",res="soul_shard",op="<",n=3}},delegated=true},  -- dark_harvest
-      {id=205180,gates={}},  -- summon_darkglare
+      {id=205180,gates={{t="cd"}}},  -- summon_darkglare
       {id=1261153,gates={},delegated=true},  -- malefic_grasp
       {id=27243,gates={},delegated=true},  -- seed_of_corruption
       {id=445468,gates={{t="dot",id=445468}}},  -- wither
