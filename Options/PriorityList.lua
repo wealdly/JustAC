@@ -914,7 +914,6 @@ function methods:Refresh()
     if HasAssistAtlas() then
         -- The emblem carries its own colour; only the padlock stand-in is tinted.
         self.pin.lock:SetAtlas(ASSIST_ATLAS)
-        self.pin.lock:SetSize(16, 16)
         self.pin.lock:SetVertexColor(1, 1, 1)
     else
         self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
@@ -1187,9 +1186,11 @@ local function Constructor()
     -- No number: this row is not a position in the list below, it is the row that owns
     -- the moment before it. The lock stands where the numbers run.
     pin.lock = pin:CreateTexture(nil, "ARTWORK")
-    pin.lock:SetSize(12, 14)
+    pin.lock:SetSize(16, 16)
     pin.lock:SetTexture(LOCK_TEXTURE)
-    pin.lock:SetPoint("CENTER", pin, "LEFT", 16, 0)
+    -- The icon column, so it lines up with every ability icon below it. The number
+    -- column stays empty: this row is not a position in the list.
+    pin.lock:SetPoint("LEFT", pin, "LEFT", 32, 0)
     pin.title = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pin.title:SetPoint("LEFT", pin, "LEFT", 55, 0)
     pin.note = pin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
