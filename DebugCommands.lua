@@ -7777,7 +7777,52 @@ function DebugCommands.ProbeSession(addon, arg)
             edgeState[key] = v
         end
     end
-    DebugCommands._probeTicker = C_Timer.NewTicker(1.0, function() pcall(edgeSample) end)
+    -- DoT tracking, change-only. Turning dot conditions into real gates rests on two
+    -- things only a session can show. Whether a tracked DoT is ever CONFIRMED in combat -
+    -- 12.1.0 tightened aura access, and without a confirmed instance the pandemic point is
+    -- an ESTIMATE that assumes the book duration, which every refresh makes wrong. And
+    -- whether the engine's own verdict agrees with that estimate when both can answer.
+    -- A spec with several bleeds running at once is the case worth recording.
+    local dotState, lastTarget = {}, nil
+    local function dotSample()
+        local DT = LibStub("JustAC-DotTracker", true)
+        if not (DT and DT.DebugState) then return end
+        -- Tracking is current-target only and is wiped on a swap, so a verdict means
+        -- nothing without knowing which target it was about.
+        local guid = UnitGUID and UnitGUID("target") or nil
+        if guid ~= lastTarget then
+            ProbeLogEmit(string.format("DOT %.1f target -> %s", GetTime(),
+                guid and guid:sub(-12) or "none"))
+            lastTarget = guid
+        end
+        local state = DT.DebugState()
+        local seen = {}
+        for _, e in ipairs(state.entries or {}) do
+            seen[e.spellID] = true
+            local key = string.format("%s/%s/%s", tostring(e.active), tostring(e.confirmed),
+                tostring(e.enginePandemic))
+            if dotState[e.spellID] ~= key then
+                ProbeLogEmit(string.format(
+                    "DOT %.1f %d active=%s confirmed=%s engine=%s expiresIn=%.1f pandemicIn=%s combat=%s",
+                    GetTime(), e.spellID, tostring(e.active), tostring(e.confirmed),
+                    tostring(e.enginePandemic), e.expiresIn or -1,
+                    e.pandemicIn and string.format("%.1f", e.pandemicIn) or "-",
+                    tostring(UnitAffectingCombat("player"))))
+                dotState[e.spellID] = key
+            end
+        end
+        for id in pairs(dotState) do
+            if not seen[id] then
+                ProbeLogEmit(string.format("DOT %.1f %d untracked", GetTime(), id))
+                dotState[id] = nil
+            end
+        end
+    end
+
+    DebugCommands._probeTicker = C_Timer.NewTicker(1.0, function()
+        pcall(edgeSample)
+        pcall(dotSample)
+    end)
 
     ProbeLogEmit(string.format("========== AUDIT SESSION ARMED %s (build %s) ==========",
         date("%Y-%m-%d %H:%M:%S"), (GetBuildInfo())))
@@ -7788,6 +7833,8 @@ function DebugCommands.ProbeSession(addon, arg)
     addon:Print("|cff00ff00=== audit ARMED ===|r Baseline captured. Now just fight: enter/exit combat a few times,")
     addon:Print("get CC'd/dazed if you can, cast + channel, get hurt, cap a resource. Snapshots are automatic.")
     addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
+    addon:Print("|cff888888  For the DoT leg: keep several bleeds rolling on one target, refresh them early,|r")
+    addon:Print("|cff888888  and swap targets at least once so the tracker has to start over.|r")
     addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
 end
 
