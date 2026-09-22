@@ -2621,6 +2621,12 @@ local function RenderQueueIcon(icon, i, ctx)
             end
         end
 
+        if i == 1 and UIFrameFactory and UIFrameFactory.SetAssistRing then
+            -- The game's own ring, on the game's own pick. Ours is the crawl below.
+            local ours = SpellQueue.LeadIsOurs and SpellQueue.LeadIsOurs()
+            UIFrameFactory.SetAssistRing(icon, not ours, ctx.inCombat)
+        end
+
         if glowState == GLOW_ASSISTED then
             UIAnimations.StartAssistedGlow(icon, ctx.inCombat)
             icon.hasAssistedGlow = true
@@ -3254,12 +3260,6 @@ end
 
 function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
-    -- Position 1 wears the assist ring, and the game lights its own on the combat edge.
-    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-    local icons = addon and addon.spellIcons
-    if icons and icons[1] and UIFrameFactory and UIFrameFactory.SetAssistRingCombat then
-        UIFrameFactory.SetAssistRingCombat(icons[1], inCombat)
-    end
 end
 
 function UIRenderer.SetCastSpellID(spellID)
