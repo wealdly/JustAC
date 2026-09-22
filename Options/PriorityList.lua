@@ -430,13 +430,7 @@ end
 --- uses, so the strip belongs to the panel instead of imitating it.
 local TAB_PAD = 22
 
---- How far each of the top pixel rows is inset. Rounded corners with no art of their
---- own: the top rows step inward and the border traces the same staircase, which reads
---- as a curve at UI scale and keeps the flat one-pixel look the rest of the panel has.
-local CORNER = { 2, 1 }
-
---- One tab: an opaque fill and a border on three sides, with a rounded top. The open
---- side faces the pane.
+--- One tab: an opaque fill and a border on three sides. The open side faces the pane.
 local function MakeTab(parent, label)
     local tab = CreateFrame("Button", nil, parent)
     tab:SetHeight(TAB_H)
@@ -444,43 +438,22 @@ local function MakeTab(parent, label)
     tab:SetHighlightFontObject("GameFontHighlightSmall")
     tab:SetText(label)
 
-    -- Fill: one inset strip per stepped row, then the body below them.
-    tab.fills = {}
-    for r = 1, #CORNER do
-        local t = tab:CreateTexture(nil, "BACKGROUND")
-        t:SetPoint("TOPLEFT", CORNER[r], -(r - 1))
-        t:SetPoint("TOPRIGHT", -CORNER[r], -(r - 1))
-        t:SetHeight(1)
-        tab.fills[#tab.fills + 1] = t
-    end
-    local body = tab:CreateTexture(nil, "BACKGROUND")
-    body:SetPoint("TOPLEFT", 0, -#CORNER)
-    body:SetPoint("BOTTOMRIGHT")
-    tab.fills[#tab.fills + 1] = body
+    tab.fill = tab:CreateTexture(nil, "BACKGROUND")
+    tab.fill:SetAllPoints()
 
-    local function edge(p1, p2, x, y, w, h)
+    local function edge(p1, p2, w, h)
         local t = tab:CreateTexture(nil, "BORDER")
-        t:SetPoint(p1, x or 0, y or 0)
-        if p2 then t:SetPoint(p2, -(x or 0), y or 0) end
+        t:SetPoint(p1)
+        t:SetPoint(p2)
         if w then t:SetWidth(w) end
         if h then t:SetHeight(h) end
         return t
     end
-    -- Top run, then one border pixel per step down each side, then the two verticals
-    -- starting below the last step.
-    tab.edges = { edge("TOPLEFT", "TOPRIGHT", CORNER[1], 0, nil, 1) }
-    for r = 1, #CORNER do
-        local inner = CORNER[r + 1] or 0
-        tab.edges[#tab.edges + 1] = edge("TOPLEFT", nil, inner, -r, CORNER[r] - inner, 1)
-        tab.edges[#tab.edges + 1] = edge("TOPRIGHT", nil, -inner, -r, CORNER[r] - inner, 1)
-    end
-    for _, side in ipairs({ { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
-        local t = tab:CreateTexture(nil, "BORDER")
-        t:SetPoint(side[1], 0, -#CORNER)
-        t:SetPoint(side[2])
-        t:SetWidth(1)
-        tab.edges[#tab.edges + 1] = t
-    end
+    tab.edges = {
+        edge("TOPLEFT", "TOPRIGHT", nil, 1),
+        edge("TOPLEFT", "BOTTOMLEFT", 1, nil),
+        edge("TOPRIGHT", "BOTTOMRIGHT", 1, nil),
+    }
 
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
     tab.liveDot:SetSize(10, 10)
@@ -498,13 +471,8 @@ local function MakeTab(parent, label)
 
     function tab:SetSelected(on)
         -- Selected shares the pane's exact colour so the two read as one surface.
-        for _, f in ipairs(self.fills) do
-            if on then
-                f:SetColorTexture(0.09, 0.085, 0.07, 1)
-            else
-                f:SetColorTexture(0.045, 0.043, 0.036, 1)
-            end
-        end
+        self.fill:SetColorTexture(0.09, 0.085, 0.07, on and 1 or 0)
+        if not on then self.fill:SetColorTexture(0.045, 0.043, 0.036, 1) end
         for _, e in ipairs(self.edges) do
             e:SetColorTexture(0.42, 0.40, 0.34, on and 1 or 0.55)
         end
