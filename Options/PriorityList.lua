@@ -26,7 +26,7 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H, ACT_H = 26, 30, 28, 4, 34, 16, 24
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 34, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -303,65 +303,56 @@ end
 
 --- One tab, in Blizzard's own options-tab art - the same three-slice the Ace tab container
 --- uses, so the strip belongs to the panel instead of imitating it.
-local ACTIVE_TAB = "Interface\\OptionsFrame\\UI-OptionsFrame-ActiveTab"
-local INACTIVE_TAB = "Interface\\OptionsFrame\\UI-OptionsFrame-InActiveTab"
+local TAB_PAD = 22
+
+--- One tab: an opaque fill and a border on three sides. The open side faces the pane.
 local function MakeTab(parent, label)
     local tab = CreateFrame("Button", nil, parent)
     tab:SetHeight(TAB_H)
     tab:SetNormalFontObject("GameFontNormalSmall")
     tab:SetHighlightFontObject("GameFontHighlightSmall")
     tab:SetText(label)
+
     tab.fill = tab:CreateTexture(nil, "BACKGROUND")
-    tab.fill:SetPoint("TOPLEFT", 3, -2)
-    tab.fill:SetPoint("BOTTOMRIGHT", -3, 0)
-    local slices = {}
-    for i, cut in ipairs({ { 0, 0.15625, 20 }, { 0.15625, 0.84375, 0 }, { 0.84375, 1, 20 } }) do
+    tab.fill:SetAllPoints()
+
+    local function edge(p1, p2, w, h)
         local t = tab:CreateTexture(nil, "BORDER")
-        t:SetTexCoord(cut[1], cut[2], 0, 1)
-        t:SetHeight(TAB_H)
-        if cut[3] > 0 then t:SetWidth(cut[3]) end
-        -- The end caps pin to the tab's own corners and the middle spans BETWEEN them.
-        -- Anchoring the right cap to the middle as well made each depend on the other,
-        -- which the layout engine refuses outright ("cannot anchor to a region dependent
-        -- on it") - and the throw came from inside Ace's tree, taking the tab with it.
-        if i == 1 then
-            t:SetPoint("BOTTOMLEFT")
-        elseif i == 3 then
-            t:SetPoint("BOTTOMRIGHT")
-        end
-        slices[i] = t
+        t:SetPoint(p1)
+        t:SetPoint(p2)
+        if w then t:SetWidth(w) end
+        if h then t:SetHeight(h) end
+        return t
     end
-    slices[2]:SetPoint("LEFT", slices[1], "RIGHT")
-    slices[2]:SetPoint("RIGHT", slices[3], "LEFT")
-    tab.slices = slices
-    -- "This is the one the queue is using." Anchored to the LABEL, not to a corner of the
-    -- tab: the label shifts a pixel when a tab is selected, and a corner-pinned dot drifted
-    -- away from the text and read as floating debris above the strip.
+    tab.edges = {
+        edge("TOPLEFT", "TOPRIGHT", nil, 1),
+        edge("TOPLEFT", "BOTTOMLEFT", 1, nil),
+        edge("TOPRIGHT", "BOTTOMRIGHT", 1, nil),
+    }
+
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
     tab.liveDot:SetSize(10, 10)
     tab.liveDot:SetPoint("RIGHT", tab:GetFontString(), "LEFT", -4, 0)
-    -- Blizzard's own round status indicator: a flat colour swatch read as a stray square.
     tab.liveDot:SetTexture("Interface\\COMMON\\Indicator-Green")
+
     --- Label plus how many abilities that source holds. Re-measured because the count
     --- changes as a list is edited.
     function tab:SetLabel(text)
         self:SetText(text)
-        self:SetWidth((self:GetFontString() and self:GetFontString():GetStringWidth() or 40) + 50)
+        local w = (self:GetFontString() and self:GetFontString():GetStringWidth() or 40) + TAB_PAD
+        if self.liveDot:IsShown() then w = w + 12 end
+        self:SetWidth(w)
     end
-    tab:SetLabel(label)
+
     function tab:SetSelected(on)
-        for _, t in ipairs(self.slices) do t:SetTexture(on and ACTIVE_TAB or INACTIVE_TAB) end
-        -- Selected matches the pane exactly so the two read as one surface; unselected
-        -- sits a shade darker, the way a tab behind the front one should.
-        if on then
-            self.fill:SetColorTexture(0.09, 0.085, 0.07, 1)
-        else
-            self.fill:SetColorTexture(0.05, 0.048, 0.04, 1)
+        -- Selected shares the pane's exact colour so the two read as one surface.
+        self.fill:SetColorTexture(0.09, 0.085, 0.07, on and 1 or 0)
+        if not on then self.fill:SetColorTexture(0.045, 0.043, 0.036, 1) end
+        for _, e in ipairs(self.edges) do
+            e:SetColorTexture(0.42, 0.40, 0.34, on and 1 or 0.55)
         end
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
-        -- Blizzard's art draws the selected tab two pixels taller; matching it is what
-        -- makes the strip read as tabs rather than buttons.
-        self:GetFontString():SetPoint("CENTER", self.liveDot:IsShown() and 5 or 0, on and -1 or -2)
+        self:GetFontString():SetPoint("CENTER", self.liveDot:IsShown() and 6 or 0, 0)
     end
     return tab
 end
@@ -530,7 +521,7 @@ local methods = {}
 function methods:OnAcquire()
     self.addon = Addon()
     self.disabled = false
-    self:SetHeight(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 10)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10)
     self:SetWidth(560)
     self:Refresh()
 end
@@ -579,7 +570,9 @@ function methods:Refresh()
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
-        tab:SetLabel(string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon, key)))
+        tab:SetLabel(key == "custom"
+            and string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon, key))
+            or tab.baseLabel)
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
         Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Preview Tip"])
@@ -599,7 +592,7 @@ function methods:Refresh()
     local free = math.max(200, (self.frame:GetWidth() or 560) - ROW_FIXED)
     local nameW = math.floor(free * 0.46)
     local condW = free - nameW
-    local y = -(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 4)
+    local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
     local detailShown = false
 
     for i = 1, #rows do
@@ -647,7 +640,7 @@ function methods:Refresh()
     self.starting = (source ~= "custom") and not haveList
     self.useThis:SetShown(not self.disabled and (self.starting or source ~= live))
     self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
-    self.useThis:SetWidth(self.starting and 160 or 116)
+    self.useThis:SetWidth(self.starting and 120 or 82)
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
@@ -663,7 +656,7 @@ function methods:Refresh()
     end
 
     -- +10: the pane's own top and bottom border insets.
-    self:SetHeight(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
         + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
 end
 
@@ -716,7 +709,7 @@ local function Constructor()
         local key, label = def[1], def[2]
         local tab = MakeTab(frame, label)
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
-            prev and -6 or 6, prev and 0 or -5)
+            prev and 3 or 8, prev and 0 or -3)
         tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
         tab:SetScript("OnClick", function()
             PriorityList.view = key
@@ -735,26 +728,26 @@ local function Constructor()
         end
         PriorityList.view = nil
         widget:Refresh()
-    end, 116)
+    end, 82)
     onPane(widget.useThis)
-    widget.useThis:SetHeight(20)
-    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -(TAB_H + 2))
+    widget.useThis:SetHeight(TAB_H - 5)
+    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -2)
 
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         PriorityList.ClearList(widget.addon)
         PriorityList.view = nil
         widget:Refresh()
-    end, 92)
+    end, 56)
     onPane(widget.clear)
-    widget.clear:SetHeight(20)
+    widget.clear:SetHeight(TAB_H - 5)
     widget.clear:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
 
     -- Column header. Its moving labels are re-anchored in Refresh, so a name column that
     -- resizes with the panel cannot drift away from its heading.
     local head = CreateFrame("Frame", nil, frame)
     head:SetHeight(HEAD_H)
-    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + ACT_H + 4))
-    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + ACT_H + 4))
+    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + 4))
+    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + 4))
     local function headLabel(text, justify)
         local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         fs:SetText(text)
@@ -780,8 +773,8 @@ local function Constructor()
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
     pin:SetHeight(PIN_H - GAP)
-    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + ACT_H + HEAD_H + 4))
-    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + ACT_H + HEAD_H + 4))
+    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + HEAD_H + 4))
+    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + HEAD_H + 4))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
     pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -804,7 +797,7 @@ local function Constructor()
     widget.pin = pin
 
     widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + ACT_H + HEAD_H + PIN_H + 6))
+    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
 
