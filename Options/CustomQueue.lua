@@ -193,16 +193,20 @@ function CustomQueue.CreateTabArgs(addon)
                 inline = true,
                 name = L["Custom Queue Ordering"],
                 order = 20,
-                -- Dropdown on its own row, then the two checkboxes side by side: a select
-                -- is taller than a toggle, so mixing them in one row misaligns all three.
+                -- "Which list" moved to the widget's tab strip; what stays here is how the
+                -- chosen list is treated, which is the same question for all three.
                 args = {
-                    -- "Which list" moved to the widget's tab strip; what stays here is how
-                    -- the chosen list is treated, which is the same question for all three.
+                    procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 1),
+                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
+                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 2),  -- Execute
+                    -- Last, and with its warning in the panel rather than in a tooltip: it
+                    -- switches OFF the situational reordering the other two build on, so
+                    -- the consequence should be readable without hovering anything.
                     orderExact = {
                         type = "toggle",
                         name = L["Order Exact"],
                         desc = L["Order Exact desc"],
-                        order = 1,
+                        order = 10,
                         width = "full",
                         get = function()
                             local profile = addon:GetProfile()
@@ -219,9 +223,18 @@ function CustomQueue.CreateTabArgs(addon)
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                     },
-                    procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 3),
-                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
-                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4),  -- Execute
+                    orderExactNote = {
+                        type = "description",
+                        name = function()
+                            local profile = addon:GetProfile()
+                            return (profile and profile.orderExact)
+                                and ("|cffffcc00" .. L["Order Exact note on"] .. "|r")
+                                or L["Order Exact note off"]
+                        end,
+                        order = 11,
+                        fontSize = "small",
+                        width = "full",
+                    },
                 },
             },
             staleWarning = {
