@@ -414,6 +414,14 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         addon:ForceUpdate()
     end
     local PriorityList = LibStub("JustAC-PriorityList", true)
+    -- A list made before upkeep abilities were excluded still carries them, and they stall
+    -- the queue. Repair it here, once, and tell the player why their list got shorter.
+    if PriorityList and PriorityList.PruneUpkeep then
+        local dropped = PriorityList.PruneUpkeep(addon)
+        if dropped > 0 and addon.Print then
+            addon:Print(string.format(L["Upkeep Pruned"], dropped))
+        end
+    end
     SpellSearch.RebuildListSection(addon, spellListArgs, {
         spellList = spellList, listType = "customqueue",
         baseOrder = 12, addOrder = 30,
