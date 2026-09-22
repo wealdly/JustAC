@@ -391,7 +391,9 @@ function CustomQueue.CreateTabArgs(addon)
                         type = "toggle",
                         name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
                         desc = L["My List Leads desc"],
-                        order = 11.5,
+                        -- Sunk below the list on purpose: it is a rarely-useful expert
+                        -- switch, and sitting above the list it read as a headline feature.
+                        order = 40,
                         width = "full",
                         get = function()
                             local profile = addon:GetProfile()
