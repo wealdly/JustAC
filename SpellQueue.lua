@@ -1634,6 +1634,7 @@ function SpellQueue._StageTail(b)
         end
     end
     lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
+    lastCtx.myListLeads = b.myListLeads == true
     b.effectiveBypassProcs = effectiveBypassProcs
     b.contextOrder, b.sinkCooldowns = contextOrder, sinkCooldowns
     b.simcCtx, b.pickWindows = simcCtx, pickWindows
@@ -1790,10 +1791,16 @@ function SpellQueue._ApplySafeLead(b)
     displacedPrimary[SpellQueue.WAIT_SENTINEL] = true
 end
 
---- Is slot 1 ours rather than the game's, as of the last build? The renderer marks it,
---- so a queue that disagrees with the game's own highlight reads as intent.
+--- Is slot 1 ours rather than the game's, as of the last build? Either the safe-lead swap
+--- put something there, or the list is leading and its first entry took the slot. The
+--- renderer marks that case and only that case, so a queue disagreeing with the game's
+--- own highlight reads as intent.
 function SpellQueue.IsSafeLead(spellID)
     return safeLeadID ~= nil and spellID == safeLeadID
+end
+
+function SpellQueue.LeadIsOurs()
+    return safeLeadID ~= nil or lastCtx.myListLeads == true
 end
 
 --- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
