@@ -4362,6 +4362,9 @@ function DebugCommands.OverrideApiDiff(addon)
         end
     end
     addon:Print(string.format("override diff: %d spellbook entries checked, %d differ", n, diffs))
+end
+
+--------------------------------------------------------------------------------
 -- Fight window (/jac inspect window [selftest])
 --------------------------------------------------------------------------------
 function DebugCommands.FightWindowDump(addon, arg)
