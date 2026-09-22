@@ -160,9 +160,7 @@ L["Require Hostile Target"] = "Require Hostile Target"
 L["Allow Item Abilities"] = "Include Item Abilities"
 L["Allow Item Abilities desc"] = "Show trinket and on-use item abilities in the offensive queue"
 L["Insert Procced Abilities desc"] = "Add glowing proc abilities from your spellbook to the queue. They take the slot right after Blizzard's pick whatever the ordering options are set to - even with Procs first off - and an ability already on your list jumps there too while it glows."
-L["Include All Available Abilities desc"] = "Let the game's pick include abilities with no visible button: ones behind a macro conditional like [mod:shift], and ones that are not on your action bars at all.
-
-Off: the pick only ever names an ability you can see on a bar."
+L["Include All Available Abilities desc"] = "Let the game's pick include abilities with no visible button: ones behind a macro conditional like [mod:shift], and ones that are not on your action bars at all.\n\nOff: the pick only ever names an ability you can see on a bar."
 L["Panel Interaction"] = "Panel Interaction"
 L["Panel Interaction desc"] = "Controls how the panel responds to mouse input.\n\nClick Through hides the grab tab and passes all clicks through to the game. Hold Alt and drag any icon to reposition."
 L["Unlocked"] = "Unlocked"
