@@ -26,7 +26,7 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 28, 4, 34, 16
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H, ACT_H = 26, 30, 28, 4, 34, 16, 24
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -311,6 +311,9 @@ local function MakeTab(parent, label)
     tab:SetNormalFontObject("GameFontNormalSmall")
     tab:SetHighlightFontObject("GameFontHighlightSmall")
     tab:SetText(label)
+    tab.fill = tab:CreateTexture(nil, "BACKGROUND")
+    tab.fill:SetPoint("TOPLEFT", 3, -2)
+    tab.fill:SetPoint("BOTTOMRIGHT", -3, 0)
     local slices = {}
     for i, cut in ipairs({ { 0, 0.15625, 20 }, { 0.15625, 0.84375, 0 }, { 0.84375, 1, 20 } }) do
         local t = tab:CreateTexture(nil, "BORDER")
@@ -348,6 +351,13 @@ local function MakeTab(parent, label)
     tab:SetLabel(label)
     function tab:SetSelected(on)
         for _, t in ipairs(self.slices) do t:SetTexture(on and ACTIVE_TAB or INACTIVE_TAB) end
+        -- Selected matches the pane exactly so the two read as one surface; unselected
+        -- sits a shade darker, the way a tab behind the front one should.
+        if on then
+            self.fill:SetColorTexture(0.09, 0.085, 0.07, 1)
+        else
+            self.fill:SetColorTexture(0.05, 0.048, 0.04, 1)
+        end
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
         -- Blizzard's art draws the selected tab two pixels taller; matching it is what
         -- makes the strip read as tabs rather than buttons.
@@ -520,7 +530,7 @@ local methods = {}
 function methods:OnAcquire()
     self.addon = Addon()
     self.disabled = false
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10)
+    self:SetHeight(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 10)
     self:SetWidth(560)
     self:Refresh()
 end
@@ -589,7 +599,7 @@ function methods:Refresh()
     local free = math.max(200, (self.frame:GetWidth() or 560) - ROW_FIXED)
     local nameW = math.floor(free * 0.46)
     local condW = free - nameW
-    local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
+    local y = -(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 4)
     local detailShown = false
 
     for i = 1, #rows do
@@ -653,7 +663,7 @@ function methods:Refresh()
     end
 
     -- +10: the pane's own top and bottom border insets.
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
+    self:SetHeight(TAB_H + ACT_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
         + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
 end
 
@@ -688,6 +698,9 @@ local function Constructor()
     -- the rows must still draw on top of the pane.
     body:SetFrameLevel(frame:GetFrameLevel() + 2)
     content:SetFrameLevel(body:GetFrameLevel() + 1)
+    -- Anything that draws ON the pane needs its level too; only the tabs go behind.
+    local function onPane(f) f:SetFrameLevel(body:GetFrameLevel() + 1) end
+    widget.OnPane = onPane
     widget.content = content
 
     -- Tab strip: the source the list is showing. Switching tabs PREVIEWS a source;
@@ -723,14 +736,16 @@ local function Constructor()
         PriorityList.view = nil
         widget:Refresh()
     end, 116)
+    onPane(widget.useThis)
     widget.useThis:SetHeight(20)
-    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -3)
+    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -(TAB_H + 2))
 
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         PriorityList.ClearList(widget.addon)
         PriorityList.view = nil
         widget:Refresh()
     end, 92)
+    onPane(widget.clear)
     widget.clear:SetHeight(20)
     widget.clear:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
 
@@ -738,8 +753,8 @@ local function Constructor()
     -- resizes with the panel cannot drift away from its heading.
     local head = CreateFrame("Frame", nil, frame)
     head:SetHeight(HEAD_H)
-    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + 4))
-    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + 4))
+    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + ACT_H + 4))
+    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + ACT_H + 4))
     local function headLabel(text, justify)
         local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         fs:SetText(text)
@@ -759,13 +774,14 @@ local function Constructor()
     head.rule:SetPoint("BOTTOMLEFT", 4, 0)
     head.rule:SetPoint("BOTTOMRIGHT", -4, 0)
     head.rule:SetColorTexture(1, 1, 1, 0.08)
+    onPane(head)
     widget.head = head
 
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
     pin:SetHeight(PIN_H - GAP)
-    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + HEAD_H + 4))
-    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + HEAD_H + 4))
+    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + ACT_H + HEAD_H + 4))
+    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + ACT_H + HEAD_H + 4))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
     pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -784,10 +800,11 @@ local function Constructor()
     pin.note:SetPoint("RIGHT", -6, 0)
     pin.note:SetJustifyH("LEFT")
     pin.note:SetWordWrap(false)
+    onPane(pin)
     widget.pin = pin
 
     widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
+    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + ACT_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
 
