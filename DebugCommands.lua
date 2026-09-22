@@ -7826,18 +7826,25 @@ function DebugCommands.ProbeSession(addon, arg)
     -- side, because the failure mode differs: denied outright, handed back secret, or
     -- returned but unusable. Out-of-combat lines are the control; the contrast is the
     -- measurement, so a route that reads the same in both is the one that survived.
-    local auraRouteCandidates, auraRouteLast = nil, nil
+    local auraRouteCandidates, auraRouteLast
     local function auraRouteSample()
         if not (C_UnitAuras and UnitExists("target")) then return end
         local BAPI = LibStub("JustAC-BlizzardAPI", true)
-        if not auraRouteCandidates then
-            -- The spells whose conditions actually ask about a dot, resolved once.
-            auraRouteCandidates = {}
+        -- Whatever the tracker believes is on the target RIGHT NOW. Asking by a spell
+        -- that is not applied answers nil whatever the restrictions are, which measures
+        -- nothing; these are the ids most likely to actually be there.
+        auraRouteCandidates = {}
+        local DT = LibStub("JustAC-DotTracker", true)
+        for _, e in ipairs((DT and DT.DebugState and DT.DebugState().entries) or {}) do
+            auraRouteCandidates[#auraRouteCandidates + 1] = e.spellID
+        end
+        if #auraRouteCandidates == 0 then
+            -- Nothing tracked: fall back to the spells whose conditions ask about a dot.
             local RI = LibStub("JustAC-RotationImport", true)
             for _, ctx in ipairs({ "st", "aoe" }) do
                 for _, e in ipairs((RI and RI.GetRotationGated and RI.GetRotationGated(ctx)) or {}) do
                     for _, g in ipairs(e.gates or {}) do
-                        if g.t == "dot" and #auraRouteCandidates < 3 then
+                        if g.t == "dot" and #auraRouteCandidates < 4 then
                             auraRouteCandidates[#auraRouteCandidates + 1] = g.id or e.id
                         end
                     end
