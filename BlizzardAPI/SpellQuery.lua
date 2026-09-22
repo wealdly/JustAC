@@ -144,9 +144,8 @@ local function QueryNextCastSpell(checkForVisibleButton)
         -- base Moonfire wearing the primary glow while Blizzard's button showed the
         -- watch). Detected by the shared timer icon 134377 - the same locale-safe
         -- check the renderer uses; file ids are identical across locales.
-        if IsPassiveID(result) then
-            local info = BlizzardAPI.GetCachedSpellInfo(result)
-            if not (info and info.iconID == 134377) then return nil end
+        if IsPassiveID(result) and not BlizzardAPI.IsWaitPlaceholder(result) then
+            return nil
         end
         return result
     end
@@ -220,6 +219,16 @@ local function WithAdditions(list)
         end
     end
     return out or list
+end
+
+--- The engine's own "wait" answer: a passive-flagged spell wearing the shared timer
+--- icon. It is a DELIBERATE display state, not a real recommendation, and it is the
+--- second shape a wait arrives in - the first being no answer at all. Three places
+--- tested the icon id by hand; the id is locale-safe but the test is worth naming.
+function BlizzardAPI.IsWaitPlaceholder(spellID)
+    if not spellID then return false end
+    local info = BlizzardAPI.GetCachedSpellInfo(spellID)
+    return (info and info.iconID == 134377) or false
 end
 
 function BlizzardAPI.GetRotationSpells()

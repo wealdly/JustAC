@@ -234,20 +234,9 @@ end
 
 --- How many abilities a source holds, without the per-row name and icon lookups Rows()
 --- does. Cheap enough to ask for all three sources on every refresh.
-function PriorityList.CountFor(addon, source)
-    local profile = addon and addon:GetProfile()
-    if not (profile and SpecKey()) then return 0 end
-    if source == "custom" then
-        local cq = CustomQueueFor(profile)
-        return cq and cq.spells and #cq.spells or 0
-    end
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
-    local n = 0
-    for _, id in ipairs(pool or {}) do
-        if not PriorityList.IsUpkeep(id) then n = n + 1 end
-    end
-    return n
+function PriorityList.CountFor(addon)
+    local cq = CustomQueueFor(addon and addon:GetProfile())
+    return cq and cq.spells and #cq.spells or 0
 end
 
 --- Where an ability sits in the GAME's own order, by id. nil when the game does not list
@@ -306,7 +295,6 @@ function PriorityList.Rows(addon, source)
         end
         return out
     end
-    PriorityList.PoolFor = poolFor
 
     local ids = {}
     if source == "custom" then
@@ -329,12 +317,14 @@ function PriorityList.Rows(addon, source)
     end
     -- Theorycraft rank, counted over the rows on screen for the same reason.
     local rankOf = PositionsIn(ids, "simc")
-    local shownKnown = {}
+    local shownKnown, shownAt = {}, {}
     for _, id in ipairs(ids) do
-        if not known or known[id] then shownKnown[#shownKnown + 1] = id end
+        if not known or known[id] then
+            shownKnown[#shownKnown + 1] = id
+            if shownAt[id] == nil then shownAt[id] = #shownKnown end
+        end
     end
     local base = known and PositionsIn(shownKnown, "blizzard") or nil
-    local haveBase = base ~= nil
     for i = 1, #ids do
         local id = ids[i]
         -- DisplayInfo owns the awkward cases: items arrive as NEGATIVE ids, and a
@@ -342,9 +332,10 @@ function PriorityList.Rows(addon, source)
         local name, icon
         if SpellSearch and SpellSearch.DisplayInfo then name, icon = SpellSearch.DisplayInfo(id) end
         local rec = (id > 0) and RI and RI.GetEntry and RI.GetEntry(id, "st") or nil
+        local upkeep = PriorityList.IsUpkeep(id)
         local move
-        if haveBase then
-            move = base[id] and (base[id] - PriorityList._shownIndex(shownKnown, id, i)) or "new"
+        if base then
+            move = base[id] and (base[id] - shownAt[id]) or "new"
         elseif rec and rec.rank then
             move = i - rankOf[id]   -- same subtraction, same sign, read from the baseline
         end
@@ -353,25 +344,17 @@ function PriorityList.Rows(addon, source)
             name = name or tostring(id),
             icon = icon or 134400,
             rank = (rec and rec.rank) and rankOf[id] or nil,
-            upkeep = PriorityList.IsUpkeep(id),
+            upkeep = upkeep,
             -- vs the game's own order: how far this source moves it, or that the game
             -- does not offer it at all. On the game's own tab, how far theorycraft would.
             move = move,
-            cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
+            cond = (id > 0) and (upkeep and L["Priority Cond Upkeep"]
                 or PriorityList.Condition(rec)) or nil,
         }
     end
     return out
 end
 
---- Position of `id` among the rows that the game also lists, so movement compares like
---- with like even when the source adds abilities the game has never heard of.
-function PriorityList._shownIndex(shownKnown, id, fallback)
-    for i = 1, #shownKnown do
-        if shownKnown[i] == id then return i end
-    end
-    return fallback
-end
 
 --- Plain words for ONE gate, or nil when there are none to give. Recursive, because a
 --- group phrases its members exactly as the list does and joins them with or / and.
@@ -453,12 +436,19 @@ GatePhrase = function(g)
         piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
     elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
         piece = ResourcePhrase(g)
-    elseif g.t == "execute" and g.pct then
-        piece = string.format(L["Priority Cond Execute"], g.pct)
-    elseif g.t == "health" and g.pct then
-        piece = string.format(L["Priority Cond Health"], g.pct)
-    elseif g.t == "stack" and g.n then
-        piece = string.format(L["Priority Cond Stacks"], g.n)
+    elseif (g.t == "execute" or g.t == "health") and g.pct then
+        -- Keyed off the OPERATOR, like the resource phrasing above. Assuming the
+        -- common direction printed one condition as its own opposite: the data holds
+        -- an execute gate that wants the target ABOVE its threshold.
+        local over = (g.op == ">" or g.op == ">=")
+        local key = g.t == "health"
+            and (over and "Priority Cond Health Over" or "Priority Cond Health")
+            or (over and "Priority Cond Execute Over" or "Priority Cond Execute")
+        piece = string.format(L[key], g.pct)
+    elseif g.t == "stack" and g.n and RESOURCE_OPS[g.op] then
+        -- Same six phrasings the resources use, with a different noun.
+        piece = string.format(L["Priority " .. RESOURCE_OPS[g.op]], g.n,
+            L["Priority Cond Stacks"])
     elseif g.t == "dot" then
         piece = L["Priority Cond Dot"]
     end
@@ -609,26 +599,20 @@ end
 --------------------------------------------------------------------------------
 -- The widget
 --------------------------------------------------------------------------------
---- A tooltip on a frame that already has its own OnEnter. Ace's widgets use theirs for
---- the highlight, so replacing it would trade one for the other.
-local function TooltipHook(frame, title, body)
-    if not frame then return end
-    frame:HookScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(title, 1, 1, 1)
-        GameTooltip:AddLine(body, 0.82, 0.78, 0.70, true)
-        GameTooltip:Show()
-    end)
-    frame:HookScript("OnLeave", function() GameTooltip:Hide() end)
-end
 
-local function Tooltip(frame, text)
-    frame:SetScript("OnEnter", function(self)
+--- `body` adds a second line. `hook` is for a frame that already has an OnEnter of its
+--- own - Ace's widgets use theirs for the highlight, so replacing it would trade one
+--- cue for the other.
+local function Tooltip(frame, text, body, hook)
+    if not frame then return end
+    local bind = hook and frame.HookScript or frame.SetScript
+    bind(frame, "OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(text, 1, 1, 1, 1, true)
+        if body then GameTooltip:AddLine(body, 0.82, 0.78, 0.70, true) end
         GameTooltip:Show()
     end)
-    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    bind(frame, "OnLeave", function() GameTooltip:Hide() end)
 end
 
 
@@ -717,7 +701,7 @@ local function BuildDetail(widget, parent)
     local function checkbox(label, desc, field, defaultOn)
         local cb = AceGUI:Create("CheckBox")
         cb:SetLabel(label)
-        TooltipHook(cb.frame, label, desc)
+        Tooltip(cb.frame, label, desc, true)
         -- 24 for the box itself, then whatever the words actually measure.
         local textW = (cb.text and cb.text:GetStringWidth()) or 120
         cb:SetWidth(24 + textW + 8)
@@ -755,7 +739,7 @@ local function BuildDetail(widget, parent)
     -- which leaves the control itself sitting low against two checkboxes that are centred.
     -- With no label the frame is 26 and centres properly.
     d.hold:SetLabel("")
-    TooltipHook(d.hold.frame, L["Hold Until"], L["Hold Until desc"])
+    Tooltip(d.hold.frame, L["Hold Until"], L["Hold Until desc"], true)
     -- The label lives INSIDE the closed control, on its left, with the value on the
     -- right where Ace already puts it. Nothing outside the control to collide with, and
     -- the pair reads as one thing rather than a caption and a box.
@@ -953,7 +937,6 @@ local function AcquireRow(self, index)
     row.name:SetWordWrap(false)   -- clipped with an ellipsis; the tooltip has it in full
     row.name:SetPoint("LEFT", row.slot, "RIGHT", 7, 0)
     row.name:SetJustifyH("LEFT")
-    row.name:SetWordWrap(false)
     row.name:SetTextColor(unpack(INK))
 
     row.cond = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -1064,7 +1047,7 @@ function methods:Refresh()
     for key, tab in pairs(self.tabs) do
         tab:SetShown(key ~= "simc" or PriorityList.HasSimc())
         tab:SetLabel(key == "custom"
-            and string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon, key))
+            and string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon))
             or tab.baseLabel)
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
@@ -1120,7 +1103,8 @@ function methods:Refresh()
             row.rank:SetText(data.rank and ("#" .. data.rank) or "")
             row.rank:SetTextColor(unpack(BLUE))
         end
-        for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
+        row.edit:SetEnabled(editable)
+        row.remove:SetEnabled(editable)
         row.canDrag = editable
         row:Show()
         y = y - ROW_H
@@ -1273,9 +1257,6 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        OnHide = function(self)
-            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
-        end,
         OnAccept = function(self)
             local d = self.data
             if d and d.w then PriorityList.StartFrom(d.w.addon, d.src) end
@@ -1295,9 +1276,6 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        OnHide = function(self)
-            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
-        end,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1369,8 +1347,7 @@ local function Constructor()
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetSize(16, 16)
     pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
-    pin.icon:SetShown(HasAtlas(BUTTON_ATLAS))
-    if HasAtlas(BUTTON_ATLAS) then pin.icon:SetAtlas(BUTTON_ATLAS) end
+    if HasAtlas(BUTTON_ATLAS) then pin.icon:SetAtlas(BUTTON_ATLAS) else pin.icon:Hide() end
     pin.frame = pin:CreateTexture(nil, "ARTWORK", nil, 1)
     pin.frame:SetSize(18, 18)
     pin.frame:SetPoint("CENTER", pin.icon, "CENTER")

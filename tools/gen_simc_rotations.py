@@ -172,33 +172,30 @@ def parse_apl(text):
 
 
 # --- gate classification -----------------------------------------------------
-def split_and(expr):
-    atoms, depth, cur = [], 0, ""
+def _split_top(expr, sep):
+    """Split on `sep`, but only outside parentheses."""
+    parts, depth, cur = [], 0, ""
     for ch in expr:
-        if ch == "(":
-            depth += 1; cur += ch
-        elif ch == ")":
-            depth -= 1; cur += ch
-        elif ch == "&" and depth == 0:
-            atoms.append(cur); cur = ""
+        depth += (ch == "(") - (ch == ")")
+        if ch == sep and depth == 0:
+            parts.append(cur); cur = ""
         else:
             cur += ch
-    if cur:
-        atoms.append(cur)
-    return [a.strip() for a in atoms if a.strip()]
+    parts.append(cur)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def split_and(expr):
+    return _split_top(expr, "&")
+
+
+def split_or(expr):
+    """Top-level alternatives. `&` binds tighter than `|`, so this splits first."""
+    return _split_top(expr, "|")
 
 
 def has_top_level_or(expr):
-    """True when `expr` has a `|` outside any parentheses."""
-    depth = 0
-    for ch in expr:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        elif ch == "|" and depth == 0:
-            return True
-    return False
+    return len(split_or(expr)) > 1
 
 
 # Discrete (countable) class resources only - see classify_atom for why continuous ones stay
@@ -504,19 +501,6 @@ def _strip_parens(expr):
                 return expr
         expr = expr[1:-1].strip()
     return expr
-
-
-def split_or(expr):
-    """Top-level alternatives. `&` binds tighter than `|`, so this splits first."""
-    parts, depth, cur = [], 0, ""
-    for ch in expr:
-        depth += (ch == "(") - (ch == ")")
-        if ch == "|" and depth == 0:
-            parts.append(cur); cur = ""
-        else:
-            cur += ch
-    parts.append(cur)
-    return [p.strip() for p in parts if p.strip()]
 
 
 def count_fails(expr, k, expanded=False):

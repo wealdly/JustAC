@@ -3233,9 +3233,6 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        OnHide = function(self)
-            if UIFrameFactory then UIFrameFactory.RestorePopupStrata(self) end
-        end,
     }
 
     if UIFrameFactory then

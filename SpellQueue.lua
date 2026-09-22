@@ -1139,7 +1139,7 @@ SpellQueue._GateVerdict = GateVerdict          -- diagnostics (/jac inspect simc
 --- The STRICT reading of a gate list, for leading rather than sinking: true only when every
 --- gate is positively confirmed to hold. The blocking reading fails OPEN (unknown does not
 --- block), which is right for sinking an entry and wrong for seating one in slot 1.
---- Safe Lead evidence only; not on the build path.
+--- Reached FROM the build path when the gap-filling lead mode is on, so keep it cheap.
 local function GatesConfirmed(gates, resCount, resName, resMax)
     if not gates then return true end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
@@ -1149,7 +1149,6 @@ local function GatesConfirmed(gates, resCount, resName, resMax)
     end
     return true
 end
-SpellQueue._GatesConfirmed = GatesConfirmed
 
 --- Every evaluable SimC gate in ONE call. Any single gate KNOWN not to hold blocks; one we
 --- cannot read never does.
@@ -1251,7 +1250,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- Arm the hoisted rankOf for this build (see its definition above).
     rankSimcMode, rankContextOrder = simcMode, contextOrder
     -- See leadBarred below. SimC ordering only: "delegated" is a property of that data.
-    local leadsMode = b.myListLeads and simcMode
+    local leadsMode = (b.leadMode == "mylist") and simcMode
     local pickID = leadsMode and b.primarySpellID or nil
     local pickDisplay = pickID and (BlizzardAPI.GetDisplaySpellID(pickID) or pickID) or nil
     local anyTimeable = false   -- leads mode: did anything the addon can time make the front?
@@ -1779,15 +1778,22 @@ local safeLeadID
 function SpellQueue._ApplySafeLead(b)
     safeLeadID = nil
     if b.leadMode ~= "safe" then return end
-    if lastSpellIDs[1] ~= SpellQueue.WAIT_SENTINEL or #lastSpellIDs < 2 then return end
+    -- A wait reaches slot 1 in TWO shapes: our sentinel, when the engine answered
+    -- nothing at all, and the engine's own passive placeholder, which _StagePrimary
+    -- passes through as an ordinary pick so the renderer can draw its watch icon.
+    -- Recognising only the first made this fire far more rarely than intended.
+    local slot1 = lastSpellIDs[1]
+    local waiting = slot1 == SpellQueue.WAIT_SENTINEL
+        or (BlizzardAPI.IsWaitPlaceholder and BlizzardAPI.IsWaitPlaceholder(slot1))
+    if not waiting or #lastSpellIDs < 2 then return end
     local id = SpellQueue.SafeLeadCandidate()
-    if not id or id == lastSpellIDs[1] then return end
+    if not id then return end
     for i = #lastSpellIDs, 1, -1 do
         if lastSpellIDs[i] == id then table.remove(lastSpellIDs, i) end
     end
     table.insert(lastSpellIDs, 1, id)
     safeLeadID = id
-    displacedPrimary[SpellQueue.WAIT_SENTINEL] = true
+    displacedPrimary[slot1] = true
 end
 
 --- Did the safe-lead swap put this spell into slot 1 on the last build? Diagnostics only
@@ -1994,7 +2000,7 @@ function SpellQueue._StageGapCloser(b)
         -- target is out of range, which is exactly when the slot needs filling.
         pickIsGapCloser = (primarySpellID
                 and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID)) or false
-        pos1IsGapCloser = (not b.myListLeads and pickIsGapCloser)
+        pos1IsGapCloser = (not (b.leadMode == "mylist") and pickIsGapCloser)
             or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
     end
 
@@ -2005,7 +2011,7 @@ function SpellQueue._StageGapCloser(b)
         -- that put Shadowstep (a cooldown) over the Shadowstrike the game was picking from
         -- stealth (free). Only when we would inject anyway - so a closer the game picks for
         -- its damage, in melee, never wears the gap-closer glow.
-        if gcSpell and b.myListLeads and pickIsGapCloser
+        if gcSpell and (b.leadMode == "mylist") and pickIsGapCloser
            and not SpellQueue.IsSpellBlacklisted(primarySpellID, b.blacklist, true) then
             gcSpell, gcBase = primarySpellID, nil
         end
@@ -2080,7 +2086,6 @@ function SpellQueue._StagePrimary(b)
     local leadMode = SpellQueue.LeadMode(profile)
     local myListLeads = leadMode == "mylist"
     b.leadMode = leadMode
-    b.myListLeads = myListLeads
 
     -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on
     -- the current target (outside its refresh window), which means it wants the DoT
@@ -2284,52 +2289,79 @@ end
 --- Every class also needs: not delegated, every gate strictly confirmed, ready, castable,
 --- affordable, in reach, on the GCD, not blacklisted, not held.
 --- @return number|nil id, number|nil class
+local function CostsPrimary(id, powerType)
+    if not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, id)
+    if not ok or type(costs) ~= "table" then return false end
+    for i = 1, #costs do
+        local c = costs[i]
+        if c and c.type == powerType and type(c.cost) == "number"
+           and not (issecretvalue and issecretvalue(c.cost)) and c.cost > 0 then return true end
+    end
+    return false
+end
+
 function SpellQueue.SafeLeadCandidate()
     local queue = lastSpellIDs
     if type(queue) ~= "table" or not RotationImport or not RotationImport.GetEntry then return nil end
     local pick = lastCtx.pickID
-    if pick and queue[1] == SpellQueue.WAIT_SENTINEL then pick = nil end
+    if pick and (queue[1] == SpellQueue.WAIT_SENTINEL
+       or (BlizzardAPI.IsWaitPlaceholder and BlizzardAPI.IsWaitPlaceholder(queue[1]))) then
+        pick = nil
+    end
     local isWait = not pick
     local resCount, resName, resMax
     if BlizzardAPI.GetClassResourcePoints then
         local c, m, r = BlizzardAPI.GetClassResourcePoints()
         resCount, resName, resMax = c, r, m
     end
-    local primaryPT = UnitPowerType("player")
-    local function costsPrimary(id)
-        if not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
-        local ok, costs = pcall(C_Spell.GetSpellPowerCost, id)
-        if not ok or type(costs) ~= "table" then return false end
-        for i = 1, #costs do
-            local c = costs[i]
-            if c and c.type == primaryPT and type(c.cost) == "number"
-               and not (issecretvalue and issecretvalue(c.cost)) and c.cost > 0 then return true end
-        end
-        return false
+    -- Only classes 3 and 4 read any of this, and both are barred over a wait. The build
+    -- path only ever asks over a wait, so for a player on this mode these three reads -
+    -- one of them a frame walk - were paid on every build and never looked at.
+    local primaryPT, powerCapped, pickSpends
+    if not isWait then
+        primaryPT = UnitPowerType("player")
+        powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
+        pickSpends = CostsPrimary(pick, primaryPT)
     end
-    local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
-    local pickSpends = pick and costsPrimary(pick)
     for i = 2, #queue do
         local id = queue[i]
         if type(id) == "number" and id > 0 and not (issecretvalue and issecretvalue(id)) then
             local rec = RotationImport.GetEntry(id, lastCtx.simcCtx)
                 or RotationImport.GetEntry(BlizzardAPI.ResolveBaseSpellID(id) or id, lastCtx.simcCtx)
-            local _, notEnough = BlizzardAPI.IsSpellUsable(id, true)
-            if not (rec and rec.delegated)
-               and BlizzardAPI.IsSpellReady(id) and not notEnough
-               and not IsUnusableNonResource(id)
-               and BlizzardAPI.AbilityInRange(id) ~= false
-               and not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(id))
-               and not SpellQueue.IsSpellBlacklisted(id)
-               and not HeldByUserHold(id, id, true)
-               and (not rec or GatesConfirmed(rec.gates, resCount, resName, resMax)) then
+            -- Cheapest question first, and they really are ordered by cost: delegated is a
+            -- field read and rejects most of the list; the evidence classes are a hash
+            -- lookup and a charge query; proving the thing castable is nine calls, one of
+            -- them protected. The old order asked the nine before asking whether the
+            -- entry had any evidence at all, which is the one that rules it out.
+            if not (rec and rec.delegated) then
                 local cls
-                if BlizzardAPI.IsInsertedSpell and BlizzardAPI.IsInsertedSpell(id) then cls = 1
-                elseif BlizzardAPI.IsSpellChargeCapped and BlizzardAPI.IsSpellChargeCapped(id) then cls = 2
-                elseif not isWait and powerCapped and costsPrimary(id) and not pickSpends then cls = 3
-                elseif not isWait and rec and HasPositiveBuffGate(rec.gates) then cls = 4
+                if BlizzardAPI.IsInsertedSpell and BlizzardAPI.IsInsertedSpell(id) then
+                    cls = 1
+                elseif BlizzardAPI.IsSpellChargeCapped and BlizzardAPI.IsSpellChargeCapped(id) then
+                    cls = 2
+                elseif not isWait and powerCapped and CostsPrimary(id, primaryPT)
+                   and not pickSpends then
+                    cls = 3
+                elseif not isWait and rec and HasPositiveBuffGate(rec.gates) then
+                    cls = 4
                 end
-                if cls then return id, cls end
+                -- Guard THEN call: `local a, b = X and X.fn()` truncates to ONE value, so
+                -- the second return comes back nil however the call went.
+                local notEnough
+                if cls then
+                    local _, ne = BlizzardAPI.IsSpellUsable(id, true)
+                    notEnough = ne
+                end
+                if cls and BlizzardAPI.IsSpellReady(id) and not notEnough
+                   and not IsUnusableNonResource(id)
+                   and BlizzardAPI.AbilityInRange(id) ~= false
+                   and not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(id))
+                   and not SpellQueue.IsSpellBlacklisted(id)
+                   and not HeldByUserHold(id, id, true)
+                   and (not rec or GatesConfirmed(rec.gates, resCount, resName, resMax)) then
+                    return id, cls
+                end
             end
         end
     end
