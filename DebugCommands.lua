@@ -7819,9 +7819,107 @@ function DebugCommands.ProbeSession(addon, arg)
         end
     end
 
+    -- Can we hold an aura INSTANCE on the target in combat? Everything a dot condition
+    -- needs hangs on that one id: the duration object it unlocks is not itself flagged
+    -- secret-when-restricted, so if an id survives, "below 30% remaining" - which is what
+    -- "needs refreshing" means - becomes answerable. Three routes are measured side by
+    -- side, because the failure mode differs: denied outright, handed back secret, or
+    -- returned but unusable. Out-of-combat lines are the control; the contrast is the
+    -- measurement, so a route that reads the same in both is the one that survived.
+    local auraRouteCandidates, auraRouteLast = nil, nil
+    local function auraRouteSample()
+        if not (C_UnitAuras and UnitExists("target")) then return end
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        if not auraRouteCandidates then
+            -- The spells whose conditions actually ask about a dot, resolved once.
+            auraRouteCandidates = {}
+            local RI = LibStub("JustAC-RotationImport", true)
+            for _, ctx in ipairs({ "st", "aoe" }) do
+                for _, e in ipairs((RI and RI.GetRotationGated and RI.GetRotationGated(ctx)) or {}) do
+                    for _, g in ipairs(e.gates or {}) do
+                        if g.t == "dot" and #auraRouteCandidates < 3 then
+                            auraRouteCandidates[#auraRouteCandidates + 1] = g.id or e.id
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Route A: ask for every harmful instance we applied.
+        local firstID, a
+        local okIds, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, "target", "HARMFUL|PLAYER")
+        if not okIds then
+            a = "denied"
+        elseif ids == nil then
+            a = "nil"
+        elseif issecretvalue and issecretvalue(ids) then
+            a = "secret"
+        else
+            local okLen, n = pcall(function() return #ids end)
+            a = okLen and ("n=" .. tostring(n)) or "len-threw"
+            if okLen and n > 0 then
+                local okIter = pcall(function()
+                    for i, v in ipairs(ids) do
+                        if i == 1 then firstID = v end
+                    end
+                end)
+                if not okIter then
+                    a = a .. ",iter-threw"
+                elseif issecretvalue and issecretvalue(firstID) then
+                    a = a .. ",id-secret"
+                    firstID = nil
+                end
+            end
+        end
+
+        -- Route B: ask by the spell id of a dot this spec actually applies.
+        local b, bID = "-", nil
+        for _, sid in ipairs(auraRouteCandidates) do
+            local okB, data = pcall(C_UnitAuras.GetUnitAuraBySpellID, "target", sid)
+            if not okB then
+                b = "denied"
+            elseif data == nil then
+                b = "nil"
+            elseif issecretvalue and issecretvalue(data) then
+                b = "secret"
+            else
+                local okF, inst = pcall(function() return data.auraInstanceID end)
+                if not okF then
+                    b = "field-threw"
+                elseif issecretvalue and issecretvalue(inst) then
+                    b = "id-secret"
+                else
+                    b, bID = "id=" .. tostring(inst), inst
+                    break
+                end
+            end
+        end
+
+        -- Route C: whichever id we hold, can it answer "below 30% left"?
+        local inst = firstID or bID
+        local c = "no-id"
+        if inst and BAPI and BAPI.GetAuraDurationObject then
+            local dur = BAPI.GetAuraDurationObject("target", inst)
+            if not dur then
+                c = "no-duration"
+            else
+                local below = BAPI.IsDurationBelowPercent and BAPI.IsDurationBelowPercent(dur, 30)
+                c = "below30=" .. tostring(below)
+            end
+        end
+
+        local line = string.format("AURAINST byList=%s bySpell=%s duration=%s combat=%s",
+            a, b, c, tostring(UnitAffectingCombat("player")))
+        if line ~= auraRouteLast then
+            auraRouteLast = line
+            ProbeLogEmit(string.format("%.1f %s", GetTime(), line))
+        end
+    end
+
     DebugCommands._probeTicker = C_Timer.NewTicker(1.0, function()
         pcall(edgeSample)
         pcall(dotSample)
+        pcall(auraRouteSample)
     end)
 
     ProbeLogEmit(string.format("========== AUDIT SESSION ARMED %s (build %s) ==========",
@@ -7835,6 +7933,7 @@ function DebugCommands.ProbeSession(addon, arg)
     addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
     addon:Print("|cff888888  For the DoT leg: keep several bleeds rolling on one target, refresh them early,|r")
     addon:Print("|cff888888  and swap targets at least once so the tracker has to start over.|r")
+    addon:Print("|cff888888  Apply a bleed OUT of combat too - the out-of-combat line is the control.|r")
     addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
 end
 

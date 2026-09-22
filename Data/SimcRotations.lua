@@ -7,10 +7,13 @@
 -- Orderings and conditions derive from SimulationCraft (GPL-3.0,
 -- https://github.com/simulationcraft/simc); the pinned source APLs live in
 -- tools/simc-apl/ as the corresponding source. Each entry keeps the SECRET-SAFE
--- gates JustAC can evaluate in 12.0 combat (cd / dot / proc-or-buff-window /
--- execute). `delegated` marks a step whose SimC condition also needs a value we
--- cannot read (resources, aura duration/stacks), so it falls back to priority
--- order and Blizzard's live pick. Used to REFINE the AC fixed queue, not replace it.
+-- gates JustAC can evaluate in combat: cooldown readiness, buff windows, aura stack
+-- counts, stealth, target and player health thresholds, and both kinds of resource.
+-- `any` / `all` gates hold nested members, so a bracketed or alternative condition
+-- survives instead of being given up on. `delegated` marks a step whose condition
+-- also needs something we cannot read - a dot's remaining time above all - so it
+-- falls back to priority order and Blizzard's live pick. Used to REFINE the AC fixed
+-- queue, not replace it.
 
 local RotationImport = LibStub("JustAC-RotationImport", true)
 if not RotationImport or not RotationImport.RegisterGated then return end

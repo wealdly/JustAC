@@ -7,8 +7,8 @@
 # through an `any` or an `all`. That half is worth failing a commit over, so it runs here
 # rather than only via /jac inspect. The leaves stay out of scope - they read the live game
 # and cannot be faked honestly - so the cases below use the two leaves that need nothing:
-# a stealth gate (one stubbed global) and a `cd` gate, which has no evaluator and is the
-# canonical unknown.
+# a stealth gate (one stubbed global) and a dot gate, the one type the queue deliberately
+# cannot answer.
 #
 # Run: python tools/test_gate_groups.py
 
@@ -46,6 +46,13 @@ def extract(name, text):
 # Gate types the queue deliberately has no evaluator for. Anything else appearing in the
 # generated data without a branch in GateVerdict is a gate that silently does nothing -
 # which is how a cooldown condition sat inert for as long as it did.
+#
+# `dot` is here for a measured reason, not an unfinished one. Answering it needs a live
+# aura instance on the target, and 12.1.0 closed every route to one in combat: the aura
+# update payload lists are secret, the instance-id lookup requires unit aura access that
+# is denied, and handing a widget to the aura container marks it with secret aspects so
+# nothing can be read back off it. Session probe, 2026-09-22: zero confirmed instances in
+# 31 samples across four bleeds. Do not re-litigate without an API change.
 UNEVALUATED = {"dot"}
 
 
@@ -67,7 +74,7 @@ def main():
 
     ON = '{t="stealth"}'            # holds only while stealthed
     OFF = '{t="stealth",neg=true}'  # holds only while NOT stealthed
-    UNK = '{t="cd"}'                # no evaluator: the canonical unknown
+    UNK = '{t="dot",id=1}'          # no evaluator at all: the canonical unknown
     cases = [
         # stealthed, gate, expected
         (True,  'any', [ON, UNK],   True,  "one member holding settles an `any`"),
