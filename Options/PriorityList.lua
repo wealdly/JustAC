@@ -1215,7 +1215,8 @@ local function Constructor()
     pin.lock = pin:CreateTexture(nil, "OVERLAY")
     pin.lock:SetSize(9, 11)
     pin.lock:SetTexture(LOCK_TEXTURE)
-    pin.lock:SetPoint("BOTTOMLEFT", pin.icon, "BOTTOMLEFT", -3, -2)
+    -- Top right: the ring the assist paints around the icon covers the other corners.
+    pin.lock:SetPoint("TOPRIGHT", pin.icon, "TOPRIGHT", 3, 2)
     -- The ring the assist paints ON an action button, over the icon, as in game.
     pin.ring = pin:CreateTexture(nil, "OVERLAY")
     pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
