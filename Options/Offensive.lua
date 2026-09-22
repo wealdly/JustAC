@@ -20,8 +20,10 @@ local function queueContentGroup(addon)
     return {
         type = "group",
         inline = true,
+        -- Below the priority list: the list is what the tab is for, and these are
+        -- settings you touch once.
         name = L["Queue Content"],
-        order = 0.1,
+        order = 30,
         args = {
             includeHiddenAbilities = W.toggle(addon, "includeHiddenAbilities", {
                 name = L["Include All Available Abilities"], desc = L["Include All Available Abilities desc"],
@@ -102,7 +104,7 @@ local function burstTriggerGroup(addon)
         type = "group",
         inline = true,
         name = L["Burst Triggers"],
-        order = 0.2,
+        order = 40,
         args = {
             info = {
                 type = "description",
