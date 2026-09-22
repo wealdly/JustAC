@@ -1943,7 +1943,7 @@ function SpellQueue._StageResolveSource(b)
                     -- Hold Until dials apply ONLY while the custom queue is the rotation
                     -- source; a stale key must never demote a spell with no live control
                     -- behind it. Both places that set them - the custom-queue rows and the
-                    -- Ability Overrides card - grey out under the same condition.
+                    -- Overrides card - grey out under the same condition.
                     -- (alwaysShow needs no such guard: it only ever adds visibility, so a
                     -- stale one is harmless.)
                     if useCustom then

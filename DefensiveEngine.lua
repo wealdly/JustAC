@@ -71,7 +71,7 @@ local function PushEntry(results, spellID, isItem, isProcced, unusable, noResour
     e.spellID, e.isItem, e.isProcced = spellID, isItem, isProcced
     e.unusable, e.noResources = unusable, noResources
     e.precombat, e.topoff = precombat, topoff
-    e.waiting = nil
+    e.waiting, e.storedID = nil, nil
     results[#results + 1] = e
     return e
 end
@@ -99,6 +99,8 @@ local SPELL_LIST_CONFIG = {
     -- Healer specs only: ResolveDefaults returns nil for every other spec, so
     -- the list is never created and the heal pass below finds nothing.
     { listKey = "groupHealSpells", restoreKey = "groupheal", defaultsKey = "CLASS_GROUPHEAL_DEFAULTS" },
+    -- Party-wide buttons for DPS and tanks (see "group help" in GetDefensiveSpellQueue).
+    { listKey = "groupHelpSpells", restoreKey = "grouphelp", defaultsKey = "CLASS_GROUP_HELP_DEFAULTS" },
 }
 
 --- Per-spell proc-priority pin (profile.defensives.spellSettings[id].procPriority,
@@ -212,10 +214,25 @@ end
 --- urgent count comes back nil there and callers must not treat that as zero.
 --- @return number|nil lowCount, number|nil urgentCount
 local HEAL_LOW_PCT, HEAL_URGENT_PCT = 80, 50
-local function GetAllyLowCounts(healing)
-    if not BlizzardAPI then return nil, nil end
-    local lowPct    = (healing and healing.lowThreshold) or HEAL_LOW_PCT
-    local urgentPct = (healing and healing.urgentThreshold) or HEAL_URGENT_PCT
+local GetAllyLowCounts
+
+--- "The party is taking a beating": two allies below the low line, or one below the
+--- urgent line. Allies only - the player's own health is the personal list's job. The
+--- party read is a workaround the game can block, and an unreadable count is "no": this
+--- only ever ADDS buttons, so failing closed hides an extra, never a defensive.
+local function PartyHurting(healing)
+    if not IsInGroup() then return false end
+    local low, urgent = GetAllyLowCounts(healing)
+    return (low or 0) >= 2 or (urgent or 0) >= 1
+end
+
+-- Per-frame memo. Every rebuild asks this - up to three times (the group-heal pass, the
+-- group-help pass, the emergency slot) for each of the two surfaces - and each miss is
+-- three unit queries per party member on top of the health reads. GetTime is fixed within
+-- a frame, so both surfaces' builds in one update share one answer.
+local allyLowAt, allyLowPct, allyUrgentPct, allyLow, allyUrgent = -1, nil, nil, nil, nil
+
+local function CountAllyLow(lowPct, urgentPct)
     if BlizzardAPI.GetPartyBelowCount then
         local low = BlizzardAPI.GetPartyBelowCount(lowPct)
         if low ~= nil then
@@ -231,6 +248,18 @@ local function GetAllyLowCounts(healing)
         return BlizzardAPI.GetPartyLowCount(), nil
     end
     return nil, nil
+end
+
+GetAllyLowCounts = function(healing)
+    if not BlizzardAPI then return nil, nil end
+    local lowPct    = (healing and healing.lowThreshold) or HEAL_LOW_PCT
+    local urgentPct = (healing and healing.urgentThreshold) or HEAL_URGENT_PCT
+    local now = GetTime()
+    if now ~= allyLowAt or lowPct ~= allyLowPct or urgentPct ~= allyUrgentPct then
+        allyLowAt, allyLowPct, allyUrgentPct = now, lowPct, urgentPct
+        allyLow, allyUrgent = CountAllyLow(lowPct, urgentPct)
+    end
+    return allyLow, allyUrgent
 end
 
 -- Player health resolves to a BAND, not a boolean. Players think about defensives
@@ -402,6 +431,23 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
             and SpellDB.ResolveDefaults(SpellDB.CLASS_GROUPHEAL_DEFAULTS, specKey, playerClass)
         if defaults then
             CopySpellList(cs, "groupHealSpells", defaults)
+        end
+    end
+
+    -- One-time move: party-wide buttons (Rallying Cry, Darkness, Anti-Magic Zone, Zephyr,
+    -- Ancestral Guidance) used to ship in the PERSONAL list, where they sat as fillers and
+    -- showed at full health. They now have a list of their own, seeded above. Take out of the
+    -- personal list exactly the ids the new list carries - nothing the player added - once
+    -- per spec, so putting one back afterwards sticks.
+    if not cs.groupHelpMoved then
+        cs.groupHelpMoved = true
+        local moved = {}
+        for _, id in ipairs(cs.groupHelpSpells or {}) do moved[id] = true end
+        local own = cs.defensiveSpells
+        if own and next(moved) then
+            for i = #own, 1, -1 do
+                if moved[own[i]] then table.remove(own, i) end
+            end
         end
     end
 
@@ -742,6 +788,7 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
     for _, entry in ipairs(spellList) do
         if entry and entry > 0 then
             local m = EvalDefensiveSpell(entry, profile, locActive, now)
+            m.storedID = entry
             local resolvedID = m.spellID
             -- Check both the original and resolved IDs to handle proc injection cross-dedup
             if m.usableGate and not alreadyAdded[entry] and not alreadyAdded[resolvedID]
@@ -817,7 +864,8 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     local spells = GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
     for _, m in ipairs(spells) do
         if not procsOnly or m.isProcced then
-            PushEntry(results, m.spellID, m.isItem, m.isProcced, m.unusable, m.noResources)
+            local e = PushEntry(results, m.spellID, m.isItem, m.isProcced, m.unusable, m.noResources)
+            e.storedID = m.storedID
             alreadyAdded[m.spellID] = true
         end
     end
@@ -944,6 +992,83 @@ local function OrderEmergencyLast(list)
     return emergencyLastBuf
 end
 
+local resolvedPotionID = nil   -- the item the Emergency Potion entry became, this build
+
+-- The player's own "wait until below" for an entry: a percent, "off" (never waits), or nil
+-- for Auto (the list-wide hide-until-low rule). Spells are keyed by the id stored in the
+-- list, then by the form a talent turned them into; items by item id. The Emergency Potion
+-- entry has its own, because the pot it fires changes with what is in your bags - an item's
+-- own setting still wins when that pot has one.
+local function WaitSetting(def, e)
+    if e.isItem then
+        local s = def.itemSettings and def.itemSettings[e.spellID]
+        if s and s.waitBelow ~= nil then return s.waitBelow end
+        if e.spellID == resolvedPotionID then return def.emergencyPotionWaitBelow end
+        return nil
+    end
+    local ss = def.spellSettings
+    if not ss then return nil end
+    local s = e.storedID and ss[e.storedID]
+    if s and s.waitBelow ~= nil then return s.waitBelow end
+    s = ss[e.spellID]
+    return s and s.waitBelow
+end
+
+-- Held-back entries are never removed: they are flagged so the renderer shows them
+-- desaturated with a centered WAIT tag. Procs are exempt (free, highlighted opportunities
+-- placed by the proc pass), and so are pre-combat buffs, which are use-now: a "wait" there
+-- would collide with the click overlay's own hint.
+--- Is the player's health below `pct`? true / false, or nil when it cannot be told.
+--- The same first two sources the health bands use: the threshold gate, then the exact
+--- percent where the client still hands one over. NOT the vignette - it only knows one
+--- line near 35%, and a guess cannot be allowed to hold a defensive back. Health reads
+--- are a secret-value workaround the game can block per context or per patch, so nil is a
+--- normal answer, and every caller must treat it as "show it".
+local function PlayerBelow(pct)
+    local below = BlizzardAPI.IsUnitHealthBelow and BlizzardAPI.IsUnitHealthBelow("player", pct)
+    if below ~= nil then return below end
+    if BlizzardAPI.GetPlayerHealthPercentSafe then
+        local exact, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+        -- `<`, as the gate asks it, so a player exactly on the line reads the same either way.
+        if exact and estimated == false then return exact < pct end
+    end
+    return nil
+end
+
+--- Auto, by kind. Big heals and heal items go live in the low band; an immunity bubble
+--- only in the worst one - solo, a bubble at 45% mostly costs you damage, and the band
+--- already gets there early while hits keep landing. Only where the band can SEE the worst
+--- grade: the screen-vignette fallback never reports it, so there a bubble keeps the old
+--- rule rather than waiting for a band that will not come.
+local function AutoLive(entry, isLow)
+    if not isLow then return false end
+    if not entry.isItem and TierOf(entry.spellID) == 1
+       and (healthBandSource == "gate" or healthBandSource == "percent") then
+        return healthBand <= BAND_PANIC
+    end
+    return true
+end
+
+local function MarkWaiting(def, results, isLow)
+    for _, entry in ipairs(results) do
+        if not entry.isProcced and not entry.precombat then
+            local w = WaitSetting(def, entry)
+            if w == nil then
+                -- Auto: with "hide until low" on, the parked panic buttons wait until the
+                -- band their kind calls for (AutoLive).
+                if def.hideEmergencyUntilLow and IsHoldWorthy(entry.spellID, entry.isItem)
+                   and not AutoLive(entry, isLow) then
+                    entry.waiting = true
+                end
+            elseif type(w) == "number" and PlayerBelow(w) == false then
+                -- FAIL SAFE: waits only on a DEFINITE "not below" (see PlayerBelow).
+                entry.waiting = true
+            end
+            -- "off": never waits.
+        end
+    end
+end
+
 -- Replace the Emergency Potion sentinel (a user-positioned tile in the defensive list)
 -- with the chosen or best owned healing item, as an item entry. Returns the list as-is
 -- when no sentinel is present; otherwise a resolved copy (never mutates the saved list).
@@ -964,6 +1089,7 @@ local function ResolveEmergencyDefensives(list, profile)
     for i = 1, #list do if list[i] == sentinel then hasSentinel = true; break end end
 
     local result
+    resolvedPotionID = nil
     if not hasSentinel then
         result = list
     else
@@ -977,6 +1103,7 @@ local function ResolveEmergencyDefensives(list, profile)
             potID = SpellDB.GetBestHealingItem()
         end
 
+        resolvedPotionID = potID
         wipe(emergencyResolveBuf)
         for i = 1, #list do
             local e = list[i]
@@ -1151,6 +1278,20 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         end
     end
 
+    -- Group help: party-wide buttons for DPS and tanks (Rallying Cry, Darkness, Vampiric
+    -- Embrace). With the party taking a beating they lead, since that is when they matter;
+    -- solo, or with the party fine, they are offered only once YOU are low, and behind your
+    -- own defensives (below). Never out of combat: the ally-low read persists between pulls.
+    local groupHelp = inCombat and DefensiveEngine.GetClassSpellList(addon, "groupHelpSpells")
+    local partyHurting = groupHelp and #groupHelp > 0 and PartyHurting(profile.healing)
+    if partyHurting then
+        AppendUsableSpells(addon, results, groupHelp, maxIcons, alreadyAdded)
+        if #results >= maxIcons then
+            MarkWaiting(profile.defensives, results, isLow)
+            return results, alreadyAdded
+        end
+    end
+
     -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
     local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
     if showAllAvailable or isLow then
@@ -1172,20 +1313,11 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             end
         end
         AppendUsableSpells(addon, results, listToShow, maxIcons, alreadyAdded)
-
-        -- With "hide until low" on and above the threshold, don't remove the parked panic
-        -- buttons - flag them so the renderer shows them desaturated with a centered WAIT
-        -- tag. Procs are exempt (free, highlighted opportunities placed by the proc pass).
-        if not isLow and profile.defensives.hideEmergencyUntilLow then
-            for _, entry in ipairs(results) do
-                -- Pre-combat buffs (food/flask/class buffs) are use-now, not held-back
-                -- emergency buttons: never tag them waiting, or their icon shows a "wait"
-                -- label that collides with the OOC click overlay's "click"/"wait" hint.
-                if not entry.isProcced and not entry.precombat and IsHoldWorthy(entry.spellID, entry.isItem) then
-                    entry.waiting = true
-                end
-            end
+        if groupHelp and isLow and not partyHurting then
+            AppendUsableSpells(addon, results, groupHelp, maxIcons, alreadyAdded)
         end
+
+        MarkWaiting(profile.defensives, results, isLow)
     end
 
     return results, alreadyAdded

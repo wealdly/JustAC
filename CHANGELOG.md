@@ -3,6 +3,29 @@
 
 ## [Unreleased]
 
+## [5.7.0] - 2026-09-22
+
+### Improved
+- **Rebuilt priority list.** One line per ability, showing what it waits for, with a fixed top row making it clear that the first slot belongs to the game. Tabs show the game's own order, the theorycraft order and your own; looking never changes the queue. Use This Order switches the queue to the one you are viewing, and a green dot marks the one it follows. Each row says how far the other order would move that ability, and its tooltip says when the ability is used, including which cooldown it waits for.
+- **Editing your own list.** Your list starts from one of the others: Export copies the order you are viewing, and Merge adds anything that order has and yours does not, leaving your order alone. Drag rows into the order you want, open an ability's settings right under it, and undo the last ten changes.
+- **One setting decides who leads the queue:** the game (the default), the queue filling the gaps when the game has nothing to recommend, or your own list replacing the game's pick. The two that are not the game are marked as such.
+- The defensive, pet, gap-closer and burst-trigger lists use the same compact rows: drag to reorder, settings open under the ability, hovering shows its tooltip, and each row shows its cooldown.
+- **Show in:** the queue and the nameplate overlay can each be hidden in open world, delves, dungeons, raids or PvP. Keep the queue for dungeons and hide it in raids, say.
+- **Per-defensive health levels.** Set a potion to wait until you are below 30%, say, and it shows greyed out with WAIT until then. If your health cannot be read, the defensive is shown as usual, so the setting never hides one you need. Immunity bubbles now wait until your health is at its lowest rather than lighting up from half health, and still come up sooner while you keep taking hits.
+- **New Help Your Group list** for party-wide buttons. In a group they come up when your party is taking a beating, so you can take pressure off your healer; solo they come up once your own health is low instead of sitting in your defensives at full health. Rallying Cry, Darkness, Anti-Magic Zone, Zephyr and Ancestral Guidance move over from your defensive list automatically, and some specs gain one: Vampiric Embrace for Shadow, Mass Barrier for Mages, Emerald Blossom for Devastation and Augmentation, Healing Stream Totem for Elemental and Enhancement.
+- **Tank maintenance slot settings:** how many seconds before your buff drops it starts warning you, an alert sound when the buff drops (or first needs refreshing), and for Demon Spikes a glow while every charge is ready, since sitting on full charges wastes recharge.
+- **Ability Overrides is now Overrides** and covers items as well as abilities. Customized abilities use the same rows as the lists, say exactly what is set on each, and open their settings under the row. Right-clicking an ability in any list opens all of its settings. Each ability only shows the settings that can affect it, and every section says whether it applies to this spec or all of them.
+- **Take an ability off your action bars** from Overrides. The game only skips an ability that has no button on your bars, so this is what makes both the game and JustAC stop suggesting it. You see which bars and buttons it is on before confirming, and Put Back returns it to the same slots. Macros are never changed. Out of combat only.
+- More of the queue is timed by the addon rather than handed back to the game: abilities that wait for a cooldown, and abilities whose conditions have an "or" in them, are now understood. Theorycraft priorities freshly imported, with tuning changes for three specs.
+- Poisons, weapon imbues and similar upkeep abilities are kept out of the queue and priority lists, where they stalled the queue; the pre-combat reminder offers them instead.
+
+### Fixed
+- If you had locked the panel in an older version, unlocking it now sticks instead of locking again every time you logged in.
+- Area abilities no longer show up on a single target. A few specs were offered their multi-target abilities in a duel; those specs now get a proper multi-target order as well.
+- Cooldowns held back for enemy waves that only happen in a raid simulation are no longer held back in your fights. Three abilities had lost their ordering to this.
+- Adding a burst trigger no longer replaces the automatic triggers with just the one you added. The list shows the triggers actually in use, editing keeps them, and Use Defaults puts the automatic ones back.
+- An ability's settings no longer appear twice, and the confirmation for clearing a list opens in front of the panel instead of behind it.
+
 ## [5.6.1] - 2026-09-21
 
 ### Fixed

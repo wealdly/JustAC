@@ -24,6 +24,7 @@ function SpecKey() return spec end
 function CustomQueueFor(p) return (p == profile) and cq or nil end
 addon = { GetProfile = function() return profile end }
 PriorityList = {}
+ListWidget = { selected = {} }
 function PriorityList.Changed(a) NoteEdit(a) end
 function edit(...)
     cq.spells = { ... }

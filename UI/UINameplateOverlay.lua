@@ -1254,6 +1254,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if queueVis == "combatOnly" and not UnitAffectingCombat("player") then
         shouldHide = true
     end
+    if not shouldHide and BlizzardAPI.HiddenInContent(npo.hideIn) then
+        shouldHide = true
+    end
     if not shouldHide and npo.hideWhenMounted then
         local isMounted = IsMounted()
         if not isMounted then

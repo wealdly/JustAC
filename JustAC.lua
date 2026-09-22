@@ -69,6 +69,7 @@ local defaults = {
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         queueVisibility = "always",    -- "always", "combatOnly", or "requireHostile"
+        hideIn = {},                   -- content kinds the panel is hidden in: hideIn.raid = true (see BlizzardAPI.GetContentType)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         clickToCastOOC = true,            -- Left-click defensive-queue icons out of combat to cast/use them
@@ -105,6 +106,10 @@ local defaults = {
         showOffGcdDot = false,             -- Amber dot marking off-GCD (weave-in) abilities
         -- Tank maintenance slot + crowd-control escape (defensive "position 0")
         showMaintenanceSlot = true,        -- Tank mitigation-upkeep slot (tank specs, combat only)
+        maintenanceLead = {},              -- per spec: seconds of warning before the buff drops (nil = the spec's own)
+        maintenanceSound = "None",         -- LSM sound when the buff drops / needs refreshing
+        maintenanceSoundAt = "drop",       -- "drop" | "refresh" | "both"
+        maintenanceCapGlow = true,         -- charge-gated buffs: glow while every charge is banked
         showCCBreak = false,               -- Experimental: Sustain slot becomes your CC-escape while held by CC
         ccBreakMacro = "",                 -- Macro name to suggest for form-escapable CC ("" = none)
         showPetHealCue = true,             -- Pet-heal reminder in the Sustain slot (pet classes)
@@ -151,6 +156,7 @@ local defaults = {
             firstIconScale    = 1.0,
             queueIconDesaturation = 0,
             queueVisibility   = "always", -- "always", "combatOnly", or "requireHostile"
+            hideIn            = {},       -- content kinds the overlay is hidden in (see profile.hideIn)
             hideWhenMounted   = false,
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-7
@@ -342,6 +348,11 @@ local function MigrateLegacySettings(profile)
     if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
         profile.panelInteraction = "locked"
     end
+    -- Then drop it. It used to be left set, and "unlocked" is the stored default, so a
+    -- player who picked Unlocked in the new dropdown was locked again on every load.
+    profile.panelLocked = nil
+    -- Retired: the "keep off action bars" declaration changed nothing by itself.
+    profile.engineHideIntent = nil
     -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
     -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
     -- NOTE: defensives.showHotkeys is deliberately dropped, not migrated - it was a

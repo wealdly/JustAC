@@ -71,6 +71,11 @@ function Overlay.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = overlayDisabled,
                     }),
+                    showIn = W.showIn(addon, "nameplateOverlay.hideIn", {
+                        order = 2.5, desc = L["Show In Overlay desc"],
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = overlayDisabled,
+                    }),
                     hideWhenMounted = W.toggle(addon, "nameplateOverlay.hideWhenMounted", {
                         name = L["Hide When Mounted"], desc = L["Hide When Mounted desc"],
                         order = 3, width = "full",
@@ -254,6 +259,7 @@ function Overlay.CreateTabArgs(addon)
             local D = addon.db.defaults.profile.nameplateOverlay
             npo.queueVisibility = D.queueVisibility
             npo.hideWhenMounted = D.hideWhenMounted
+            if npo.hideIn then wipe(npo.hideIn) end
             npo.reverseAnchor = D.reverseAnchor
             npo.expansion     = D.expansion
             npo.iconSize      = D.iconSize

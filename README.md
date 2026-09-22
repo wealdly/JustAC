@@ -149,9 +149,9 @@ Options are organized into 6 tabs:
 |-----|--------|
 | **General** | Disruption slot (interrupts, enrage cleanse, dangerous-cast warning), input, Blizzard UI integration (action-bar highlight, Cooldown Manager) |
 | **Display** | 3 sub-tabs: Main Queue (the draggable surface: layout/docking, DPS icons, defensive icons, appearance), Nameplate Queue (the nameplate surface), and Shared Behavior (highlight mode, ability markers, icon labels) |
-| **DPS Queue** | Custom queue (Always Show / Hold Until Charged), ordering preset (Smart / Match Blizzard / Fixed, customizable), burst-ready cue, gap-closers |
-| **Defensive Queue** | 3 sub-tabs: General (queue behavior, Sustain slot: tank maintenance, CC escape, pet heal), Pre-Combat Buffs, Priority Lists (per-spec spell/item lists, aura linking) |
-| **Ability Overrides** | One card per ability: visibility (the blacklist), pins, item aura-linking, list membership, hotkey label - plus a list of everything you've customized |
+| **DPS Queue** | The priority (the game's order, the theorycraft order, or your own list), ordering, queue content, burst triggers and cue, gap-closers |
+| **Defensive Queue** | 2 sub-tabs: General (the priority lists, Help Your Group, ordering, Sustain slot: tank maintenance, CC escape, pet heal), Pre-Combat Buffs |
+| **Overrides** | One card per spell or item: visibility (the blacklist) and taking it off your action bars, queue and item settings, situational sets, hotkey label - plus a list of everything you've customized |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
 - **Localization** - English, German, French, Italian, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese

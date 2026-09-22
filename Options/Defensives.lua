@@ -4,9 +4,8 @@
 local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 4)
 if not Defensives then return end
 
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
-local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local SpellLists = LibStub("JustAC-OptionsSpellLists")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local W = LibStub("JustAC-OptionsWidgets")
 
@@ -120,18 +119,27 @@ local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
     }
 end
 
+--- The current spec's maintenance entry when it runs on a CLOCK (Shield of the Righteous,
+--- Ignore Pain, Ironfur), else nil. Bone Shield is eaten by damage and charge-gated buffs
+--- never pre-warn, so a warning time or a "needs refreshing" sound means nothing for those.
+local function ClockedMaintenance()
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local e = SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive()
+    if e and e.dur and not e.chargeGated then return e end
+    return nil
+end
+
+local function ChargeGatedMaintenance()
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local e = SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive()
+    return (e and e.chargeGated) and true or false
+end
+
 --- Returns true when the current spec has a maintenance mitigation buff (tank specs with a
 --- curated entry). Brewmaster is a tank but has no entry, so this is spec-level, not role-level.
 local function HasMaintenanceDefensive()
     local SDB = LibStub("JustAC-SpellDB", true)
     return (SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive() ~= nil) or false
-end
-
---- Returns true when the player's class has pet rez/summon defaults.
-local function IsPetRezClass()
-    local _, pc = UnitClass("player")
-    local SDB = LibStub("JustAC-SpellDB", true)
-    return SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc]
 end
 
 --- Returns true when the player's class has pet heal defaults.
@@ -180,19 +188,43 @@ function Defensives.CreateTabArgs(addon)
         order = 5,
         childGroups = "tab",
         args = {
-            -- ── SUB-TAB 1: GENERAL (queue behavior + the Sustain slot) ──────────
+            -- ── SUB-TAB 1: GENERAL (the lists, queue behavior, the Sustain slot) ──
+            -- Laid out like the Offensive tab's General: the priority first, under the same
+            -- spec header, then the settings that act on it.
             general = {
                 type = "group",
                 name = L["General"],
                 order = 1,
                 args = {
+            spellListGroup = {
+                type = "group",
+                inline = true,
+                name = SpellSearch.SpecHeader(L["Priority Section"]),
+                order = 1,
+                -- Each list is one call: header, what it is for, the rows, Add, Restore.
+                -- The pet lists hide themselves on a class without pets.
+                args = SpellLists.Args(addon, "petheal", 110,
+                    SpellLists.Args(addon, "petrez", 80,
+                        SpellLists.Args(addon, "defensive", 20))),
+            },
+            -- Its own box, not a third list in the one above: it is not ranked with your
+            -- defensives - it only leads when the party is hurting. The same split as the
+            -- Offensive tab's Burst box beside its priority.
+            groupHelpGroup = {
+                type = "group",
+                inline = true,
+                name = L["Group Help List"],
+                order = 2,
+                args = SpellLists.Args(addon, "grouphelp", 1),
+            },
             -- Defensive queue CONTENT behavior (cross-surface: standard queue + overlay).
             -- Frame/display settings (enable, health bars, display mode, positioning)
             -- live in Standard Queue -> Defensive Display.
             queueContentGroup = {
                 type = "group",
                 inline = true,
-                name = L["Defensive Queue"],
+                -- Same name as the Offensive tab's box: both hold how the list is treated.
+                name = L["Custom Queue Ordering"],
                 order = 5,
                 args = {
                     showDefensiveProcs = W.toggle(addon, "defensives.showProcs", {
@@ -234,9 +266,8 @@ function Defensives.CreateTabArgs(addon)
             -- buff is one member, crowd-control escape is another and works on any
             -- spec, and the pet-heal cue is a third. Only the mitigation-buff TOGGLE
             -- is tank-gated; the section is not.
-            -- Shown but greyed off-spec, unlike the class-gated pet sections on the
-            -- Priority Lists sub-tab which hide: spec is switchable, so a Feral
-            -- still needs to discover it exists.
+            -- Shown but greyed off-spec, unlike the class-gated pet lists above, which
+            -- hide: spec is switchable, so a Feral still needs to discover it exists.
             sustainGroup = {
                 type = "group",
                 inline = true,
@@ -272,6 +303,79 @@ function Defensives.CreateTabArgs(addon)
                         disabled = function(a)
                             return not HasMaintenanceDefensive() or defensivesUnreachable(a)
                         end,
+                    }),
+                    -- Tuning for the buff above. Each shows only where it means something for
+                    -- the spec in hand, and greys with the slot.
+                    maintenanceLead = {
+                        type = "select",
+                        name = L["Maintenance Lead"],
+                        desc = L["Maintenance Lead desc"],
+                        order = 2.1,
+                        width = "normal",
+                        hidden = function() return not ClockedMaintenance() end,
+                        disabled = function() return addon.db.profile.showMaintenanceSlot == false end,
+                        -- Up to a second short of the buff itself: warning for its whole
+                        -- duration is not a warning.
+                        values = function()
+                            local e = ClockedMaintenance()
+                            local out = { auto = L["Wait Auto"] }
+                            for n = 1, math.min(6, math.floor(((e and e.dur) or 2) - 1)) do
+                                out[n] = string.format(L["Seconds Short"], n)
+                            end
+                            return out
+                        end,
+                        sorting = function()
+                            local e = ClockedMaintenance()
+                            local out = { "auto" }
+                            for n = 1, math.min(6, math.floor(((e and e.dur) or 2) - 1)) do out[#out + 1] = n end
+                            return out
+                        end,
+                        get = function()
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            local sk = SDB and SDB.GetSpecKey and SDB.GetSpecKey()
+                            local t = addon.db.profile.maintenanceLead
+                            return (sk and t and t[sk]) or "auto"
+                        end,
+                        set = function(_, v)
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            local sk = SDB and SDB.GetSpecKey and SDB.GetSpecKey()
+                            if not sk then return end
+                            local p = addon.db.profile
+                            p.maintenanceLead = p.maintenanceLead or {}
+                            if v == "auto" then p.maintenanceLead[sk] = nil else p.maintenanceLead[sk] = v end
+                            addon:ForceUpdateAll()
+                        end,
+                    },
+                    maintenanceSound = W.select(addon, "maintenanceSound", {
+                        name = L["Maintenance Sound"], desc = L["Maintenance Sound desc"],
+                        order = 2.2, width = "normal", default = "None",
+                        dialogControl = W.soundControl(),
+                        values = W.soundValues,
+                        hidden = function() return not HasMaintenanceDefensive() end,
+                        disabled = function(a) return a.db.profile.showMaintenanceSlot == false end,
+                    }),
+                    maintenanceSoundAt = W.select(addon, "maintenanceSoundAt", {
+                        name = L["Maintenance Sound At"], desc = L["Maintenance Sound At desc"],
+                        order = 2.3, width = "normal", default = "drop",
+                        values = {
+                            drop = L["Maintenance Sound Drop"],
+                            refresh = L["Maintenance Sound Refresh"],
+                            both = L["Maintenance Sound Both"],
+                        },
+                        sorting = { "drop", "refresh", "both" },
+                        -- Only a buff with a clock ever reaches "needs refreshing".
+                        hidden = function() return not ClockedMaintenance() end,
+                        disabled = function(a)
+                            local p = a.db.profile
+                            return p.showMaintenanceSlot == false or (p.maintenanceSound or "None") == "None"
+                        end,
+                    }),
+                    maintenanceCapGlow = W.toggle(addon, "maintenanceCapGlow", {
+                        name = L["Maintenance Cap Glow"], desc = L["Maintenance Cap Glow desc"],
+                        order = 2.4, width = "full", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = function() return not ChargeGatedMaintenance() end,
+                        disabled = function(a) return a.db.profile.showMaintenanceSlot == false end,
                     }),
                     -- Group heals: healer specs only. Rides the defensive cluster
                     -- for now, so it lives beside the other cluster content.
@@ -559,99 +663,6 @@ function Defensives.CreateTabArgs(addon)
                     xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
                 },
             },
-            -- ── SUB-TAB 3: PRIORITY LISTS (per-spec, dynamic rows) ──────────────
-            lists = {
-                type = "group",
-                name = L["Priority Lists"],
-                order = 3,
-                args = {
-            spellListGroup = {
-                type = "group",
-                inline = true,
-                name = SpellSearch.SpecHeader("Defensive Spells"),
-                order = 20,
-                args = {
-                    selfHealHeader = {
-                        type = "header",
-                        name = L["Defensive Priority List"],
-                        order = 20,
-                    },
-                    selfHealInfo = {
-                        type = "description",
-                        name = L["Defensive Priority desc"],
-                        order = 21,
-                        fontSize = "small"
-                    },
-                    restoreSelfHealDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults"],
-                        desc = L["Restore Defensive Defaults desc"],
-                        order = 42,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("defensive")
-                            Defensives.UpdateDefensivesOptions(addon)
-                        end,
-                    },
-                    -- Dynamic defensiveSpells entries added by UpdateDefensivesOptions
-                    -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
-                    petRezHeader = {
-                        type = "header",
-                        name = L["Pet Rez/Summon Priority List"],
-                        order = 80,
-                        hidden = function() return not IsPetRezClass() end,
-                    },
-                    petRezInfo = {
-                        type = "description",
-                        name = L["Pet Rez/Summon Priority desc"],
-                        order = 81,
-                        fontSize = "small",
-                        hidden = function() return not IsPetRezClass() end,
-                    },
-                    restorePetRezDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Pet Rez Defaults desc"],
-                        order = 102,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("petrez")
-                            Defensives.UpdateDefensivesOptions(addon)
-                        end,
-                        hidden = function() return not IsPetRezClass() end,
-                    },
-                    -- Dynamic petRezSpells entries added by UpdateDefensivesOptions
-                    -- PET HEAL PRIORITY LIST (110+, pet classes only)
-                    petHealHeader = {
-                        type = "header",
-                        name = L["Pet Heal Priority List"],
-                        order = 110,
-                        hidden = function() return not IsPetHealClass() end,
-                    },
-                    petHealInfo = {
-                        type = "description",
-                        name = L["Pet Heal Priority desc"],
-                        order = 111,
-                        fontSize = "small",
-                        hidden = function() return not IsPetHealClass() end,
-                    },
-                    restorePetHealDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Pet Heal Defaults desc"],
-                        order = 132,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("petheal")
-                            Defensives.UpdateDefensivesOptions(addon)
-                        end,
-                        hidden = function() return not IsPetHealClass() end,
-                    },
-                    -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
-                },
-            },
-                },
-            },
         },
     }
     -- One reset for the whole Defensive Queue tab (scalar settings across all
@@ -663,7 +674,12 @@ function Defensives.CreateTabArgs(addon)
             def.showProcs             = true
             def.hideEmergencyUntilLow = true
             def.emergencyPotionChoice = nil
+            def.emergencyPotionWaitBelow = nil
             p.showMaintenanceSlot = true
+            p.maintenanceSound    = "None"
+            p.maintenanceSoundAt  = "drop"
+            p.maintenanceCapGlow  = true
+            if p.maintenanceLead then wipe(p.maintenanceLead) end
             p.showPetHealCue      = true
             p.petHealThreshold    = 50
             p.showCCBreak         = false
@@ -679,85 +695,4 @@ function Defensives.CreateTabArgs(addon)
             W.NotifyChange()
         end)
     return tab
-end
-
-function Defensives.UpdateDefensivesOptions(addon)
-    local optionsTable = addon and addon.optionsTable
-    if not optionsTable or not SpellQueue then return end
-
-    local listsTab = optionsTable.args.defensives.args.lists
-    local spellListGroup = listsTab and listsTab.args.spellListGroup
-    if not spellListGroup then return end
-    local spellListArgs = spellListGroup.args
-
-    -- Clear dynamic entries, preserve static ones. ANY statically-declared control in
-    -- spellListGroup must be listed here or it is silently deleted on the next refresh -
-    -- the entry still exists in CreateTabArgs, so it appears once and then vanishes, which
-    -- is a confusing way to lose an option.
-    -- (Sustain / CC-escape controls live on the General sub-tab now, outside this group.)
-    local staticKeys = {
-        selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
-        petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
-        petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
-    }
-    SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
-
-    local defensives = addon.db.profile.defensives
-    if not defensives then return end
-
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    local specKey, playerClass
-    if SpellDB and SpellDB.GetSpecKey then
-        specKey, playerClass = SpellDB.GetSpecKey()
-    else
-        local _
-        _, playerClass = UnitClass("player")
-    end
-
-    -- Resolve spell lists using spec→class fallback
-    local defensiveSpells, petRezSpells, petHealSpells
-    local targetKey = specKey  -- prefer spec key
-    if targetKey and defensives.classSpells and defensives.classSpells[targetKey] then
-        defensiveSpells = defensives.classSpells[targetKey].defensiveSpells
-        petRezSpells = defensives.classSpells[targetKey].petRezSpells
-        petHealSpells = defensives.classSpells[targetKey].petHealSpells
-    elseif playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
-        -- Class-level fallback (legacy data not yet migrated to per-spec)
-        defensiveSpells = defensives.classSpells[playerClass].defensiveSpells
-        petRezSpells = defensives.classSpells[playerClass].petRezSpells
-        petHealSpells = defensives.classSpells[playerClass].petHealSpells
-    end
-
-    -- Determine if this is a pet class (has rez or heal defaults)
-    local isPetClass = SpellDB and SpellDB.ClassHasPetDefaults(playerClass)
-
-    local updateFunc = function()
-        Defensives.UpdateDefensivesOptions(addon)
-        -- Refresh the per-list defensive caches (new additions included)
-        local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
-        if DefensiveEngine and DefensiveEngine.RegisterDefensivesForTracking then
-            DefensiveEngine.RegisterDefensivesForTracking(addon)
-        end
-        addon:ForceUpdateAll()
-    end
-
-    -- Unified defensive spells (order 22.0-39.9, allowing 180 entries)
-    SpellSearch.CreateSpellListEntries(addon, spellListArgs, defensiveSpells, "defensive", 22, updateFunc)
-    SpellSearch.CreateAddSpellButton(addon, spellListArgs, defensiveSpells, "defensive", 40, "Defensives", updateFunc, false)
-
-    -- Pet Rez/Summon spells (order 82.0-99.9, pet classes only)
-    if isPetClass and petRezSpells then
-        SpellSearch.CreateSpellListEntries(addon, spellListArgs, petRezSpells, "petrez", 82, updateFunc)
-        SpellSearch.CreateAddSpellButton(addon, spellListArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon", updateFunc, true)
-    end
-
-    -- Pet Heal spells (order 112.0-129.9, pet classes only)
-    if isPetClass and petHealSpells then
-        SpellSearch.CreateSpellListEntries(addon, spellListArgs, petHealSpells, "petheal", 112, updateFunc)
-        SpellSearch.CreateAddSpellButton(addon, spellListArgs, petHealSpells, "petheal", 130, "Pet Heals", updateFunc, false)
-    end
-
-    if AceConfigRegistry then
-        AceConfigRegistry:NotifyChange("JustAssistedCombat")
-    end
 end

@@ -1029,7 +1029,9 @@ end
 SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Death Knight ────────────────────────────────────────────────────────
     -- Class fallback (Frost/Unholy DPS): quick heal then big CDs
-    DEATHKNIGHT   = {49998, 48743, 48792, 48707, 51052, 49039, 327574}, -- Death Strike, Death Pact, Icebound Fortitude, Anti-Magic Shell, Anti-Magic Zone, Lichborne, Sacrificial Pact
+    -- Anti-Magic Zone moved to CLASS_GROUP_HELP_DEFAULTS: it protects the party, and as a
+    -- personal-list filler it showed at full health.
+    DEATHKNIGHT   = {49998, 48743, 48792, 48707, 49039, 327574}, -- Death Strike, Death Pact, Icebound Fortitude, Anti-Magic Shell, Lichborne, Sacrificial Pact
     -- Blood (tank): active mitigation first, Death Strike for heal, then big CDs.
     -- Rune Tap (194679) and Tombstone (219809) REMOVED: an earlier note called Rune Tap
     -- "still live in 12.1 DB2", which was true of the wrong thing - the SpellName row
@@ -1037,11 +1039,11 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- SpecializationSpells row, so neither is obtainable. Same shape as the Guard removal
     -- in the Monk block. Sibling Blood talents (Vampiric Blood, Icebound Fortitude) all
     -- resolve, so this is not an export gap. Do not restore without an acquisition row.
-    DEATHKNIGHT_1 = {49998, 55233, 48743, 48792, 48707, 51052, 49039}, -- Death Strike, Vampiric Blood, Death Pact, IBF, AMS, AMZ, Lichborne
+    DEATHKNIGHT_1 = {49998, 55233, 48743, 48792, 48707, 49039}, -- Death Strike, Vampiric Blood, Death Pact, IBF, AMS, Lichborne
 
     -- ── Demon Hunter ────────────────────────────────────────────────────────
-    -- Class fallback (Havoc DPS): Blur, Netherwalk (talent), Darkness
-    DEMONHUNTER   = {198589, 196555, 196718},                   -- Blur, Netherwalk, Darkness
+    -- Class fallback (Havoc DPS): Blur, Netherwalk (talent). Darkness is in the group list.
+    DEMONHUNTER   = {198589, 196555},                           -- Blur, Netherwalk
     -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, Metamorphosis (a
     -- Vengeance SURVIVAL cd, not a DPS burst - unlike Havoc's), then Blur
     -- Soul Barrier REMOVED: nine ids carry the name and not one is castable - the only one
@@ -1088,7 +1090,9 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Emerald Communion are class talents (verified live in 12.1 DB2); dropped by the
     -- known-spell gate when untalented.
     -- Renewing Blaze (374348) REMOVED: PASSIVE in 12.1 (attrs 0x10040) - never castable.
-    EVOKER        = {360995, 363916, 374227, 370960},           -- Verdant Embrace, Obsidian Scales, Zephyr, Emerald Communion
+    -- Zephyr is in the group list (Devastation / Augmentation) and the emergency ladder
+    -- (Preservation).
+    EVOKER        = {360995, 363916, 370960},                   -- Verdant Embrace, Obsidian Scales, Emerald Communion
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
@@ -1174,7 +1178,8 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Healing Surge is last: it is a hardcast, and the case where it is the right button -
     -- Enhancement with Maelstrom Weapon stacked, making it instant - arrives as a proc and
     -- is promoted automatically.
-    SHAMAN        = {108271, 974, 108281, 198103, 8004},       -- Astral Shift, Earth Shield, Ancestral Guidance, Earth Elemental, Healing Surge
+    -- Ancestral Guidance is in the group list: it heals the party off your damage.
+    SHAMAN        = {108271, 974, 198103, 8004},               -- Astral Shift, Earth Shield, Earth Elemental, Healing Surge
     -- Restoration: Earth Shield is baseline and belongs on the player between casts, and the
     -- spec owns two panic totems the other specs have no access to. Earth Elemental is
     -- dropped - a healer under pressure is not stopping to summon one.
@@ -1190,12 +1195,13 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Regeneration Fury-only - the runtime known-spell gate shows each spec its own wall.
     -- Bitter Immunity is a class talent all three specs can take (instant self-heal plus a
     -- dispel), so it sits with the other quick heals.
-    WARRIOR       = {34428, 202168, 383762, 190456, 118038, 184364, 23920, 386208, 97462},  -- Victory Rush, Impending Victory, Bitter Immunity, Ignore Pain, Die by the Sword, Enraged Regeneration, Spell Reflection, Defensive Stance, Rallying Cry
+    -- Rallying Cry is in the group list (all three specs).
+    WARRIOR       = {34428, 202168, 383762, 190456, 118038, 184364, 23920, 386208},  -- Victory Rush, Impending Victory, Bitter Immunity, Ignore Pain, Die by the Sword, Enraged Regeneration, Spell Reflection, Defensive Stance
     -- Protection (tank): Shield Block first (physical active mitigation, used on CD -
     -- the sink hint below parks it while its buff is already rolling), then Ignore Pain,
     -- Impending Victory, Last Stand + Shield Wall (major CDs), Rallying Cry, Spell Reflection.
     -- (Last Stand 12975 is an active 3-min CD in 12.1 DB2 - the older "passive" note was wrong.)
-    WARRIOR_3     = {2565, 190456, 202168, 383762, 12975, 871, 97462, 23920}, -- Shield Block, Ignore Pain, Impending Victory, Bitter Immunity, Last Stand, Shield Wall, Rallying Cry, Spell Reflection
+    WARRIOR_3     = {2565, 190456, 202168, 383762, 12975, 871, 23920}, -- Shield Block, Ignore Pain, Impending Victory, Bitter Immunity, Last Stand, Shield Wall, Spell Reflection
 }
 
 -- Emergency tier for the graded defensive reorder. Tier 1 = immunity bubble (survives any
@@ -1577,6 +1583,27 @@ SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
     -- Dream Breath is 355936, not 382614 - the latter is one of seven ids sharing the
     -- name and has no acquisition route; 355936 is the one the talent tree grants.
     EVOKER_2 = {355913, 355936, 367226, 373861},
+}
+
+-- Party-wide buttons for DPS and tank specs: things that take pressure off the healer
+-- without asking anyone to heal. Offered when the party is taking a beating, and solo once
+-- your own health is low (DefensiveEngine, "group help"). Press-and-done only, like the
+-- group heals above: nothing aimed at one ally.
+-- Healer specs get an EMPTY list on purpose. Their group heals and emergency ladder above
+-- already cover this job, and a spell must never render on two surfaces at once - which
+-- the class fallback would otherwise do for Ancestral Guidance and Zephyr.
+-- Classes with nothing party-wide (Druid, Hunter, Monk, Paladin DPS, Rogue, Warlock) have
+-- no key. Nature's Vigil (124974) would suit Druids but has no acquisition route in 12.1.
+SpellDB.CLASS_GROUP_HELP_DEFAULTS = {
+    DEATHKNIGHT = {51052},            -- Anti-Magic Zone
+    DEMONHUNTER = {196718},           -- Darkness
+    EVOKER      = {374227, 355913},   -- Zephyr, Emerald Blossom
+    EVOKER_2    = {},
+    MAGE        = {414660},           -- Mass Barrier
+    PRIEST_3    = {15286},            -- Vampiric Embrace
+    SHAMAN      = {108281, 5394},     -- Ancestral Guidance, Healing Stream Totem
+    SHAMAN_3    = {},
+    WARRIOR     = {97462},            -- Rallying Cry
 }
 
 -- Group-crisis ladder for the emergency slot: first READY spell wins, so these

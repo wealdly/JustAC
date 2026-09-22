@@ -4,8 +4,7 @@
 local Offensive = LibStub:NewLibrary("JustAC-OptionsOffensive", 3)
 if not Offensive then return end
 
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
-local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local SpellLists = LibStub("JustAC-OptionsSpellLists")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local W = LibStub("JustAC-OptionsWidgets")
 
@@ -87,11 +86,11 @@ local function queueContentGroup(addon)
 end
 
 -- Burst-ready cue triggers. Cross-surface queue content, so it lives with the
--- other content tools on the General sub-tab. The effective list resolves at
--- runtime: user override -> SimC sync anchors (generated) -> curated class
--- defaults; this panel shows the effective list and edits the override tier.
+-- other content tools on the General sub-tab. The list shows what is in effect: your
+-- own triggers, else theorycraft's burst-window markers, else curated class defaults.
+-- Editing it makes it yours (Options/SpellLists.lua); Use Defaults hands it back.
 local function burstTriggerGroup(addon)
-    return {
+    local group = {
         type = "group",
         inline = true,
         name = L["Burst"],
@@ -106,67 +105,24 @@ local function burstTriggerGroup(addon)
                 onSet = function() addon:ForceUpdate() end,
                 disabled = fullyDisabled,
             }),
-            info = {
-                type = "description",
-                name = L["Burst Triggers desc"],
-                order = 1,
-                fontSize = "small",
-            },
-            active = {
-                type = "description",
-                name = function()
-                    local SpellQueueLib = LibStub("JustAC-SpellQueue", true)
-                    local list, source
-                    if SpellQueueLib and SpellQueueLib.GetBurstTriggerInfo then
-                        list, source = SpellQueueLib.GetBurstTriggerInfo()
-                    end
-                    local srcLabel = L["Burst Source " .. (source or "curated")]
-                    if not list or #list == 0 then
-                        return string.format(L["Burst Triggers Active"], srcLabel) .. " -"
-                    end
-                    local names = {}
-                    for _, id in ipairs(list) do
-                        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
-                        names[#names + 1] = info and info.name or ("#" .. id)
-                    end
-                    return string.format(L["Burst Triggers Active"], srcLabel)
-                        .. " " .. table.concat(names, ", ")
-                end,
-                order = 2,
-                fontSize = "medium",
-            },
-            clearTriggers = {
-                type = "execute",
-                name = L["Clear Burst Triggers"],
-                desc = L["Clear Burst Triggers desc"],
-                order = 40,
-                width = "normal",
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    local SpellDB = LibStub("JustAC-SpellDB", true)
-                    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-                    local t = profile and specKey and profile.burstTriggers
-                        and profile.burstTriggers[specKey]
-                    return not (t and #t > 0)
-                end,
-                func = function()
-                    local profile = addon:GetProfile()
-                    local SpellDB = LibStub("JustAC-SpellDB", true)
-                    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-                    if profile and specKey and profile.burstTriggers then
-                        profile.burstTriggers[specKey] = nil
-                    end
-                    local SpellQueueLib = LibStub("JustAC-SpellQueue", true)
-                    if SpellQueueLib and SpellQueueLib.InvalidateBurstTriggers then
-                        SpellQueueLib.InvalidateBurstTriggers()
-                    end
-                    Offensive.UpdateBurstTriggerOptions(addon)
-                    addon:ForceUpdate()
-                end,
-            },
-            -- Dynamic override entries added by UpdateBurstTriggerOptions
         },
     }
+    SpellLists.Args(addon, "burst", 1, group.args)
+    -- Where the list on screen comes from, since it can be any of three.
+    group.args.burstSource = {
+        type = "description",
+        name = function()
+            local SQ = LibStub("JustAC-SpellQueue", true)
+            -- Guard, THEN call: `SQ and SQ.GetBurstTriggerInfo()` keeps only the first
+            -- return, and the source is the second.
+            local source
+            if SQ and SQ.GetBurstTriggerInfo then source = select(2, SQ.GetBurstTriggerInfo()) end
+            return string.format(L["Burst Triggers From"], L["Burst Source " .. (source or "curated")])
+        end,
+        order = 1.15,
+        fontSize = "small",
+    }
+    return group
 end
 
 function Offensive.CreateTabArgs(addon)
@@ -205,48 +161,3 @@ function Offensive.CreateTabArgs(addon)
     return tab
 end
 
--------------------------------------------------------------------------------
--- Dynamic burst-trigger override rebuild (mirrors the gap-closer list pattern)
--------------------------------------------------------------------------------
-function Offensive.UpdateBurstTriggerOptions(addon)
-    local optionsTable = addon and addon.optionsTable
-    if not optionsTable then return end
-    -- The General sub-tab keeps the arg key "customQueue" (see CreateTabArgs).
-    local generalTab = optionsTable.args.offensive and optionsTable.args.offensive.args.customQueue
-    local group = generalTab and generalTab.args.burstTriggerGroup
-    if not group then return end
-    local args = group.args
-
-    -- Everything NOT named here is treated as a dynamic trigger row and deleted on the
-    -- next rebuild - which silently ate the burst-ready cue when it moved into this group.
-    local staticKeys = { info = true, active = true, clearTriggers = true, burstCueGlow = true }
-    SpellSearch.ClearDynamicArgs(args, staticKeys)
-
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    if not specKey then return end
-    local profile = addon:GetProfile()
-    if not profile then return end
-    if not profile.burstTriggers then profile.burstTriggers = {} end
-    if not profile.burstTriggers[specKey] then profile.burstTriggers[specKey] = {} end
-    local list = profile.burstTriggers[specKey]
-
-    local updateFunc = function()
-        local SpellQueueLib = LibStub("JustAC-SpellQueue", true)
-        if SpellQueueLib and SpellQueueLib.InvalidateBurstTriggers then
-            SpellQueueLib.InvalidateBurstTriggers()
-        end
-        Offensive.UpdateBurstTriggerOptions(addon)
-        addon:ForceUpdate()
-    end
-    SpellSearch.RebuildListSection(addon, args, {
-        spellList = list, listType = "bursttrigger",
-        baseOrder = 10, addOrder = 30,
-        listName = L["Burst Triggers"], updateFunc = updateFunc,
-        spellsOnly = true, emptyText = L["Burst Triggers Empty"],
-    })
-
-    if AceConfigRegistry then
-        AceConfigRegistry:NotifyChange("JustAssistedCombat")
-    end
-end

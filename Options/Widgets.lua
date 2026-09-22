@@ -140,6 +140,54 @@ local function scalar(addon, wtype, path, opts)
     return entry
 end
 
+--- "Show in": one tick per kind of content (BlizzardAPI.GetContentType). Stored as the
+--- kinds the surface is HIDDEN in, sparse, so an untouched profile saves nothing.
+--- Leave `width` unset: Ace applies it to every tick, so "full" stacks them one per row.
+function W.showIn(addon, path, opts)
+    local segs = compilePath(path)
+    local onSet = opts.onSet
+    local entry = buildBase(addon, "multiselect", opts)
+    entry.name = opts.name or L["Show In"]
+    entry.values = {
+        world = L["Content World"], delve = L["Content Delve"], dungeon = L["Content Dungeon"],
+        raid = L["Content Raid"], pvp = L["Content PvP"],
+    }
+    entry.get = function(_, key)
+        local hidden = pathGet(addon.db.profile, segs)
+        return not (hidden and hidden[key])
+    end
+    entry.set = function(_, key, shown)
+        local parent = pathEnsureParent(addon.db.profile, segs)
+        local hidden = parent[segs[#segs]]
+        if type(hidden) ~= "table" then
+            hidden = {}
+            parent[segs[#segs]] = hidden
+        end
+        if shown then hidden[key] = nil else hidden[key] = true end
+        if onSet then onSet(addon) end
+    end
+    return entry
+end
+
+--- The LSM sound picker (speaker-icon previews) ONLY when its widget type actually
+--- registered, else nil for a plain dropdown. AceGUI-3.0-SharedMediaWidgets loads LSM with no
+--- silent flag, so on a partial install that file errors, LSM30_Sound never registers, and
+--- naming it made AceConfigDialog throw while rendering - taking EVERY tab down with it
+--- (field-reported). Same value list either way; only the previews are lost.
+function W.soundControl()
+    local AceGUI = LibStub("AceGUI-3.0", true)
+    if AceGUI and AceGUI.GetWidgetVersion and AceGUI:GetWidgetVersion("LSM30_Sound") then
+        return "LSM30_Sound"
+    end
+    return nil
+end
+
+--- Every sound LSM knows, for a sound picker's values.
+function W.soundValues()
+    local LSM = LibStub("LibSharedMedia-3.0", true)
+    return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
+end
+
 function W.toggle(addon, path, opts) return scalar(addon, "toggle", path, opts) end
 function W.range(addon, path, opts)  return scalar(addon, "range",  path, opts) end
 function W.select(addon, path, opts) return scalar(addon, "select", path, opts) end

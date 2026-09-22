@@ -94,17 +94,19 @@ Note `Options/Core.lua` loads LAST of the `Options/*` files: the panels resolve
 | `PrecombatEngine.lua` | Out-of-combat buff checklist (flask/food/rune/imbue) | `IsCategorySatisfied()`, maintained-buff offers | v8 |
 | `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v37 |
 | `DebugHUD.lua` | Movable live overlay of the signals feeding the queue | `Toggle()` | v1 |
-| **Options/** | **Modular options panel (14 files)** | | |
+| **Options/** | **Modular options panel (18 files)** | | |
 | `Options/Widgets.lua` | Shared AceConfig entry builders (`JustAC-OptionsWidgets`) | `W.toggle()`, `W.select()`, `W.range()`, `W.resetButton()` | v1 |
-| `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()`, `RebuildListSection()` | v3 |
+| `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()`, `HoldModeControl()` | v3 |
+| `Options/ListWidget.lua` | The rows every ability list is drawn with: pane, drag, settings strip and panels | `PlaceRows()`, `Attach()`, `Pane()`, `BindDetail()`, `BindPanels()` | v1 |
+| `Options/SpellLists.lua` | Registry of the editable ability lists + the plain list widget | `Args()`, `AddButton()`, `Remove()`, `LISTS` | v1 |
 | `Options/LiveSearchPopup.lua` | Persistent modal for spell/item selection | `Open()`, `Close()`, `IsOpen()` | v1 |
 | `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v8 |
 | `Options/StandardQueue.lua` | Standard Queue tab (icon size, spacing, layout) | `CreateTabArgs()` | v4 |
-| `Options/Offensive.lua` | Offensive tab + blacklist + burst-trigger overrides | `CreateTabArgs()`, `UpdateBlacklistOptions()`, `UpdateBurstTriggerOptions()` | v3 |
+| `Options/Offensive.lua` | Offensive tab + burst triggers | `CreateTabArgs()` | v3 |
 | `Options/CustomQueue.lua` | Custom Queue tab (manual spell list override) | `CreateTabArgs()` | v1 |
 | `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v3 |
-| `Options/Defensives.lua` | Defensives tab + spell list management | `CreateTabArgs()`, `UpdateDefensivesOptions()` | v4 |
-| `Options/GapClosers.lua` | Gap Closers tab (sub-tab of Offensive) | `CreateTabArgs()`, `UpdateGapCloserOptions()` | v1 |
+| `Options/Defensives.lua` | Defensives tab | `CreateTabArgs()` | v4 |
+| `Options/GapClosers.lua` | Gap Closers tab (sub-tab of Offensive) | `CreateTabArgs()` | v1 |
 | `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v4 |
 | `Options/Hotkeys.lua` | Hotkey Overrides tab | `CreateTabArgs()`, `UpdateHotkeyOverrideOptions()` | v1 |
 | `Options/Profiles.lua` | Per-spec profile switching (injected into profiles) | `AddSpecProfileOptions()` | v1 |
