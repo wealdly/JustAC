@@ -3246,6 +3246,12 @@ end
 
 function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
+    -- Position 1 wears the assist ring, and the game lights its own on the combat edge.
+    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    local icons = addon and addon.spellIcons
+    if icons and icons[1] and UIFrameFactory and UIFrameFactory.SetAssistRingCombat then
+        UIFrameFactory.SetAssistRingCombat(icons[1], inCombat)
+    end
 end
 
 function UIRenderer.SetCastSpellID(spellID)
