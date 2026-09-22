@@ -84,44 +84,11 @@ end
 --- The "Context ordering" select for positions 2+: Off / Match Blizzard's pick (the
 --- context-aware heuristic) / SimC priority (imported theorycraft order). The SimC
 --- tier only appears where we have data for the current spec.
-local function MakeContextOrderSelect(addon, order)
-    local function hasSimc()
-        local RI = LibStub("JustAC-RotationImport", true)
-        return RI and RI.HasRotation and RI.HasRotation()
-    end
-    return {
-        type = "select",
-        name = L["Context Ordering"],
-        desc = L["Context Ordering desc"],
-        order = order,
-        width = "double",
-        values = function()
-            local v = { off = L["Off"], ac = L["Context Match"] }
-            if hasSimc() then v.simc = L["Context SimC"] end
-            return v
-        end,
-        sorting = function()
-            return hasSimc() and { "off", "ac", "simc" } or { "off", "ac" }
-        end,
-        get = function()
-            local profile = addon:GetProfile()
-            if not profile then return "ac" end
-            local v = profile.contextOrder or "simc"
-            -- No SimC data for this spec: the runtime falls back to the AC
-            -- heuristic, and the dropdown has no "simc" entry - reflect that.
-            if v == "simc" and not hasSimc() then v = "ac" end
-            return v
-        end,
-        set = function(_, val)
-            local profile = addon:GetProfile()
-            if not profile then return end
-            profile.contextOrder = val
-            -- SimC priority also adds its missing abilities to the pool.
-            InvalidateRotationCache()
-            addon:ForceUpdateAll()
-            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-        end,
-    }
+--- Is there an imported priority for this spec? Without one the runtime falls back to the
+--- pick-matching heuristic, so turning literal ordering OFF must restore to that.
+local function hasSimc()
+    local RI = LibStub("JustAC-RotationImport", true)
+    return (RI and RI.HasRotation and RI.HasRotation()) or false
 end
 
 --- Copy the current Blizzard rotation into cq.baseline. Returns the rotation
@@ -236,59 +203,35 @@ function CustomQueue.CreateTabArgs(addon)
         name = L["Custom Queue"],
         order = 1,
         args = {
-            positionNote = {
-                type = "description",
-                name = L["Custom Queue Position Note"],
-                order = 0.25,
-                fontSize = "medium",
-            },
-            enableCustomQueue = {
-                type = "toggle",
-                name = L["Enable Custom Queue"],
-                desc = L["Enable Custom Queue desc"],
-                -- The tab's master switch reads first, right under the position
-                -- note; the ordering group below applies to both queue sources,
-                -- so it keeps working with the switch off.
-                order = 0.4,
-                width = "full",
-                get = function()
-                    local profile = addon:GetProfile()
-                    local specKey = GetSpecKey()
-                    return profile and profile.customQueue
-                        and specKey and profile.customQueue[specKey]
-                        and profile.customQueue[specKey].enabled == true
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    local specKey = GetSpecKey()
-                    if not specKey then return end
-                    if not profile.customQueue then profile.customQueue = {} end
-                    if not profile.customQueue[specKey] then
-                        profile.customQueue[specKey] = {}
-                    end
-                    profile.customQueue[specKey].enabled = val
-                    -- Snapshot rotation on first enable if no spells yet
-                    if val and (not profile.customQueue[specKey].spells
-                                or #profile.customQueue[specKey].spells == 0) then
-                        SnapshotRotation(addon, specKey)
-                    end
-                    -- Invalidate rotation cache so SpellQueue picks up the change
-                    InvalidateRotationCache()
-                    CustomQueue.UpdateCustomQueueOptions(addon)
-                    addon:ForceUpdateAll()
-                end,
-            },
             ordering = {
                 type = "group",
                 inline = true,
                 name = L["Custom Queue Ordering"],
-                order = 0.5,
+                order = 20,
                 -- Dropdown on its own row, then the two checkboxes side by side: a select
                 -- is taller than a toggle, so mixing them in one row misaligns all three.
                 args = {
-                    contextOrder  = MakeContextOrderSelect(addon, 1),
-                    rowBreak      = { type = "description", name = "", order = 2, width = "full" },
+                    -- "Which list" moved to the widget's tab strip; what stays here is how
+                    -- the chosen list is treated, which is the same question for all three.
+                    orderExact = {
+                        type = "toggle",
+                        name = L["Order Exact"],
+                        desc = L["Order Exact desc"],
+                        order = 1,
+                        width = "full",
+                        get = function()
+                            local profile = addon:GetProfile()
+                            return (profile and profile.contextOrder) == "off"
+                        end,
+                        set = function(_, val)
+                            local profile = addon:GetProfile()
+                            if not profile then return end
+                            profile.contextOrder = val and "off" or (hasSimc() and "simc" or "ac")
+                            InvalidateRotationCache()
+                            addon:ForceUpdateAll()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
                     procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 3),
                     sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
                         W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4),  -- Execute
@@ -376,8 +319,7 @@ function CustomQueue.CreateTabArgs(addon)
                 type = "group",
                 inline = true,
                 name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
-                order = 10,
-                disabled = function() return IsCustomQueueOff(addon) end,
+                order = 1,
                 args = {
                     spellListInfo = {
                         type = "description",
