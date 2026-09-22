@@ -138,7 +138,6 @@ L["Restore Pet Heal Defaults desc"] = "Redefinir magias de cura de pet para os p
 L["Proc Priority"] = "Prioridade de proc"
 L["Proc Priority desc"] = "Quando ativado por proc, mover esta magia para a frente da fila. Desmarcar para mantê-la na posição configurada (ainda brilhará)."
 L["Always Show"] = "Sempre mostrar"
-L["Custom Queue Cap Note"] = "%d habilidades mas apenas %d ícones de fila: as entradas que recuam (em recarga, fora de alcance ou com o efeito de dano ao longo do tempo ativo) podem não caber. Aumente Ícones máx na aba Fila padrão, ou reduza a lista."
 L["Always Show desc"] = "Nunca ocultar esta habilidade: ela permanece na fila mesmo quando seu buff já está ativo ou seu efeito de dano ao longo do tempo está rodando no alvo. Ainda pode recuar para o fim enquanto estiver em recarga ou fora de alcance."
 
 -- Item settings (per-item aura link / combat hide)
