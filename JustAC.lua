@@ -80,7 +80,7 @@ local defaults = {
         orderProcsFirst = true,           -- Surface procced abilities ahead of source order
         contextOrder = "simc",            -- "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft priority; falls back to "ac" without spec data)
         orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
-        includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
+        includeHiddenAbilities = true,    -- Let the pick name abilities with no visible bar button
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "kickPrefer",      -- Interrupt reminder mode: "disabled", "kickOnly", "kickPrefer", "ccPrefer"
