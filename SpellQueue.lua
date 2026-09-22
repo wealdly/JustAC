@@ -913,6 +913,23 @@ function SpellQueue.GetHoldResource(spellID)
     return nil
 end
 
+--- Does one countable-resource gate hold? true / false / nil (deficit with unknown max).
+local function ResourceGateHolds(g, resCount, resMax)
+    local value = resCount
+    if g.deficit then
+        value = (type(resMax) == "number" and resMax > 0) and (resMax - resCount) or nil
+    end
+    if value == nil then return nil end
+    if     g.op == ">=" then return value >= g.n
+    elseif g.op == "<=" then return value <= g.n
+    elseif g.op == ">"  then return value >  g.n
+    elseif g.op == "<"  then return value <  g.n
+    elseif g.op == "="  then return value == g.n
+    elseif g.op == "!=" then return value ~= g.n
+    end
+    return nil
+end
+
 -- True when a resource gate is present, EVALUABLE, and NOT satisfied - the entry is not worth
 -- surfacing yet (Shred once you are already at 5 combo points, Hand of Gul'dan under 3 shards).
 -- The count is plain frame state from BlizzardAPI.GetClassResourcePoints, never a secret read.
@@ -928,21 +945,7 @@ local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
             -- resources both numbers are plain - the point-widget read returns
             -- current AND max - so this is ordinary arithmetic and needs no gate.
             -- Unknown max -> skip this one rather than guess (fails open).
-            local value = resCount
-            if g.deficit then
-                value = (type(resMax) == "number" and resMax > 0) and (resMax - resCount) or nil
-            end
-            if value then
-                local ok
-                if     g.op == ">=" then ok = value >= g.n
-                elseif g.op == "<=" then ok = value <= g.n
-                elseif g.op == ">"  then ok = value >  g.n
-                elseif g.op == "<"  then ok = value <  g.n
-                elseif g.op == "="  then ok = value == g.n
-                elseif g.op == "!=" then ok = value ~= g.n
-                end
-                if ok == false then return true end
-            end
+            if ResourceGateHolds(g, resCount, resMax) == false then return true end
         end
     end
     return false
@@ -1098,6 +1101,51 @@ local function SimcStealthGateBlocks(gates)
     end
     return false
 end
+
+--- The STRICT reading of a gate list, for leading rather than sinking: true only when every
+--- gate is positively confirmed to hold. The blockers above fail OPEN (unknown = does not
+--- block), which is right for sinking an entry and wrong for seating one in slot 1. Anything
+--- unreadable - a secret buff with no own-cast window, a hidden class bar, a `cd` or `dot`
+--- gate (no evaluator) - is "not confirmed". Safe Lead evidence only; not on the build path.
+local function GatesConfirmed(gates, resCount, resName, resMax)
+    if not gates then return true end
+    for i = 1, #gates do
+        local g = gates[i]
+        local t = g.t
+        if t == "buff" then
+            local up = g.id and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id, g.dur)
+            if g.neg then
+                -- "not during X" confirmed only when X is a window we could have opened
+                -- ourselves (has a duration) and we did not: secret aura, no other route.
+                if not g.dur or up then return false end
+            elseif not up then
+                return false
+            end
+        elseif t == "resource" then
+            if not (resCount and g.res == resName and g.op and g.n)
+               or ResourceGateHolds(g, resCount, resMax) ~= true then return false end
+        elseif t == "power" then
+            local pct, pt = SpellQueue.PowerGateThreshold(g)
+            local below = pct and BlizzardAPI.IsUnitPowerBelow and BlizzardAPI.IsUnitPowerBelow("player", pct, pt)
+            if below == nil or ThresholdGateBlocks(g, below) then return false end
+        elseif t == "execute" or t == "health" then
+            local unit = t == "health" and "player"
+                or (UnitExists("target") and UnitCanAttack("player", "target") and not g.neg and "target") or nil
+            local below = unit and g.pct and BlizzardAPI.IsUnitHealthBelow and BlizzardAPI.IsUnitHealthBelow(unit, g.pct)
+            if below == nil or ThresholdGateBlocks(g, below) then return false end
+        elseif t == "stack" then
+            local unit = g.tgt and "target" or "player"
+            if (g.tgt and not UnitExists("target")) or StackHolds(unit, g) ~= true then return false end
+        elseif t == "stealth" then
+            local stealthed = IsStealthed and IsStealthed() or false
+            if (g.neg and stealthed) or (not g.neg and not stealthed) then return false end
+        else
+            return false   -- cd / dot / unknown: no evaluator, so never confirmed
+        end
+    end
+    return true
+end
+SpellQueue._GatesConfirmed = GatesConfirmed
 
 --- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
 --- Both call sites use this rather than the individual blockers, so a new gate
@@ -1583,6 +1631,7 @@ function SpellQueue._StageTail(b)
     b.effectiveBypassProcs = effectiveBypassProcs
     b.contextOrder, b.sinkCooldowns = contextOrder, sinkCooldowns
     b.simcCtx, b.pickWindows = simcCtx, pickWindows
+    lastCtx.simcCtx = simcCtx
     -- Healer specs: heals (and melee-weave entries in caster mode) out of
     -- the DPS tail - see SpellQueue.FilterHealerTail. Position 1 (the AC
     -- pick) is inserted elsewhere and is never filtered.
@@ -2187,6 +2236,66 @@ end
 --- Last build's context (post latch/sticky). Diagnostic only (/jac inspect rank).
 function SpellQueue.DebugContextState()
     return lastCtx
+end
+
+--- Safe Lead DRY RUN (Documentation/SAFE_LEAD_PLAN.md, phase 1). Diagnostic only - the pick
+--- log samples it; nothing on the build path reads it. Walks the last build's queue from
+--- slot 2 and returns the first entry that carries game-issued evidence for leading, and
+--- which class of evidence: 1 the game never recommends it, 2 charges capped, 3 primary
+--- power capped and the entry spends it while the pick does not, 4 a confirmed buff window.
+--- Over a WAIT (no pick) only classes 1 and 2 count - a wait can be pooling.
+--- Every class also needs: not delegated, every gate strictly confirmed, ready, castable,
+--- affordable, in reach, on the GCD, not blacklisted, not held.
+--- @return number|nil id, number|nil class
+function SpellQueue.SafeLeadCandidate()
+    local queue = lastSpellIDs
+    if type(queue) ~= "table" or not RotationImport or not RotationImport.GetEntry then return nil end
+    local pick = lastCtx.pickID
+    local isWait = not pick
+    local resCount, resName, resMax
+    if BlizzardAPI.GetClassResourcePoints then
+        local c, m, r = BlizzardAPI.GetClassResourcePoints()
+        resCount, resName, resMax = c, r, m
+    end
+    local primaryPT = UnitPowerType("player")
+    local function costsPrimary(id)
+        if not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
+        local ok, costs = pcall(C_Spell.GetSpellPowerCost, id)
+        if not ok or type(costs) ~= "table" then return false end
+        for i = 1, #costs do
+            local c = costs[i]
+            if c and c.type == primaryPT and type(c.cost) == "number"
+               and not (issecretvalue and issecretvalue(c.cost)) and c.cost > 0 then return true end
+        end
+        return false
+    end
+    local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
+    local pickSpends = pick and costsPrimary(pick)
+    for i = 2, #queue do
+        local id = queue[i]
+        if type(id) == "number" and id > 0 and not (issecretvalue and issecretvalue(id)) then
+            local rec = RotationImport.GetEntry(id, lastCtx.simcCtx)
+                or RotationImport.GetEntry(BlizzardAPI.ResolveBaseSpellID(id) or id, lastCtx.simcCtx)
+            local _, notEnough = BlizzardAPI.IsSpellUsable(id, true)
+            if not (rec and rec.delegated)
+               and BlizzardAPI.IsSpellReady(id) and not notEnough
+               and not IsUnusableNonResource(id)
+               and BlizzardAPI.AbilityInRange(id) ~= false
+               and not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(id))
+               and not SpellQueue.IsSpellBlacklisted(id)
+               and not HeldByUserHold(id, id, true)
+               and (not rec or GatesConfirmed(rec.gates, resCount, resName, resMax)) then
+                local cls
+                if BlizzardAPI.IsInsertedSpell and BlizzardAPI.IsInsertedSpell(id) then cls = 1
+                elseif BlizzardAPI.IsSpellChargeCapped and BlizzardAPI.IsSpellChargeCapped(id) then cls = 2
+                elseif not isWait and powerCapped and costsPrimary(id) and not pickSpends then cls = 3
+                elseif not isWait and rec and HasPositiveBuffGate(rec.gates) then cls = 4
+                end
+                if cls then return id, cls end
+            end
+        end
+    end
+    return nil
 end
 
 --- Rank a spell against the last build's context. Diagnostic only (/jac inspect rank).

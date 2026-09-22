@@ -179,7 +179,15 @@ end
 -- spells, with no Voidblade). Part of what SimC ordering means: append every SimC ability the addon can time by itself
 -- (RotationImport.GetInsertable) that the character knows. Everything downstream - cooldown
 -- and usability filters, SimC ranking and gates - treats them like any other pool spell.
+-- The ids the last WithAdditions pass ADDED to the game's pool: abilities the game itself
+-- never recommends (its live list omits them). Safe Lead evidence class 1 reads this.
+local insertedIDs = {}
+function BlizzardAPI.IsInsertedSpell(spellID)
+    return spellID ~= nil and insertedIDs[spellID] == true
+end
+
 local function WithAdditions(list)
+    wipe(insertedIDs)
     local profile = BlizzardAPI.GetProfile()
     if not profile or (profile.contextOrder or "simc") ~= "simc" then
         return list
@@ -207,6 +215,7 @@ local function WithAdditions(list)
                 for j = 1, #list do out[j] = list[j] end   -- never grow Blizzard's own table
             end
             out[#out + 1] = id
+            insertedIDs[id] = true
             have[id], have[raw] = true, true
         end
     end

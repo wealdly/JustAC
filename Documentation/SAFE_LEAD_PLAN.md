@@ -157,7 +157,15 @@ replaces a Wait only.
      flips drop as measured and that the 38 missed-pack ticks now rank as AoE;
    - **W5** stuck-pick safeguard: a one-line chat hint outside combat, and `/jac why` names it;
    - `/jac inspect window` prints the buffer.
-1. **Dry run (no behaviour change).** In `/jac inspect picklog`, per tick: is the pick
+1. **Dry run (no behaviour change).** **BUILT 2026-09-22** on `safe-lead`:
+   `SpellQueue.SafeLeadCandidate()` (diagnostic, sampled by the pick log only), the strict
+   `GatesConfirmed`, `BlizzardAPI.IsInsertedSpell` (retained added-id set), pick log fields
+   `sl=<class>:<id>` and `w=cast|gcd|idle` on wait ticks (waits are now logged), and
+   `tools/audit_assisted_combat.py --safelead`. Class 3 already carries the "pick does not
+   spend the capped power" clause. Not yet: the triggered-aura duration follow-up in the
+   generator (Metamorphosis), and the W2 live filler - the dry run reports served-most (C)
+   beside Blizzard's last steps (A) for the human to compare.
+   Original spec: In `/jac inspect picklog`, per tick: is the pick
    displaceable (Wait, or the **W2** filler), which evidence class would fire - judged by the
    strict `GatesConfirmed`, never the fail-open gate check - and what would lead. Beside each
    Wait: player casting / GCD running, so pooling, mid-cast and all-on-cooldown can be told
