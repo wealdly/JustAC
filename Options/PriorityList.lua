@@ -358,6 +358,32 @@ end
 
 --- Plain words for ONE gate, or nil when there are none to give. Recursive, because a
 --- group phrases its members exactly as the list does and joins them with or / and.
+--- A resource condition in words. It used to print the raw comparison, tokens and all
+--- ("combo_points >= 5"), which was both the longest line in the column and the only
+--- one written in the data's language rather than the player's.
+local RESOURCE_NAMES = {
+    combo_points = "Combo Points", holy_power = "Holy Power", chi = "Chi",
+    soul_shard = "Soul Shards", rune = "Runes", essence = "Essence",
+    arcane_charges = "Arcane Charges", energy = "Energy", rage = "Rage",
+    mana = "Mana", astral_power = "Astral Power", fury = "Fury",
+    runic_power = "Runic Power", maelstrom = "Maelstrom", insanity = "Insanity",
+    focus = "Focus", pain = "Pain",
+}
+local RESOURCE_OPS = {
+    [">="] = "Cond Res Min", [">"] = "Cond Res Over", ["<"] = "Cond Res Under",
+    ["<="] = "Cond Res Max", ["="] = "Cond Res Exact", ["!="] = "Cond Res Not",
+}
+
+local function ResourcePhrase(g)
+    local key = RESOURCE_OPS[g.op]
+    if not key then return nil end
+    local name = RESOURCE_NAMES[g.res] or g.res or "?"
+    -- `.deficit` asks about the room left, not the amount held, and there is no short
+    -- way to say that: name it and let the tooltip carry the rest.
+    if g.deficit then name = string.format(L["Priority Cond Res Room"], name) end
+    return string.format(L["Priority " .. key], g.n, name)
+end
+
 local GatePhrase
 GatePhrase = function(g)
     local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
@@ -367,6 +393,24 @@ GatePhrase = function(g)
     end
     local piece
     if g.t == "any" or g.t == "all" then
+        -- "during A or during B" says the same word twice. When every member of an OR
+        -- is a plain buff, the shared word is lifted out: "during A or B".
+        if g.t == "any" and #(g.g or {}) > 1 then
+            local names, allBuffs = {}, true
+            for i = 1, #g.g do
+                local m = g.g[i]
+                if m.t == "buff" and m.id and not m.neg then
+                    names[#names + 1] = nameOf(m.id)
+                else
+                    allBuffs = false
+                    break
+                end
+            end
+            if allBuffs then
+                return string.format(L["Priority Cond During"],
+                    table.concat(names, L["Priority Cond Or"]))
+            end
+        end
         local sub = {}
         for i = 1, #(g.g or {}) do
             local m = g.g[i]
@@ -391,7 +435,7 @@ GatePhrase = function(g)
     elseif g.t == "stealth" then
         piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
     elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
-        piece = string.format("%s %s %d", g.res or "?", g.op, g.n)
+        piece = ResourcePhrase(g)
     elseif g.t == "execute" and g.pct then
         piece = string.format(L["Priority Cond Execute"], g.pct)
     elseif g.t == "health" and g.pct then
@@ -693,7 +737,7 @@ end
 --- from BEFORE Ace lays this widget out again.
 local function ApplyColumns(self)
     local free = math.max(0, (self.frame:GetWidth() or 560) - ROW_FIXED)
-    local nameW = math.floor(free * 0.46)
+    local nameW = math.floor(free * 0.33)
     for i = 1, #self.rows do
         self.rows[i].name:SetWidth(nameW)
         self.rows[i].cond:SetWidth(free - nameW)
@@ -799,6 +843,7 @@ local function AcquireRow(self, index)
     -- Everything below is anchored and coloured ONCE: only the row's own position, its
     -- text and the two column widths change per refresh.
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.name:SetWordWrap(false)   -- clipped with an ellipsis; the tooltip has it in full
     row.name:SetPoint("LEFT", row.slot, "RIGHT", 7, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
