@@ -51,13 +51,10 @@ local function queueContentGroup(addon)
                 end,
                 disabled = function() return fullyDisabled(addon) end,
             },
-            showDotSpreadArrow = W.toggle(addon, "showDotSpreadArrow", {
-                name = "Switch-Target Arrow",
-                desc = "Show an arrow on the first icon when Assisted Combat keeps recommending a damage-over-time ability that is already active on your target - a cue to apply it to another enemy.",
-                order = 4, width = "normal", default = false,
-                onSet = function() addon:ForceUpdate() end,
-                disabled = fullyDisabled,
-            }),
+            -- The switch-target arrow is not offered: it never fired reliably, because
+            -- "the game re-recommended a DoT that is already up" turned out not to mean
+            -- "spread it" on every spec. The engine still honours profile.showDotSpreadArrow
+            -- for anyone who set it before; nothing sets it now.
             burstCueGlow = W.toggle(addon, "burstCueGlow", {
                 name = L["Burst Ready Cue"], desc = L["Burst Ready Cue desc"],
                 order = 5, width = "normal", default = true,
