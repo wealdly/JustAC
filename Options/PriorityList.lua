@@ -111,11 +111,7 @@ function PriorityList.StartFrom(addon, source)
     profile.customQueue[specKey] = profile.customQueue[specKey] or {}
     local cq = profile.customQueue[specKey]
     cq.spells = {}
-    for i = 1, #rows do
-        -- Upkeep abilities are left out: in a list they stall the queue, and the
-        -- pre-combat reminder already offers them.
-        if not rows[i].upkeep then cq.spells[#cq.spells + 1] = rows[i].id end
-    end
+    for i = 1, #rows do cq.spells[i] = rows[i].id end
     -- The baseline is the game's pool as it stands now, so the "new abilities since you
     -- made this" notice keeps working. Same snapshot the reset button takes.
     local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
@@ -146,6 +142,22 @@ function PriorityList.IsUpkeep(spellID)
     return false
 end
 
+--- Remove upkeep abilities from a stored list. Older lists were snapshotted from the
+--- game's pool, which carries every poison the spec can use, and those entries stall the
+--- queue (see IsUpkeep). Runs when the panel builds, so a list repairs itself once.
+--- @return number how many were dropped
+function PriorityList.PruneUpkeep(addon)
+    local cq = CustomQueueFor(addon and addon:GetProfile())
+    local list = cq and cq.spells
+    if not list then return 0 end
+    local kept, dropped = {}, 0
+    for i = 1, #list do
+        if PriorityList.IsUpkeep(list[i]) then dropped = dropped + 1 else kept[#kept + 1] = list[i] end
+    end
+    if dropped > 0 then cq.spells = kept end
+    return dropped
+end
+
 --- The entries of one source: { id, name, icon, rank, cond, gameTimed, upkeep }.
 function PriorityList.Rows(addon, source)
     local out = {}
@@ -165,6 +177,13 @@ function PriorityList.Rows(addon, source)
             ids[i] = id
         end
         PriorityList.SortByPriority(ids, source)   -- a custom list is the player's own order
+        -- The game's pool carries every poison; a list must not, so the preview a list is
+        -- started from does not offer them either.
+        local keep = {}
+        for _, id in ipairs(ids) do
+            if not PriorityList.IsUpkeep(id) then keep[#keep + 1] = id end
+        end
+        ids = keep
     end
 
     for i = 1, #ids do
