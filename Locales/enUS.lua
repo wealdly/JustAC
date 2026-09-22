@@ -359,12 +359,22 @@ L["Enable Custom Queue"] = "Enable Custom Priority"
 L["Enable Custom Queue desc"] = "When on, the abilities after Blizzard's pick come from your own list instead of Blizzard's rotation - it starts seeded from your spec's rotation, then reorder, trim, or add abilities below. Off: JustAC just orders Blizzard's own rotation.\n\nShift+right-click any queue icon to hide that ability everywhere."
 L["My List Leads"] = "My List Leads"
 L["Experimental"] = "Experimental"
-L["My List Leads desc"] = "Experimental: your list takes the first slot too. The queue leads with the first ability from this list that passes every gate - ready, affordable, in range, not held - instead of Blizzard's pick.\n\nBlizzard's assist reads combat state the game hides from addons, so its pick can be smarter than any fixed order; this mode trades that for full control. Its recommendation is still consulted quietly for ordering context and the burst cue.\n\nThere is no \"wait\" in this mode - something is always suggested, even when pooling would be better - and the first slot's glow now means JustAC's pick, not Blizzard's. Gap closers still take the first slot when the target is out of reach.\n\nActive only while this Custom Priority list is enabled and has abilities."
+L["My List Leads desc"] = "Not recommended. Most abilities can only be timed by the game, and those can never take the first slot - so on a typical list this changes almost nothing. Measured across a full session it moved the first slot twice in 440 checks.
+
+What it does: your list may take the first slot, using the highest entry that is not locked and passes every gate. Locked entries (the padlock in the list) still defer to the game, and when nothing in your list can be timed the game keeps the slot anyway.
+
+The cost is real: there is no \"wait\" in this mode, so something is always suggested even when pooling would be better, and the first slot's glow stops meaning Blizzard's pick. Gap closers still take the first slot when the target is out of reach.
+
+Active only while this list is enabled and has abilities."
 L["Custom Queue Spells"] = "Custom Priority"
 L["Custom Queue Spells desc"] = "Your ability order for the queue. Use Up / Dn to reorder; the Ordering options above still apply."
 L["Priority Tab Blizzard"] = "Blizzard"
 L["Priority Tab Simc"] = "Theorycraft"
 L["Priority Tab Custom"] = "My List"
+L["Priority Head Slot"] = "#"
+L["Priority Head Ability"] = "Ability"
+L["Priority Head When"] = "When it is used"
+L["Priority Head Rank"] = "Rank"
 L["Priority Start From"] = "Start my list from this"
 L["Priority Empty Hint"] = "You have no list yet. Open the Blizzard or Theorycraft tab and start from one - then reorder, remove and add whatever you like."
 L["Priority Use Source"] = "Use this list"

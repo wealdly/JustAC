@@ -25,7 +25,7 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame, UIParent = CreateFrame, UIParent
 
-local ROW_H, PIN_H, TAB_H, GAP = 26, 30, 26, 4
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 26, 4, 34, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 
 -- Ace's own dialog colors, so the list reads as part of the panel rather than a guest.
@@ -186,6 +186,29 @@ function PriorityList.Condition(rec)
     return table.concat(parts, " \194\183 ")   -- middle dot
 end
 
+--- The per-ability settings live in ONE store, shared with the Ace controls the other
+--- lists still use (profile.defensives.spellSettings). Stored sparse: absent means default.
+local function Setting(addon, spellID, key)
+    local profile = addon and addon:GetProfile()
+    local s = profile and profile.defensives and profile.defensives.spellSettings
+        and profile.defensives.spellSettings[spellID]
+    if key == "procPriority" then return not s or s.procPriority ~= false end
+    return s and s[key] == true
+end
+
+local function SetSetting(addon, spellID, key, val)
+    local profile = addon and addon:GetProfile()
+    if not (profile and profile.defensives) then return end
+    profile.defensives.spellSettings = profile.defensives.spellSettings or {}
+    profile.defensives.spellSettings[spellID] = profile.defensives.spellSettings[spellID] or {}
+    local s = profile.defensives.spellSettings[spellID]
+    if key == "procPriority" then
+        s.procPriority = (val == false) and false or nil
+    else
+        s[key] = val or nil
+    end
+end
+
 --- Anything that edits the list routes through here: one place that refreshes the queue
 --- and the panel, so a new control cannot forget half of it.
 function PriorityList.Changed(addon)
@@ -298,12 +321,101 @@ local function AcquireRow(self, index)
     return row
 end
 
+--- Settings for the open row, drawn INSIDE the list so they appear under that ability
+--- rather than below the whole table. One strip, re-bound as the open row changes.
+local function BuildDetail(widget, parent)
+    local d = CreateFrame("Frame", nil, parent)
+    d:SetHeight(DETAIL_H)
+    d.bg = d:CreateTexture(nil, "BACKGROUND")
+    d.bg:SetAllPoints()
+    d.bg:SetColorTexture(0.85, 0.65, 0.34, 0.07)
+    d.edge = d:CreateTexture(nil, "ARTWORK")
+    d.edge:SetPoint("TOPLEFT")
+    d.edge:SetPoint("BOTTOMLEFT")
+    d.edge:SetWidth(2)
+    d.edge:SetColorTexture(unpack(GOLD))
+
+    local function check(label, key, tip)
+        local cb = CreateFrame("CheckButton", nil, d, "UICheckButtonTemplate")
+        cb:SetSize(20, 20)
+        cb.label = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        cb.label:SetPoint("LEFT", cb, "RIGHT", 1, 0)
+        cb.label:SetText(label)
+        cb:SetScript("OnClick", function(self)
+            if not d.spellID then return end
+            SetSetting(widget.addon, d.spellID, key, self:GetChecked() and true or false)
+            PriorityList.Changed(widget.addon)
+        end)
+        cb:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(tip, 1, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        cb.key = key
+        return cb
+    end
+
+    d.always = check(L["Always Show"], "alwaysShow", L["Always Show desc"])
+    d.always:SetPoint("LEFT", 46, 0)
+    d.proc = check(L["Custom Queue Procs First"], "procPriority", L["Custom Queue Procs First desc"])
+
+    d.holdLabel = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    d.holdLabel:SetText(L["Hold Until"])
+
+    -- The dial reuses the option control's own values/get/set, so the widget never owns a
+    -- second copy of what the modes mean.
+    d.hold = CreateFrame("Frame", "JustACPriorityHoldDropDown", d, "UIDropDownMenuTemplate")
+    d.Rebind = function(spellID)
+        d.spellID = spellID
+        if not spellID then return end
+        d.always:SetChecked(Setting(widget.addon, spellID, "alwaysShow"))
+        d.proc:SetChecked(Setting(widget.addon, spellID, "procPriority"))
+        d.proc:ClearAllPoints()
+        d.proc:SetPoint("LEFT", d.always.label, "RIGHT", 14, 0)
+        d.holdLabel:ClearAllPoints()
+        d.holdLabel:SetPoint("LEFT", d.proc.label, "RIGHT", 16, 0)
+        d.hold:ClearAllPoints()
+        d.hold:SetPoint("LEFT", d.holdLabel, "RIGHT", -8, -2)
+
+        local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+        local ctl = SpellSearch and SpellSearch.HoldModeControl
+            and SpellSearch.HoldModeControl(widget.addon, spellID, 1)
+        if not ctl then d.hold:Hide() return end
+        d.hold:Show()
+        local values, sorting = ctl.values(), ctl.sorting and ctl.sorting() or nil
+        local current = ctl.get()
+        UIDropDownMenu_SetWidth(d.hold, 120)
+        UIDropDownMenu_SetText(d.hold, values[current] or current or "")
+        UIDropDownMenu_Initialize(d.hold, function()
+            local keys = sorting
+            if not keys then
+                keys = {}
+                for k in pairs(values) do keys[#keys + 1] = k end
+                table.sort(keys)
+            end
+            for _, k in ipairs(keys) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text, info.checked = values[k], (k == current)
+                info.func = function()
+                    ctl.set(nil, k)
+                    PriorityList.Changed(widget.addon)
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+        local off = ctl.disabled and ctl.disabled()
+        if off then UIDropDownMenu_DisableDropDown(d.hold) else UIDropDownMenu_EnableDropDown(d.hold) end
+    end
+    return d
+end
+
 local methods = {}
 
 function methods:OnAcquire()
     self.addon = Addon()
     self.view = nil
-    self:SetHeight(TAB_H + PIN_H + GAP)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP)
     self:SetWidth(560)
     self:Refresh()
 end
@@ -368,7 +480,8 @@ function methods:Refresh()
 
     local rows = PriorityList.Rows(self.addon, source)
     local width = self.frame:GetWidth() or 560
-    local y = -(TAB_H + PIN_H + GAP)
+    local y = -(TAB_H + HEAD_H + PIN_H + GAP)
+    local openRow, detailShown = nil, false
     local start = leads and 1 or 2
 
     for i = 1, #rows do
@@ -406,7 +519,20 @@ function methods:Refresh()
         row.edit:SetShown(editable and not self.disabled)
         row:Show()
         y = y - ROW_H
+
+        -- The open ability's settings belong under IT, inside the list - not below the
+        -- whole table, where the row they belong to has scrolled out of sight.
+        if editable and PriorityList.selected == data.id then
+            openRow, detailShown = row, true
+            self.detail:ClearAllPoints()
+            self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
+            self.detail:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", 0, y)
+            self.detail.Rebind(data.id)
+            self.detail:Show()
+            y = y - DETAIL_H
+        end
     end
+    if not detailShown then self.detail:Hide() end
     for i = #rows + 1, #self.rows do self.rows[i]:Hide() end
 
     -- One button, three states: an empty list starts FROM what is on screen, a list that
@@ -422,7 +548,20 @@ function methods:Refresh()
     self.emptyNote:SetShown(source == "custom" and not haveList)
     self.emptyNote:SetText(L["Priority Empty Hint"])
 
-    self:SetHeight(TAB_H + PIN_H + GAP + (#rows * ROW_H) + ((#rows == 0) and 28 or 4))
+    -- Header labels track the live row geometry.
+    local first = self.rows[1]
+    self.head:SetShown(#rows > 0)
+    if first and #rows > 0 then
+        self.head.name:ClearAllPoints()
+        self.head.name:SetPoint("LEFT", self.frame, "LEFT", 55, 0)
+        self.head.cond:ClearAllPoints()
+        self.head.cond:SetPoint("LEFT", self.frame, "LEFT", 55 + (first.name:GetWidth() or 100) + 8, 0)
+        self.head.rank:ClearAllPoints()
+        self.head.rank:SetPoint("RIGHT", self.frame, "RIGHT", editable and -104 or -6, 0)
+    end
+
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + (#rows * ROW_H)
+        + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
 end
 
 --------------------------------------------------------------------------------
@@ -480,15 +619,15 @@ local function Constructor()
     end)
 
     widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + PIN_H + 6))
+    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
 
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
     pin:SetHeight(PIN_H - GAP)
-    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -TAB_H)
-    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -TAB_H)
+    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(TAB_H + HEAD_H))
+    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(TAB_H + HEAD_H))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
     pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -507,6 +646,35 @@ local function Constructor()
     pin.note:SetPoint("RIGHT", -6, 0)
     pin.note:SetJustifyH("LEFT")
     widget.pin = pin
+
+    -- Column header. Its labels are anchored to the FIRST row's regions in Refresh, so a
+    -- name column that resizes with the panel can never drift away from its heading.
+    local head = CreateFrame("Frame", nil, frame)
+    head:SetHeight(HEAD_H)
+    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -TAB_H)
+    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -TAB_H)
+    local function headLabel(text, justify)
+        local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        fs:SetText(text)
+        fs:SetJustifyH(justify or "LEFT")
+        return fs
+    end
+    head.slot = headLabel(L["Priority Head Slot"], "RIGHT")
+    head.slot:SetPoint("LEFT", 6, 0)
+    head.slot:SetWidth(20)
+    head.name = headLabel(L["Priority Head Ability"])
+    head.cond = headLabel(L["Priority Head When"])
+    head.rank = headLabel(L["Priority Head Rank"], "RIGHT")
+    head.rank:SetWidth(44)
+    head.rule = head:CreateTexture(nil, "ARTWORK")
+    head.rule:SetHeight(1)
+    head.rule:SetPoint("BOTTOMLEFT", 4, 0)
+    head.rule:SetPoint("BOTTOMRIGHT", -4, 0)
+    head.rule:SetColorTexture(1, 1, 1, 0.08)
+    widget.head = head
+
+    widget.detail = BuildDetail(widget, content)
+    widget.detail:Hide()
 
     return AceGUI:RegisterAsWidget(widget)
 end
