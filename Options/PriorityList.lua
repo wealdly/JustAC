@@ -183,10 +183,18 @@ function PriorityList.CountFor(addon, source)
     return n
 end
 
---- Where an ability sits in the player's own list, by id. nil when it is not in it.
-local function MyListPositions(profile)
-    local out, cq = {}, CustomQueueFor(profile)
-    for i, id in ipairs((cq and cq.spells) or {}) do
+--- Where an ability sits in the GAME's own order, by id. nil when the game does not list
+--- it at all. Upkeep is excluded so the positions match what the panel actually shows.
+local function BlizzardPositions(addon)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+    local ids = {}
+    for _, id in ipairs(pool or {}) do
+        if not PriorityList.IsUpkeep(id) then ids[#ids + 1] = id end
+    end
+    PriorityList.SortByPriority(ids, "blizzard")
+    local out = {}
+    for i, id in ipairs(ids) do
         if out[id] == nil then out[id] = i end
     end
     return out
@@ -220,10 +228,9 @@ function PriorityList.Rows(addon, source)
         ids = keep
     end
 
-    -- Movement is only meaningful against a list that exists, and only on a preview: on
-    -- your own list every row would read "no change".
-    local mine = (source ~= "custom") and MyListPositions(profile) or nil
-    local haveMine = mine and next(mine) ~= nil
+    -- Every source except the baseline itself is shown as movement against it.
+    local base = (source ~= "blizzard") and BlizzardPositions(addon) or nil
+    local haveBase = base and next(base) ~= nil
     for i = 1, #ids do
         local id = ids[i]
         -- DisplayInfo owns the awkward cases: items arrive as NEGATIVE ids, and a
@@ -237,9 +244,9 @@ function PriorityList.Rows(addon, source)
             icon = icon or 134400,
             rank = rec and rec.rank or nil,
             upkeep = PriorityList.IsUpkeep(id),
-            -- vs the player's list: how far this source would move it, or that it is
-            -- missing from their list entirely.
-            move = haveMine and (mine[id] and (mine[id] - i) or "new") or nil,
+            -- vs the game's own order: how far this source moves it, or that the game
+            -- does not offer it at all.
+            move = haveBase and (base[id] and (base[id] - i) or "new") or nil,
             cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
                 or PriorityList.Condition(rec)) or nil,
         }
@@ -754,7 +761,7 @@ function methods:Refresh()
         self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
         self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -104, 0)
-        self.head.rank:SetText(source == "custom" and L["Priority Head Rank"] or L["Priority Head Move"])
+        self.head.rank:SetText(source == "blizzard" and L["Priority Head Rank"] or L["Priority Head Move"])
     end
 
     -- +10: the pane's own top and bottom border insets.
