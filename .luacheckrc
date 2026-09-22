@@ -37,10 +37,6 @@ ignore = {
 }
 
 read_globals = {
-    -- Classic dropdown API (Options/PriorityList.lua drives one from a custom widget)
-    "UIDropDownMenu_Initialize", "UIDropDownMenu_CreateInfo", "UIDropDownMenu_AddButton",
-    "UIDropDownMenu_SetText", "UIDropDownMenu_SetWidth", "UIDropDownMenu_EnableDropDown",
-    "UIDropDownMenu_DisableDropDown",
   "ActionButton_ApplyCooldown",
   "BOOKTYPE_SPELL",
   "BlizzardAPI",
@@ -157,7 +153,7 @@ read_globals = {
   "STANDARD_TEXT_FONT",
   "SetCVar",
   "Settings",
-  "StaticPopup_Show",
+  "StaticPopup_Show", "YES", "NO",
   "TargetFrame",
   "UIParent",
   "UnitAffectingCombat",
