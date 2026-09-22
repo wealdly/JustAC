@@ -268,22 +268,24 @@ local function MakeTab(parent, label)
     tab:SetNormalFontObject("GameFontNormalSmall")
     tab:SetHighlightFontObject("GameFontHighlightSmall")
     tab:SetText(label)
-    local slices, prev = {}, nil
+    local slices = {}
     for i, cut in ipairs({ { 0, 0.15625, 20 }, { 0.15625, 0.84375, 0 }, { 0.84375, 1, 20 } }) do
         local t = tab:CreateTexture(nil, "BORDER")
         t:SetTexCoord(cut[1], cut[2], 0, 1)
         t:SetHeight(TAB_H)
         if cut[3] > 0 then t:SetWidth(cut[3]) end
+        -- The end caps pin to the tab's own corners and the middle spans BETWEEN them.
+        -- Anchoring the right cap to the middle as well made each depend on the other,
+        -- which the layout engine refuses outright ("cannot anchor to a region dependent
+        -- on it") - and the throw came from inside Ace's tree, taking the tab with it.
         if i == 1 then
             t:SetPoint("BOTTOMLEFT")
-        elseif i == 2 then
-            t:SetPoint("LEFT", prev, "RIGHT")
-        else
-            t:SetPoint("LEFT", prev, "RIGHT")
+        elseif i == 3 then
             t:SetPoint("BOTTOMRIGHT")
         end
-        slices[i], prev = t, t
+        slices[i] = t
     end
+    slices[2]:SetPoint("LEFT", slices[1], "RIGHT")
     slices[2]:SetPoint("RIGHT", slices[3], "LEFT")
     tab.slices = slices
     tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
