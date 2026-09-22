@@ -349,7 +349,10 @@ function CustomQueue.CreateTabArgs(addon)
                             local cq = profile.customQueue and profile.customQueue[specKey]
                             if not cq then return end
                             cq.myListLeads = val or nil
-                            addon:ForceUpdateAll()
+                            -- Through Changed, not ForceUpdateAll: this decides what the
+                            -- position-1 row says, and only a rebuild repaints the widget.
+                            local PL = LibStub("JustAC-PriorityList", true)
+                            if PL and PL.Changed then PL.Changed(addon) else addon:ForceUpdateAll() end
                         end,
                     },
                     priorityList = {
