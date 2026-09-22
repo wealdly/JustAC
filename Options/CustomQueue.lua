@@ -463,14 +463,11 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         baseOrder = 12, addOrder = 30,
         listName = L["Custom Queue Spells"], updateFunc = updateFunc,
         spellsOnly = false, emptyText = L["Custom Queue Empty"],
-        -- Rows come from the widget; Ace only renders the opened row's settings - and
-        -- NONE when no row is open. 0 is that "none": nil would mean "no filter", which
-        -- drew the old full-height rows underneath the widget (both lists at once).
-        -- Gated on the previewed source as well: an open row's settings kept rendering
-        -- under a read-only preview, complete with its own Remove button.
-        onlyEntry = PriorityList
-            and ((PriorityList.CurrentSource(profile) == "custom" and PriorityList.selected) or 0)
-            or nil,
+        -- Rows, reordering and per-ability settings all live in the widget now, so Ace
+        -- renders NO entry group. Its Up/Down/Remove duplicated the row's own controls
+        -- and opened below the whole table rather than under the ability. 0 is "no entry
+        -- matches"; nil would mean "no filter" and redraw the entire legacy list.
+        onlyEntry = PriorityList and 0 or nil,
     })
 
     -- The add button belongs to YOUR list: on the read-only previews there is nothing to
