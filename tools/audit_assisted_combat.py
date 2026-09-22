@@ -5,6 +5,7 @@
 #
 #   python tools/audit_assisted_combat.py                 what SimC pool insertion adds, per spec
 #   python tools/audit_assisted_combat.py --diff OLD NEW  which specs' rotations changed between builds
+#   python tools/audit_assisted_combat.py --safelead [FILE]  Safe Lead dry-run metrics from a pick log
 #   python tools/audit_assisted_combat.py --cooldowns     Blizzard's cooldown/movement class vs burst anchors + NEVER_INSERT
 #   python tools/audit_assisted_combat.py --dots          DoTs Blizzard refreshes when missing vs Data/TargetDots.lua
 #   python tools/audit_assisted_combat.py --healers       the local healer pins vs Blizzard's order for those specs
@@ -302,6 +303,75 @@ def self_check():
     assert 1239123 not in insertable_by_spec()["DEMONHUNTER_3"], "delegated flag is not being parsed"
 
 
+def audit_safelead(path=None):
+    """Safe Lead dry run (Documentation/SAFE_LEAD_PLAN.md phase 1) from a pick log.
+
+    Per fight: how often a candidate fired and on which evidence class; AGREEMENT - was the
+    game's NEXT pick the ability we would have shown (high = we gain a GCD, low = we add
+    something the game would not have asked for); what a WAIT meant (casting / GCD / idle);
+    and the served-most filler (measured C) beside Blizzard's last-step candidate (A).
+    """
+    import collections
+    wtf = REPO.parents[2] / "WTF" / "Account"
+    hits = [Path(path)] if path else sorted(wtf.glob("*/SavedVariables/JustAC.lua"), key=lambda p: p.stat().st_mtime)
+    if not hits or not hits[-1].exists():
+        sys.exit("no SavedVariables/JustAC.lua found - record with /jac inspect picklog, /reload, then re-run")
+    text = hits[-1].read_text(encoding="utf-8", errors="replace")
+    rx = re.compile(r'"([\d.]+) (\w+_\d) pick=(\d+) combat=(\S) .*? sl=(\S+)(?: w=(\w+))?"')
+    rows = [(float(t), spec, int(pick), c == "1", sl, w) for t, spec, pick, c, sl, w in rx.findall(text)]
+    rows = [r for r in rows if r[3]]
+    if not rows:
+        sys.exit("no pick-log ticks carrying the sl= field (needs 5.6.1+ with the dry run recorder)")
+    names = spell_names()
+    nm = lambda i: names.get(i, str(i))
+    # fights: gaps > 8 s
+    fights, cur = [], []
+    for r in rows:
+        if cur and r[0] - cur[-1][0] > 8:
+            fights.append(cur); cur = []
+        cur.append(r)
+    if cur:
+        fights.append(cur)
+    spec = rows[0][1]
+    fired = collections.Counter(); agree = collections.Counter(); shown = collections.Counter()
+    waits = collections.Counter(); served = collections.Counter(); over = collections.Counter()
+    ticks = 0
+    for f in fights:
+        prev = None
+        for i, (t, _, pick, _, sl, w) in enumerate(f):
+            ticks += 1
+            if pick and pick != prev:
+                served[pick] += 1
+            prev = pick or prev
+            if not pick:
+                waits[w or "?"] += 1
+            if sl != "-":
+                cls, sid = sl.split(":"); sid = int(sid)
+                fired[cls] += 1; shown[(cls, sid)] += 1
+                over["wait" if not pick else nm(pick)] += 1
+                # the next DIFFERENT pick after this tick
+                nxt = next((p for (_, _, p, _, _, _) in f[i + 1:] if p and p != pick), None)
+                if nxt is not None:
+                    agree[(cls, nxt == sid)] += 1
+    print(f"{spec}: {len(fights)} fights, {ticks} combat ticks, candidate fired on {sum(fired.values())} "
+          f"({100 * sum(fired.values()) / max(1, ticks):.0f}%)")
+    for cls in sorted(fired):
+        yes, no = agree[(cls, True)], agree[(cls, False)]
+        print(f"  class {cls}: fired {fired[cls]:4d}   next pick agreed {yes}/{yes + no}"
+              f"{'  (' + str(round(100 * yes / (yes + no))) + '%)' if yes + no else ''}")
+    print("  what it would have shown:")
+    for (cls, sid), n in shown.most_common(12):
+        print(f"    {n:4d}  class {cls}  {nm(sid)} ({sid})")
+    print("  over:", ", ".join(f"{k} x{v}" for k, v in over.most_common(8)) or "-")
+    print("  waits:", ", ".join(f"{k} x{v}" for k, v in waits.most_common()) or "none")
+    print("  served most (filler candidate C):", ", ".join(f"{nm(p)} x{n}" for p, n in served.most_common(6)))
+    order = re.search(r'\["%s"\] = \{(.*?)\n  \}' % spec,
+                      (REPO / "Data" / "AssistedCombatOrder.lua").read_text(encoding="utf-8"), re.S)
+    if order:
+        last = re.findall(r"\[(\d+)\]=(\d+),  -- (.*)", order.group(1))[-3:]
+        print("  Blizzard last steps (filler candidate A):", ", ".join(f"{n} (#{r})" for _, r, n in last))
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--diff", nargs=2, metavar=("OLD", "NEW"), help="compare rotations between two builds")
@@ -309,6 +379,8 @@ if __name__ == "__main__":
         ap.add_argument(f"--{flag}", action="store_true")
     ap.add_argument("--decode", nargs="?", const="", metavar="SAVEDVARS",
                     help="join a /jac inspect picklog recording with the rule table")
+    ap.add_argument("--safelead", nargs="?", const="", metavar="SAVEDVARS",
+                    help="Safe Lead dry-run metrics from a /jac inspect picklog recording")
     args = ap.parse_args()
     if args.diff:
         audit_diff(*args.diff)
@@ -322,6 +394,8 @@ if __name__ == "__main__":
         audit_procs()
     elif args.decode is not None:
         audit_decode(args.decode or None)
+    elif args.safelead is not None:
+        audit_safelead(args.safelead or None)
     else:
         self_check()
         audit_insertion()

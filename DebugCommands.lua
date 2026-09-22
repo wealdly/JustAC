@@ -4410,7 +4410,20 @@ local function PickLogSample()
     local SDB = LibStub("JustAC-SpellDB", true)
     if not (BAPI and SDB) then return end
     local pick = BAPI.GetAnyNextCastSpell and BAPI.GetAnyNextCastSpell()
-    if not pick then return end
+    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
+    if not pick and not inCombat then return end   -- a WAIT is a tick in combat
+    -- What a wait means: mid-cast, GCD running, or truly nothing (pooling / all on cooldown).
+    local waitWhy = ""
+    if not pick then
+        local casting = UnitCastingInfo("player") or UnitChannelInfo("player")
+        waitWhy = casting and " w=cast" or (BAPI.IsSpellOnGCD and BAPI.IsSpellOnGCD(61304) and " w=gcd") or " w=idle"
+    end
+    -- Safe Lead dry run: what WOULD lead, and on which evidence class (plan phase 1).
+    local slID, slCls = nil, nil
+    do
+        local SQ0 = LibStub("JustAC-SpellQueue", true)
+        if SQ0 and SQ0.SafeLeadCandidate then slID, slCls = SQ0.SafeLeadCandidate() end
+    end
     local cur, max = nil, nil
     if BAPI.GetClassResourcePoints then cur, max = BAPI.GetClassResourcePoints() end
     local function n(v) return (type(v) == "number" and not issecretvalue(v)) and tostring(v) or "-" end
@@ -4428,7 +4441,7 @@ local function PickLogSample()
     -- B blacklisted, O out of range, U unusable for a non-resource reason, P the LEAD has a
     -- proc overlay, "-" none of these. @N = the pick's own slot in the queue (0 = absent).
     local why = ""
-    if lead and lead ~= pick then
+    if pick and lead and lead ~= pick then
         local shown = BAPI.GetDisplaySpellID and BAPI.GetDisplaySpellID(pick) or pick
         if lead ~= shown then
             local DT = LibStub("JustAC-DotTracker", true)
@@ -4454,17 +4467,18 @@ local function PickLogSample()
     -- The context the queue actually ranked with; "*" = carried by the fight window.
     local ctxState = SQ and SQ.DebugContextState and SQ.DebugContextState()
     if type(second) ~= "number" or issecretvalue(second) then second = nil end
-    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s second=%s ctx=%s%s",
+    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s second=%s ctx=%s%s sl=%s%s",
         tostring(SDB.GetSpecKey and SDB.GetSpecKey() or "?"),
-        pick,
-        (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
+        pick or 0,
+        inCombat and "1" or "0",
         n(BAPI.GetEngagedEnemyCount and BAPI.GetEngagedEnemyCount()),
         n(cur), n(max),
         n(BAPI.GetPowerBand and BAPI.GetPowerBand("player", POWER_BANDS)),
         n(UnitExists("target") and BAPI.GetHealthBand and BAPI.GetHealthBand("target", HEALTH_BANDS) or nil),
         n(lead), (rec and rec.delegated) and "D" or (rec and "" or "?"), why,
         tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"), n(second),
-        tostring(ctxState and ctxState.arch or "-"), (ctxState and ctxState.stickyApplied) and "*" or "")
+        tostring(ctxState and ctxState.arch or "-"), (ctxState and ctxState.stickyApplied) and "*" or "",
+        slID and (tostring(slCls) .. ":" .. tostring(slID)) or "-", waitWhy)
     if payload == lastPickPayload then return end
     lastPickPayload = payload
     _G.JustACGlobal = _G.JustACGlobal or {}
