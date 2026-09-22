@@ -12,9 +12,10 @@
 -- things the option table cannot: which slot the game owns, and which entries the addon
 -- is unable to time.
 --
--- What it deliberately does NOT draw: the per-entry settings. Those stay Ace controls,
--- emitted by Options/CustomQueue.lua for the selected row, so the toggles, dials and
--- their get/set logic are not reimplemented here.
+-- What it deliberately does NOT do itself: anything Ace or another module already owns.
+-- The per-row settings are real AceGUI widgets parented into the row; the tab strip uses
+-- Blizzard's own options-tab art; and the name lookup, settings store, rank sort and
+-- baseline snapshot all come from the modules that own them.
 local Type, Version = "JustACPriorityList", 1
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end
@@ -23,38 +24,42 @@ local PriorityList = LibStub:NewLibrary("JustAC-PriorityList", 1)
 if not PriorityList then return end
 
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
-local CreateFrame, UIParent = CreateFrame, UIParent
+local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 26, 4, 34, 16
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 28, 4, 34, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
+-- Everything on a row that is NOT the two text columns: number, icon, rank, the four
+-- buttons and the gaps between them. What is left is split between name and
+-- condition, so a wider panel widens both instead of only one.
+local ROW_FIXED = 208
 
--- Ace's own dialog colors, so the list reads as part of the panel rather than a guest.
-local INK        = { 0.93, 0.90, 0.85 }
-local INK_DIM    = { 0.66, 0.62, 0.55 }
-local GOLD       = { 0.85, 0.65, 0.34 }
-local GREEN      = { 0.62, 0.79, 0.50 }
-local BLUE       = { 0.44, 0.62, 0.85 }
+local INK, INK_DIM = { 0.93, 0.90, 0.85 }, { 0.66, 0.62, 0.55 }
+local GOLD, GREEN, BLUE = { 0.85, 0.65, 0.34 }, { 0.62, 0.79, 0.50 }, { 0.44, 0.62, 0.85 }
 
 --------------------------------------------------------------------------------
--- Model: what the list shows, derived from the profile and the imported data.
+-- Model
 --------------------------------------------------------------------------------
 local function Addon() return LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
 local function SpecKey()
     local SpellDB = LibStub("JustAC-SpellDB", true)
     return SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey() or nil
 end
-
---- Which source the QUEUE is using right now: the custom list, the imported priority, or
---- the game's own order. One reading for the tab strip and the "use this" button.
-function PriorityList.LiveSource(profile)
+local function CustomQueueFor(profile)
     local specKey = SpecKey()
-    local cq = specKey and profile and profile.customQueue and profile.customQueue[specKey]
+    return specKey and profile and profile.customQueue and profile.customQueue[specKey] or nil
+end
+
+--- Which source the QUEUE is using right now. Deliberately independent of `orderExact`:
+--- "show my order literally" is a different question from "whose order", and folding both
+--- into one profile field made ticking either silently move the other.
+function PriorityList.LiveSource(profile)
+    local cq = CustomQueueFor(profile)
     if cq and cq.enabled then return "custom" end
     return (profile and profile.contextOrder or "simc") == "simc" and "simc" or "blizzard"
 end
 
---- Point the queue at a source. The two settings that decide it are written together, so
---- a player comparing sources flips one control instead of remembering the pair.
+--- Point the queue at a source. The settings that decide it are written together, so a
+--- player comparing sources flips one control instead of remembering the pair.
 function PriorityList.SetLiveSource(addon, source)
     local profile = addon and addon:GetProfile()
     local specKey = SpecKey()
@@ -71,10 +76,31 @@ function PriorityList.SetLiveSource(addon, source)
     PriorityList.Changed(addon)
 end
 
+--- Sort ids into priority order for a source, in place. The ONE ranker: the reset button
+--- and the previews below both call it, so two copies cannot drift apart.
+function PriorityList.SortByPriority(ids, source)
+    local RI = LibStub("JustAC-RotationImport", true)
+    if not RI then return ids end
+    local key = {}
+    for _, id in ipairs(ids) do
+        local rec = RI.GetEntry and RI.GetEntry(id, "st")
+        if source == "blizzard" then
+            key[id] = (RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999
+        else
+            -- Unranked entries (poisons, utility) fall below everything the data ranks.
+            key[id] = (rec and rec.rank) or (1000 + ((RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999))
+        end
+    end
+    table.sort(ids, function(a, b)
+        if key[a] ~= key[b] then return (key[a] or 999) < (key[b] or 999) end
+        return a < b
+    end)
+    return ids
+end
+
 --- Copy the source the player is LOOKING AT into their own list, and switch to it. This is
 --- how a list begins: there is no blank-page state to explain, and the order they just
---- compared is the order they get. The baseline is the game's pool as it stands now, so the
---- "new abilities since you made this" notice keeps working.
+--- compared is the order they get.
 function PriorityList.StartFrom(addon, source)
     local profile = addon and addon:GetProfile()
     local specKey = SpecKey()
@@ -85,86 +111,95 @@ function PriorityList.StartFrom(addon, source)
     profile.customQueue[specKey] = profile.customQueue[specKey] or {}
     local cq = profile.customQueue[specKey]
     cq.spells = {}
-    for i = 1, #rows do cq.spells[i] = rows[i].id end
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
-    cq.baseline = {}
-    for i = 1, #(pool or {}) do cq.baseline[i] = pool[i] end
+    for i = 1, #rows do
+        -- Upkeep abilities are left out: in a list they stall the queue, and the
+        -- pre-combat reminder already offers them.
+        if not rows[i].upkeep then cq.spells[#cq.spells + 1] = rows[i].id end
+    end
+    -- The baseline is the game's pool as it stands now, so the "new abilities since you
+    -- made this" notice keeps working. Same snapshot the reset button takes.
+    local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
+    if CustomQueue and CustomQueue.SnapshotBaseline then CustomQueue.SnapshotBaseline(cq) end
     cq.enabled = true
+    PriorityList.selected = nil
     PriorityList.Changed(addon)
 end
 
---- The entries of one source, newest profile state each call (cheap: options are cold).
---- Returns an array of { id, name, icon, rank, cond, gameTimed }.
+--- Empty the list and hand the queue back to the game. Leaves the entries' own settings
+--- alone: those are ability-level and shared with the other lists.
+function PriorityList.ClearList(addon)
+    local cq = CustomQueueFor(addon and addon:GetProfile())
+    if not cq then return end
+    cq.spells, cq.baseline, cq.enabled = {}, nil, false
+    PriorityList.selected = nil
+    PriorityList.Changed(addon)
+end
+
+--- Upkeep, not rotation: poisons, weapon imbues and long-duration self/raid buffs. The
+--- game surfaces these one at a time out of combat and holds its other picks until each is
+--- applied, so a list that owns the order can sit on one of them and never move on. They
+--- belong to the pre-combat reminder, which offers them without blocking the queue.
+function PriorityList.IsUpkeep(spellID)
+    if not spellID or spellID <= 0 then return false end
+    local RF = LibStub("JustAC-RedundancyFilter", true)
+    if RF and RF.IsUpkeepSpell then return RF.IsUpkeepSpell(spellID) end
+    return false
+end
+
+--- The entries of one source: { id, name, icon, rank, cond, gameTimed, upkeep }.
 function PriorityList.Rows(addon, source)
     local out = {}
     local profile = addon and addon:GetProfile()
-    local specKey = SpecKey()
-    if not (profile and specKey) then return out end
+    if not (profile and SpecKey()) then return out end
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     local RI = LibStub("JustAC-RotationImport", true)
     if not BlizzardAPI then return out end
 
-    local ids
+    local ids = {}
     if source == "custom" then
-        local cq = profile.customQueue and profile.customQueue[specKey]
-        ids = (cq and cq.spells) or {}
+        local cq = CustomQueueFor(profile)
+        for i, id in ipairs((cq and cq.spells) or {}) do ids[i] = id end
     else
-        ids = (BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()) or {}
-    end
-
-    -- The imported priority sorts the "simc" view; the game's own step order sorts
-    -- "blizzard". A custom list is the player's order and is never re-sorted here.
-    local order = {}
-    for i = 1, #ids do order[i] = ids[i] end
-    if source ~= "custom" and RI then
-        local key = {}
-        for _, id in ipairs(order) do
-            local rec = RI.GetEntry and RI.GetEntry(id, "st")
-            if source == "simc" then
-                key[id] = (rec and rec.rank) or (1000 + ((RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999))
-            else
-                key[id] = (RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999
-            end
+        for i, id in ipairs((BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()) or {}) do
+            ids[i] = id
         end
-        table.sort(order, function(a, b)
-            if key[a] ~= key[b] then return (key[a] or 999) < (key[b] or 999) end
-            return a < b
-        end)
+        PriorityList.SortByPriority(ids, source)   -- a custom list is the player's own order
     end
 
-    for i = 1, #order do
-        local id = order[i]
-        local info = BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
-        local rec = RI and RI.GetEntry and RI.GetEntry(id, "st")
+    for i = 1, #ids do
+        local id = ids[i]
+        -- DisplayInfo owns the awkward cases: items arrive as NEGATIVE ids, and a
+        -- transform form is labelled with the button it belongs to.
+        local name, icon
+        if SpellSearch and SpellSearch.DisplayInfo then name, icon = SpellSearch.DisplayInfo(id) end
+        local rec = (id > 0) and RI and RI.GetEntry and RI.GetEntry(id, "st") or nil
         out[i] = {
             id = id,
-            name = (info and info.name) or tostring(id),
-            icon = (info and info.iconID) or 134400,
+            name = name or tostring(id),
+            icon = icon or 134400,
             rank = rec and rec.rank or nil,
-            -- Only the game can time a delegated entry, and an entry the imported data
-            -- does not rank at all is in the same position: nothing here knows its moment.
-            gameTimed = (rec == nil) or (rec.delegated == true),
-            cond = PriorityList.Condition(rec),
+            upkeep = PriorityList.IsUpkeep(id),
+            cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
+                or PriorityList.Condition(rec)) or nil,
         }
     end
     return out
 end
 
---- One line of plain words for an entry's conditions, or nil when it has none we read.
+--- One line of plain words for an entry's conditions.
 function PriorityList.Condition(rec)
     if not rec then return L["Priority Cond Unknown"] end
     local gates = rec.gates
     if not gates or #gates == 0 then return L["Priority Cond None"] end
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     local parts = {}
     for i = 1, #gates do
-        local g = gates[i]
-        local piece
+        local g, piece = gates[i], nil
         if g.t == "buff" and g.id then
-            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-            local info = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(g.id)
-            local nm = (info and info.name) or tostring(g.id)
-            piece = string.format(g.neg and L["Priority Cond Not During"] or L["Priority Cond During"], nm)
+            local nm = SpellSearch and SpellSearch.DisplayInfo and SpellSearch.DisplayInfo(g.id)
+            piece = string.format(g.neg and L["Priority Cond Not During"] or L["Priority Cond During"],
+                nm or tostring(g.id))
         elseif g.t == "stealth" then
             piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
         elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
@@ -186,29 +221,6 @@ function PriorityList.Condition(rec)
     return table.concat(parts, " \194\183 ")   -- middle dot
 end
 
---- The per-ability settings live in ONE store, shared with the Ace controls the other
---- lists still use (profile.defensives.spellSettings). Stored sparse: absent means default.
-local function Setting(addon, spellID, key)
-    local profile = addon and addon:GetProfile()
-    local s = profile and profile.defensives and profile.defensives.spellSettings
-        and profile.defensives.spellSettings[spellID]
-    if key == "procPriority" then return not s or s.procPriority ~= false end
-    return s and s[key] == true
-end
-
-local function SetSetting(addon, spellID, key, val)
-    local profile = addon and addon:GetProfile()
-    if not (profile and profile.defensives) then return end
-    profile.defensives.spellSettings = profile.defensives.spellSettings or {}
-    profile.defensives.spellSettings[spellID] = profile.defensives.spellSettings[spellID] or {}
-    local s = profile.defensives.spellSettings[spellID]
-    if key == "procPriority" then
-        s.procPriority = (val == false) and false or nil
-    else
-        s[key] = val or nil
-    end
-end
-
 --- Anything that edits the list routes through here: one place that refreshes the queue
 --- and the panel, so a new control cannot forget half of it.
 function PriorityList.Changed(addon)
@@ -226,21 +238,152 @@ end
 --------------------------------------------------------------------------------
 -- The widget
 --------------------------------------------------------------------------------
-local function MakeButton(parent, label, tip, onClick)
+local function Tooltip(frame, text)
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(text, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
+local function MakeButton(parent, label, tip, onClick, width)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    b:SetSize(22, 18)
+    b:SetSize(width or 22, 18)
     b:SetText(label)
     local fs = b:GetFontString()
     if fs then fs:SetFont(fs:GetFont(), 10, "") end
     b:SetScript("OnClick", onClick)
-    b:SetScript("OnEnter", function(self)
-        if not tip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(tip, 1, 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    Tooltip(b, tip)
     return b
+end
+
+--- One tab, in Blizzard's own options-tab art - the same three-slice the Ace tab container
+--- uses, so the strip belongs to the panel instead of imitating it.
+local ACTIVE_TAB = "Interface\\OptionsFrame\\UI-OptionsFrame-ActiveTab"
+local INACTIVE_TAB = "Interface\\OptionsFrame\\UI-OptionsFrame-InActiveTab"
+local function MakeTab(parent, label)
+    local tab = CreateFrame("Button", nil, parent)
+    tab:SetHeight(TAB_H)
+    tab:SetNormalFontObject("GameFontNormalSmall")
+    tab:SetHighlightFontObject("GameFontHighlightSmall")
+    tab:SetText(label)
+    local slices, prev = {}, nil
+    for i, cut in ipairs({ { 0, 0.15625, 20 }, { 0.15625, 0.84375, 0 }, { 0.84375, 1, 20 } }) do
+        local t = tab:CreateTexture(nil, "BORDER")
+        t:SetTexCoord(cut[1], cut[2], 0, 1)
+        t:SetHeight(TAB_H)
+        if cut[3] > 0 then t:SetWidth(cut[3]) end
+        if i == 1 then
+            t:SetPoint("BOTTOMLEFT")
+        elseif i == 2 then
+            t:SetPoint("LEFT", prev, "RIGHT")
+        else
+            t:SetPoint("LEFT", prev, "RIGHT")
+            t:SetPoint("BOTTOMRIGHT")
+        end
+        slices[i], prev = t, t
+    end
+    slices[2]:SetPoint("RIGHT", slices[3], "LEFT")
+    tab.slices = slices
+    tab.liveDot = tab:CreateTexture(nil, "OVERLAY")
+    tab.liveDot:SetSize(5, 5)
+    tab.liveDot:SetPoint("TOPRIGHT", -8, -5)
+    tab.liveDot:SetColorTexture(unpack(GREEN))
+    local width = (tab:GetFontString() and tab:GetFontString():GetStringWidth() or 40) + 44
+    tab:SetWidth(width)
+    function tab:SetSelected(on)
+        for _, t in ipairs(self.slices) do t:SetTexture(on and ACTIVE_TAB or INACTIVE_TAB) end
+        self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
+        -- Blizzard's art draws the selected tab two pixels taller; matching it is what
+        -- makes the strip read as tabs rather than buttons.
+        self:GetFontString():SetPoint("CENTER", 0, on and -1 or -2)
+    end
+    return tab
+end
+
+--- Settings for the open row, drawn INSIDE the list so they appear under that ability
+--- rather than below the whole table. One strip, re-bound as the open row changes; the
+--- controls are Ace's own, so the look and the keyboard behaviour come free.
+local function BuildDetail(widget, parent)
+    local d = CreateFrame("Frame", nil, parent)
+    d:SetHeight(DETAIL_H)
+    d.bg = d:CreateTexture(nil, "BACKGROUND")
+    d.bg:SetAllPoints()
+    d.bg:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.07)
+    d.edge = d:CreateTexture(nil, "ARTWORK")
+    d.edge:SetPoint("TOPLEFT")
+    d.edge:SetPoint("BOTTOMLEFT")
+    d.edge:SetWidth(2)
+    d.edge:SetColorTexture(unpack(GOLD))
+
+    local function checkbox(label, field, defaultOn, x)
+        local cb = AceGUI:Create("CheckBox")
+        cb:SetLabel(label)
+        cb:SetWidth(150)
+        cb.frame:SetParent(d)
+        cb.frame:SetPoint("LEFT", d, "LEFT", x, 0)
+        cb.frame:Show()
+        cb:SetCallback("OnValueChanged", function(_, _, val)
+            local Abilities = LibStub("JustAC-OptionsAbilities", true)
+            local profile = widget.addon and widget.addon:GetProfile()
+            local s = d.spellID and profile and Abilities and Abilities.SpellSettings
+                and Abilities.SpellSettings(profile, d.spellID, true)
+            if not s then return end
+            -- Explicit if/else, never `(not val) and false or nil`: that idiom cannot
+            -- produce false, so a default-ON box could not be unchecked at all
+            -- (Options/Abilities.lua documents the same bug from a user report).
+            if defaultOn then
+                if val then s[field] = nil else s[field] = false end
+            else
+                if val then s[field] = true else s[field] = nil end
+            end
+            PriorityList.Changed(widget.addon)
+        end)
+        return cb
+    end
+
+    d.always = checkbox(L["Always Show"], "alwaysShow", false, 40)
+    d.proc = checkbox(L["Custom Queue Procs First"], "procPriority", true, 200)
+
+    -- The dial reuses the option control's own values/get/set, so the widget never owns a
+    -- second copy of what the modes mean.
+    d.hold = AceGUI:Create("Dropdown")
+    d.hold:SetLabel(L["Hold Until"])
+    d.hold:SetWidth(170)
+    d.hold.frame:SetParent(d)
+    d.hold.frame:SetPoint("LEFT", d, "LEFT", 360, -6)
+    d.hold.frame:Show()
+
+    --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
+    --- changes: rebuilding it closes an open menu, and a refresh can fire from a resize.
+    d.Rebind = function(spellID)
+        local changed = (d.spellID ~= spellID)
+        d.spellID = spellID
+        if not spellID then return end
+        local Abilities = LibStub("JustAC-OptionsAbilities", true)
+        local profile = widget.addon and widget.addon:GetProfile()
+        local s = profile and Abilities and Abilities.SpellSettings
+            and Abilities.SpellSettings(profile, spellID, false)
+        d.always:SetValue(s and s.alwaysShow == true or false)
+        d.proc:SetValue(not s or s.procPriority ~= false)
+
+        local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+        local ctl = SpellSearch and SpellSearch.HoldModeControl
+            and SpellSearch.HoldModeControl(widget.addon, spellID, 1)
+        if not ctl then d.hold.frame:Hide() return end
+        d.hold.frame:Show()
+        if changed then
+            d.hold:SetList(ctl.values(), ctl.sorting and ctl.sorting() or nil)
+            d.hold:SetCallback("OnValueChanged", function(_, _, key)
+                ctl.set(nil, key)
+                PriorityList.Changed(widget.addon)
+            end)
+        end
+        d.hold:SetValue(ctl.get())
+        d.hold:SetDisabled(ctl.disabled and ctl.disabled() or false)
+    end
+    return d
 end
 
 local function AcquireRow(self, index)
@@ -261,212 +404,112 @@ local function AcquireRow(self, index)
     row.icon:SetPoint("LEFT", row.idx, "RIGHT", 6, 0)
     row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
+    -- Everything below is anchored and coloured ONCE: only the row's own position, its
+    -- text and the two column widths change per refresh.
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.name:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
     row.name:SetJustifyH("LEFT")
+    row.name:SetTextColor(unpack(INK))
 
     row.cond = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.cond:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
     row.cond:SetJustifyH("LEFT")
-    row.cond:SetWidth(190)
-
-    row.lock = row:CreateTexture(nil, "ARTWORK")
-    row.lock:SetSize(12, 14)
-    row.lock:SetTexture(LOCK_TEXTURE)
-    row.lock:SetVertexColor(unpack(GOLD))
+    row.cond:SetTextColor(unpack(INK_DIM))
 
     row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.rank:SetWidth(44)
+    row.rank:SetWidth(40)
     row.rank:SetJustifyH("RIGHT")
+    row.rank:SetPoint("LEFT", row.cond, "RIGHT", 6, 0)
+    row.rank:SetTextColor(unpack(BLUE))
 
-    -- Hovering the lock explains the one thing users misread about the queue.
-    row.lockHit = CreateFrame("Frame", nil, row)
-    row.lockHit:SetSize(16, ROW_H)
-    row.lockHit:SetScript("OnEnter", function(f)
-        GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
-        GameTooltip:SetText(L["Priority Locked Tip"], 1, 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    row.lockHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-    row.up = MakeButton(row, "^", L["Move up desc"], function()
-        local i = row.index
+    row.remove = MakeButton(row, "x", L["Remove"], function()
         local list = self:List()
-        if not list or i <= 1 then return end
-        list[i - 1], list[i] = list[i], list[i - 1]
+        if not (list and list[row.index]) then return end
+        table.remove(list, row.index)
+        if PriorityList.selected == row.id then PriorityList.selected = nil end
+        PriorityList.Changed(self.addon)
+    end)
+    row.edit = MakeButton(row, "...", L["Priority Edit Tip"], function()
+        PriorityList.selected = (PriorityList.selected == row.id) and nil or row.id
         PriorityList.Changed(self.addon)
     end)
     row.down = MakeButton(row, "v", L["Move down desc"], function()
-        local i = row.index
-        local list = self:List()
+        local list, i = self:List(), row.index
         if not list or i >= #list then return end
         list[i + 1], list[i] = list[i], list[i + 1]
         PriorityList.Changed(self.addon)
     end)
-    row.edit = MakeButton(row, "...", L["Priority Edit Tip"], function()
-        -- The settings themselves stay Ace controls: this only says which entry the
-        -- option table should render them for.
-        PriorityList.selected = (PriorityList.selected == row.id) and nil or row.id
+    row.up = MakeButton(row, "^", L["Move up desc"], function()
+        local list, i = self:List(), row.index
+        if not list or i <= 1 then return end
+        list[i - 1], list[i] = list[i], list[i - 1]
         PriorityList.Changed(self.addon)
     end)
-    row.remove = MakeButton(row, "x", L["Remove"], function()
-        local i = row.index
-        local list = self:List()
-        if not list or not list[i] then return end
-        table.remove(list, i)
-        if PriorityList.selected == row.id then PriorityList.selected = nil end
-        PriorityList.Changed(self.addon)
-    end)
+    row.remove:SetPoint("RIGHT", -4, 0)
+    row.edit:SetPoint("RIGHT", row.remove, "LEFT", -2, 0)
+    row.down:SetPoint("RIGHT", row.edit, "LEFT", -2, 0)
+    row.up:SetPoint("RIGHT", row.down, "LEFT", -2, 0)
 
     self.rows[index] = row
     return row
-end
-
---- Settings for the open row, drawn INSIDE the list so they appear under that ability
---- rather than below the whole table. One strip, re-bound as the open row changes.
-local function BuildDetail(widget, parent)
-    local d = CreateFrame("Frame", nil, parent)
-    d:SetHeight(DETAIL_H)
-    d.bg = d:CreateTexture(nil, "BACKGROUND")
-    d.bg:SetAllPoints()
-    d.bg:SetColorTexture(0.85, 0.65, 0.34, 0.07)
-    d.edge = d:CreateTexture(nil, "ARTWORK")
-    d.edge:SetPoint("TOPLEFT")
-    d.edge:SetPoint("BOTTOMLEFT")
-    d.edge:SetWidth(2)
-    d.edge:SetColorTexture(unpack(GOLD))
-
-    local function check(label, key, tip)
-        local cb = CreateFrame("CheckButton", nil, d, "UICheckButtonTemplate")
-        cb:SetSize(20, 20)
-        cb.label = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        cb.label:SetPoint("LEFT", cb, "RIGHT", 1, 0)
-        cb.label:SetText(label)
-        cb:SetScript("OnClick", function(self)
-            if not d.spellID then return end
-            SetSetting(widget.addon, d.spellID, key, self:GetChecked() and true or false)
-            PriorityList.Changed(widget.addon)
-        end)
-        cb:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(tip, 1, 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
-        cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        cb.key = key
-        return cb
-    end
-
-    d.always = check(L["Always Show"], "alwaysShow", L["Always Show desc"])
-    d.always:SetPoint("LEFT", 46, 0)
-    d.proc = check(L["Custom Queue Procs First"], "procPriority", L["Custom Queue Procs First desc"])
-
-    d.holdLabel = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    d.holdLabel:SetText(L["Hold Until"])
-
-    -- The dial reuses the option control's own values/get/set, so the widget never owns a
-    -- second copy of what the modes mean.
-    d.hold = CreateFrame("Frame", "JustACPriorityHoldDropDown", d, "UIDropDownMenuTemplate")
-    d.Rebind = function(spellID)
-        d.spellID = spellID
-        if not spellID then return end
-        d.always:SetChecked(Setting(widget.addon, spellID, "alwaysShow"))
-        d.proc:SetChecked(Setting(widget.addon, spellID, "procPriority"))
-        d.proc:ClearAllPoints()
-        d.proc:SetPoint("LEFT", d.always.label, "RIGHT", 14, 0)
-        d.holdLabel:ClearAllPoints()
-        d.holdLabel:SetPoint("LEFT", d.proc.label, "RIGHT", 16, 0)
-        d.hold:ClearAllPoints()
-        d.hold:SetPoint("LEFT", d.holdLabel, "RIGHT", -8, -2)
-
-        local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-        local ctl = SpellSearch and SpellSearch.HoldModeControl
-            and SpellSearch.HoldModeControl(widget.addon, spellID, 1)
-        if not ctl then d.hold:Hide() return end
-        d.hold:Show()
-        local values, sorting = ctl.values(), ctl.sorting and ctl.sorting() or nil
-        local current = ctl.get()
-        UIDropDownMenu_SetWidth(d.hold, 120)
-        UIDropDownMenu_SetText(d.hold, values[current] or current or "")
-        UIDropDownMenu_Initialize(d.hold, function()
-            local keys = sorting
-            if not keys then
-                keys = {}
-                for k in pairs(values) do keys[#keys + 1] = k end
-                table.sort(keys)
-            end
-            for _, k in ipairs(keys) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text, info.checked = values[k], (k == current)
-                info.func = function()
-                    ctl.set(nil, k)
-                    PriorityList.Changed(widget.addon)
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-        local off = ctl.disabled and ctl.disabled()
-        if off then UIDropDownMenu_DisableDropDown(d.hold) else UIDropDownMenu_EnableDropDown(d.hold) end
-    end
-    return d
 end
 
 local methods = {}
 
 function methods:OnAcquire()
     self.addon = Addon()
-    self.view = nil
+    self.disabled = false
     self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP)
     self:SetWidth(560)
     self:Refresh()
 end
 
 function methods:OnRelease()
-    self.addon, self.view = nil, nil
+    -- Widgets are pooled: anything left here is inherited by the next option that mounts
+    -- this type.
+    self.addon, self.disabled = nil, false
 end
 
--- AceConfigDialog drives a description control with these; the list draws itself, so the
--- option's own name and image are not used. Tolerant no-ops keep the mount type flexible.
+-- AceConfigDialog drives a description control with SetText/SetFontObject, and every
+-- control with SetDisabled. The list draws itself, so the option's own text is unused.
 function methods:SetText() end
-function methods:SetLabel() end
 function methods:SetFontObject() end
-function methods:SetImage() end
-function methods:SetImageSize() end
-function methods:SetColor() end
-function methods:SetDisabled(disabled) self.disabled = disabled and true or false end
+function methods:SetDisabled(disabled)
+    self.disabled = disabled and true or false
+    -- Ace sets the width (which refreshes) BEFORE disabled, so without this pass the
+    -- buttons would keep the previous answer.
+    self:Refresh()
+end
 
 function methods:OnWidthSet() self:Refresh() end
 
---- The editable array behind the current view, or nil when the view is a preview of a
---- source the player does not own (the game's list, the imported one).
+--- The editable array behind the current view, or nil when previewing a source the player
+--- does not own.
 function methods:List()
     if self:Source() ~= "custom" then return nil end
-    local profile = self.addon and self.addon:GetProfile()
-    local specKey = SpecKey()
-    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+    local cq = CustomQueueFor(self.addon and self.addon:GetProfile())
     return cq and cq.spells or nil
 end
 
 function methods:Source()
-    if self.view then return self.view end
-    local profile = self.addon and self.addon:GetProfile()
-    return PriorityList.LiveSource(profile)
+    -- Module state, not instance state: editing anything rebuilds the options table, which
+    -- releases and re-acquires this widget. Kept on the instance, the previewed tab was
+    -- lost on every click and the panel jumped back to whichever source is live.
+    if PriorityList.view then return PriorityList.view end
+    return PriorityList.LiveSource(self.addon and self.addon:GetProfile())
 end
 
 function methods:Refresh()
     if not self.addon then return end
-    local source = self:Source()
     local profile = self.addon:GetProfile()
-    local live = PriorityList.LiveSource(profile)
-    local specKey = SpecKey()
-    local cq = specKey and profile and profile.customQueue and profile.customQueue[specKey]
+    local source, live = self:Source(), PriorityList.LiveSource(profile)
+    local cq = CustomQueueFor(profile)
+    local haveList = cq and cq.spells and #cq.spells > 0
     local leads = (cq and cq.enabled and cq.myListLeads == true) or false
-    local editable = (source == "custom")
+    local editable = (source == "custom") and not self.disabled
 
-    -- Tabs
     for key, tab in pairs(self.tabs) do
-        local on = (key == source)
-        tab:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
-        tab.underline:SetShown(on)
+        tab:SetSelected(key == source)
         tab.liveDot:SetShown(key == live)
     end
 
@@ -479,50 +522,37 @@ function methods:Refresh()
     self.pin.bg:SetColorTexture(leads and 0.17 or 0.11, leads and 0.14 or 0.18, 0.09, 0.55)
 
     local rows = PriorityList.Rows(self.addon, source)
-    local width = self.frame:GetWidth() or 560
+    -- Share the free width between the two text columns rather than fixing the condition
+    -- and giving the name whatever is left: ability names run long in every language.
+    local free = math.max(200, (self.frame:GetWidth() or 560) - ROW_FIXED)
+    local nameW = math.floor(free * 0.46)
+    local condW = free - nameW
     local y = -(TAB_H + HEAD_H + PIN_H + GAP)
     local detailShown = false
-    local start = leads and 1 or 2
 
     for i = 1, #rows do
         local data = rows[i]
         local row = AcquireRow(self, i)
         row.index, row.id = i, data.id
-        row:SetParent(self.content)
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
         row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", 0, y)
         row.bg:SetColorTexture(0, 0, 0, (i % 2 == 0) and 0.18 or 0.08)
-        row.idx:SetText(i + start - 1)
+        row.idx:SetText(i + (leads and 0 or 1))
         row.icon:SetTexture(data.icon)
         row.name:SetText(data.name)
-        row.name:SetTextColor(unpack(INK))
-        row.name:SetWidth(math.max(80, width - 430))
+        row.name:SetWidth(nameW)
         row.cond:SetText(data.cond or "")
-        row.cond:SetTextColor(unpack(INK_DIM))
-        row.cond:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
-        row.lock:SetShown(data.gameTimed)
-        row.lock:SetPoint("LEFT", row.cond, "RIGHT", 6, 0)
-        row.lockHit:SetPoint("LEFT", row.cond, "RIGHT", 4, 0)
-        row.lockHit:SetShown(data.gameTimed)
+        row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
+        row.cond:SetWidth(condW)
         row.rank:SetText(data.rank and ("#" .. data.rank) or "")
-        row.rank:SetTextColor(unpack(BLUE))
-        row.rank:SetPoint("LEFT", row.lock, "RIGHT", 6, 0)
-
-        row.remove:SetPoint("RIGHT", -4, 0)
-        row.edit:SetPoint("RIGHT", row.remove, "LEFT", -2, 0)
-        row.down:SetPoint("RIGHT", row.edit, "LEFT", -2, 0)
-        row.up:SetPoint("RIGHT", row.down, "LEFT", -2, 0)
-        for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do
-            b:SetShown(editable and not self.disabled)
-        end
-        row.edit:SetShown(editable and not self.disabled)
+        for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do b:SetShown(editable) end
         row:Show()
         y = y - ROW_H
 
         -- The open ability's settings belong under IT, inside the list - not below the
         -- whole table, where the row they belong to has scrolled out of sight.
-        if editable and PriorityList.selected == data.id then
+        if editable and PriorityList.selected == data.id and data.id > 0 then
             detailShown = true
             self.detail:ClearAllPoints()
             self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
@@ -532,32 +562,30 @@ function methods:Refresh()
             y = y - DETAIL_H
         end
     end
-    if not detailShown then self.detail:Hide() end
     for i = #rows + 1, #self.rows do self.rows[i]:Hide() end
+    if not detailShown then
+        self.detail:Hide()
+        self.detail.spellID = nil   -- so reopening the same row rebuilds its dial
+    end
 
-    -- One button, three states: an empty list starts FROM what is on screen, a list that
-    -- exists is switched to, and the source already live needs no button at all.
-    local haveList = cq and cq.spells and #cq.spells > 0
+    -- Actions. Previewing a source you do not use offers to take it; your own list offers
+    -- to start over. Both are the same button slot, so the strip never grows.
     self.starting = (source ~= "custom") and not haveList
-    self.useThis:SetShown(not self.disabled and (self.starting or source ~= live))
+    self.useThis:SetShown(not self.disabled and source ~= live)
     self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
-    self.useThis:SetWidth(self.starting and 150 or 110)
-    self.useThis:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -4, -2)
+    self.useThis:SetWidth(self.starting and 160 or 116)
+    self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
-    -- An empty own-list is the one view with nothing to draw: say where a list comes from.
     self.emptyNote:SetShown(source == "custom" and not haveList)
     self.emptyNote:SetText(L["Priority Empty Hint"])
 
-    -- Header labels track the live row geometry.
-    local first = self.rows[1]
+    -- Only the columns that follow the resizing name field actually move.
     self.head:SetShown(#rows > 0)
-    if first and #rows > 0 then
-        self.head.name:ClearAllPoints()
-        self.head.name:SetPoint("LEFT", self.frame, "LEFT", 55, 0)
+    if #rows > 0 then
         self.head.cond:ClearAllPoints()
-        self.head.cond:SetPoint("LEFT", self.frame, "LEFT", 55 + (first.name:GetWidth() or 100) + 8, 0)
+        self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
-        self.head.rank:SetPoint("RIGHT", self.frame, "RIGHT", editable and -104 or -6, 0)
+        self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", editable and -104 or -6, 0)
     end
 
     self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + (#rows * ROW_H)
@@ -579,49 +607,71 @@ local function Constructor()
     -- Tab strip: the source the list is showing. Switching tabs PREVIEWS a source;
     -- committing is the separate button, so a comparison never changes the queue by
     -- accident.
-    local defs = { { "blizzard", L["Priority Tab Blizzard"] }, { "simc", L["Priority Tab Simc"] }, { "custom", L["Priority Tab Custom"] } }
+    local defs = {
+        { "blizzard", L["Priority Tab Blizzard"] },
+        { "simc", L["Priority Tab Simc"] },
+        { "custom", L["Priority Tab Custom"] },
+    }
     local prev
     for _, def in ipairs(defs) do
         local key, label = def[1], def[2]
-        local tab = CreateFrame("Button", nil, frame)
-        tab:SetHeight(TAB_H - 4)
-        tab:SetNormalFontObject("GameFontDisableSmall")
-        tab:SetText(label)
-        tab:SetWidth((tab:GetFontString() and tab:GetFontString():GetStringWidth() or 40) + 26)
-        tab:SetPoint("TOPLEFT", prev or frame, prev and "TOPRIGHT" or "TOPLEFT", prev and 2 or 0, prev and 0 or -2)
-        tab.underline = tab:CreateTexture(nil, "ARTWORK")
-        tab.underline:SetHeight(2)
-        tab.underline:SetPoint("BOTTOMLEFT", 6, 0)
-        tab.underline:SetPoint("BOTTOMRIGHT", -6, 0)
-        tab.underline:SetColorTexture(unpack(GOLD))
-        tab.liveDot = tab:CreateTexture(nil, "ARTWORK")
-        tab.liveDot:SetSize(5, 5)
-        tab.liveDot:SetPoint("TOPRIGHT", -4, -3)
-        tab.liveDot:SetColorTexture(unpack(GREEN))
+        local tab = MakeTab(frame, label)
+        tab:SetPoint("BOTTOMLEFT", prev or frame, prev and "BOTTOMRIGHT" or "TOPLEFT",
+            prev and -6 or 4, prev and 0 or -TAB_H)
         tab:SetScript("OnClick", function()
-            widget.view = key
+            PriorityList.view = key
             widget:Refresh()
         end)
         widget.tabs[key] = tab
         prev = tab
     end
 
-    widget.useThis = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    widget.useThis:SetSize(120, 20)
-    widget.useThis:SetScript("OnClick", function()
+    widget.useThis = MakeButton(frame, "", "", function()
         if widget.starting then
             PriorityList.StartFrom(widget.addon, widget:Source())
         else
             PriorityList.SetLiveSource(widget.addon, widget:Source())
         end
-        widget.view = nil
+        PriorityList.view = nil
         widget:Refresh()
-    end)
+    end, 116)
+    widget.useThis:SetHeight(20)
+    widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -3)
 
-    widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
-    widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
-    widget.emptyNote:SetJustifyH("LEFT")
+    widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
+        PriorityList.ClearList(widget.addon)
+        PriorityList.view = nil
+        widget:Refresh()
+    end, 92)
+    widget.clear:SetHeight(20)
+    widget.clear:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
+
+    -- Column header. Its moving labels are re-anchored in Refresh, so a name column that
+    -- resizes with the panel cannot drift away from its heading.
+    local head = CreateFrame("Frame", nil, frame)
+    head:SetHeight(HEAD_H)
+    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -TAB_H)
+    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -TAB_H)
+    local function headLabel(text, justify)
+        local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        fs:SetText(text)
+        fs:SetJustifyH(justify or "LEFT")
+        return fs
+    end
+    head.slot = headLabel(L["Priority Head Slot"], "RIGHT")
+    head.slot:SetPoint("LEFT", head, "LEFT", 6, 0)
+    head.slot:SetWidth(20)
+    head.name = headLabel(L["Priority Head Ability"])
+    head.name:SetPoint("LEFT", head, "LEFT", 55, 0)
+    head.cond = headLabel(L["Priority Head When"])
+    head.rank = headLabel(L["Priority Head Rank"], "RIGHT")
+    head.rank:SetWidth(40)
+    head.rule = head:CreateTexture(nil, "ARTWORK")
+    head.rule:SetHeight(1)
+    head.rule:SetPoint("BOTTOMLEFT", 4, 0)
+    head.rule:SetPoint("BOTTOMRIGHT", -4, 0)
+    head.rule:SetColorTexture(1, 1, 1, 0.08)
+    widget.head = head
 
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
@@ -647,31 +697,10 @@ local function Constructor()
     pin.note:SetJustifyH("LEFT")
     widget.pin = pin
 
-    -- Column header. Its labels are anchored to the FIRST row's regions in Refresh, so a
-    -- name column that resizes with the panel can never drift away from its heading.
-    local head = CreateFrame("Frame", nil, frame)
-    head:SetHeight(HEAD_H)
-    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -TAB_H)
-    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -TAB_H)
-    local function headLabel(text, justify)
-        local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        fs:SetText(text)
-        fs:SetJustifyH(justify or "LEFT")
-        return fs
-    end
-    head.slot = headLabel(L["Priority Head Slot"], "RIGHT")
-    head.slot:SetPoint("LEFT", 6, 0)
-    head.slot:SetWidth(20)
-    head.name = headLabel(L["Priority Head Ability"])
-    head.cond = headLabel(L["Priority Head When"])
-    head.rank = headLabel(L["Priority Head Rank"], "RIGHT")
-    head.rank:SetWidth(44)
-    head.rule = head:CreateTexture(nil, "ARTWORK")
-    head.rule:SetHeight(1)
-    head.rule:SetPoint("BOTTOMLEFT", 4, 0)
-    head.rule:SetPoint("BOTTOMRIGHT", -4, 0)
-    head.rule:SetColorTexture(1, 1, 1, 0.08)
-    widget.head = head
+    widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
+    widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
+    widget.emptyNote:SetJustifyH("LEFT")
 
     widget.detail = BuildDetail(widget, content)
     widget.detail:Hide()

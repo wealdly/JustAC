@@ -1185,6 +1185,15 @@ local function HasActiveWeaponEnchant()
     return true
 end
 
+--- Upkeep rather than rotation: a poison, a weapon imbue, or a long-duration self/raid
+--- buff. The same set the in-combat suppression below uses, exposed because the options
+--- panel must keep them out of a priority list (they stall a list-driven queue).
+function RedundancyFilter.IsUpkeepSpell(spellID)
+    if not spellID or spellID <= 0 then return false end
+    return StaticLookup(NEVER_SECRET_AURA_SPELLS, spellID)
+        or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) or false
+end
+
 --------------------------------------------------------------------------------
 -- Main Redundancy Check
 -- isDefensiveCheck: optional flag to skip DPS-relevance filter (for defensive spell selection)
