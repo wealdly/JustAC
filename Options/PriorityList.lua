@@ -461,7 +461,7 @@ local methods = {}
 function methods:OnAcquire()
     self.addon = Addon()
     self.disabled = false
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP)
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10)
     self:SetWidth(560)
     self:Refresh()
 end
@@ -529,7 +529,7 @@ function methods:Refresh()
     local free = math.max(200, (self.frame:GetWidth() or 560) - ROW_FIXED)
     local nameW = math.floor(free * 0.46)
     local condW = free - nameW
-    local y = -(TAB_H + HEAD_H + PIN_H + GAP)
+    local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
     local detailShown = false
 
     for i = 1, #rows do
@@ -537,8 +537,8 @@ function methods:Refresh()
         local row = AcquireRow(self, i)
         row.index, row.id = i, data.id
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
-        row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", 0, y)
+        row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
+        row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
         row.bg:SetColorTexture(0, 0, 0, (i % 2 == 0) and 0.18 or 0.08)
         row.idx:SetText(i + (leads and 0 or 1))
         row.icon:SetTexture(data.icon)
@@ -557,8 +557,8 @@ function methods:Refresh()
         if editable and PriorityList.selected == data.id and data.id > 0 then
             detailShown = true
             self.detail:ClearAllPoints()
-            self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, y)
-            self.detail:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", 0, y)
+            self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
+            self.detail:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
             self.detail.Rebind(data.id)
             self.detail:Show()
             y = y - DETAIL_H
@@ -590,7 +590,8 @@ function methods:Refresh()
         self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", editable and -104 or -6, 0)
     end
 
-    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + (#rows * ROW_H)
+    -- +10: the pane's own top and bottom border insets.
+    self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
         + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
 end
 
@@ -601,6 +602,23 @@ local function Constructor()
 
     local widget = { frame = frame, type = Type, rows = {}, tabs = {} }
     for method, func in pairs(methods) do widget[method] = func end
+
+    -- The list needs a pane for the tabs to sit ON, or they float over the panel with
+    -- nothing joining them to the rows. Ace's own inline-group backdrop, so the pane
+    -- matches every other bordered group around it; the tab strip then overlaps its top
+    -- edge by two pixels, which is what reads as "joined".
+    local body = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    body:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(TAB_H - 2))
+    body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    body:SetBackdrop({
+        bgFile = "Interface\ChatFrame\ChatFrameBackground",
+        edgeFile = "Interface\Tooltips\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 3, right = 3, top = 5, bottom = 3 },
+    })
+    body:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
+    body:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    widget.body = body
 
     local content = CreateFrame("Frame", nil, frame)
     content:SetAllPoints()
@@ -618,8 +636,9 @@ local function Constructor()
     for _, def in ipairs(defs) do
         local key, label = def[1], def[2]
         local tab = MakeTab(frame, label)
-        tab:SetPoint("BOTTOMLEFT", prev or frame, prev and "BOTTOMRIGHT" or "TOPLEFT",
-            prev and -6 or 4, prev and 0 or -TAB_H)
+        tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
+            prev and -6 or 6, prev and 0 or (TAB_H - 4))
+        tab:SetFrameLevel(body:GetFrameLevel() + 2)
         tab:SetScript("OnClick", function()
             PriorityList.view = key
             widget:Refresh()
@@ -652,8 +671,8 @@ local function Constructor()
     -- resizes with the panel cannot drift away from its heading.
     local head = CreateFrame("Frame", nil, frame)
     head:SetHeight(HEAD_H)
-    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -TAB_H)
-    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -TAB_H)
+    head:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + 4))
+    head:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + 4))
     local function headLabel(text, justify)
         local fs = head:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         fs:SetText(text)
@@ -678,8 +697,8 @@ local function Constructor()
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
     pin:SetHeight(PIN_H - GAP)
-    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(TAB_H + HEAD_H))
-    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(TAB_H + HEAD_H))
+    pin:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -(TAB_H + HEAD_H + 4))
+    pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + HEAD_H + 4))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
     pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
