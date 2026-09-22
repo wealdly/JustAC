@@ -993,6 +993,12 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        -- Put back what the show raised it to, so the next popup out of this shared
+        -- frame pool (anyone's) is not left sitting above the whole UI.
+        OnHide = function(self)
+            self:SetFrameStrata("DIALOG")
+            self:SetToplevel(false)
+        end,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1002,7 +1008,14 @@ local function Constructor()
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         local dialog = StaticPopup_Show("JUSTAC_CLEAR_PRIORITY_LIST")
-        if dialog then dialog.data = widget end
+        if dialog then
+            dialog.data = widget
+            -- Popups live in DIALOG; the options window is a strata above it, so a
+            -- confirmation opened from here appeared behind the list it asks about.
+            dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+            dialog:SetFrameLevel(frame:GetFrameLevel() + 20)
+            dialog:SetToplevel(true)
+        end
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
