@@ -335,9 +335,9 @@ function CustomQueue.CreateTabArgs(addon)
                         -- Sunk below the list on purpose: it is a rarely-useful expert
                         -- setting, and sitting above the list it read as a headline feature.
                         order = 40,
-                        -- A dropdown stretched to the full panel width reads as the
-                        -- headline control; this one is a rarely-touched expert setting.
-                        width = "double",
+                        -- Default width: the longest answer is nine characters, and a
+                        -- stretched dropdown reads as the headline control on this page
+                        -- when it is a rarely-touched expert setting.
                         values = function()
                             local v = { off = L["Lead Off"], safe = L["Lead Safe"] }
                             -- Leading with a list needs a list, so that answer only
