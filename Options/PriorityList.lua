@@ -35,6 +35,7 @@ local ROW_FIXED = 208
 
 local INK, INK_DIM = { 0.93, 0.90, 0.85 }, { 0.66, 0.62, 0.55 }
 local GOLD, GREEN, BLUE = { 0.85, 0.65, 0.34 }, { 0.62, 0.79, 0.50 }, { 0.44, 0.62, 0.85 }
+local RED = { 0.80, 0.47, 0.47 }
 
 --------------------------------------------------------------------------------
 -- Model
@@ -182,7 +183,16 @@ function PriorityList.CountFor(addon, source)
     return n
 end
 
---- The entries of one source: { id, name, icon, rank, cond, gameTimed, upkeep }.
+--- Where an ability sits in the player's own list, by id. nil when it is not in it.
+local function MyListPositions(profile)
+    local out, cq = {}, CustomQueueFor(profile)
+    for i, id in ipairs((cq and cq.spells) or {}) do
+        if out[id] == nil then out[id] = i end
+    end
+    return out
+end
+
+--- The entries of one source: { id, name, icon, rank, cond, gameTimed, upkeep, move }.
 function PriorityList.Rows(addon, source)
     local out = {}
     local profile = addon and addon:GetProfile()
@@ -210,6 +220,10 @@ function PriorityList.Rows(addon, source)
         ids = keep
     end
 
+    -- Movement is only meaningful against a list that exists, and only on a preview: on
+    -- your own list every row would read "no change".
+    local mine = (source ~= "custom") and MyListPositions(profile) or nil
+    local haveMine = mine and next(mine) ~= nil
     for i = 1, #ids do
         local id = ids[i]
         -- DisplayInfo owns the awkward cases: items arrive as NEGATIVE ids, and a
@@ -223,6 +237,9 @@ function PriorityList.Rows(addon, source)
             icon = icon or 134400,
             rank = rec and rec.rank or nil,
             upkeep = PriorityList.IsUpkeep(id),
+            -- vs the player's list: how far this source would move it, or that it is
+            -- missing from their list entirely.
+            move = haveMine and (mine[id] and (mine[id] - i) or "new") or nil,
             cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
                 or PriorityList.Condition(rec)) or nil,
         }
@@ -476,8 +493,8 @@ local function AcquireRow(self, index)
     row.cond:SetTextColor(unpack(INK_DIM))
 
     row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.rank:SetWidth(40)
     row.rank:SetJustifyH("RIGHT")
+    row.rank:SetWidth(46)
 
     row.rank:SetTextColor(unpack(BLUE))
 
@@ -610,7 +627,21 @@ function methods:Refresh()
         row.cond:SetText(data.cond or "")
         row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
         row.cond:SetWidth(condW)
-        row.rank:SetText(data.rank and ("#" .. data.rank) or "")
+        if data.move ~= nil then
+            if data.move == "new" then
+                row.rank:SetText(L["Priority Move New"])
+                row.rank:SetTextColor(unpack(BLUE))
+            elseif data.move == 0 then
+                row.rank:SetText("=")
+                row.rank:SetTextColor(unpack(INK_DIM))
+            else
+                row.rank:SetText((data.move > 0 and "+" or "") .. data.move)
+                row.rank:SetTextColor(unpack(data.move > 0 and GREEN or RED))
+            end
+        else
+            row.rank:SetText(data.rank and ("#" .. data.rank) or "")
+            row.rank:SetTextColor(unpack(BLUE))
+        end
         for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do
             b:SetEnabled(editable)
         end
@@ -653,6 +684,7 @@ function methods:Refresh()
         self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
         self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -104, 0)
+        self.head.rank:SetText(source == "custom" and L["Priority Head Rank"] or L["Priority Head Move"])
     end
 
     -- +10: the pane's own top and bottom border insets.
@@ -761,7 +793,7 @@ local function Constructor()
     head.name:SetPoint("LEFT", head, "LEFT", 55, 0)
     head.cond = headLabel(L["Priority Head When"])
     head.rank = headLabel(L["Priority Head Rank"], "RIGHT")
-    head.rank:SetWidth(40)
+    head.rank:SetWidth(76)
     head.rule = head:CreateTexture(nil, "ARTWORK")
     head.rule:SetHeight(1)
     head.rule:SetPoint("BOTTOMLEFT", 4, 0)
