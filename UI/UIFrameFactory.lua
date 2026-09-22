@@ -597,11 +597,27 @@ end
 --   size         - icon size in pixels
 --   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
 --   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
--- The ring the game paints around an action button to say "press this". Position 1 wears
--- it permanently, because that is what position 1 IS: not a step in the order below it
--- but whatever should be pressed right now. A fixed mark, never a state - it does not
--- follow the spell in the slot, and nothing turns it off and on mid-fight.
-local ASSIST_RING_ATLAS = "UI-HUD-RotationHelper-Inactive"
+-- The ring the game paints around an action button to say "press this". Exactly ONE icon
+-- in the addon wears it: position 1 of the offensive queue, the only slot that stands for
+-- what the game's own assist button stands for. Not the defensive queue, not the
+-- disruption slot, and not merely any icon built at the first icon's SIZE, which is what
+-- the size flag means and is passed by three builders.
+--
+-- A fixed mark, never a state: it does not follow the spell in the slot and nothing turns
+-- it on and off mid-fight, so it reads as the nature of the position.
+local ASSIST_RING_ATLAS = "UI-HUD-RotationHelper-Active"
+
+local function AddAssistRing(button, size)
+    if not (C_Texture and C_Texture.GetAtlasInfo
+            and C_Texture.GetAtlasInfo(ASSIST_RING_ATLAS)) then return end
+    -- Anchored to the button rather than sized from it, so it tracks a resize instead of
+    -- keeping whatever the icon measured when it was built.
+    local ring = button:CreateTexture(nil, "OVERLAY", nil, 2)
+    ring:SetAtlas(ASSIST_RING_ATLAS)
+    ring:SetPoint("TOPLEFT", button, "TOPLEFT", -size * 0.1, size * 0.1)
+    ring:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", size * 0.1, -size * 0.1)
+    button.AssistRing = ring
+end
 
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     local button = CreateFrame("Button", nil, parent)
@@ -625,16 +641,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     iconTexture:Hide()
     button.iconTexture = iconTexture
 
-    if isFirstIcon and C_Texture and C_Texture.GetAtlasInfo
-       and C_Texture.GetAtlasInfo(ASSIST_RING_ATLAS) then
-        -- Anchored to the button rather than sized from it, so it tracks a resize
-        -- instead of being left at whatever the icon measured when it was built.
-        local ring = button:CreateTexture(nil, "OVERLAY", nil, 2)
-        ring:SetAtlas(ASSIST_RING_ATLAS)
-        ring:SetPoint("TOPLEFT", button, "TOPLEFT", -size * 0.1, size * 0.1)
-        ring:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", size * 0.1, -size * 0.1)
-        button.AssistRing = ring
-    end
+
 
     -- Match Blizzard action-button mask geometry. The mask needs to be larger than the
     -- visible button; a smaller edge-anchored mask leaves the slot background visible at
@@ -1859,6 +1866,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
     if not button then return nil end
+    if isFirstIcon then AddAssistRing(button, actualIconSize) end
 
     -- Position based on orientation
     if orientation == "RIGHT" then
