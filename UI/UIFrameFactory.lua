@@ -597,6 +597,12 @@ end
 --   size         - icon size in pixels
 --   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
 --   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
+-- The ring the game paints around an action button to say "press this". Position 1 wears
+-- it permanently, because that is what position 1 IS: not a step in the order below it
+-- but whatever should be pressed right now. A fixed mark, never a state - it does not
+-- follow the spell in the slot, and nothing turns it off and on mid-fight.
+local ASSIST_RING_ATLAS = "UI-HUD-RotationHelper-Inactive"
+
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
@@ -618,6 +624,17 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     iconTexture:SetAllPoints(button)
     iconTexture:Hide()
     button.iconTexture = iconTexture
+
+    if isFirstIcon and C_Texture and C_Texture.GetAtlasInfo
+       and C_Texture.GetAtlasInfo(ASSIST_RING_ATLAS) then
+        -- Anchored to the button rather than sized from it, so it tracks a resize
+        -- instead of being left at whatever the icon measured when it was built.
+        local ring = button:CreateTexture(nil, "OVERLAY", nil, 2)
+        ring:SetAtlas(ASSIST_RING_ATLAS)
+        ring:SetPoint("TOPLEFT", button, "TOPLEFT", -size * 0.1, size * 0.1)
+        ring:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", size * 0.1, -size * 0.1)
+        button.AssistRing = ring
+    end
 
     -- Match Blizzard action-button mask geometry. The mask needs to be larger than the
     -- visible button; a smaller edge-anchored mask leaves the slot background visible at
