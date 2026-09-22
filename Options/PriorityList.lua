@@ -411,11 +411,14 @@ local function AcquireRow(self, index)
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.name:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
     row.name:SetJustifyH("LEFT")
+    row.name:SetWordWrap(false)
     row.name:SetTextColor(unpack(INK))
 
     row.cond = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     row.cond:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
     row.cond:SetJustifyH("LEFT")
+    -- Never wrap: the row is a fixed 26px, and a second line silently broke the grid.
+    row.cond:SetWordWrap(false)
     row.cond:SetTextColor(unpack(INK_DIM))
 
     row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -637,7 +640,7 @@ local function Constructor()
         local key, label = def[1], def[2]
         local tab = MakeTab(frame, label)
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
-            prev and -6 or 6, prev and 0 or (TAB_H - 4))
+            prev and -6 or 6, prev and 0 or -2)
         tab:SetFrameLevel(body:GetFrameLevel() + 2)
         tab:SetScript("OnClick", function()
             PriorityList.view = key
@@ -716,6 +719,7 @@ local function Constructor()
     pin.note:SetPoint("LEFT", pin.title, "RIGHT", 8, 0)
     pin.note:SetPoint("RIGHT", -6, 0)
     pin.note:SetJustifyH("LEFT")
+    pin.note:SetWordWrap(false)
     widget.pin = pin
 
     widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
