@@ -597,11 +597,17 @@ end
 local function AcquireRow(self, index)
     local row = self.rows[index]
     if row then return row end
-    row = CreateFrame("Frame", nil, self.content)
+    -- A Button, not a Frame: a plain frame takes mouse motion (so hover and tooltips
+    -- worked) but does not reliably deliver the button press that starts a drag.
+    row = CreateFrame("Button", nil, self.content)
     row:SetHeight(ROW_H)
+    row:RegisterForClicks("LeftButtonUp")
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints()
     row:EnableMouse(true)
+    -- Newer clients split motion from clicks; ask for both explicitly where the calls exist.
+    if row.SetMouseClickEnabled then row:SetMouseClickEnabled(true) end
+    if row.SetMouseMotionEnabled then row:SetMouseMotionEnabled(true) end
     row:SetScript("OnEnter", function(self)
         if not self.id then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
