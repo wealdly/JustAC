@@ -697,13 +697,14 @@ local function BuildDetail(widget, parent)
     d.edge:SetWidth(2)
     d.edge:SetColorTexture(unpack(GOLD))
 
-    local function checkbox(label, desc, field, defaultOn, x)
+    local function checkbox(label, desc, field, defaultOn)
         local cb = AceGUI:Create("CheckBox")
         cb:SetLabel(label)
         TooltipHook(cb.frame, label, desc)
-        cb:SetWidth(150)
+        -- 24 for the box itself, then whatever the words actually measure.
+        local textW = (cb.text and cb.text:GetStringWidth()) or 120
+        cb:SetWidth(24 + textW + 8)
         cb.frame:SetParent(d)
-        cb.frame:SetPoint("LEFT", d, "LEFT", x, 0)
         cb.frame:Show()
         cb:SetCallback("OnValueChanged", function(_, _, val)
             local Abilities = LibStub("JustAC-OptionsAbilities", true)
@@ -724,28 +725,35 @@ local function BuildDetail(widget, parent)
         return cb
     end
 
-    d.always = checkbox(L["Always Show"], L["Always Show desc"], "alwaysShow", false, 40)
+    d.always = checkbox(L["Always Show"], L["Always Show desc"], "alwaysShow", false)
+    d.always.frame:SetPoint("LEFT", d, "LEFT", 40, 0)
     d.proc = checkbox(L["Custom Queue Procs First"], L["Custom Queue Procs First desc"],
-        "procPriority", true, 190)
+        "procPriority", true)
+    d.proc.frame:SetPoint("LEFT", d.always.frame, "RIGHT", 16, 0)
 
     -- The dial reuses the option control's own values/get/set, so the widget never owns a
     -- second copy of what the modes mean.
     d.hold = AceGUI:Create("Dropdown")
     -- No label ON the widget: Ace stacks it above the control and grows the frame to 40,
     -- which leaves the control itself sitting low against two checkboxes that are centred.
-    -- Labelled to the left instead, so all three read along one line.
+    -- With no label the frame is 26 and centres properly.
     d.hold:SetLabel("")
     TooltipHook(d.hold.frame, L["Hold Until"], L["Hold Until desc"])
-    d.holdLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- The label lives INSIDE the closed control, on its left, with the value on the
+    -- right where Ace already puts it. Nothing outside the control to collide with, and
+    -- the pair reads as one thing rather than a caption and a box.
+    local holdHost = d.hold.dropdown or d.hold.frame
+    d.holdLabel = holdHost:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     d.holdLabel:SetText(L["Hold Until"])
     d.holdLabel:SetTextColor(unpack(INK_DIM))
     d.hold:SetWidth(150)
     d.hold.frame:SetParent(d)
     -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
     d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -20, 0)
-    -- Ace draws the control 15px left of its own frame, so the gap is measured from
-    -- there rather than from the frame edge.
-    d.holdLabel:SetPoint("RIGHT", d.hold.frame, "LEFT", -21, 0)
+    -- 22 clears the dropdown art's own left cap.
+    d.holdLabel:SetPoint("LEFT", holdHost, "LEFT", 22, 0)
+    d.holdLabel:SetJustifyH("LEFT")
+    d.holdLabel:SetWordWrap(false)
     d.hold.frame:Show()
 
     --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
