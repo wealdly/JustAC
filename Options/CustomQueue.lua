@@ -321,14 +321,6 @@ function CustomQueue.CreateTabArgs(addon)
                 name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
                 order = 1,
                 args = {
-                    spellListInfo = {
-                        type = "description",
-                        name = function()
-                            return IsCustomQueueOff(addon) and L["Custom Queue Off Hint"] or L["Custom Queue Spells desc"]
-                        end,
-                        order = 11,
-                        fontSize = "small",
-                    },
                     myListLeads = {
                         type = "toggle",
                         name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
@@ -415,7 +407,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     if not spellListGroup then return end
 
     local spellListArgs = spellListGroup.args
-    local staticKeys = { spellListInfo = true, myListLeads = true, priorityList = true }
+    local staticKeys = { myListLeads = true, priorityList = true }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local specKey = GetSpecKey()
