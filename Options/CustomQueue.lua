@@ -330,7 +330,10 @@ function CustomQueue.CreateTabArgs(addon)
                 args = {
                     leadMode = {
                         type = "select",
-                        name = W.risky(L["Lead Mode"]),
+                        -- The setting itself is not the risk: its default is the safe
+                        -- answer. The mark belongs on the answers that carry one, where
+                        -- it distinguishes them from the one that does not.
+                        name = L["Lead Mode"],
                         desc = L["Lead Mode desc"],
                         -- Sunk below the list on purpose: it is a rarely-useful expert
                         -- setting, and sitting above the list it read as a headline feature.
