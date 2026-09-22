@@ -338,29 +338,18 @@ function CustomQueue.CreateTabArgs(addon)
                         -- Default width: the longest answer is nine characters, and a
                         -- stretched dropdown reads as the headline control on this page
                         -- when it is a rarely-touched expert setting.
-                        values = function()
-                            local v = { off = L["Lead Off"], safe = L["Lead Safe"] }
-                            -- Leading with a list needs a list, so that answer only
-                            -- appears once there is one to lead with.
-                            local profile = addon:GetProfile()
-                            local specKey = GetSpecKey()
-                            local cq = profile and specKey and profile.customQueue
-                                and profile.customQueue[specKey]
-                            if cq and cq.spells and #cq.spells > 0 then
-                                v.mylist = L["Lead My List"]
-                            end
-                            return v
-                        end,
-                        sorting = function()
-                            local profile = addon:GetProfile()
-                            local specKey = GetSpecKey()
-                            local cq = profile and specKey and profile.customQueue
-                                and profile.customQueue[specKey]
-                            if cq and cq.spells and #cq.spells > 0 then
-                                return { "off", "safe", "mylist" }
-                            end
-                            return { "off", "safe" }
-                        end,
+                        -- All three, always. Hiding the list answer until a list existed
+                        -- made the control read as broken on every spec without one, and
+                        -- it was never needed: choosing it without a list already falls
+                        -- back to the game, which is the same thing the option would have
+                        -- done. The caution mark rides the two answers that are not the
+                        -- game's, so the safe one is the one without it.
+                        values = {
+                            off = L["Lead Off"],
+                            safe = W.risky(L["Lead Safe"]),
+                            mylist = W.risky(L["Lead My List"]),
+                        },
+                        sorting = { "off", "safe", "mylist" },
                         get = function()
                             local SQ = LibStub("JustAC-SpellQueue", true)
                             -- The queue owns the reading, including what a pre-dropdown
