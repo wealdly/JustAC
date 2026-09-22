@@ -375,10 +375,12 @@ end
 --- only its single-target condition, which is the common case and all that fits; a
 --- different condition on two or more targets is exactly the kind of thing a player wants
 --- to check before reordering, so it belongs here rather than nowhere.
---- `leads` decides which slots these conditions are even consulted for, and `exact`
---- decides whether they can move an entry at all, so both belong in the same tooltip as
---- the conditions they qualify. Answering "when is this used" without them is a guess.
-function PriorityList.DetailLines(id, leads, exact)
+--- `leads` decides which slots these conditions are even consulted for, so it belongs
+--- in the same tooltip: with your list leading, an entry can take the opening slot the
+--- moment its conditions hold; without it, the game owns that slot whatever they say.
+--- Deliberately silent on whether those conditions can MOVE an entry: the ordering
+--- option below the list already says that, and this tooltip has scarcer things to say.
+function PriorityList.DetailLines(id, leads)
     local out = {}
     if not id or id <= 0 then return out end
     if PriorityList.IsUpkeep(id) then
@@ -412,11 +414,7 @@ function PriorityList.DetailLines(id, leads, exact)
     if not any then
         out[#out + 1] = { L["Priority Cond Unknown"], 0.66, 0.62, 0.55 }
     end
-    -- What those three lines are FOR. Read literally they look like they place the
-    -- ability; with exact order on they only decide whether it is offered at all.
-    out[#out + 1] = exact
-        and { L["Priority Tip Order Exact"], 0.82, 0.78, 0.70 }
-        or { L["Priority Tip Order Loose"], 0.82, 0.78, 0.70 }
+
 
     -- Deliberately no rank number here: the theorycraft data ranks abilities this spec
     -- cannot currently cast, so its absolute number disagrees with the column, which counts
@@ -701,7 +699,7 @@ local function AcquireRow(self, index)
         if self.canDrag then
             GameTooltip:AddLine(L["Priority Drag Hint"], 0.62, 0.79, 0.50)
         end
-        for _, line in ipairs(PriorityList.DetailLines(self.id, self.leadsNow, self.exactNow)) do
+        for _, line in ipairs(PriorityList.DetailLines(self.id, self.leadsNow)) do
             GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
         end
         GameTooltip:Show()
@@ -922,7 +920,6 @@ function methods:Refresh()
         for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
         row.canDrag = editable
         row.leadsNow = leads
-        row.exactNow = profile.orderExact == true
         row:Show()
         y = y - ROW_H
 
@@ -958,6 +955,7 @@ function methods:Refresh()
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
     self.emptyNote:SetText(L["Priority Empty Hint"])
+
 
     self.head:SetShown(#rows > 0)
     ApplyColumns(self)
