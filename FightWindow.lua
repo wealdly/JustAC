@@ -55,6 +55,12 @@ end
 function FightWindow.Used(id, now)
     if not id then return end
     now = now or GetTime()
+    -- One press can fire the cast event twice (Shadow Dance: the cast id, then the buff it
+    -- triggers). The second is the same press, not another cast.
+    if count > 0 and rKind[head] == "U" and now - rT[head] < 0.1 then
+        local base = BlizzardAPI and BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(id)
+        if base == rID[head] or id == rID[head] then return end
+    end
     Push(now, id, "U")
     if not servedID then return end
     if SamePress(id, servedID) then
@@ -87,7 +93,10 @@ local TYPED_LOOKBACK, MULTI_NEEDED = 6, 2
 --- Multi-target context from recent picks: at least MULTI_NEEDED multi-target picks among the
 --- last TYPED_LOOKBACK TYPED picks. Untyped picks (a cooldown, a buff) say nothing about the
 --- pack and are skipped, so a long untyped stretch does not age the memory of one.
---- @return string|nil arch, string|nil range  of the most recent multi-target pick
+--- The tier is the STRONGEST among the counted picks, not the newest: one aoe pick among
+--- cleave-tagged finishers means a pack (measured: Secret Technique, tagged cleave, was the
+--- newest multi pick in a Shuriken Storm pack and the window said cleave).
+--- @return string|nil arch, string|nil range  of the strongest multi-target pick
 function FightWindow.MultiContext()
     local typed, multi, arch, range = 0, 0, nil, nil
     local i = head
@@ -96,7 +105,7 @@ function FightWindow.MultiContext()
             typed = typed + 1
             if rArch[i] == "aoe" or rArch[i] == "cleave" then
                 multi = multi + 1
-                if not arch then arch, range = rArch[i], rRange[i] end
+                if not arch or (arch == "cleave" and rArch[i] == "aoe") then arch, range = rArch[i], rRange[i] end
             end
             if typed >= TYPED_LOOKBACK then break end
         end
@@ -133,13 +142,14 @@ function FightWindow.SelfTest()
     FightWindow.Served(3, 2, nil)                             -- untyped: skipped
     FightWindow.Served(4, 3, "cleave", "ranged")
     local a, r = FightWindow.MultiContext()
-    ok = ok and a == "cleave" and r == "ranged"               -- 2 of last 6 typed, newest wins
+    ok = ok and a == "aoe" and r == "melee"                   -- 2 of last 6 typed, strongest tier wins
     for i = 5, 9 do FightWindow.Served(i, i, "st") end
     ok = ok and FightWindow.MultiContext() == nil             -- single-target picks flush it
     for i = 10, 40 do FightWindow.Served(i, i, "st") end      -- wraps the ring
     ok = ok and count == SIZE
     FightWindow.Served(99, 100, "st")
-    FightWindow.Used(7, 101); FightWindow.Used(7, 104); FightWindow.Used(7, 107)
+    FightWindow.Used(7, 101); FightWindow.Used(7, 101.01); FightWindow.Used(7, 104); FightWindow.Used(7, 107)
+    -- (the 101.01 press is the same-tick double fire and must not count)
     ok = ok and FightWindow.StuckSeconds(99) == 7             -- 3 other casts over >= 6s
     FightWindow.Served(98, 200, "st")
     FightWindow.Used(98, 201); FightWindow.Used(7, 204); FightWindow.Used(7, 207); FightWindow.Used(7, 210)
