@@ -774,15 +774,22 @@ local function AcquireRow(self, index)
     row.idx:SetWidth(20)
     row.idx:SetJustifyH("CENTER")
 
+    row.slot = row:CreateTexture(nil, "BACKGROUND")
+    row.slot:SetSize(16, 16)
+    row.slot:SetPoint("LEFT", row.idx, "RIGHT", 6, 0)
+    if HasAtlas(BUTTON_ATLAS) then row.slot:SetAtlas(BUTTON_ATLAS) else row.slot:Hide() end
+
+    -- Inset inside the slot art, so the button reads as a frame around the ability
+    -- rather than a plate behind it.
     row.icon = row:CreateTexture(nil, "ARTWORK")
-    row.icon:SetSize(16, 16)
-    row.icon:SetPoint("LEFT", row.idx, "RIGHT", 6, 0)
+    row.icon:SetPoint("TOPLEFT", row.slot, "TOPLEFT", 1, -1)
+    row.icon:SetPoint("BOTTOMRIGHT", row.slot, "BOTTOMRIGHT", -1, 1)
     row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
     -- Everything below is anchored and coloured ONCE: only the row's own position, its
     -- text and the two column widths change per refresh.
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.name:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
+    row.name:SetPoint("LEFT", row.slot, "RIGHT", 7, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
     row.name:SetTextColor(unpack(INK))
