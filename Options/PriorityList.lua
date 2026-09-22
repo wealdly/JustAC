@@ -340,35 +340,62 @@ function PriorityList._shownIndex(shownKnown, id, fallback)
     return fallback
 end
 
+--- Plain words for ONE gate, or nil when there are none to give. Recursive, because a
+--- group phrases its members exactly as the list does and joins them with or / and.
+local GatePhrase
+GatePhrase = function(g)
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+    local function nameOf(id)
+        local nm = SpellSearch and SpellSearch.DisplayInfo and SpellSearch.DisplayInfo(id)
+        return nm or tostring(id)
+    end
+    local piece
+    if g.t == "any" or g.t == "all" then
+        local sub = {}
+        for i = 1, #(g.g or {}) do
+            local m = g.g[i]
+            local phrase = GatePhrase(m)
+            -- Bracket a nested group: "a and b or c" reads three different ways.
+            if phrase and (m.t == "any" or m.t == "all") and #(m.g or {}) > 1 then
+                phrase = "(" .. phrase .. ")"
+            end
+            sub[#sub + 1] = phrase
+        end
+        if #sub == 0 then return nil end
+        if #sub == 1 then return sub[1] end
+        return table.concat(sub, g.t == "any" and L["Priority Cond Or"]
+            or L["Priority Cond And"])
+    elseif g.t == "buff" and g.id then
+        piece = string.format(g.neg and L["Priority Cond Not During"]
+            or L["Priority Cond During"], nameOf(g.id))
+    elseif g.t == "cd" and g.id then
+        -- `neg` means the entry wants that cooldown RUNNING, not ready.
+        piece = string.format(g.neg and L["Priority Cond Cd Running"]
+            or L["Priority Cond Cd Ready"], nameOf(g.id))
+    elseif g.t == "stealth" then
+        piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
+    elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
+        piece = string.format("%s %s %d", g.res or "?", g.op, g.n)
+    elseif g.t == "execute" and g.pct then
+        piece = string.format(L["Priority Cond Execute"], g.pct)
+    elseif g.t == "health" and g.pct then
+        piece = string.format(L["Priority Cond Health"], g.pct)
+    elseif g.t == "stack" and g.n then
+        piece = string.format(L["Priority Cond Stacks"], g.n)
+    elseif g.t == "dot" then
+        piece = L["Priority Cond Dot"]
+    end
+    return piece
+end
+
 --- One line of plain words for an entry's conditions.
 function PriorityList.Condition(rec)
     if not rec then return L["Priority Cond Unknown"] end
     local gates = rec.gates
     if not gates or #gates == 0 then return L["Priority Cond None"] end
-    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     local parts = {}
     for i = 1, #gates do
-        local g, piece = gates[i], nil
-        if g.t == "buff" and g.id then
-            local nm = SpellSearch and SpellSearch.DisplayInfo and SpellSearch.DisplayInfo(g.id)
-            piece = string.format(g.neg and L["Priority Cond Not During"] or L["Priority Cond During"],
-                nm or tostring(g.id))
-        elseif g.t == "stealth" then
-            piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
-        elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
-            piece = string.format("%s %s %d", g.res or "?", g.op, g.n)
-        elseif g.t == "execute" and g.pct then
-            piece = string.format(L["Priority Cond Execute"], g.pct)
-        elseif g.t == "health" and g.pct then
-            piece = string.format(L["Priority Cond Health"], g.pct)
-        elseif g.t == "stack" and g.n then
-            piece = string.format(L["Priority Cond Stacks"], g.n)
-        elseif g.t == "dot" then
-            piece = L["Priority Cond Dot"]
-        elseif g.t == "cd" then
-            piece = L["Priority Cond Cd"]
-        end
-        if piece then parts[#parts + 1] = piece end
+        parts[#parts + 1] = GatePhrase(gates[i])
     end
     if #parts == 0 then return L["Priority Cond None"] end
     return table.concat(parts, " \194\183 ")   -- middle dot

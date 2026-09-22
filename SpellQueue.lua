@@ -1032,9 +1032,10 @@ SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simc
 --- to be thrown away for having a bracket in it.
 ---
 --- `strict` is the difference between the two readings the queue needs. SINKING an entry
---- fails open, so a buff, cooldown or dot - none of which have a blocker we trust - reads
+--- fails open, so a buff or a dot - neither of which has a blocker we trust - reads
 --- as nil and buries nothing. SEATING one in slot 1 demands proof, so there a buff window
---- we cannot see is a definite no.
+--- we cannot see is a definite no. A cooldown is not in that group: it reads the same
+--- either way, because the engine answers it outright.
 local gateCtx = {}   -- reused: this runs per entry per build and must not allocate
 
 local function GateVerdict(g, ctx)
@@ -1092,6 +1093,14 @@ local function GateVerdict(g, ctx)
         if g.tgt and not UnitExists("target") then return nil end
         return StackHolds(g.tgt and "target" or "player", g)
     end
+    if t == "cd" then
+        -- Engine truth, GCD excluded: the real cooldown either is running or is not.
+        -- `neg` means the entry wants it RUNNING (SimC's `cooldown.x.remains`).
+        if not (g.id and BlizzardAPI.IsSpellOnCooldown) then
+            return ctx.strict and false or nil
+        end
+        return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(g.id) and true or false)
+    end
     if t == "buff" then
         if not ctx.strict then return nil end
         local up = g.id and BlizzardAPI.IsBuffWindowActive
@@ -1104,7 +1113,7 @@ local function GateVerdict(g, ctx)
         end
         return up and true or false
     end
-    if ctx.strict then return false end   -- cd / dot / unknown: never confirmed
+    if ctx.strict then return false end   -- dot / unknown: no evaluator, never confirmed
     return nil
 end
 SpellQueue._GateVerdict = GateVerdict          -- diagnostics (/jac inspect simcgates)

@@ -256,8 +256,22 @@ def classify_atom(atom, resolve):
     m = re.fullmatch(r'stealthed\.\w+|variable\.(\w+)', a)
     if m and (m.group(1) is None or m.group(1) in STEALTH_VARS):
         return {"t": "stealth", "neg": neg}, False
-    if re.fullmatch(r'cooldown\.\w+\.(ready|up|remains)', a):
-        return {"t": "cd"}, False
+    m = re.fullmatch(r'cooldown\.(\w+)\.(ready|up|remains)', a)
+    if m:
+        # Name the spell. Without an id this was a gate saying only "some cooldown",
+        # which the runtime could not evaluate and which made two different cooldowns
+        # in one condition indistinguishable. An unresolved token delegates, as ever.
+        sid = resolve(m.group(1))
+        if not sid:
+            return None, True
+        # `remains` is truthy while time is LEFT, so it asks the opposite question to
+        # `ready`/`up`. Both collapse into one gate, the sense carried in `neg`: set,
+        # the entry wants the cooldown RUNNING. Neither was distinguished before, so a
+        # line wanting a cooldown up and one wanting it down compiled identically.
+        want_running = (m.group(2) == "remains")
+        if neg:
+            want_running = not want_running
+        return {"t": "cd", "id": sid, "neg": want_running}, False
     m = re.fullmatch(r'dot\.(\w+)\.(refreshable|ticking|remains)', a)
     if m:
         did = resolve(m.group(1))
@@ -356,7 +370,7 @@ def group_member_ok(g):
         return all(group_member_ok(x) for x in g["g"])
     if t == "stealth":
         return True
-    if t == "buff":
+    if t in ("buff", "cd"):
         return bool(g.get("id"))
     if t in ("resource", "power"):
         return bool(g.get("res") and g.get("op") and g.get("n") is not None)
@@ -364,7 +378,7 @@ def group_member_ok(g):
         return bool(g.get("op") and g.get("pct") is not None)
     if t == "stack":
         return bool(g.get("id") and g.get("op") and g.get("n") is not None)
-    return False          # cd, dot, anything new: no evaluator, so no opinion
+    return False          # dot, anything new: no evaluator, so no opinion
 
 
 def classify_group(kind, parts, resolve, depth):
@@ -951,6 +965,15 @@ def spec_from_filename(name, bridge):
 
 
 def _selftest():
+    # cooldown gates name their spell, and `remains` is the opposite of `ready`
+    assert classify_atom("cooldown.x.ready", lambda t: 9)[0] == {"t": "cd", "id": 9, "neg": False}
+    assert classify_atom("cooldown.x.up", lambda t: 9)[0] == {"t": "cd", "id": 9, "neg": False}
+    assert classify_atom("cooldown.x.remains", lambda t: 9)[0] == {"t": "cd", "id": 9, "neg": True}
+    assert classify_atom("!cooldown.x.ready", lambda t: 9)[0] == {"t": "cd", "id": 9, "neg": True}
+    assert classify_atom("!cooldown.x.remains", lambda t: 9)[0] == {"t": "cd", "id": 9, "neg": False}
+    assert classify_atom("cooldown.x.ready", lambda t: None) == (None, True)
+    # a tail is still a different question and still delegates
+    assert classify_atom("cooldown.x.remains>10", lambda t: 9) == (None, True)
     # nested groups: readable throughout -> one gate; one unreadable member -> delegate
     def r(tok):
         return {"x": 101, "y": 202}.get(tok)
@@ -1108,7 +1131,7 @@ def _selftest():
     assert classify_atom("buff.x.react<2", lambda t: 1) == (None, True)
     assert classify_atom("dot.x.remains<5", lambda t: 1) == (None, True)
     # ...while the bare boolean forms still gate.
-    assert classify_atom("cooldown.x.ready", lambda t: 1)[0] == {"t": "cd"}
+    assert classify_atom("cooldown.x.ready", lambda t: 1)[0] == {"t": "cd", "id": 1, "neg": False}
     assert classify_atom("buff.x.up", lambda t: 7)[0] == {"t": "buff", "id": 7, "neg": False}
     assert classify_atom("dot.x.ticking", lambda t: 7)[0] == {"t": "dot", "id": 7}
     # An unresolved dot delegates rather than emitting an id-less gate the runtime can't use.
