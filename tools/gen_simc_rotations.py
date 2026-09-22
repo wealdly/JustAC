@@ -467,6 +467,93 @@ def count_fails(expr, k, expanded=False):
     return bool(ns) and all(not _count_ok(m.group(1), n, k) for n in ns)
 
 
+# --- scripted encounter events -----------------------------------------------
+# `raid_event.*` describes add waves, pulls and movement that a SIMULATION schedules. In a
+# real fight nothing schedules them, so every term resolves the way SimC itself resolves it
+# with no events configured: nothing exists, nothing is running, and the next one never
+# arrives. Left in place they are unreadable, which delegated whole lines that are otherwise
+# perfectly evaluable - upstream put `raid_event.adds.in>=60` on three Enhancement
+# cooldowns and cost them their ordering. Folded out, the rest of the condition survives.
+_RAID_NEVER = 100000
+_RAID_BARE = re.compile(r'raid_event\.\w+\.(\w+)$')
+_RAID_CMP = re.compile(r'raid_event\.\w+\.(\w+)\s*(>=|<=|>|<|=|!=)\s*(\d+)$')
+
+
+def _raid_atom(atom):
+    """True/False for a term about scripted events, or None when the shape is unfamiliar."""
+    m = _RAID_CMP.fullmatch(atom)
+    if m:
+        v = _RAID_NEVER if m.group(1) == "in" else 0
+        return _count_ok(m.group(2), int(m.group(3)), v)
+    m = _RAID_BARE.fullmatch(atom)
+    if m:
+        return m.group(1) == "in"   # only "time until the next one" is non-zero
+    return None
+
+
+def fold_raid_events(expr):
+    """The expression with its scripted-event terms resolved away. True when what is left
+    always holds, False when it never does, otherwise the reduced expression."""
+    expr = _strip_parens(expr.strip())
+    if not expr:
+        return True
+    alts = split_or(expr)
+    if len(alts) > 1:
+        kept = []
+        for a in alts:
+            r = fold_raid_events(a)
+            if r is True:
+                return True
+            if r is not False:
+                kept.append(r)
+        return "|".join(kept) if kept else False
+    atoms = split_and(expr)
+    if len(atoms) > 1:
+        kept = []
+        for a in atoms:
+            r = fold_raid_events(a)
+            if r is False:
+                return False
+            if r is not True:
+                kept.append("(%s)" % r if has_top_level_or(r) else r)
+        return "&".join(kept) if kept else True
+    atom = atoms[0]
+    if "raid_event." not in atom:
+        return atom
+    if atom.startswith("!"):
+        r = fold_raid_events(atom.lstrip("!"))
+        return (not r) if isinstance(r, bool) else atom
+    r = _raid_atom(atom)
+    return atom if r is None else r
+
+
+def drop_raid_events(lists):
+    """Fold scripted-event terms out of every condition, and drop the lines that only ever
+    fire for one - a cooldown held back for an add wave that is never coming."""
+    out = {}
+    for name, entries in lists.items():
+        kept = []
+        for token, mods in entries:
+            for key in ("if", "value"):
+                if "raid_event." not in mods.get(key, ""):
+                    continue
+                r = fold_raid_events(mods[key])
+                mods = dict(mods)
+                if key == "value":
+                    mods[key] = {True: "1", False: "0"}.get(r, r)
+                elif r is True:
+                    mods.pop("if")          # nothing left to test
+                elif r is False:
+                    mods = None             # the line only ever fired for the event
+                    break
+                else:
+                    mods[key] = r
+            if mods is not None:
+                kept.append((token, mods))
+        out[name] = kept
+    return out
+
+
 # --- flatten -----------------------------------------------------------------
 def make_entry(token, mods, resolve, unresolved, k):
     if token in SKIP or token.startswith("variable"):
@@ -884,6 +971,17 @@ def _selftest():
     assert classify_atom("stealthed.rogue", lambda t: None) == ({"t": "stealth", "neg": False}, False)
     assert classify_atom("!stealthed.all", lambda t: None) == ({"t": "stealth", "neg": True}, False)
     assert classify_atom("variable.unknown_thing", lambda t: None) == (None, True)
+    # scripted encounter events: nothing schedules them in a real fight
+    assert fold_raid_events("raid_event.adds.in>=60") is True
+    assert fold_raid_events("raid_event.adds.exists") is False
+    assert fold_raid_events("!raid_event.adds.exists") is True
+    assert fold_raid_events("raid_event.adds.remains>5") is False
+    assert fold_raid_events("talent.x&(raid_event.adds.in>=30|fight_remains<=12)") == "talent.x"
+    assert fold_raid_events("active_enemies>=2&raid_event.adds.remains>5") is False
+    assert fold_raid_events("buff.x.up|raid_event.adds.up") == "buff.x.up"
+    assert fold_raid_events("(a|b)&raid_event.adds.in>1") == "(a|b)"   # keeps its grouping
+    assert fold_raid_events("raid_event.adds.count>2") is False
+    assert fold_raid_events("raid_event.adds.count>variable.x") == "raid_event.adds.count>variable.x"
     STEALTH_VARS.add("stealth")
     assert classify_atom("!variable.stealth", lambda t: None) == ({"t": "stealth", "neg": True}, False)
     STEALTH_VARS.clear()
@@ -993,7 +1091,7 @@ def main():
         resolve = bridge.resolver(cls, specname, CURATED.get(speckey, {}))
         unresolved = set()
         text = open(f, encoding="utf-8").read()
-        lists = parse_apl(text)
+        lists = drop_raid_events(parse_apl(text))
         varmap = build_varmap(lists)
         VARMAP.clear()
         VARMAP.update(varmap)
