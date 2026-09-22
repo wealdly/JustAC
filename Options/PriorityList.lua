@@ -35,14 +35,23 @@ local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- circling arrow the one-button helper puts on an action button. An atlas, so there is no
 -- art to ship and no path to get wrong; the padlock stays as the fallback.
 local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
-local assistAtlasOK, assistAtlasTried
-local function HasAssistAtlas()
-    if not assistAtlasTried then
-        assistAtlasTried = true
-        assistAtlasOK = (C_Texture and C_Texture.GetAtlasInfo
-            and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
+local assistArt, assistArtTried
+--- The assist's own icon, and whether its ring overlay exists. Resolved once: neither
+--- changes, and a build without either just leaves the padlock showing.
+local function AssistArt()
+    if assistArtTried then return assistArt end
+    assistArtTried = true
+    local icon
+    if C_AssistedCombat and C_AssistedCombat.GetActionSpell then
+        local ok, sid = pcall(C_AssistedCombat.GetActionSpell)
+        local info = ok and sid and C_Spell and C_Spell.GetSpellInfo
+            and C_Spell.GetSpellInfo(sid)
+        icon = info and info.iconID or nil
     end
-    return assistAtlasOK
+    local ring = (C_Texture and C_Texture.GetAtlasInfo
+        and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
+    if icon or ring then assistArt = { icon = icon, ring = ring } end
+    return assistArt
 end
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -903,21 +912,28 @@ function methods:Refresh()
         Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Use Tip"])
     end
 
-    -- Position 1. The row the whole panel exists to explain: with the list leading it is
-    -- contested, otherwise it is simply the game's and the list below starts at 2.
+    -- Position 1. The row the whole panel exists to explain, in the three states the lead
+    -- setting can put it in: the game's outright, contested by your list, or the game's
+    -- except while it waits.
     local pinTitle, pinNote, pinGold = L["Priority Pin Blizzard"], L["Priority Pin Blizzard Note"], false
     if leads then
         pinTitle, pinNote, pinGold = L["Priority Pin Contested"], L["Priority Pin Contested Note"], true
     elseif leadMode == "safe" then
         pinTitle, pinNote, pinGold = L["Priority Pin Safe"], L["Priority Pin Safe Note"], true
     end
-    if HasAssistAtlas() then
-        -- The emblem carries its own colour; only the padlock stand-in is tinted.
-        self.pin.lock:SetAtlas(ASSIST_ATLAS)
-        self.pin.lock:SetVertexColor(1, 1, 1)
-    else
-        self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
+    local art = AssistArt()
+    if art and art.icon then
+        -- A real icon carries its own colour; only the padlock stand-in is tinted.
+        self.pin.icon:SetTexture(art.icon)
+        self.pin.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        self.pin.icon:SetVertexColor(1, 1, 1)
+    elseif art and art.ring then
+        self.pin.icon:SetAtlas(ASSIST_ATLAS)
+        self.pin.icon:SetVertexColor(1, 1, 1)
     end
+    self.pin.icon:SetShown(art ~= nil)
+    self.pin.ring:SetShown((art and art.ring and art.icon) and true or false)
+    self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
     self.pin.title:SetText(pinTitle)
     self.pin.title:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.note:SetText(pinNote)
@@ -1184,13 +1200,21 @@ local function Constructor()
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
     -- No number: this row is not a position in the list below, it is the row that owns
-    -- the moment before it. The lock stands where the numbers run.
+    -- the moment before it. The padlock stands where the numbers run and says so.
     pin.lock = pin:CreateTexture(nil, "ARTWORK")
-    pin.lock:SetSize(16, 16)
+    pin.lock:SetSize(12, 14)
     pin.lock:SetTexture(LOCK_TEXTURE)
-    -- The icon column, so it lines up with every ability icon below it. The number
-    -- column stays empty: this row is not a position in the list.
-    pin.lock:SetPoint("LEFT", pin, "LEFT", 32, 0)
+    pin.lock:SetPoint("CENTER", pin, "LEFT", 16, 0)
+    -- The icon column, so the emblem lines up with every ability icon below it.
+    pin.icon = pin:CreateTexture(nil, "ARTWORK")
+    pin.icon:SetSize(16, 16)
+    pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
+    -- The ring the assist paints ON an action button, over the icon, as in game.
+    pin.ring = pin:CreateTexture(nil, "OVERLAY")
+    pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
+    pin.ring:SetSize(22, 22)
+    pin.ring:SetAtlas(ASSIST_ATLAS)
+    pin.ring:Hide()
     pin.title = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pin.title:SetPoint("LEFT", pin, "LEFT", 55, 0)
     pin.note = pin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
