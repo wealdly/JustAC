@@ -272,6 +272,12 @@ function PriorityList.Rows(addon, source)
         local name, icon
         if SpellSearch and SpellSearch.DisplayInfo then name, icon = SpellSearch.DisplayInfo(id) end
         local rec = (id > 0) and RI and RI.GetEntry and RI.GetEntry(id, "st") or nil
+        local move
+        if haveBase then
+            move = base[id] and (base[id] - PriorityList._shownIndex(shownKnown, id, i)) or "new"
+        elseif rec and rec.rank then
+            move = i - rankOf[id]   -- same subtraction, same sign, read from the baseline
+        end
         out[i] = {
             id = id,
             name = name or tostring(id),
@@ -279,8 +285,8 @@ function PriorityList.Rows(addon, source)
             rank = (rec and rec.rank) and rankOf[id] or nil,
             upkeep = PriorityList.IsUpkeep(id),
             -- vs the game's own order: how far this source moves it, or that the game
-            -- does not offer it at all.
-            move = haveBase and (base[id] and (base[id] - PriorityList._shownIndex(shownKnown, id, i)) or "new") or nil,
+            -- does not offer it at all. On the game's own tab, how far theorycraft would.
+            move = move,
             cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
                 or PriorityList.Condition(rec)) or nil,
         }
@@ -366,10 +372,11 @@ function PriorityList.DetailLines(id)
         out[#out + 1] = { L["Priority Cond Unknown"], 0.66, 0.62, 0.55 }
     end
 
+    -- Deliberately no rank number here: the theorycraft data ranks abilities this spec
+    -- cannot currently cast, so its absolute number disagrees with the column, which counts
+    -- only the rows on screen. Whether it is ranked AT ALL is the part the column cannot say.
     local rec = RI.GetEntry(id, "st")
-    if rec and rec.rank then
-        out[#out + 1] = { string.format(L["Priority Tip Rank"], rec.rank), BLUE[1], BLUE[2], BLUE[3] }
-    else
+    if not (rec and rec.rank) then
         out[#out + 1] = { L["Priority Tip Unranked"], 0.66, 0.62, 0.55 }
     end
     -- The padlock used to say this in the row itself; it repeated on nearly every line,
@@ -594,6 +601,21 @@ local function EndDrag(self, commit)
     PriorityList.Changed(self.addon)
 end
 
+--- Re-share the free width between the name and condition columns. Called whenever the
+--- pane resizes, not just on Refresh, because the width that Refresh measured is the one
+--- from BEFORE Ace lays this widget out again.
+local function ApplyColumns(self)
+    local free = math.max(0, (self.frame:GetWidth() or 560) - ROW_FIXED)
+    local nameW = math.floor(free * 0.46)
+    for i = 1, #self.rows do
+        self.rows[i].name:SetWidth(nameW)
+        self.rows[i].cond:SetWidth(free - nameW)
+    end
+    self.head.cond:ClearAllPoints()
+    self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
+end
+
+
 local function AcquireRow(self, index)
     local row = self.rows[index]
     if row then return row end
@@ -780,7 +802,7 @@ function methods:Refresh()
     local source, live = self:Source(), PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
     local haveList = cq and cq.spells and #cq.spells > 0
-    local leads = (cq and cq.enabled and cq.myListLeads == true) or false
+    local leads = source == "custom" and haveList and cq.myListLeads == true
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
@@ -802,11 +824,6 @@ function methods:Refresh()
     self.pin.bg:SetColorTexture(leads and 0.20 or 0.11, leads and 0.16 or 0.20, 0.09, 1)
 
     local rows = PriorityList.Rows(self.addon, source)
-    -- Share the free width between the two text columns rather than fixing the condition
-    -- and giving the name whatever is left: ability names run long in every language.
-    local free = math.max(0, (self.frame:GetWidth() or 560) - ROW_FIXED)
-    local nameW = math.floor(free * 0.46)
-    local condW = free - nameW
     local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
     local detailShown = false
 
@@ -818,13 +835,11 @@ function methods:Refresh()
         row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
         row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
         row.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.035 or 0)
-        row.idx:SetText(i + (leads and 0 or 1))
+        row.idx:SetText(i)
         row.icon:SetTexture(data.icon)
         row.name:SetText(data.name)
-        row.name:SetWidth(nameW)
         row.cond:SetText(data.cond or "")
         row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
-        row.cond:SetWidth(condW)
         if data.move ~= nil then
             if data.move == "new" then
                 row.rank:SetText(L["Priority Move New"])
@@ -878,11 +893,9 @@ function methods:Refresh()
     self.emptyNote:SetShown(source == "custom" and not haveList)
     self.emptyNote:SetText(L["Priority Empty Hint"])
 
-    -- Only the columns that follow the resizing name field actually move.
     self.head:SetShown(#rows > 0)
+    ApplyColumns(self)
     if #rows > 0 then
-        self.head.cond:ClearAllPoints()
-        self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
         self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -56, 0)
         self.head.rank:SetText(source == "blizzard" and L["Priority Head Rank"] or L["Priority Head Move"])
@@ -898,6 +911,9 @@ end
 local function Constructor()
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:Hide()
+    frame:SetScript("OnSizeChanged", function(f)
+        if f.obj and f.obj.rows then ApplyColumns(f.obj) end
+    end)
 
     local widget = { frame = frame, type = Type, rows = {}, tabs = {} }
     for method, func in pairs(methods) do widget[method] = func end
@@ -1027,15 +1043,12 @@ local function Constructor()
     pin:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -(TAB_H + HEAD_H + 4))
     pin.bg = pin:CreateTexture(nil, "BACKGROUND")
     pin.bg:SetAllPoints()
-    pin.num = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    pin.num:SetPoint("LEFT", 6, 0)
-    pin.num:SetWidth(20)
-    pin.num:SetJustifyH("RIGHT")
-    pin.num:SetText("1")
+    -- No number: this row is not a position in the list below, it is the row that owns
+    -- the moment before it. The lock stands where the numbers run.
     pin.lock = pin:CreateTexture(nil, "ARTWORK")
     pin.lock:SetSize(12, 14)
     pin.lock:SetTexture(LOCK_TEXTURE)
-    pin.lock:SetPoint("LEFT", pin.num, "RIGHT", 8, 0)
+    pin.lock:SetPoint("LEFT", 14, 0)
     pin.title = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pin.title:SetPoint("LEFT", pin.lock, "RIGHT", 7, 0)
     pin.note = pin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
