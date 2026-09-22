@@ -573,7 +573,7 @@ function methods:Refresh()
     -- Actions. Previewing a source you do not use offers to take it; your own list offers
     -- to start over. Both are the same button slot, so the strip never grows.
     self.starting = (source ~= "custom") and not haveList
-    self.useThis:SetShown(not self.disabled and source ~= live)
+    self.useThis:SetShown(not self.disabled and (self.starting or source ~= live))
     self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
     self.useThis:SetWidth(self.starting and 160 or 116)
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
@@ -611,8 +611,8 @@ local function Constructor()
     body:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(TAB_H - 2))
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     body:SetBackdrop({
-        bgFile = "Interface\ChatFrame\ChatFrameBackground",
-        edgeFile = "Interface\Tooltips\UI-Tooltip-Border",
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 3, right = 3, top = 5, bottom = 3 },
     })
