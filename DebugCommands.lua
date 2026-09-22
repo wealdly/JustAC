@@ -1984,7 +1984,7 @@ function DebugCommands.GateDiagnostics(addon)
         if g.id then s = s .. "[" .. tostring(g.id) .. "]" end
         if g.res then s = s .. ":" .. tostring(g.res) end
         if g.op and g.n then s = s .. g.op .. tostring(g.n) end
-        if g.pct then s = s .. "<=" .. tostring(g.pct) .. "%" end
+        if g.pct then s = s .. tostring(g.op or "<") .. tostring(g.pct) .. "%" end
         return s
     end
     local function gateStr(e)
@@ -8841,10 +8841,12 @@ function DebugCommands.SimcGateProbe(addon, arg)
             -- way. Without this a nested condition printed nothing and its whole entry
             -- silently vanished from the probe.
             local DescribeGate
-            DescribeGate = function(g)
+            DescribeGate = function(g, nested)
                 if g.t == "any" or g.t == "all" then
                     local sub = {}
-                    for k = 1, #(g.g or {}) do sub[#sub + 1] = DescribeGate(g.g[k]) or "?" end
+                    for k = 1, #(g.g or {}) do
+                        sub[#sub + 1] = DescribeGate(g.g[k], true) or "?"
+                    end
                     if #sub == 0 then return nil end
                     return "(" .. table.concat(sub, g.t == "any" and " or " or " and ") .. ")"
                 end
@@ -8898,6 +8900,14 @@ function DebugCommands.SimcGateProbe(addon, arg)
                     return string.format("%s%s%s%d [is=%s]", g.res,
                         g.deficit and ".deficit" or "", g.op, g.n,
                         (g.res == resName) and tostring(value) or "other resource")
+                end
+                if nested then
+                    -- No live read for these, but a group member has to show something
+                    -- or the whole group reads as a row of question marks.
+                    local info = g.id and C_Spell and C_Spell.GetSpellInfo
+                        and C_Spell.GetSpellInfo(g.id)
+                    return (g.neg and "!" or "") .. tostring(g.t)
+                        .. (g.id and ("(" .. ((info and info.name) or tostring(g.id)) .. ")") or "")
                 end
                 return nil
             end
