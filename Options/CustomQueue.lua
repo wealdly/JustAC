@@ -496,8 +496,10 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         baseOrder = 12, addOrder = 30,
         listName = L["Custom Queue Spells"], updateFunc = updateFunc,
         spellsOnly = false, emptyText = L["Custom Queue Empty"],
-        -- Rows come from the widget; Ace only renders the opened row's settings.
-        onlyEntry = PriorityList and PriorityList.selected or nil,
+        -- Rows come from the widget; Ace only renders the opened row's settings - and
+        -- NONE when no row is open. 0 is that "none": nil would mean "no filter", which
+        -- drew the old full-height rows underneath the widget (both lists at once).
+        onlyEntry = PriorityList and (PriorityList.selected or 0) or nil,
     })
 
     -- Cap transparency: entries that sink (cooldown, out of range, active DoT)
