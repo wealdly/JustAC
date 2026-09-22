@@ -48,11 +48,18 @@ def extract(name, text):
 # which is how a cooldown condition sat inert for as long as it did.
 #
 # `dot` is here for a measured reason, not an unfinished one. Answering it needs a live
-# aura instance on the target, and 12.1.0 closed every route to one in combat: the aura
-# update payload lists are secret, the instance-id lookup requires unit aura access that
-# is denied, and handing a widget to the aura container marks it with secret aspects so
-# nothing can be read back off it. Session probe, 2026-09-22: zero confirmed instances in
-# 31 samples across four bleeds. Do not re-litigate without an API change.
+# aura instance on the target, and 12.1.0 closed every route to one in combat. Measured
+# in game 2026-09-22, Feral, bleeds up on the target the whole time:
+#
+#   instance list      works out of combat (an id, and the duration object answers
+#                      "below 30% left" outright) - DENIED in combat
+#   lookup by spell    nil in combat with four bleeds tracked on that target; the call
+#                      requires a non-secret aura and in combat there is no such thing
+#   aura container     renders only: every region, font string and cooldown handed to it
+#                      is marked with secret aspects, so nothing reads back
+#
+# The duration object itself is NOT restricted - only every handle to one is. Zero
+# confirmed instances in 38 samples. Do not re-litigate without an API change.
 UNEVALUATED = {"dot"}
 
 
