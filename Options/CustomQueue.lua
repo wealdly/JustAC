@@ -111,14 +111,18 @@ local function SnapshotRotation(addon, specKey)
     local rotationSpells = snapshotBaseline(cq)
     if not rotationSpells then return false end
     cq.spells = {}
-    for i, spellID in ipairs(rotationSpells) do
-        cq.spells[i] = spellID
+    local PL = LibStub("JustAC-PriorityList", true)
+    for _, spellID in ipairs(rotationSpells) do
+        -- Upkeep is excluded HERE rather than pruned later: copying it in and deleting it
+        -- one call afterwards told the player we had removed entries they never added.
+        if not (PL and PL.IsUpkeep and PL.IsUpkeep(spellID)) then
+            cq.spells[#cq.spells + 1] = spellID
+        end
     end
     -- The game hands its pool over in spell-id order, which reads as nonsense in a list the
     -- user is about to reorder (Eviscerate at step 8, poisons at 2-4) and IS the order with
     -- Context Ordering off. Seed it as a priority instead: theorycraft rank, then the game's
-    -- own step order, then id. Unranked entries (poisons, utility) fall to the bottom.
-    local PL = LibStub("JustAC-PriorityList", true)
+    -- own step order, then id. Unranked entries (utility) fall to the bottom.
     if PL and PL.SortByPriority then PL.SortByPriority(cq.spells, "simc") end
 
     return true
@@ -284,8 +288,11 @@ function CustomQueue.CreateTabArgs(addon)
                     -- Append added spells
                     if added then
                         if not cq.spells then cq.spells = {} end
+                        local PL = LibStub("JustAC-PriorityList", true)
                         for _, sid in ipairs(added) do
-                            cq.spells[#cq.spells + 1] = sid
+                            if not (PL and PL.IsUpkeep and PL.IsUpkeep(sid)) then
+                                cq.spells[#cq.spells + 1] = sid
+                            end
                         end
                     end
 
@@ -429,7 +436,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     local PriorityList = LibStub("JustAC-PriorityList", true)
     -- A list made before upkeep abilities were excluded still carries them, and they stall
     -- the queue. Repair it here, once, and tell the player why their list got shorter.
-    if PriorityList and PriorityList.PruneUpkeep then
+    if PriorityList and PriorityList.PruneUpkeep and cq.enabled then
         local dropped = PriorityList.PruneUpkeep(addon)
         if dropped > 0 and addon.Print then
             addon:Print(string.format(L["Upkeep Pruned"], dropped))
@@ -443,7 +450,11 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         -- Rows come from the widget; Ace only renders the opened row's settings - and
         -- NONE when no row is open. 0 is that "none": nil would mean "no filter", which
         -- drew the old full-height rows underneath the widget (both lists at once).
-        onlyEntry = PriorityList and (PriorityList.selected or 0) or nil,
+        -- Gated on the previewed source as well: an open row's settings kept rendering
+        -- under a read-only preview, complete with its own Remove button.
+        onlyEntry = PriorityList
+            and ((PriorityList.CurrentSource(profile) == "custom" and PriorityList.selected) or 0)
+            or nil,
     })
 
     -- The add button belongs to YOUR list: on the read-only previews there is nothing to

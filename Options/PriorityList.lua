@@ -26,12 +26,12 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 34, 16
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
 -- condition, so a wider panel widens both instead of only one.
-local ROW_FIXED = 208
+local ROW_FIXED = 213
 
 local INK, INK_DIM = { 0.93, 0.90, 0.85 }, { 0.66, 0.62, 0.55 }
 local GOLD, GREEN, BLUE = { 0.85, 0.65, 0.34 }, { 0.62, 0.79, 0.50 }, { 0.44, 0.62, 0.85 }
@@ -53,10 +53,21 @@ end
 --- Which source the QUEUE is using right now. Deliberately independent of `orderExact`:
 --- "show my order literally" is a different question from "whose order", and folding both
 --- into one profile field made ticking either silently move the other.
+--- Is there an imported priority for this spec? Without one the engine falls back to the
+--- pick-matching heuristic, so the theorycraft tab would show the game's own order under a
+--- name the queue is not using.
+function PriorityList.HasSimc()
+    local RI = LibStub("JustAC-RotationImport", true)
+    return (RI and RI.HasRotation and RI.HasRotation()) or false
+end
+
 function PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
     if cq and cq.enabled then return "custom" end
-    return (profile and profile.contextOrder or "simc") == "simc" and "simc" or "blizzard"
+    if (profile and profile.contextOrder or "simc") == "simc" and PriorityList.HasSimc() then
+        return "simc"
+    end
+    return "blizzard"
 end
 
 --- The source ON SCREEN: the previewed tab, else whichever is live. Controls outside the
@@ -76,6 +87,9 @@ function PriorityList.SetLiveSource(addon, source)
     local cq = profile.customQueue[specKey]
     if source == "custom" then
         cq.enabled = true
+        -- Nothing edits contextOrder now the source select is gone, and a list left on
+        -- the old "ac" value ranks by the pick-matching heuristic with nothing saying so.
+        if PriorityList.HasSimc() then profile.contextOrder = "simc" end
     else
         cq.enabled = false
         profile.contextOrder = (source == "simc") and "simc" or "ac"
@@ -185,13 +199,12 @@ end
 
 --- Where an ability sits in the GAME's own order, by id. nil when the game does not list
 --- it at all. Upkeep is excluded so the positions match what the panel actually shows.
-local function BlizzardPositions(addon)
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+--- Where the abilities BEING SHOWN would sit in the game's own order. Ranking the same
+--- set both ways is the only comparison that means anything: measured against the whole
+--- pool, a short list reads as "everything moved up" when nothing moved at all.
+local function BlizzardPositions(shown)
     local ids = {}
-    for _, id in ipairs(pool or {}) do
-        if not PriorityList.IsUpkeep(id) then ids[#ids + 1] = id end
-    end
+    for i, id in ipairs(shown) do ids[i] = id end
     PriorityList.SortByPriority(ids, "blizzard")
     local out = {}
     for i, id in ipairs(ids) do
@@ -210,27 +223,46 @@ function PriorityList.Rows(addon, source)
     local RI = LibStub("JustAC-RotationImport", true)
     if not BlizzardAPI then return out end
 
+    local BAPI = BlizzardAPI
+    --- The game's own list never includes what we inserted into the pool; the baseline has
+    --- to mean the same thing whichever source happens to be live.
+    local function poolFor(src)
+        local out = {}
+        for _, id in ipairs((BAPI.GetRotationSpells and BAPI.GetRotationSpells()) or {}) do
+            local inserted = BAPI.IsInsertedSpell and BAPI.IsInsertedSpell(id)
+            if not PriorityList.IsUpkeep(id) and not (src == "blizzard" and inserted) then
+                out[#out + 1] = id
+            end
+        end
+        return out
+    end
+    PriorityList.PoolFor = poolFor
+
     local ids = {}
     if source == "custom" then
         local cq = CustomQueueFor(profile)
         for i, id in ipairs((cq and cq.spells) or {}) do ids[i] = id end
     else
-        for i, id in ipairs((BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()) or {}) do
-            ids[i] = id
+        ids = poolFor(source)
+        -- "Use my order exactly" turns the engine's ranking off, so a preview that still
+        -- showed a ranked order would describe something the queue is not doing.
+        if not profile.orderExact then
+            PriorityList.SortByPriority(ids, source)   -- a custom list is the player's own order
         end
-        PriorityList.SortByPriority(ids, source)   -- a custom list is the player's own order
-        -- The game's pool carries every poison; a list must not, so the preview a list is
-        -- started from does not offer them either.
-        local keep = {}
-        for _, id in ipairs(ids) do
-            if not PriorityList.IsUpkeep(id) then keep[#keep + 1] = id end
-        end
-        ids = keep
     end
 
-    -- Every source except the baseline itself is shown as movement against it.
-    local base = (source ~= "blizzard") and BlizzardPositions(addon) or nil
-    local haveBase = base and next(base) ~= nil
+    -- Every source except the baseline itself is shown as movement against it. An id the
+    -- game does not list at all has no baseline position, so it reads as added.
+    local known = (source ~= "blizzard") and {} or nil
+    if known then
+        for _, id in ipairs(poolFor("blizzard")) do known[id] = true end
+    end
+    local shownKnown = {}
+    for _, id in ipairs(ids) do
+        if not known or known[id] then shownKnown[#shownKnown + 1] = id end
+    end
+    local base = known and BlizzardPositions(shownKnown) or nil
+    local haveBase = base ~= nil
     for i = 1, #ids do
         local id = ids[i]
         -- DisplayInfo owns the awkward cases: items arrive as NEGATIVE ids, and a
@@ -246,12 +278,21 @@ function PriorityList.Rows(addon, source)
             upkeep = PriorityList.IsUpkeep(id),
             -- vs the game's own order: how far this source moves it, or that the game
             -- does not offer it at all.
-            move = haveBase and (base[id] and (base[id] - i) or "new") or nil,
+            move = haveBase and (base[id] and (base[id] - PriorityList._shownIndex(shownKnown, id, i)) or "new") or nil,
             cond = (id > 0) and (PriorityList.IsUpkeep(id) and L["Priority Cond Upkeep"]
                 or PriorityList.Condition(rec)) or nil,
         }
     end
     return out
+end
+
+--- Position of `id` among the rows that the game also lists, so movement compares like
+--- with like even when the source adds abilities the game has never heard of.
+function PriorityList._shownIndex(shownKnown, id, fallback)
+    for i = 1, #shownKnown do
+        if shownKnown[i] == id then return i end
+    end
+    return fallback
 end
 
 --- One line of plain words for an entry's conditions.
@@ -483,7 +524,7 @@ local function BuildDetail(widget, parent)
     d.hold:SetWidth(150)
     d.hold.frame:SetParent(d)
     -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
-    d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -8, -6)
+    d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -20, 0)
     d.hold.frame:Show()
 
     --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
@@ -539,6 +580,9 @@ local function AcquireRow(self, index)
         GameTooltip:Hide()
         self.hover:Hide()
     end)
+    -- A row hidden while the cursor is on it (removing the last entry) may never get
+    -- OnLeave, leaving a tooltip for an ability that no longer exists.
+    row:SetScript("OnHide", row:GetScript("OnLeave"))
     row.hover = row:CreateTexture(nil, "BACKGROUND")
     row.hover:SetAllPoints()
     row.hover:SetColorTexture(1, 1, 1, 0.05)
@@ -623,7 +667,9 @@ end
 function methods:OnRelease()
     -- Widgets are pooled: anything left here is inherited by the next option that mounts
     -- this type.
-    self.addon, self.disabled = nil, false
+    self.addon, self.disabled, self.refreshing = nil, false, nil
+    -- Pooled: a strip left open would keep the previous mount's dial contents.
+    if self.detail then self.detail.spellID = nil end
 end
 
 -- AceConfigDialog drives a description control with SetText/SetFontObject, and every
@@ -655,7 +701,8 @@ function methods:Source()
 end
 
 function methods:Refresh()
-    if not self.addon then return end
+    if not self.addon or self.refreshing then return end
+    self.refreshing = true
     local profile = self.addon:GetProfile()
     local source, live = self:Source(), PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
@@ -664,6 +711,7 @@ function methods:Refresh()
     local editable = (source == "custom") and not self.disabled
 
     for key, tab in pairs(self.tabs) do
+        tab:SetShown(key ~= "simc" or PriorityList.HasSimc())
         tab:SetLabel(key == "custom"
             and string.format("%s (%d)", tab.baseLabel, PriorityList.CountFor(self.addon, key))
             or tab.baseLabel)
@@ -683,7 +731,7 @@ function methods:Refresh()
     local rows = PriorityList.Rows(self.addon, source)
     -- Share the free width between the two text columns rather than fixing the condition
     -- and giving the name whatever is left: ability names run long in every language.
-    local free = math.max(200, (self.frame:GetWidth() or 560) - ROW_FIXED)
+    local free = math.max(0, (self.frame:GetWidth() or 560) - ROW_FIXED)
     local nameW = math.floor(free * 0.46)
     local condW = free - nameW
     local y = -(TAB_H + HEAD_H + PIN_H + GAP + 4)
@@ -746,7 +794,11 @@ function methods:Refresh()
     -- Actions. Previewing a source you do not use offers to take it; your own list offers
     -- to start over. Both are the same button slot, so the strip never grows.
     self.starting = (source ~= "custom") and not haveList
-    self.useThis:SetShown(not self.disabled and (self.starting or source ~= live))
+    -- Never offer to switch TO an empty list: the queue would silently keep using the
+    -- game's pool while every label claimed otherwise, and the next spec change would
+    -- backfill the whole pool as a list the player never built.
+    self.useThis:SetShown(not self.disabled
+        and (self.starting or (source ~= live and (source ~= "custom" or haveList))))
     self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
     self.useThis:SetWidth(self.starting and 120 or 82)
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
@@ -767,6 +819,7 @@ function methods:Refresh()
     -- +10: the pane's own top and bottom border insets.
     self:SetHeight(TAB_H + HEAD_H + PIN_H + GAP + 10 + (#rows * ROW_H)
         + (detailShown and DETAIL_H or 0) + ((#rows == 0) and 28 or 4))
+    self.refreshing = nil
 end
 
 --------------------------------------------------------------------------------
@@ -822,7 +875,10 @@ local function Constructor()
         tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
         tab:SetScript("OnClick", function()
             PriorityList.view = key
-            widget:Refresh()
+            -- The add button and the open row's settings live in the options table, and
+            -- both key off the previewed source: repainting the widget alone left them
+            -- answering for the tab the player just left.
+            PriorityList.Changed(widget.addon)
         end)
         tab.baseLabel = label
         widget.tabs[key] = tab
@@ -830,22 +886,21 @@ local function Constructor()
     end
 
     widget.useThis = MakeButton(frame, "", "", function()
+        local source = widget:Source()
+        PriorityList.view = nil   -- before Changed: the rebuild reads it
         if widget.starting then
-            PriorityList.StartFrom(widget.addon, widget:Source())
+            PriorityList.StartFrom(widget.addon, source)
         else
-            PriorityList.SetLiveSource(widget.addon, widget:Source())
+            PriorityList.SetLiveSource(widget.addon, source)
         end
-        PriorityList.view = nil
-        widget:Refresh()
     end, 82)
     onPane(widget.useThis)
     widget.useThis:SetHeight(TAB_H - 5)
     widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -2)
 
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
-        PriorityList.ClearList(widget.addon)
         PriorityList.view = nil
-        widget:Refresh()
+        PriorityList.ClearList(widget.addon)
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
@@ -905,7 +960,7 @@ local function Constructor()
     onPane(pin)
     widget.pin = pin
 
-    widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    widget.emptyNote = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
