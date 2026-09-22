@@ -927,12 +927,9 @@ function methods:Refresh()
         self.pin.icon:SetTexture(art.icon)
         self.pin.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         self.pin.icon:SetVertexColor(1, 1, 1)
-    elseif art and art.ring then
-        self.pin.icon:SetAtlas(ASSIST_ATLAS)
-        self.pin.icon:SetVertexColor(1, 1, 1)
     end
-    self.pin.icon:SetShown(art ~= nil)
-    self.pin.ring:SetShown((art and art.ring and art.icon) and true or false)
+    self.pin.icon:SetShown((art and art.icon) and true or false)
+    self.pin.ring:SetShown((art and art.ring) and true or false)
     self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
     self.pin.num:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.title:SetText(pinTitle)
@@ -1212,17 +1209,22 @@ local function Constructor()
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetSize(16, 16)
     pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
-    pin.lock = pin:CreateTexture(nil, "OVERLAY")
+    -- The ring the assist paints around an action button. Sized to the icon rather than
+    -- to the atlas, which is drawn for a 36px button and sat proud of a 16px one, and
+    -- softened so it reads as a mark on the icon instead of a sticker over it.
+    pin.ring = pin:CreateTexture(nil, "OVERLAY", nil, 1)
+    pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
+    pin.ring:SetSize(18, 18)
+    pin.ring:SetAtlas(ASSIST_ATLAS)
+    pin.ring:SetAlpha(0.85)
+    pin.ring:Hide()
+    -- Above the ring, not merely after it: same layer, and draw order within a layer
+    -- is the sublevel, so the lock was being painted under the arc it sits beside.
+    pin.lock = pin:CreateTexture(nil, "OVERLAY", nil, 7)
     pin.lock:SetSize(9, 11)
     pin.lock:SetTexture(LOCK_TEXTURE)
-    -- Top right: the ring the assist paints around the icon covers the other corners.
+    -- Top right: the ring covers the other corners.
     pin.lock:SetPoint("TOPRIGHT", pin.icon, "TOPRIGHT", 3, 2)
-    -- The ring the assist paints ON an action button, over the icon, as in game.
-    pin.ring = pin:CreateTexture(nil, "OVERLAY")
-    pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
-    pin.ring:SetSize(22, 22)
-    pin.ring:SetAtlas(ASSIST_ATLAS)
-    pin.ring:Hide()
     pin.title = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pin.title:SetPoint("LEFT", pin, "LEFT", 55, 0)
     pin.note = pin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
