@@ -605,18 +605,38 @@ end
 --
 -- A fixed mark, never a state: it does not follow the spell in the slot and nothing turns
 -- it on and off mid-fight, so it reads as the nature of the position.
-local ASSIST_RING_ATLAS = "UI-HUD-RotationHelper-Active"
+-- The game shows the grey ring out of combat and the lit one in it, so the two states are
+-- about the fight, not about which button is recommended. Mirrored here for the same
+-- reason the ring is here at all: the slot should look like what it stands for.
+local ASSIST_RING_IDLE = "UI-HUD-RotationHelper-Inactive"
+local ASSIST_RING_LIT = "UI-HUD-RotationHelper-Active"
 
-local function AddAssistRing(button, size)
+local function AddAssistRing(button)
     if not (C_Texture and C_Texture.GetAtlasInfo
-            and C_Texture.GetAtlasInfo(ASSIST_RING_ATLAS)) then return end
-    -- Anchored to the button rather than sized from it, so it tracks a resize instead of
-    -- keeping whatever the icon measured when it was built.
-    local ring = button:CreateTexture(nil, "OVERLAY", nil, 2)
-    ring:SetAtlas(ASSIST_RING_ATLAS)
-    ring:SetPoint("TOPLEFT", button, "TOPLEFT", -size * 0.1, size * 0.1)
-    ring:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", size * 0.1, -size * 0.1)
-    button.AssistRing = ring
+            and C_Texture.GetAtlasInfo(ASSIST_RING_IDLE)) then return end
+    -- A CHILD FRAME, not a texture on the button, which is how the game builds it and is
+    -- why nothing on the button can draw over the ring. A texture sits at some draw layer
+    -- and the hotkey label sits above it; a child frame is above the whole button.
+    local f = CreateFrame("Frame", nil, button)
+    -- Sized to the icon. The game lets its ring overhang the button, but our icons sit a
+    -- pixel apart by default and an overhanging ring would climb onto its neighbour.
+    f:SetAllPoints(button)
+    local ring = f:CreateTexture(nil, "ARTWORK")
+    ring:SetAllPoints(f)
+    ring:SetAtlas(ASSIST_RING_IDLE)
+    f.texture = ring
+    button.AssistRing = f
+end
+
+--- Swap the ring between its two states. Called on the combat edge, not per frame: it is
+--- one texture swap on one icon. The lit state's pulsing glow is deliberately left out -
+--- the game plays it on the ONE button it wants pressed, and a permanent mark that pulses
+--- for the whole fight is a different thing entirely.
+function UIFrameFactory.SetAssistRingCombat(icon, inCombat)
+    local f = icon and icon.AssistRing
+    if f and f.texture then
+        f.texture:SetAtlas(inCombat and ASSIST_RING_LIT or ASSIST_RING_IDLE)
+    end
 end
 
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
@@ -1866,7 +1886,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
     if not button then return nil end
-    if isFirstIcon then AddAssistRing(button, actualIconSize) end
+    if isFirstIcon then AddAssistRing(button) end
 
     -- Position based on orientation
     if orientation == "RIGHT" then
