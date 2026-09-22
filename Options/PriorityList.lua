@@ -26,7 +26,7 @@ if not PriorityList then return end
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 54, 16
+local ROW_H, PIN_H, TAB_H, GAP, DETAIL_H, HEAD_H = 26, 30, 24, 4, 44, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -476,7 +476,6 @@ local function MakeTab(parent, label)
         for _, e in ipairs(self.edges) do
             e:SetColorTexture(0.42, 0.40, 0.34, on and 1 or 0.55)
         end
-        self:SetFrameLevel(self.paneLevel + (on and 1 or -1))
         self:SetNormalFontObject(on and "GameFontNormalSmall" or "GameFontDisableSmall")
         self:GetFontString():SetPoint("CENTER", self.liveDot:IsShown() and 6 or 0, 0)
     end
@@ -928,20 +927,12 @@ local function Constructor()
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     body:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-        tile = true, tileSize = 16,
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 3, right = 3, top = 5, bottom = 3 },
     })
     body:SetBackdropColor(0.09, 0.085, 0.07, 1)
-    for _, pts in ipairs({
-        { "TOPLEFT", "TOPRIGHT", nil, 1 }, { "BOTTOMLEFT", "BOTTOMRIGHT", nil, 1 },
-        { "TOPLEFT", "BOTTOMLEFT", 1, nil }, { "TOPRIGHT", "BOTTOMRIGHT", 1, nil },
-    }) do
-        local t = body:CreateTexture(nil, "OVERLAY")
-        t:SetPoint(pts[1])
-        t:SetPoint(pts[2])
-        if pts[3] then t:SetWidth(pts[3]) end
-        if pts[4] then t:SetHeight(pts[4]) end
-        t:SetColorTexture(0.42, 0.40, 0.34, 1)
-    end
+    body:SetBackdropBorderColor(0.4, 0.4, 0.4)
     widget.body = body
 
     local content = CreateFrame("Frame", nil, frame)
@@ -969,7 +960,7 @@ local function Constructor()
         local tab = MakeTab(frame, label)
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
             prev and 3 or 8, prev and 0 or -3)
-        tab.paneLevel = body:GetFrameLevel()
+        tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
         tab:SetScript("OnClick", function()
             PriorityList.view = key
             -- The add button and the open row's settings live in the options table, and
@@ -1002,12 +993,6 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        -- Put back what Show() raised it to, so the next popup out of this frame pool
-        -- (anyone's) is not left sitting above the whole UI.
-        OnHide = function(self)
-            self:SetFrameStrata("DIALOG")
-            self:SetToplevel(false)
-        end,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1017,14 +1002,7 @@ local function Constructor()
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         local dialog = StaticPopup_Show("JUSTAC_CLEAR_PRIORITY_LIST")
-        if dialog then
-            dialog.data = widget
-            -- Popups live in DIALOG; the options window is a strata above it, so a
-            -- confirmation opened from here appeared behind the list it asks about.
-            dialog:SetFrameStrata("FULLSCREEN_DIALOG")
-            dialog:SetFrameLevel(frame:GetFrameLevel() + 20)
-            dialog:SetToplevel(true)
-        end
+        if dialog then dialog.data = widget end
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
