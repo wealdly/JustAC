@@ -1937,7 +1937,6 @@ end
 function DebugCommands.GateDiagnostics(addon)
     local RI = LibStub("JustAC-RotationImport", true)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local DotTracker = LibStub("JustAC-DotTracker", true)
     if not (RI and RI.HasRotation and RI.HasRotation()) then
         addon:Print("|cffff6600No SimC gate data for this spec.|r")
         return
@@ -1968,40 +1967,41 @@ function DebugCommands.GateDiagnostics(addon)
         end
     end
 
-    -- Live per-entry gate evaluation for each context.
+    -- Live per-entry gate evaluation for each context. The VERDICT comes from the queue
+    -- itself rather than being re-derived here: this listing used to guess per type, and
+    -- guessed wrong - it asked whether the ENTRY was ready for a cooldown gate that names a
+    -- different spell, had branches for gate types the generator never emits, and printed
+    -- nothing at all for a group or for any threshold gate.
+    local gateCtx = { strict = false }
+    local gateLabel
+    gateLabel = function(g)
+        if g.t == "any" or g.t == "all" then
+            local sub = {}
+            for i = 1, #(g.g or {}) do sub[#sub + 1] = gateLabel(g.g[i]) end
+            return "(" .. table.concat(sub, g.t == "any" and " | " or " & ") .. ")"
+        end
+        local s = (g.neg and "!" or "") .. tostring(g.t)
+        if g.id then s = s .. "[" .. tostring(g.id) .. "]" end
+        if g.res then s = s .. ":" .. tostring(g.res) end
+        if g.op and g.n then s = s .. g.op .. tostring(g.n) end
+        if g.pct then s = s .. "<=" .. tostring(g.pct) .. "%" end
+        return s
+    end
     local function gateStr(e)
         if not e.gates or #e.gates == 0 then
             return e.delegated and "|cff888888delegated, no gates|r" or "no gates"
         end
-        local parts, negBlocked = {}, false
+        if BAPI.GetClassResourcePoints then
+            gateCtx.resCount, gateCtx.resMax, gateCtx.resName = BAPI.GetClassResourcePoints()
+        end
+        local parts = {}
         for _, g in ipairs(e.gates) do
-            if g.t == "cd" then
-                local ok = BAPI.IsSpellReady and BAPI.IsSpellReady(e.id)
-                parts[#parts + 1] = "cd=" .. (ok and "|cff00ff00rdy|r" or "|cffff6600cd|r")
-            elseif g.t == "dot" then
-                local live = DotTracker and DotTracker.IsDotActiveOnCurrentTarget
-                    and DotTracker.IsDotActiveOnCurrentTarget(g.id)
-                parts[#parts + 1] = "dot=" .. (live and "|cffff6600up|r" or "|cff00ff00refresh|r")
-            elseif g.t == "proc" then
-                local ok = BAPI.IsSpellProcced and BAPI.IsSpellProcced(e.id)
-                parts[#parts + 1] = "proc=" .. (ok and "|cff00ff00Y|r" or "|cff888888n|r")
-            elseif g.t == "buff" then
-                local ok = BAPI.IsBuffWindowActive and BAPI.IsBuffWindowActive(g.id, g.dur)
-                local viaPick = pickWindows and pickWindows[g.id]
-                local state = ok and "|cff00ff00up|r"
-                    or (viaPick and "|cff00ff00up(pick)|r" or "|cff888888--|r")
-                if g.neg and ok then negBlocked = true end
-                parts[#parts + 1] = (g.neg and "!" or "") .. "buff[" .. tostring(g.id) .. "]=" .. state
-            elseif g.t == "targets" then
-                parts[#parts + 1] = "|cff888888targets|r"
-            elseif g.t == "execute" then
-                parts[#parts + 1] = "|cff888888execute|r"
-            elseif g.t == "stealth" then
-                parts[#parts + 1] = (g.neg and "!" or "") .. "stealthed"
-            end
+            -- green holds, orange does not, grey cannot be read (so it blocks nothing).
+            local v = SpellQueue and SpellQueue._GateVerdict and SpellQueue._GateVerdict(g, gateCtx)
+            local col = (v == true and "|cff00ff00") or (v == false and "|cffff6600") or "|cff888888"
+            parts[#parts + 1] = col .. gateLabel(g) .. "|r"
         end
         local s = table.concat(parts, " ")
-        if negBlocked then s = s .. " |cffff6600[neg-blocked]|r" end
         if e.delegated then s = s .. " |cff888888[deleg]|r" end
         return s
     end
@@ -4405,6 +4405,15 @@ local lastPickPayload = nil
 local POWER_BANDS  = { 25, 50, 75 }
 local HEALTH_BANDS = { 20, 35, 80 }
 
+--- Do the imported conditions on this spell rule it out right now? The `why` codes
+--- explained every OTHER reason the game's pick could lose its place, so a pick sunk by
+--- its own gates showed up as "-" and looked like the queue misbehaving.
+local function PickGated(RI, SQ, spellID, cur, resName, max)
+    if not (RI and RI.GetEntry and SQ and SQ._SimcGateBlocks) then return false end
+    local rec = RI.GetEntry(spellID)
+    return (rec and rec.gates and SQ._SimcGateBlocks(rec.gates, cur, resName, max)) or false
+end
+
 local function PickLogSample()
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
     local SDB = LibStub("JustAC-SpellDB", true)
@@ -4430,8 +4439,8 @@ local function PickLogSample()
         local SQ0 = LibStub("JustAC-SpellQueue", true)
         if SQ0 and SQ0.SafeLeadCandidate then slID, slCls = SQ0.SafeLeadCandidate() end
     end
-    local cur, max = nil, nil
-    if BAPI.GetClassResourcePoints then cur, max = BAPI.GetClassResourcePoints() end
+    local cur, max, resName = nil, nil, nil
+    if BAPI.GetClassResourcePoints then cur, max, resName = BAPI.GetClassResourcePoints() end
     local function n(v) return (type(v) == "number" and not issecretvalue(v)) and tostring(v) or "-" end
     -- What JustAC itself is leading with, and whether that entry is one only the game can
     -- time (delegated). With My List Leads on, lead ~= pick is normal; a DELEGATED lead that
@@ -4445,7 +4454,9 @@ local function PickLogSample()
     -- When the game's pick is NOT what we lead with, say why the pick lost its place:
     -- R not ready, S cannot afford, H held by a user dial, T its DoT is already up,
     -- B blacklisted, O out of range, U unusable for a non-resource reason, P the LEAD has a
-    -- proc overlay, "-" none of these. @N = the pick's own slot in the queue (0 = absent).
+    -- proc overlay, G one of its own imported conditions says no (a cooldown that is not
+    -- ready, a threshold unmet, a group none of whose branches hold), "-" none of these.
+    -- @N = the pick's own slot in the queue (0 = absent).
     local why = ""
     if pick and lead and lead ~= pick then
         local shown = BAPI.GetDisplaySpellID and BAPI.GetDisplaySpellID(pick) or pick
@@ -4460,6 +4471,7 @@ local function PickLogSample()
                 .. ((SQ.IsConfirmedOutOfRange and SQ.IsConfirmedOutOfRange(shown)) and "O" or "")
                 .. ((SQ.IsUnusableNonResource and SQ.IsUnusableNonResource(shown)) and "U" or "")
                 .. ((BAPI.IsSpellProcced and BAPI.IsSpellProcced(lead)) and "P" or "")
+                .. (PickGated(RI, SQ, shown, cur, resName, max) and "G" or "")
             -- Where the pick actually sits: @N in the visible queue, @0 when it is not there at all.
             local at = 0
             for i = 2, #queue do
