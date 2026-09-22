@@ -7,3 +7,7 @@
 
 ### Fixed
 - An ability a talent has turned passive no longer appears in the queue.
+- Area abilities no longer show up on a single target. Some rotations describe the
+  enemy count in a way the theorycraft priorities were not reading, so a few specs were
+  offered their multi-target abilities in a duel. Those same specs now get a proper
+  multi-target order as well.
