@@ -31,7 +31,7 @@ local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
 -- condition, so a wider panel widens both instead of only one.
-local ROW_FIXED = 213
+local ROW_FIXED = 165
 
 local INK, INK_DIM = { 0.93, 0.90, 0.85 }, { 0.66, 0.62, 0.55 }
 local GOLD, GREEN, BLUE = { 0.85, 0.65, 0.34 }, { 0.62, 0.79, 0.50 }, { 0.44, 0.62, 0.85 }
@@ -558,6 +558,40 @@ local function BuildDetail(widget, parent)
     return d
 end
 
+--- Where the entry would land if dropped now, and where to draw the line saying so.
+--- Dropping on the upper half of a row means "above it", the lower half "below".
+local function DropTarget(self)
+    local _, cy = GetCursorPosition()
+    cy = cy / (self.content:GetEffectiveScale() or 1)
+    for i = 1, #self.rows do
+        local r = self.rows[i]
+        if r:IsShown() and r:GetTop() then
+            local mid = (r:GetTop() + r:GetBottom()) / 2
+            if cy >= mid then return r.index, r:GetTop() end
+            if cy >= r:GetBottom() then return r.index + 1, r:GetBottom() end
+        end
+    end
+    return nil
+end
+
+local function EndDrag(self, commit)
+    local from = self.dragFrom
+    self.dragFrom = nil
+    self.dropLine:Hide()
+    self.content:SetScript("OnUpdate", nil)
+    for i = 1, #self.rows do self.rows[i].dragTint:Hide() end
+    if not (commit and from) then return end
+    local list, to = self:List(), DropTarget(self)
+    if not (list and to and list[from]) then return end
+    -- Removing first shifts everything after it up one, so a downward move overshoots by
+    -- exactly one unless the target is corrected for the gap the entry leaves behind.
+    if to > from then to = to - 1 end
+    if to == from or to < 1 then return end
+    local id = table.remove(list, from)
+    table.insert(list, math.min(to, #list + 1), id)
+    PriorityList.Changed(self.addon)
+end
+
 local function AcquireRow(self, index)
     local row = self.rows[index]
     if row then return row end
@@ -570,6 +604,9 @@ local function AcquireRow(self, index)
         if not self.id then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(self.tipName or "", 1, 1, 1)
+        if self.canDrag then
+            GameTooltip:AddLine(L["Priority Drag Hint"], 0.62, 0.79, 0.50)
+        end
         for _, line in ipairs(PriorityList.DetailLines(self.id)) do
             GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
         end
@@ -580,9 +617,40 @@ local function AcquireRow(self, index)
         GameTooltip:Hide()
         self.hover:Hide()
     end)
-    -- A row hidden while the cursor is on it (removing the last entry) may never get
-    -- OnLeave, leaving a tooltip for an ability that no longer exists.
-    row:SetScript("OnHide", row:GetScript("OnLeave"))
+    row:RegisterForDrag("LeftButton")
+    row:SetScript("OnDragStart", function(r)
+        if not r.canDrag then return end
+        GameTooltip:Hide()
+        self.dragFrom = r.index
+        r.dragTint:Show()
+        -- The line follows the cursor rather than the row: the rows themselves never
+        -- move, so the only feedback is where the entry would land.
+        self.content:SetScript("OnUpdate", function()
+            local _, y = DropTarget(self)
+            if y then
+                self.dropLine:ClearAllPoints()
+                self.dropLine:SetPoint("LEFT", self.content, "LEFT", 5, 0)
+                self.dropLine:SetPoint("RIGHT", self.content, "RIGHT", -5, 0)
+                self.dropLine:SetPoint("TOP", self.content, "TOP",
+                    0, y - (self.content:GetTop() or 0))
+                self.dropLine:Show()
+            else
+                self.dropLine:Hide()
+            end
+        end)
+    end)
+    row:SetScript("OnDragStop", function() EndDrag(self, true) end)
+    row:SetScript("OnHide", function(r)
+        if self.dragFrom == r.index then EndDrag(self, false) end
+        GameTooltip:Hide()
+        r.hover:Hide()
+    end)
+
+    row.dragTint = row:CreateTexture(nil, "ARTWORK")
+    row.dragTint:SetAllPoints()
+    row.dragTint:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
+    row.dragTint:Hide()
+
     row.hover = row:CreateTexture(nil, "BACKGROUND")
     row.hover:SetAllPoints()
     row.hover:SetColorTexture(1, 1, 1, 0.05)
@@ -636,25 +704,11 @@ local function AcquireRow(self, index)
         end
         PriorityList.Changed(self.addon)
     end)
-    row.down = MakeButton(row, "v", L["Move down desc"], function()
-        local list, i = self:List(), row.index
-        if not list or i >= #list then return end
-        list[i + 1], list[i] = list[i], list[i + 1]
-        PriorityList.Changed(self.addon)
-    end)
-    row.up = MakeButton(row, "^", L["Move up desc"], function()
-        local list, i = self:List(), row.index
-        if not list or i <= 1 then return end
-        list[i - 1], list[i] = list[i], list[i - 1]
-        PriorityList.Changed(self.addon)
-    end)
     row.remove:SetPoint("RIGHT", -4, 0)
-    -- Anchored to the buttons, not to the text: a hidden frame keeps its position, so the
-    -- rank lands in the same place whether the row is editable or read-only.
     row.edit:SetPoint("RIGHT", row.remove, "LEFT", -2, 0)
-    row.down:SetPoint("RIGHT", row.edit, "LEFT", -2, 0)
-    row.up:SetPoint("RIGHT", row.down, "LEFT", -2, 0)
-    row.rank:SetPoint("RIGHT", row.up, "LEFT", -6, 0)
+    -- Anchored to the buttons, not to the text: a disabled button keeps its position, so
+    -- the rank column lands in the same place whether the row is editable or read-only.
+    row.rank:SetPoint("RIGHT", row.edit, "LEFT", -6, 0)
 
     self.rows[index] = row
     return row
@@ -673,6 +727,11 @@ end
 function methods:OnRelease()
     -- Widgets are pooled: anything left here is inherited by the next option that mounts
     -- this type.
+    if self.dragFrom then
+        self.dragFrom = nil
+        self.dropLine:Hide()
+        self.content:SetScript("OnUpdate", nil)
+    end
     self.addon, self.disabled, self.refreshing = nil, false, nil
     -- Pooled: a strip left open would keep the previous mount's dial contents.
     if self.detail then self.detail.spellID = nil end
@@ -773,9 +832,8 @@ function methods:Refresh()
             row.rank:SetText(data.rank and ("#" .. data.rank) or "")
             row.rank:SetTextColor(unpack(BLUE))
         end
-        for _, b in ipairs({ row.up, row.down, row.edit, row.remove }) do
-            b:SetEnabled(editable)
-        end
+        for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
+        row.canDrag = editable
         row:Show()
         y = y - ROW_H
 
@@ -818,7 +876,7 @@ function methods:Refresh()
         self.head.cond:ClearAllPoints()
         self.head.cond:SetPoint("LEFT", self.head, "LEFT", 55 + nameW + 8, 0)
         self.head.rank:ClearAllPoints()
-        self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -104, 0)
+        self.head.rank:SetPoint("RIGHT", self.head, "RIGHT", -56, 0)
         self.head.rank:SetText(source == "blizzard" and L["Priority Head Rank"] or L["Priority Head Move"])
     end
 
@@ -984,6 +1042,11 @@ local function Constructor()
     widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
+
+    widget.dropLine = content:CreateTexture(nil, "OVERLAY")
+    widget.dropLine:SetHeight(2)
+    widget.dropLine:SetColorTexture(unpack(GOLD))
+    widget.dropLine:Hide()
 
     widget.detail = BuildDetail(widget, content)
     widget.detail:Hide()
