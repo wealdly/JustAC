@@ -281,6 +281,57 @@ function PriorityList.Condition(rec)
     return table.concat(parts, " \194\183 ")   -- middle dot
 end
 
+--- The full story for one ability, as tooltip lines: { text, r, g, b } . The row shows
+--- only its single-target condition, which is the common case and all that fits; a
+--- different condition on two or more targets is exactly the kind of thing a player wants
+--- to check before reordering, so it belongs here rather than nowhere.
+function PriorityList.DetailLines(id)
+    local out = {}
+    if not id or id <= 0 then return out end
+    if PriorityList.IsUpkeep(id) then
+        out[#out + 1] = { L["Priority Tip Upkeep"], GOLD[1], GOLD[2], GOLD[3] }
+        return out
+    end
+    local RI = LibStub("JustAC-RotationImport", true)
+    if not (RI and RI.GetEntry) then return out end
+
+    local contexts = {
+        { "st", L["Priority Tip One"] },
+        { "cleave", L["Priority Tip Two"] },
+        { "aoe", L["Priority Tip Many"] },
+    }
+    local seen, any = {}, false
+    for _, ctx in ipairs(contexts) do
+        local rec = RI.GetEntry(id, ctx[1])
+        local cond = rec and PriorityList.Condition(rec) or nil
+        -- Only say it again when it actually differs: repeating one line three times
+        -- reads as three facts.
+        if cond and not seen[cond] then
+            seen[cond] = true
+            any = true
+            out[#out + 1] = { string.format("%s: %s", ctx[2], cond), 0.82, 0.78, 0.70 }
+        end
+    end
+    if not any then
+        out[#out + 1] = { L["Priority Cond Unknown"], 0.66, 0.62, 0.55 }
+    end
+
+    local rec = RI.GetEntry(id, "st")
+    if rec and rec.rank then
+        out[#out + 1] = { string.format(L["Priority Tip Rank"], rec.rank), BLUE[1], BLUE[2], BLUE[3] }
+    else
+        out[#out + 1] = { L["Priority Tip Unranked"], 0.66, 0.62, 0.55 }
+    end
+    -- The padlock used to say this in the row itself; it repeated on nearly every line,
+    -- so it moved here where it costs nothing to state properly.
+    if (rec == nil) or (rec.delegated == true) then
+        out[#out + 1] = { L["Priority Tip Game Timed"], GOLD[1], GOLD[2], GOLD[3] }
+    else
+        out[#out + 1] = { L["Priority Tip Self Timed"], GREEN[1], GREEN[2], GREEN[3] }
+    end
+    return out
+end
+
 --- Anything that edits the list routes through here: one place that refreshes the queue
 --- and the panel, so a new control cannot forget half of it.
 function PriorityList.Changed(addon)
@@ -466,6 +517,25 @@ local function AcquireRow(self, index)
     row:SetHeight(ROW_H)
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints()
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", function(self)
+        if not self.id then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tipName or "", 1, 1, 1)
+        for _, line in ipairs(PriorityList.DetailLines(self.id)) do
+            GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+        end
+        GameTooltip:Show()
+        self.hover:Show()
+    end)
+    row:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+        self.hover:Hide()
+    end)
+    row.hover = row:CreateTexture(nil, "BACKGROUND")
+    row.hover:SetAllPoints()
+    row.hover:SetColorTexture(1, 1, 1, 0.05)
+    row.hover:Hide()
 
     row.idx = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     row.idx:SetPoint("LEFT", 6, 0)
@@ -615,7 +685,7 @@ function methods:Refresh()
     for i = 1, #rows do
         local data = rows[i]
         local row = AcquireRow(self, i)
-        row.index, row.id = i, data.id
+        row.index, row.id, row.tipName = i, data.id, data.name
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
         row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
