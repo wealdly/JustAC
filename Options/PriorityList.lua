@@ -375,7 +375,10 @@ end
 --- only its single-target condition, which is the common case and all that fits; a
 --- different condition on two or more targets is exactly the kind of thing a player wants
 --- to check before reordering, so it belongs here rather than nowhere.
-function PriorityList.DetailLines(id)
+--- `leads` decides which slots these conditions are even consulted for, so it belongs
+--- in the same tooltip: with your list leading, an entry can take the opening slot the
+--- moment its conditions hold; without it, the game owns that slot whatever they say.
+function PriorityList.DetailLines(id, leads)
     local out = {}
     if not id or id <= 0 then return out end
     if PriorityList.IsUpkeep(id) then
@@ -384,6 +387,10 @@ function PriorityList.DetailLines(id)
     end
     local RI = LibStub("JustAC-RotationImport", true)
     if not (RI and RI.GetEntry) then return out end
+
+    out[#out + 1] = leads
+        and { L["Priority Tip Slot Leads"], GOLD[1], GOLD[2], GOLD[3] }
+        or { L["Priority Tip Slot Game"], GREEN[1], GREEN[2], GREEN[3] }
 
     local contexts = {
         { "st", L["Priority Tip One"] },
@@ -447,6 +454,24 @@ local function Tooltip(frame, text)
         GameTooltip:Show()
     end)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
+--- Popups live one frame strata below the options window, so a confirmation opened
+--- from here appears behind the list it is asking about. Raised for the duration and
+--- put back by the dialog's own OnHide, because the frame comes from a shared pool and
+--- the next popup out of it may belong to anyone.
+local function Confirm(which, widget, data)
+    local dialog = StaticPopup_Show(which)
+    if not dialog then return end
+    dialog.data = data
+    dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+    dialog:SetFrameLevel(widget.frame:GetFrameLevel() + 20)
+    dialog:SetToplevel(true)
+end
+
+local function RestoreStrata(dialog)
+    dialog:SetFrameStrata("DIALOG")
+    dialog:SetToplevel(false)
 end
 
 local function MakeButton(parent, label, tip, onClick, width)
@@ -675,7 +700,7 @@ local function AcquireRow(self, index)
                     1, 0.82, 0, true)
             end
         end
-        for _, line in ipairs(PriorityList.DetailLines(self.id)) do
+        for _, line in ipairs(PriorityList.DetailLines(self.id, self.leadsNow)) do
             GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
         end
         GameTooltip:Show()
@@ -896,6 +921,7 @@ function methods:Refresh()
         for _, b in ipairs({ row.edit, row.remove }) do b:SetEnabled(editable) end
         row.canDrag = editable
         row.dragLoose = editable and not profile.orderExact
+        row.leadsNow = leads
         row:Show()
         y = y - ROW_H
 
@@ -917,13 +943,16 @@ function methods:Refresh()
         self.detail.spellID = nil   -- so reopening the same row rebuilds its dial
     end
 
-    -- One action, on the two orders you did not write: take this order into a list of
-    -- your own. With a list already there it adds what is missing instead of replacing
-    -- it, so the button can stay live without ever costing the player their work.
-    self.merging = (source ~= "custom") and haveList
-    self.useThis:SetShown(not self.disabled and source ~= "custom")
-    self.useThis:SetText(self.merging and L["Priority Merge"] or L["Priority Export"])
-    Tooltip(self.useThis, self.merging and L["Priority Merge desc"] or L["Priority Export desc"])
+    -- Two ways to take one of the orders you did not write into a list of your own.
+    -- Export replaces the whole thing and asks first; Merge only adds what is missing
+    -- and never needs to. Both collapse to one wide Export before there is a list to
+    -- protect, which is also where the long label fits and is most needed.
+    local offer = (source ~= "custom") and not self.disabled
+    self.merge:SetShown(offer and haveList)
+    self.useThis:SetShown(offer)
+    self.useThis:SetText(haveList and L["Priority Export Short"] or L["Priority Export"])
+    self.useThis:SetWidth(haveList and 66 or 132)
+    Tooltip(self.useThis, haveList and L["Priority Replace desc"] or L["Priority Export desc"])
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
@@ -1015,15 +1044,40 @@ local function Constructor()
     end
 
     widget.useThis = MakeButton(frame, "", "", function()
-        if widget.merging then
-            PriorityList.MergeFrom(widget.addon, widget:Source())
+        local source = widget:Source()
+        local cq = CustomQueueFor(widget.addon and widget.addon:GetProfile())
+        if cq and cq.spells and #cq.spells > 0 then
+            -- The source is captured NOW: the tabs stay clickable behind a popup, and
+            -- reading it again on accept would replace the list from whichever tab the
+            -- player wandered to while the question was on screen.
+            Confirm("JUSTAC_REPLACE_PRIORITY_LIST", widget, { w = widget, src = source })
         else
-            PriorityList.StartFrom(widget.addon, widget:Source())
+            PriorityList.StartFrom(widget.addon, source)
         end
     end, 132)
     onPane(widget.useThis)
     widget.useThis:SetHeight(TAB_H - 5)
     widget.useThis:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
+
+    StaticPopupDialogs["JUSTAC_REPLACE_PRIORITY_LIST"] = StaticPopupDialogs["JUSTAC_REPLACE_PRIORITY_LIST"] or {
+        text = L["Priority Replace Confirm"],
+        button1 = YES,
+        button2 = NO,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        OnHide = RestoreStrata,
+        OnAccept = function(self)
+            local d = self.data
+            if d and d.w then PriorityList.StartFrom(d.w.addon, d.src) end
+        end,
+    }
+
+    widget.merge = MakeButton(frame, L["Priority Merge Short"], L["Priority Merge desc"], function()
+        PriorityList.MergeFrom(widget.addon, widget:Source())
+    end, 66)
+    onPane(widget.merge)
+    widget.merge:SetHeight(TAB_H - 5)
 
     StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] = StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] or {
         text = L["Priority Clear Confirm"],
@@ -1032,12 +1086,7 @@ local function Constructor()
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        -- Put back what the show raised it to, so the next popup out of this shared
-        -- frame pool (anyone's) is not left sitting above the whole UI.
-        OnHide = function(self)
-            self:SetFrameStrata("DIALOG")
-            self:SetToplevel(false)
-        end,
+        OnHide = RestoreStrata,
         OnAccept = function(self)
             local w = self.data
             if not w then return end
@@ -1046,19 +1095,12 @@ local function Constructor()
         end,
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
-        local dialog = StaticPopup_Show("JUSTAC_CLEAR_PRIORITY_LIST")
-        if dialog then
-            dialog.data = widget
-            -- Popups live in DIALOG; the options window is a strata above it, so a
-            -- confirmation opened from here appeared behind the list it asks about.
-            dialog:SetFrameStrata("FULLSCREEN_DIALOG")
-            dialog:SetFrameLevel(frame:GetFrameLevel() + 20)
-            dialog:SetToplevel(true)
-        end
+        Confirm("JUSTAC_CLEAR_PRIORITY_LIST", widget, widget)
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
     widget.clear:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
+    widget.merge:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
 
     -- Column header. Its moving labels are re-anchored in Refresh, so a name column that
     -- resizes with the panel cannot drift away from its heading.
