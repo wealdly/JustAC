@@ -58,6 +58,12 @@ function PriorityList.LiveSource(profile)
     return (profile and profile.contextOrder or "simc") == "simc" and "simc" or "blizzard"
 end
 
+--- The source ON SCREEN: the previewed tab, else whichever is live. Controls outside the
+--- widget key off this so they can hide when they make no sense for the tab being shown.
+function PriorityList.CurrentSource(profile)
+    return PriorityList.view or PriorityList.LiveSource(profile)
+end
+
 --- Point the queue at a source. The settings that decide it are written together, so a
 --- player comparing sources flips one control instead of remembering the pair.
 function PriorityList.SetLiveSource(addon, source)
@@ -519,8 +525,7 @@ function methods:Source()
     -- Module state, not instance state: editing anything rebuilds the options table, which
     -- releases and re-acquires this widget. Kept on the instance, the previewed tab was
     -- lost on every click and the panel jumped back to whichever source is live.
-    if PriorityList.view then return PriorityList.view end
-    return PriorityList.LiveSource(self.addon and self.addon:GetProfile())
+    return PriorityList.CurrentSource(self.addon and self.addon:GetProfile())
 end
 
 function methods:Refresh()
