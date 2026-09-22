@@ -409,7 +409,24 @@ function CustomQueue.CreateTabArgs(addon)
                             addon:ForceUpdateAll()
                         end,
                     },
-                    -- Dynamic spell entries added by UpdateCustomQueueOptions
+                    priorityList = {
+                        type = "description",
+                        name = "",
+                        order = 11.8,
+                        width = "full",
+                        -- The list draws itself (Options/PriorityList.lua): one 26px row per
+                        -- ability, the position-1 row the game owns, and a lock on every
+                        -- entry only the game can time. Falls back to nothing rather than
+                        -- killing the panel if the widget did not register.
+                        dialogControl = (function()
+                            local AceGUI = LibStub("AceGUI-3.0", true)
+                            if AceGUI and AceGUI.GetWidgetVersion and AceGUI:GetWidgetVersion("JustACPriorityList") then
+                                return "JustACPriorityList"
+                            end
+                            return nil
+                        end)(),
+                    },
+                    -- Settings for the one row the player opened, added by UpdateCustomQueueOptions
                 },
             },
             -- RESET (990+)
@@ -454,7 +471,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     if not spellListGroup then return end
 
     local spellListArgs = spellListGroup.args
-    local staticKeys = { spellListInfo = true, myListLeads = true }
+    local staticKeys = { spellListInfo = true, myListLeads = true, priorityList = true }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local specKey = GetSpecKey()
@@ -473,11 +490,14 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         CustomQueue.UpdateCustomQueueOptions(addon)
         addon:ForceUpdate()
     end
+    local PriorityList = LibStub("JustAC-PriorityList", true)
     SpellSearch.RebuildListSection(addon, spellListArgs, {
         spellList = spellList, listType = "customqueue",
         baseOrder = 12, addOrder = 30,
         listName = L["Custom Queue Spells"], updateFunc = updateFunc,
         spellsOnly = false, emptyText = L["Custom Queue Empty"],
+        -- Rows come from the widget; Ace only renders the opened row's settings.
+        onlyEntry = PriorityList and PriorityList.selected or nil,
     })
 
     -- Cap transparency: entries that sink (cooldown, out of range, active DoT)

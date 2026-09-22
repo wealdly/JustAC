@@ -549,10 +549,14 @@ local function StillAt(list, i, entry)
     return list and i and list[i] == entry
 end
 
-function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, listType, baseOrder, updateFunc)
+--- @param onlyEntry number|nil  when set, only THIS entry gets a group - the compact list
+---   widget draws the rows, and Ace renders the settings for the one row the player opened.
+---   The loop still walks the whole list so each entry keeps its real index for reordering.
+function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, listType, baseOrder, updateFunc, onlyEntry)
     if not spellList then return end
 
     for i, entry in ipairs(spellList) do
+      if not onlyEntry or entry == onlyEntry then
         local isEmergency = listType == "defensive" and SpellDB and SpellDB.EMERGENCY_POTION
             and entry == SpellDB.EMERGENCY_POTION
         local isItemEntry = (not isEmergency) and (entry < 0)
@@ -889,6 +893,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                 entryArgs.holdMode = SpellSearch.HoldModeControl(_addon, spellID, 4)
             end
         end
+      end
     end
 end
 
@@ -952,6 +957,6 @@ function SpellSearch.RebuildListSection(addon, argsTable, opts)
             fontSize = "medium",
         }
     end
-    SpellSearch.CreateSpellListEntries(addon, argsTable, spellList, opts.listType, opts.baseOrder, opts.updateFunc)
+    SpellSearch.CreateSpellListEntries(addon, argsTable, spellList, opts.listType, opts.baseOrder, opts.updateFunc, opts.onlyEntry)
     SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, opts.listType, opts.addOrder, opts.listName, opts.updateFunc, opts.spellsOnly)
 end

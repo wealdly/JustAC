@@ -95,6 +95,7 @@ DebugHUD.lua
 
 # Options
 Options\Widgets.lua
+Options\PriorityList.lua
 Options\SpellSearch.lua
 Options\LiveSearchPopup.lua
 Options\General.lua
