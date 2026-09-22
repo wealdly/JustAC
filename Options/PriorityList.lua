@@ -898,9 +898,23 @@ local function Constructor()
     widget.useThis:SetHeight(TAB_H - 5)
     widget.useThis:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -2)
 
+    StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] = StaticPopupDialogs["JUSTAC_CLEAR_PRIORITY_LIST"] or {
+        text = L["Priority Clear Confirm"],
+        button1 = YES,
+        button2 = NO,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        OnAccept = function(self)
+            local w = self.data
+            if not w then return end
+            PriorityList.view = nil
+            PriorityList.ClearList(w.addon)
+        end,
+    }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
-        PriorityList.view = nil
-        PriorityList.ClearList(widget.addon)
+        local dialog = StaticPopup_Show("JUSTAC_CLEAR_PRIORITY_LIST")
+        if dialog then dialog.data = widget end
     end, 56)
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
