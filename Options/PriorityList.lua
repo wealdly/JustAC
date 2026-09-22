@@ -71,6 +71,29 @@ function PriorityList.SetLiveSource(addon, source)
     PriorityList.Changed(addon)
 end
 
+--- Copy the source the player is LOOKING AT into their own list, and switch to it. This is
+--- how a list begins: there is no blank-page state to explain, and the order they just
+--- compared is the order they get. The baseline is the game's pool as it stands now, so the
+--- "new abilities since you made this" notice keeps working.
+function PriorityList.StartFrom(addon, source)
+    local profile = addon and addon:GetProfile()
+    local specKey = SpecKey()
+    if not (profile and specKey) then return end
+    local rows = PriorityList.Rows(addon, source)
+    if #rows == 0 then return end
+    profile.customQueue = profile.customQueue or {}
+    profile.customQueue[specKey] = profile.customQueue[specKey] or {}
+    local cq = profile.customQueue[specKey]
+    cq.spells = {}
+    for i = 1, #rows do cq.spells[i] = rows[i].id end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local pool = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+    cq.baseline = {}
+    for i = 1, #(pool or {}) do cq.baseline[i] = pool[i] end
+    cq.enabled = true
+    PriorityList.Changed(addon)
+end
+
 --- The entries of one source, newest profile state each call (cheap: options are cold).
 --- Returns an array of { id, name, icon, rank, cond, gameTimed }.
 function PriorityList.Rows(addon, source)
@@ -386,11 +409,20 @@ function methods:Refresh()
     end
     for i = #rows + 1, #self.rows do self.rows[i]:Hide() end
 
-    self.useThis:SetShown(source ~= live)
-    self.useThis:SetText(string.format(L["Priority Use Source"]))
+    -- One button, three states: an empty list starts FROM what is on screen, a list that
+    -- exists is switched to, and the source already live needs no button at all.
+    local haveList = cq and cq.spells and #cq.spells > 0
+    self.starting = (source ~= "custom") and not haveList
+    self.useThis:SetShown(not self.disabled and (self.starting or source ~= live))
+    self.useThis:SetText(self.starting and L["Priority Start From"] or L["Priority Use Source"])
+    self.useThis:SetWidth(self.starting and 150 or 110)
     self.useThis:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -4, -2)
 
-    self:SetHeight(TAB_H + PIN_H + GAP + (#rows * ROW_H) + 4)
+    -- An empty own-list is the one view with nothing to draw: say where a list comes from.
+    self.emptyNote:SetShown(source == "custom" and not haveList)
+    self.emptyNote:SetText(L["Priority Empty Hint"])
+
+    self:SetHeight(TAB_H + PIN_H + GAP + (#rows * ROW_H) + ((#rows == 0) and 28 or 4))
 end
 
 --------------------------------------------------------------------------------
@@ -438,10 +470,19 @@ local function Constructor()
     widget.useThis = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     widget.useThis:SetSize(120, 20)
     widget.useThis:SetScript("OnClick", function()
-        PriorityList.SetLiveSource(widget.addon, widget:Source())
+        if widget.starting then
+            PriorityList.StartFrom(widget.addon, widget:Source())
+        else
+            PriorityList.SetLiveSource(widget.addon, widget:Source())
+        end
         widget.view = nil
         widget:Refresh()
     end)
+
+    widget.emptyNote = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + PIN_H + 6))
+    widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
+    widget.emptyNote:SetJustifyH("LEFT")
 
     -- Position-1 row, always present, never editable.
     local pin = CreateFrame("Frame", nil, frame)
