@@ -519,9 +519,65 @@ function PriorityList.DetailLines(id)
     return out
 end
 
+-- UNDO. Every edit already routes through Changed, so rather than asking each control to
+-- remember what it is about to do, the list is compared against the copy held here: the
+-- copy IS the previous state, and pushing it is the whole of the bookkeeping. A control
+-- added later is undoable without knowing this exists.
+local UNDO_DEPTH = 10
+local undoStack, undoSpec, undoProfile, undoLast = {}, nil, nil, nil
+
+local function ListCopy(cq)
+    local out = {}
+    for i, id in ipairs((cq and cq.spells) or {}) do out[i] = id end
+    return out
+end
+
+local function SameList(a, b)
+    if not (a and b) or #a ~= #b then return false end
+    for i = 1, #a do
+        if a[i] ~= b[i] then return false end
+    end
+    return true
+end
+
+local function NoteEdit(addon)
+    local profile = addon and addon:GetProfile()
+    local specKey = SpecKey()
+    -- A list belongs to one spec on one profile. Carrying history across either would
+    -- let an undo paste somebody else's list into this one.
+    if specKey ~= undoSpec or profile ~= undoProfile then
+        wipe(undoStack)
+        undoSpec, undoProfile, undoLast = specKey, profile, nil
+    end
+    local now = ListCopy(CustomQueueFor(profile))
+    if undoLast and not SameList(undoLast, now) then
+        undoStack[#undoStack + 1] = undoLast
+        if #undoStack > UNDO_DEPTH then table.remove(undoStack, 1) end
+    end
+    undoLast = now
+end
+
+function PriorityList.CanUndo()
+    return #undoStack > 0
+end
+
+--- Put the list back as it was before the last change.
+function PriorityList.Undo(addon)
+    local prev = table.remove(undoStack)
+    local cq = CustomQueueFor(addon and addon:GetProfile())
+    if not (prev and cq) then return end
+    cq.spells = prev
+    -- Set BEFORE the rebuild: Changed calls NoteEdit, which would otherwise see the
+    -- restore as an edit and push the state we just undid back onto the stack.
+    undoLast = ListCopy(cq)
+    PriorityList.selected = nil
+    PriorityList.Changed(addon)
+end
+
 --- Anything that edits the list routes through here: one place that refreshes the queue
 --- and the panel, so a new control cannot forget half of it.
 function PriorityList.Changed(addon)
+    NoteEdit(addon)
     local SpellQueue = LibStub("JustAC-SpellQueue", true)
     if SpellQueue and SpellQueue.InvalidateRotationCache then SpellQueue.InvalidateRotationCache(true) end
     local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
@@ -1047,6 +1103,9 @@ function methods:Refresh()
     self.useThis:SetWidth(haveList and 66 or 132)
     Tooltip(self.useThis, haveList and L["Priority Replace desc"] or L["Priority Export desc"])
     self.clear:SetShown(not self.disabled and source == "custom" and haveList)
+    -- Only where there is a list to put back, and only once something has changed.
+    self.undo:SetShown(not self.disabled and source == "custom"
+        and PriorityList.CanUndo())
 
     self.emptyNote:SetShown(source == "custom" and not haveList)
     self.emptyNote:SetText(L["Priority Empty Hint"])
@@ -1203,6 +1262,13 @@ local function Constructor()
     onPane(widget.clear)
     widget.clear:SetHeight(TAB_H - 5)
     widget.clear:SetPoint("RIGHT", frame, "TOPRIGHT", -6, -(TAB_H / 2 + 1))
+
+    widget.undo = MakeButton(frame, L["Priority Undo"], L["Priority Undo desc"], function()
+        PriorityList.Undo(widget.addon)
+    end, 56)
+    onPane(widget.undo)
+    widget.undo:SetHeight(TAB_H - 5)
+    widget.undo:SetPoint("RIGHT", widget.clear, "LEFT", -4, 0)
     widget.merge:SetPoint("RIGHT", widget.useThis, "LEFT", -4, 0)
 
     -- Column header. Its moving labels are re-anchored in Refresh, so a name column that
