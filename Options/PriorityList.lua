@@ -31,45 +31,17 @@ local CreateFrame = CreateFrame
 
 local ROW_H, PIN_H, TAB_H, DETAIL_H, HEAD_H = 26, 26, 24, 44, 16
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
--- The pinned row is about the game's own assist, so it wears the assist's emblem: the
--- circling arrow the one-button helper puts on an action button. An atlas, so there is no
--- art to ship and no path to get wrong; the padlock stays as the fallback.
+-- The pinned row is about the game's own assist, so it wears what the assist wears: an
+-- action button with the helper's circling arrow drawn over it. An EMPTY button - the
+-- slot is the subject, not whatever spell happens to be sitting in it, and an empty one
+-- is also honest about a row nobody can put anything into. Both are atlases the game
+-- already ships, and both are the same art a queue icon uses for its own empty slot.
 local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
-local assistArt
-local ringAtlasOK, ringAtlasTried
-local function HasAssistAtlas()
-    if not ringAtlasTried then
-        ringAtlasTried = true
-        ringAtlasOK = (C_Texture and C_Texture.GetAtlasInfo
-            and C_Texture.GetAtlasInfo(ASSIST_ATLAS) ~= nil) or false
-    end
-    return ringAtlasOK
-end
+local BUTTON_ATLAS = "UI-HUD-ActionBar-IconFrame-Background"
 
-local function IconOf(spellID)
-    local info = spellID and C_Spell and C_Spell.GetSpellInfo
-        and C_Spell.GetSpellInfo(spellID)
-    return info and info.iconID or nil
-end
-
---- The icon this row's ring is drawn over. The assist's own action spell when the game
---- will name it, which is stable and is the honest subject; failing that, whatever is in
---- slot 1 right now, which is what the row is describing anyway. Not cached on failure:
---- the action spell can resolve later in a session than the first time the panel opens.
-local function AssistIcon()
-    if assistArt then return assistArt end
-    if C_AssistedCombat and C_AssistedCombat.GetActionSpell then
-        local ok, sid = pcall(C_AssistedCombat.GetActionSpell)
-        assistArt = ok and IconOf(sid) or nil
-        if assistArt then return assistArt end
-    end
-    local SQ = LibStub("JustAC-SpellQueue", true)
-    local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
-    local first = type(queue) == "table" and queue[1] or nil
-    if type(first) ~= "number" or first <= 0 or (issecretvalue and issecretvalue(first)) then
-        return nil
-    end
-    return IconOf(first)
+local function HasAtlas(atlas)
+    return (C_Texture and C_Texture.GetAtlasInfo
+        and C_Texture.GetAtlasInfo(atlas) ~= nil) or false
 end
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
@@ -939,16 +911,6 @@ function methods:Refresh()
     elseif leadMode == "safe" then
         pinTitle, pinNote, pinGold = L["Priority Pin Safe"], L["Priority Pin Safe Note"], true
     end
-    local icon = AssistIcon()
-    if icon then
-        -- A real icon carries its own colour; only the padlock stand-in is tinted.
-        self.pin.icon:SetTexture(icon)
-        self.pin.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        self.pin.icon:SetVertexColor(1, 1, 1)
-    end
-    -- The ring is an OVERLAY, so it only means anything with an icon beneath it.
-    self.pin.icon:SetShown(icon ~= nil)
-    self.pin.ring:SetShown(icon ~= nil and HasAssistAtlas())
     self.pin.lock:SetVertexColor(unpack(pinGold and GOLD or GREEN))
     self.pin.num:SetTextColor(unpack(pinGold and GOLD or GREEN))
     self.pin.title:SetText(pinTitle)
@@ -1228,6 +1190,8 @@ local function Constructor()
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetSize(16, 16)
     pin.icon:SetPoint("LEFT", pin, "LEFT", 32, 0)
+    pin.icon:SetShown(HasAtlas(BUTTON_ATLAS))
+    if HasAtlas(BUTTON_ATLAS) then pin.icon:SetAtlas(BUTTON_ATLAS) end
     -- The ring the assist paints around an action button. Sized to the icon rather than
     -- to the atlas, which is drawn for a 36px button and sat proud of a 16px one, and
     -- softened so it reads as a mark on the icon instead of a sticker over it.
@@ -1235,8 +1199,7 @@ local function Constructor()
     pin.ring:SetPoint("CENTER", pin.icon, "CENTER")
     pin.ring:SetSize(22, 22)
     pin.ring:SetAtlas(ASSIST_ATLAS)
-    pin.ring:SetAlpha(1)
-    pin.ring:Hide()
+    pin.ring:SetShown(HasAtlas(ASSIST_ATLAS) and HasAtlas(BUTTON_ATLAS))
     -- Above the ring, not merely after it: same layer, and draw order within a layer
     -- is the sublevel, so the lock was being painted under the arc it sits beside.
     pin.lock = pin:CreateTexture(nil, "OVERLAY", nil, 7)
