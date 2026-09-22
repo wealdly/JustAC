@@ -2251,6 +2251,7 @@ function SpellQueue.SafeLeadCandidate()
     local queue = lastSpellIDs
     if type(queue) ~= "table" or not RotationImport or not RotationImport.GetEntry then return nil end
     local pick = lastCtx.pickID
+    if pick and queue[1] == SpellQueue.WAIT_SENTINEL then pick = nil end
     local isWait = not pick
     local resCount, resName, resMax
     if BlizzardAPI.GetClassResourcePoints then

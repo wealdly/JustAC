@@ -4411,6 +4411,12 @@ local function PickLogSample()
     if not (BAPI and SDB) then return end
     local pick = BAPI.GetAnyNextCastSpell and BAPI.GetAnyNextCastSpell()
     local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
+    -- The assist's own wait placeholder comes back as a pick id (passive, timer icon
+    -- 134377 - the renderer's WAIT test). For the log a wait is pick=0.
+    if pick and BAPI.IsPassiveSpell and BAPI.IsPassiveSpell(pick) then
+        local info = BAPI.GetCachedSpellInfo and BAPI.GetCachedSpellInfo(pick)
+        if info and info.iconID == 134377 then pick = nil end
+    end
     if not pick and not inCombat then return end   -- a WAIT is a tick in combat
     -- What a wait means: mid-cast, GCD running, or truly nothing (pooling / all on cooldown).
     local waitWhy = ""

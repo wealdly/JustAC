@@ -333,31 +333,42 @@ def audit_safelead(path=None):
     if cur:
         fights.append(cur)
     spec = rows[0][1]
-    fired = collections.Counter(); agree = collections.Counter(); shown = collections.Counter()
-    waits = collections.Counter(); served = collections.Counter(); over = collections.Counter()
-    ticks = 0
+    # Side A of the rule, applied here: the pick must be a WAIT or the FILLER. The filler is
+    # measured (C): the pick served most often. The recorder logs the candidate over ANY
+    # pick so the raw rate is visible too, but only fires over a displaceable pick count.
+    served = collections.Counter()
     for f in fights:
         prev = None
-        for i, (t, _, pick, _, sl, w) in enumerate(f):
-            ticks += 1
+        for (_, _, pick, _, _, _) in f:
             if pick and pick != prev:
                 served[pick] += 1
             prev = pick or prev
+    filler = served.most_common(1)[0][0] if served else None
+    fired = collections.Counter(); raw = collections.Counter(); agree = collections.Counter()
+    shown = collections.Counter(); waits = collections.Counter(); over = collections.Counter()
+    ticks = 0
+    for f in fights:
+        for i, (t, _, pick, _, sl, w) in enumerate(f):
+            ticks += 1
             if not pick:
                 waits[w or "?"] += 1
             if sl != "-":
                 cls, sid = sl.split(":"); sid = int(sid)
+                raw[cls] += 1
+                if sid == pick or not (pick == 0 or pick == filler):
+                    continue
                 fired[cls] += 1; shown[(cls, sid)] += 1
                 over["wait" if not pick else nm(pick)] += 1
                 # the next DIFFERENT pick after this tick
                 nxt = next((p for (_, _, p, _, _, _) in f[i + 1:] if p and p != pick), None)
                 if nxt is not None:
                     agree[(cls, nxt == sid)] += 1
-    print(f"{spec}: {len(fights)} fights, {ticks} combat ticks, candidate fired on {sum(fired.values())} "
-          f"({100 * sum(fired.values()) / max(1, ticks):.0f}%)")
-    for cls in sorted(fired):
+    print(f"{spec}: {len(fights)} fights, {ticks} combat ticks, filler (served most) = {nm(filler)}")
+    print(f"  candidate over ANY pick: {sum(raw.values())} ticks; over a wait or the filler: "
+          f"{sum(fired.values())} ({100 * sum(fired.values()) / max(1, ticks):.0f}%)")
+    for cls in sorted(set(raw) | set(fired)):
         yes, no = agree[(cls, True)], agree[(cls, False)]
-        print(f"  class {cls}: fired {fired[cls]:4d}   next pick agreed {yes}/{yes + no}"
+        print(f"  class {cls}: raw {raw[cls]:4d}  counted {fired[cls]:4d}   next pick agreed {yes}/{yes + no}"
               f"{'  (' + str(round(100 * yes / (yes + no))) + '%)' if yes + no else ''}")
     print("  what it would have shown:")
     for (cls, sid), n in shown.most_common(12):
