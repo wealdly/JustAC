@@ -164,8 +164,9 @@ function PriorityList.MergeFrom(addon, source)
         PriorityList.SetLiveSource(addon, "custom")   -- calls Changed
     end
     if addon and addon.Print then
-        -- Say so either way: a button that can legitimately do nothing has to admit it,
-        -- or it reads as broken the one time your list already has everything.
+        -- Say so either way, and say WHY: merging compares membership, not order, so a
+        -- list holding the same abilities in a different sequence is a no-op. Reporting
+        -- only "nothing to add" reads as a broken button.
         if added > 0 then
             addon:Print(string.format(L["Priority Merged"], added))
         else
