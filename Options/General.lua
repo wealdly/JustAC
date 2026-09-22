@@ -124,28 +124,9 @@ function General.CreateTabArgs(addon)
                     interruptAlertSound = W.select(addon, "interruptAlertSound", {
                         name = L["Interrupt Alert"], desc = L["Interrupt Alert Sound desc"],
                         order = 8, width = "double", default = "None",
-                        -- The LSM sound picker (speaker-icon previews) ONLY when its widget
-                        -- type actually registered. AceGUI-3.0-SharedMediaWidgets does
-                        -- LibStub("LibSharedMedia-3.0") with no silent flag, so on a
-                        -- partial install (Libs folder from an older version, or a hand
-                        -- copy without Libs) that file errors, LSM30_Sound never registers,
-                        -- and AceConfigDialog then threw on THIS control while rendering -
-                        -- which took EVERY tab down with it: "no customization appears in
-                        -- the panel", cured for those users only by installing Ace3+LSM
-                        -- standalone (field-reported, several users). Naming a widget type
-                        -- that does not exist must degrade to a plain dropdown, not kill
-                        -- the panel. Same value list either way; only the previews are lost.
-                        dialogControl = (function()
-                            local AceGUI = LibStub("AceGUI-3.0", true)
-                            if AceGUI and AceGUI.GetWidgetVersion and AceGUI:GetWidgetVersion("LSM30_Sound") then
-                                return "LSM30_Sound"
-                            end
-                            return nil
-                        end)(),
-                        values = function()
-                            local LSM = LibStub("LibSharedMedia-3.0", true)
-                            return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
-                        end,
+                        -- Degrades to a plain dropdown on a partial install (W.soundControl).
+                        dialogControl = W.soundControl(),
+                        values = W.soundValues,
                         -- The sound only plays on the interrupt icon's show transition,
                         -- which never happens with the interrupt reminder off.
                         disabled = function()

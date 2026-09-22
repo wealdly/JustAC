@@ -7,6 +7,7 @@ if not CustomQueue then return end
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local SpellLists = LibStub("JustAC-OptionsSpellLists")
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local W = LibStub("JustAC-OptionsWidgets")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
@@ -325,7 +326,7 @@ function CustomQueue.CreateTabArgs(addon)
             spellListGroup = {
                 type = "group",
                 inline = true,
-                name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
+                name = SpellSearch.SpecHeader(L["Priority Section"]),
                 order = 1,
                 args = {
                     leadMode = {
@@ -392,7 +393,16 @@ function CustomQueue.CreateTabArgs(addon)
                             return nil
                         end)(),
                     },
-                    -- Settings for the one row the player opened, added by UpdateCustomQueueOptions
+                    -- The add button belongs to YOUR list: on the read-only previews there
+                    -- is nothing to add to.
+                    priorityAdd = (function()
+                        local add = SpellLists.AddButton(addon, "custom", 30)
+                        add.hidden = function()
+                            local PL = LibStub("JustAC-PriorityList", true)
+                            return not PL or PL.CurrentSource(addon:GetProfile()) ~= "custom"
+                        end
+                        return add
+                    end)(),
                 },
             },
             -- RESET (990+)
@@ -424,66 +434,17 @@ function CustomQueue.CreateTabArgs(addon)
 end
 
 function CustomQueue.UpdateCustomQueueOptions(addon)
-    local optionsTable = addon and addon.optionsTable
-    if not optionsTable then return end
-
-    local offTab = optionsTable.args.offensive
-    if not offTab then return end
-    local cqTab = offTab.args.customQueue
-    if not cqTab then return end
-
-    -- Update spell list entries
-    local spellListGroup = cqTab.args.spellListGroup
-    if not spellListGroup then return end
-
-    local spellListArgs = spellListGroup.args
-    local staticKeys = { leadMode = true, priorityList = true }
-    SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
-
-    local specKey = GetSpecKey()
-    if not specKey then return end
-
+    if not (addon and addon.optionsTable) then return end
     local profile = addon:GetProfile()
-    if not profile then return end
-    if not profile.customQueue then profile.customQueue = {} end
-    if not profile.customQueue[specKey] then profile.customQueue[specKey] = {} end
-    local cq = profile.customQueue[specKey]
-    if not cq.spells then cq.spells = {} end
-    local spellList = cq.spells
-
-    local updateFunc = function()
-        InvalidateRotationCache()
-        CustomQueue.UpdateCustomQueueOptions(addon)
-        addon:ForceUpdate()
-    end
     local PriorityList = LibStub("JustAC-PriorityList", true)
+    local specKey = GetSpecKey()
+    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
     -- A list made before upkeep abilities were excluded still carries them, and they stall
     -- the queue. Repair it here, once, and tell the player why their list got shorter.
-    if PriorityList and PriorityList.PruneUpkeep and cq.enabled then
+    if cq and cq.enabled and PriorityList and PriorityList.PruneUpkeep then
         local dropped = PriorityList.PruneUpkeep(addon)
         if dropped > 0 and addon.Print then
             addon:Print(string.format(L["Upkeep Pruned"], dropped))
-        end
-    end
-    SpellSearch.RebuildListSection(addon, spellListArgs, {
-        spellList = spellList, listType = "customqueue",
-        baseOrder = 12, addOrder = 30,
-        listName = L["Custom Queue Spells"], updateFunc = updateFunc,
-        spellsOnly = false, emptyText = L["Custom Queue Empty"],
-        -- Rows, reordering and per-ability settings all live in the widget now, so Ace
-        -- renders NO entry group. Its Up/Down/Remove duplicated the row's own controls
-        -- and opened below the whole table rather than under the ability. 0 is "no entry
-        -- matches"; nil would mean "no filter" and redraw the entire legacy list.
-        onlyEntry = PriorityList and 0 or nil,
-    })
-
-    -- The add button belongs to YOUR list: on the read-only previews there is nothing to
-    -- add to. Its generated name ("Add <list name>...") also overran the row.
-    local addButton = spellListArgs["add_popup_customqueue"]
-    if addButton then
-        addButton.name = L["Priority Add"]
-        addButton.hidden = function()
-            return not PriorityList or PriorityList.CurrentSource(addon:GetProfile()) ~= "custom"
         end
     end
 

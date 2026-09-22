@@ -738,6 +738,31 @@ function BlizzardAPI.IsThresholdGateAvailable()
     return CachedBelow("player", 50, false, nil) ~= nil
 end
 
+-- The kind of content the player is in, for per-content visibility. Plain values: instance
+-- information is not secret. Anything that is none of these - housing plots, for one -
+-- reads as open world.
+local CONTENT_BY_INSTANCE = { party = "dungeon", raid = "raid", pvp = "pvp", arena = "pvp", scenario = "delve" }
+
+--- "world", "delve" (delves and other scenarios), "dungeon", "raid" or "pvp" (battlegrounds
+--- and arenas).
+function BlizzardAPI.GetContentType()
+    local inInstance, instanceType = IsInInstance()
+    if not inInstance then return "world" end
+    -- Only INSIDE an instance: this is the PARTY's delve state, so it can be true for a
+    -- member standing in the open world while the others are in.
+    if C_PartyInfo and C_PartyInfo.IsDelveInProgress and C_PartyInfo.IsDelveInProgress() then
+        return "delve"
+    end
+    return CONTENT_BY_INSTANCE[instanceType] or "world"
+end
+
+--- Is a surface set to be hidden in the content the player is in right now? `hideIn` is
+--- the surface's sparse set of hidden kinds; an empty one costs nothing but the check.
+function BlizzardAPI.HiddenInContent(hideIn)
+    if not (hideIn and next(hideIn)) then return false end
+    return hideIn[BlizzardAPI.GetContentType()] == true
+end
+
 function BlizzardAPI.IsUnitHealthBelow(unit, pct)
     return CachedBelow(unit, pct, false, nil)
 end

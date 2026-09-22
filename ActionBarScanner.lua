@@ -1304,3 +1304,81 @@ function ActionBarScanner.GetAssistedCombatSlot()
     end
     return cachedAssistedSlot
 end
+
+--------------------------------------------------------------------------------
+-- Editing the bars (out of combat only)
+--------------------------------------------------------------------------------
+-- The game's own assist skips an ability only when it has no button on the action bars, so
+-- taking it off the bars is the one way to make the game stop suggesting it. These do the bar
+-- work; the Abilities tab decides when, asks first, and remembers what to put back.
+-- Scanned: the numbered bars and the stance / form pages. NOT 121-144: those are the vehicle,
+-- possess and override bars the game fills itself.
+
+--- Same ability, allowing for talent swaps in either direction (the rules SearchSlots uses).
+local function SameSpell(a, b)
+    if a == b then return true end
+    if C_Spell_GetOverrideSpell then
+        if C_Spell_GetOverrideSpell(a, 0, false) == b or C_Spell_GetOverrideSpell(b, 0, false) == a then
+            return true
+        end
+    end
+    if FindBaseSpellByID and (FindBaseSpellByID(a) == b or FindBaseSpellByID(b) == a) then return true end
+    return false
+end
+
+--- Where an ability sits on the bars. `slots` = { {slot, id} } for the ability itself (id is
+--- what the slot actually holds, so Put Back restores exactly that); `macros` = { {slot,
+--- name} } for macros on the bars that cast it, which are reported and never touched.
+function ActionBarScanner.FindSpellSlots(spellID)
+    local slots, macros = {}, {}
+    if not spellID or not BlizzardAPI then return slots, macros end
+    for slot = 1, 180 do
+        if (slot <= 120 or slot >= 145) and HasAction(slot) then
+            local actionType, id, _, macroSpellID = BlizzardAPI.GetActionInfo(slot)
+            if actionType == "spell" and type(id) == "number" and SameSpell(id, spellID) then
+                slots[#slots + 1] = { slot = slot, id = id }
+            elseif actionType == "macro" and type(macroSpellID) == "number" and macroSpellID > 0
+                   and SameSpell(macroSpellID, spellID) then
+                macros[#macros + 1] = { slot = slot, name = GetActionText(slot) }
+            end
+        end
+    end
+    return slots, macros
+end
+
+--- Empty these slots. The cursor is cleared FIRST: picking an action up while holding
+--- something drops what was held into the slot instead of emptying it.
+--- @return number how many were emptied
+function ActionBarScanner.ClearSlots(slots)
+    if InCombatLockdown() then return 0 end
+    ClearCursor()
+    local n = 0
+    for _, s in ipairs(slots) do
+        if HasAction(s.slot) then
+            PickupAction(s.slot)
+            ClearCursor()
+            n = n + 1
+        end
+    end
+    return n
+end
+
+--- Put abilities back where they were. A slot that has since been given something else is
+--- left alone, never overwritten.
+--- @return number placed, number taken
+function ActionBarScanner.PlaceSpells(slots)
+    if InCombatLockdown() then return 0, 0 end
+    ClearCursor()
+    local placed, taken = 0, 0
+    for _, s in ipairs(slots) do
+        if HasAction(s.slot) then
+            taken = taken + 1
+        elseif C_Spell and C_Spell.PickupSpell then
+            C_Spell.PickupSpell(s.id)
+            PlaceAction(s.slot)
+            ClearCursor()
+            placed = placed + 1
+        end
+    end
+    return placed, taken
+end

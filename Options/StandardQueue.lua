@@ -157,6 +157,11 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdate() end,
                         disabled = panelDisabled,
                     }),
+                    showIn = W.showIn(addon, "hideIn", {
+                        order = 2.5, desc = L["Show In desc"],
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
                     hideQueueWhenMounted = W.toggle(addon, "hideQueueWhenMounted", {
                         name = L["Hide When Mounted"], desc = L["Hide When Mounted desc"],
                         order = 3, width = "full",
@@ -520,6 +525,7 @@ function StandardQueue.CreateTabArgs(addon)
             local D = addon.db.defaults.profile
             p.queueVisibility      = D.queueVisibility
             p.hideQueueWhenMounted  = D.hideQueueWhenMounted
+            if p.hideIn then wipe(p.hideIn) end
             -- Clear legacy visibility keys
             p.hideQueueOutOfCombat  = nil
             p.requireHostileTarget  = nil

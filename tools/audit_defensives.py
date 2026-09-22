@@ -172,7 +172,7 @@ def main():
     # Sibling tables that also name spells the player is asked to CAST. Aura-bearing
     # tables are deliberately absent: an aura id is what we look FOR, never something
     # cast, so it has no acquisition row and would be pure noise here.
-    for extra in ("CLASS_GROUPHEAL_DEFAULTS", "HEAL_EMERGENCY_LADDER", "CLASS_TOPOFF_HEALS",
+    for extra in ("CLASS_GROUPHEAL_DEFAULTS", "CLASS_GROUP_HELP_DEFAULTS", "HEAL_EMERGENCY_LADDER", "CLASS_TOPOFF_HEALS",
                   "CLASS_PETHEAL_DEFAULTS", "CLASS_PET_REZ_DEFAULTS",
                   "CLASS_GAPCLOSER_DEFAULTS", "CLASS_BURST_TRIGGER_DEFAULTS"):
         m = re.search(r"SpellDB\." + extra + r"\s*=\s*\{(.*?)\n\}", src, re.S)

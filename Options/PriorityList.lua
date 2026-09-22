@@ -13,9 +13,11 @@
 -- is unable to time.
 --
 -- What it deliberately does NOT do itself: anything Ace or another module already owns.
--- The per-row settings are real AceGUI widgets parented into the row; the tab strip uses
--- Blizzard's own options-tab art; and the name lookup, settings store, rank sort and
--- baseline snapshot all come from the modules that own them.
+-- The rows, dragging and the settings strip are the ones every list uses
+-- (Options/ListWidget.lua); an ability's settings are the same controls its Abilities card
+-- shows; and the name lookup, settings store, rank sort and baseline snapshot all come
+-- from the modules that own them. What is left here is what only this list has: the
+-- tabs, the pinned first slot and the two comparison columns.
 local Type, Version = "JustACPriorityList", 1
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end
@@ -29,7 +31,10 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local CreateFrame = CreateFrame
 
-local ROW_H, PIN_H, TAB_H, DETAIL_H, HEAD_H = 26, 26, 24, 44, 16
+local ListWidget = LibStub("JustAC-ListWidget")
+local ROW_H, DETAIL_H = ListWidget.ROW_H, ListWidget.DETAIL_H
+local PIN_H, TAB_H, HEAD_H = 26, 24, 16
+local LOCK_ATLAS, LOCK_H = "QuestSharing-Padlock", 13
 local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- The pinned row is about the game's own assist, so it wears what the assist wears: an
 -- action button with the helper's circling arrow drawn over it. An EMPTY button - the
@@ -37,24 +42,15 @@ local LOCK_TEXTURE = "Interface\\Buttons\\LockButton-Locked-Up"
 -- is also honest about a row nobody can put anything into. Both are atlases the game
 -- already ships, and both are the same art a queue icon uses for its own empty slot.
 local ASSIST_ATLAS = "UI-HUD-RotationHelper-Inactive"
-local BUTTON_ATLAS = "UI-HUD-ActionBar-IconFrame-Background"
--- The button frame, drawn OVER the art. The background plate alone is invisible behind a
--- filled icon, which is why seating the rows in it changed nothing to look at. The game
--- draws this one a pixel proud of the button so it frames the art instead of covering it.
-local BUTTON_FRAME_ATLAS = "UI-HUD-ActionBar-IconFrame"
-
-local function HasAtlas(atlas)
-    return (C_Texture and C_Texture.GetAtlasInfo
-        and C_Texture.GetAtlasInfo(atlas) ~= nil) or false
-end
+local BUTTON_ATLAS, BUTTON_FRAME_ATLAS = ListWidget.BUTTON_ATLAS, ListWidget.BUTTON_FRAME_ATLAS
+local HasAtlas = ListWidget.HasAtlas
 -- Everything on a row that is NOT the two text columns: number, icon, rank, the four
 -- buttons and the gaps between them. What is left is split between name and
 -- condition, so a wider panel widens both instead of only one.
 local ROW_FIXED = 165
 
-local INK, INK_DIM = { 0.93, 0.90, 0.85 }, { 0.66, 0.62, 0.55 }
-local GOLD, GREEN, BLUE = { 0.85, 0.65, 0.34 }, { 0.62, 0.79, 0.50 }, { 0.44, 0.62, 0.85 }
-local RED = { 0.80, 0.47, 0.47 }
+local INK_DIM, GOLD, GREEN = ListWidget.INK_DIM, ListWidget.GOLD, ListWidget.GREEN
+local BLUE, RED = ListWidget.BLUE, ListWidget.RED
 
 --------------------------------------------------------------------------------
 -- Model
@@ -138,9 +134,9 @@ function PriorityList.SortByPriority(ids, source)
     return ids
 end
 
---- Copy the source the player is LOOKING AT into their own list, and switch to it. This is
---- how a list begins: there is no blank-page state to explain, and the order they just
---- compared is the order they get.
+--- Copy the source the player is LOOKING AT into their own list, and show it. This is how
+--- a list begins: there is no blank-page state to explain, and the order they just compared
+--- is the order they get. It does not switch the queue to it - Use This Order does that.
 function PriorityList.StartFrom(addon, source)
     local profile = addon and addon:GetProfile()
     local specKey = SpecKey()
@@ -156,9 +152,8 @@ function PriorityList.StartFrom(addon, source)
     -- made this" notice keeps working. Same snapshot the reset button takes.
     local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
     if CustomQueue and CustomQueue.SnapshotBaseline then CustomQueue.SnapshotBaseline(cq) end
-    cq.enabled = true
     PriorityList.view = "custom"
-    PriorityList.selected = nil
+    ListWidget.selected.custom = nil
     PriorityList.Changed(addon)
 end
 
@@ -180,7 +175,7 @@ function PriorityList.MergeFrom(addon, source)
     end
     if added > 0 then
         PriorityList.view = "custom"
-        PriorityList.SetLiveSource(addon, "custom")   -- calls Changed
+        PriorityList.Changed(addon)
     end
     if addon and addon.Print then
         -- Say so either way, and say WHY: merging compares membership, not order, so a
@@ -201,7 +196,7 @@ function PriorityList.ClearList(addon)
     local cq = CustomQueueFor(addon and addon:GetProfile())
     if not cq then return end
     cq.spells, cq.baseline, cq.enabled = {}, nil, false
-    PriorityList.selected = nil
+    ListWidget.selected.custom = nil
     PriorityList.Changed(addon)
 end
 
@@ -577,7 +572,7 @@ function PriorityList.Undo(addon)
     -- Set BEFORE the rebuild: Changed calls NoteEdit, which would otherwise see the
     -- restore as an edit and push the state we just undid back onto the stack.
     undoLast = ListCopy(cq)
-    PriorityList.selected = nil
+    ListWidget.selected.custom = nil
     PriorityList.Changed(addon)
 end
 
@@ -600,32 +595,7 @@ end
 -- The widget
 --------------------------------------------------------------------------------
 
---- `body` adds a second line. `hook` is for a frame that already has an OnEnter of its
---- own - Ace's widgets use theirs for the highlight, so replacing it would trade one
---- cue for the other.
-local function Tooltip(frame, text, body, hook)
-    if not frame then return end
-    local bind = hook and frame.HookScript or frame.SetScript
-    bind(frame, "OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(text, 1, 1, 1, 1, true)
-        if body then GameTooltip:AddLine(body, 0.82, 0.78, 0.70, true) end
-        GameTooltip:Show()
-    end)
-    bind(frame, "OnLeave", function() GameTooltip:Hide() end)
-end
-
-
-local function MakeButton(parent, label, tip, onClick, width)
-    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    b:SetSize(width or 22, 18)
-    b:SetText(label)
-    local fs = b:GetFontString()
-    if fs then fs:SetFont(fs:GetFont(), 10, "") end
-    b:SetScript("OnClick", onClick)
-    Tooltip(b, tip)
-    return b
-end
+local Tooltip, MakeButton = ListWidget.Tooltip, ListWidget.MakeButton
 
 --- One tab, in Blizzard's own options-tab art - the same three-slice the Ace tab container
 --- uses, so the strip belongs to the panel instead of imitating it.
@@ -683,144 +653,26 @@ local function MakeTab(parent, label)
     return tab
 end
 
---- Settings for the open row, drawn INSIDE the list so they appear under that ability
---- rather than below the whole table. One strip, re-bound as the open row changes; the
---- controls are Ace's own, so the look and the keyboard behaviour come free.
-local function BuildDetail(widget, parent)
-    local d = CreateFrame("Frame", nil, parent)
-    d:SetHeight(DETAIL_H)
-    d.bg = d:CreateTexture(nil, "BACKGROUND")
-    d.bg:SetAllPoints()
-    d.bg:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
-    d.edge = d:CreateTexture(nil, "ARTWORK")
-    d.edge:SetPoint("TOPLEFT")
-    d.edge:SetPoint("BOTTOMLEFT")
-    d.edge:SetWidth(2)
-    d.edge:SetColorTexture(unpack(GOLD))
-
-    local function checkbox(label, desc, field, defaultOn)
-        local cb = AceGUI:Create("CheckBox")
-        cb:SetLabel(label)
-        Tooltip(cb.frame, label, desc, true)
-        -- 24 for the box itself, then whatever the words actually measure.
-        local textW = (cb.text and cb.text:GetStringWidth()) or 120
-        cb:SetWidth(24 + textW + 8)
-        cb.frame:SetParent(d)
-        cb.frame:Show()
-        cb:SetCallback("OnValueChanged", function(_, _, val)
-            local Abilities = LibStub("JustAC-OptionsAbilities", true)
-            local profile = widget.addon and widget.addon:GetProfile()
-            local s = d.spellID and profile and Abilities and Abilities.SpellSettings
-                and Abilities.SpellSettings(profile, d.spellID, true)
-            if not s then return end
-            -- Explicit if/else, never `(not val) and false or nil`: that idiom cannot
-            -- produce false, so a default-ON box could not be unchecked at all
-            -- (Options/Abilities.lua documents the same bug from a user report).
-            if defaultOn then
-                if val then s[field] = nil else s[field] = false end
-            else
-                if val then s[field] = true else s[field] = nil end
-            end
-            PriorityList.Changed(widget.addon)
-        end)
-        return cb
+--- An entry's settings, for the strip under the open row. The same controls its Abilities
+--- card shows; only the Proc Priority wording is this list's own, and it greys while the
+--- ordering option it depends on is off.
+local function RowControls(addon, id)
+    local Abilities = LibStub("JustAC-OptionsAbilities", true)
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+    local C = Abilities and Abilities.Controls
+    if not C then return nil end
+    local function changed() PriorityList.Changed(addon) end
+    local proc = C.ProcPriority(addon, id, changed,
+        L["Custom Queue Procs First"], L["Custom Queue Procs First desc"])
+    proc.disabled = function()
+        local profile = addon:GetProfile()
+        return (profile and profile.orderProcsFirst == false) or false
     end
-
-    d.always = checkbox(L["Always Show"], L["Always Show desc"], "alwaysShow", false)
-    d.always.frame:SetPoint("LEFT", d, "LEFT", 40, 0)
-    d.proc = checkbox(L["Custom Queue Procs First"], L["Custom Queue Procs First desc"],
-        "procPriority", true)
-    d.proc.frame:SetPoint("LEFT", d.always.frame, "RIGHT", 16, 0)
-
-    -- The dial reuses the option control's own values/get/set, so the widget never owns a
-    -- second copy of what the modes mean.
-    d.hold = AceGUI:Create("Dropdown")
-    -- No label ON the widget: Ace stacks it above the control and grows the frame to 40,
-    -- which leaves the control itself sitting low against two checkboxes that are centred.
-    -- With no label the frame is 26 and centres properly.
-    d.hold:SetLabel("")
-    Tooltip(d.hold.frame, L["Hold Until"], L["Hold Until desc"], true)
-    -- The label lives INSIDE the closed control, on its left, with the value on the
-    -- right where Ace already puts it. Nothing outside the control to collide with, and
-    -- the pair reads as one thing rather than a caption and a box.
-    local holdHost = d.hold.dropdown or d.hold.frame
-    d.holdLabel = holdHost:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    d.holdLabel:SetText(L["Hold Until"])
-    d.holdLabel:SetTextColor(unpack(INK_DIM))
-    d.hold:SetWidth(150)
-    d.hold.frame:SetParent(d)
-    -- Right-anchored: a fixed left offset pushed it past the pane on a narrow panel.
-    d.hold.frame:SetPoint("RIGHT", d, "RIGHT", -20, 0)
-    -- The dropdown art's left cap eats the first 16 or so, so this is the inset past it
-    -- rather than from the frame edge.
-    d.holdLabel:SetPoint("LEFT", holdHost, "LEFT", 30, 0)
-    d.holdLabel:SetJustifyH("LEFT")
-    d.holdLabel:SetWordWrap(false)
-    d.hold.frame:Show()
-
-    --- Re-bind to one ability. The dropdown's LIST is rebuilt only when the ability
-    --- changes: rebuilding it closes an open menu, and a refresh can fire from a resize.
-    d.Rebind = function(spellID)
-        local changed = (d.spellID ~= spellID)
-        d.spellID = spellID
-        if not spellID then return end
-        local Abilities = LibStub("JustAC-OptionsAbilities", true)
-        local profile = widget.addon and widget.addon:GetProfile()
-        local s = profile and Abilities and Abilities.SpellSettings
-            and Abilities.SpellSettings(profile, spellID, false)
-        d.always:SetValue(s and s.alwaysShow == true or false)
-        d.proc:SetValue(not s or s.procPriority ~= false)
-
-        local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-        local ctl = SpellSearch and SpellSearch.HoldModeControl
-            and SpellSearch.HoldModeControl(widget.addon, spellID, 1)
-        if not ctl then d.hold.frame:Hide() return end
-        d.hold.frame:Show()
-        if changed then
-            d.hold:SetList(ctl.values(), ctl.sorting and ctl.sorting() or nil)
-            d.hold:SetCallback("OnValueChanged", function(_, _, key)
-                ctl.set(nil, key)
-                PriorityList.Changed(widget.addon)
-            end)
-        end
-        d.hold:SetValue(ctl.get())
-        d.hold:SetDisabled(ctl.disabled and ctl.disabled() or false)
+    local out = { C.AlwaysShow(addon, id, changed), proc }
+    if SpellSearch and SpellSearch.HoldModeControl then
+        out[#out + 1] = SpellSearch.HoldModeControl(addon, id, nil, changed)
     end
-    return d
-end
-
---- Where the entry would land if dropped now, and where to draw the line saying so.
---- Dropping on the upper half of a row means "above it", the lower half "below".
-local function DropTarget(self)
-    local _, cy = GetCursorPosition()
-    cy = cy / (self.content:GetEffectiveScale() or 1)
-    for i = 1, #self.rows do
-        local r = self.rows[i]
-        if r:IsShown() and r:GetTop() then
-            local mid = (r:GetTop() + r:GetBottom()) / 2
-            if cy >= mid then return r.index, r:GetTop() end
-            if cy >= r:GetBottom() then return r.index + 1, r:GetBottom() end
-        end
-    end
-    return nil
-end
-
-local function EndDrag(self, commit)
-    local from = self.dragFrom
-    self.dragFrom = nil
-    self.dropLine:Hide()
-    self.content:SetScript("OnUpdate", nil)
-    for i = 1, #self.rows do self.rows[i].dragTint:Hide() end
-    if not (commit and from) then return end
-    local list, to = self:List(), DropTarget(self)
-    if not (list and to and list[from]) then return end
-    -- Removing first shifts everything after it up one, so a downward move overshoots by
-    -- exactly one unless the target is corrected for the gap the entry leaves behind.
-    if to > from then to = to - 1 end
-    if to == from or to < 1 then return end
-    local id = table.remove(list, from)
-    table.insert(list, math.min(to, #list + 1), id)
-    PriorityList.Changed(self.addon)
+    return out
 end
 
 --- Re-share the free width between the name and condition columns. Called whenever the
@@ -838,146 +690,6 @@ local function ApplyColumns(self)
 end
 
 
-local function AcquireRow(self, index)
-    local row = self.rows[index]
-    if row then return row end
-    -- A Button, not a Frame: a plain frame takes mouse motion (so hover and tooltips
-    -- worked) but does not reliably deliver the button press that starts a drag.
-    row = CreateFrame("Button", nil, self.content)
-    row:SetHeight(ROW_H)
-    row:RegisterForClicks("LeftButtonUp")
-    row.bg = row:CreateTexture(nil, "BACKGROUND")
-    row.bg:SetAllPoints()
-    row:EnableMouse(true)
-    -- Newer clients split motion from clicks; ask for both explicitly where the calls exist.
-    if row.SetMouseClickEnabled then row:SetMouseClickEnabled(true) end
-    if row.SetMouseMotionEnabled then row:SetMouseMotionEnabled(true) end
-    row:SetScript("OnEnter", function(self)
-        if not self.id then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tipName or "", 1, 1, 1)
-        if self.canDrag then
-            GameTooltip:AddLine(L["Priority Drag Hint"], 0.62, 0.79, 0.50)
-        end
-        for _, line in ipairs(PriorityList.DetailLines(self.id)) do
-            GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
-        end
-        GameTooltip:Show()
-        self.hover:Show()
-    end)
-    row:SetScript("OnLeave", function(self)
-        GameTooltip:Hide()
-        self.hover:Hide()
-    end)
-    row:RegisterForDrag("LeftButton")
-    row:SetScript("OnDragStart", function(r)
-        if not r.canDrag then return end
-        GameTooltip:Hide()
-        self.dragFrom = r.index
-        r.dragTint:Show()
-        -- The line follows the cursor rather than the row: the rows themselves never
-        -- move, so the only feedback is where the entry would land.
-        self.content:SetScript("OnUpdate", function()
-            local _, y = DropTarget(self)
-            if y then
-                self.dropLine:ClearAllPoints()
-                self.dropLine:SetPoint("LEFT", self.content, "LEFT", 5, 0)
-                self.dropLine:SetPoint("RIGHT", self.content, "RIGHT", -5, 0)
-                self.dropLine:SetPoint("TOP", self.content, "TOP",
-                    0, y - (self.content:GetTop() or 0))
-                self.dropLine:Show()
-            else
-                self.dropLine:Hide()
-            end
-        end)
-    end)
-    row:SetScript("OnDragStop", function() EndDrag(self, true) end)
-    row:SetScript("OnHide", function(r)
-        if self.dragFrom == r.index then EndDrag(self, false) end
-        GameTooltip:Hide()
-        r.hover:Hide()
-    end)
-
-    row.dragTint = row:CreateTexture(nil, "ARTWORK")
-    row.dragTint:SetAllPoints()
-    row.dragTint:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
-    row.dragTint:Hide()
-
-    row.hover = row:CreateTexture(nil, "BACKGROUND")
-    row.hover:SetAllPoints()
-    row.hover:SetColorTexture(1, 1, 1, 0.05)
-    row.hover:Hide()
-
-    row.idx = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.idx:SetPoint("LEFT", 6, 0)
-    row.idx:SetWidth(20)
-    row.idx:SetJustifyH("CENTER")
-
-    row.slot = row:CreateTexture(nil, "BACKGROUND")
-    row.slot:SetSize(16, 16)
-    row.slot:SetPoint("LEFT", row.idx, "RIGHT", 6, 0)
-    if HasAtlas(BUTTON_ATLAS) then row.slot:SetAtlas(BUTTON_ATLAS) else row.slot:Hide() end
-
-    row.icon = row:CreateTexture(nil, "ARTWORK")
-    row.icon:SetAllPoints(row.slot)
-    row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-    row.frame = row:CreateTexture(nil, "OVERLAY")
-    row.frame:SetSize(18, 18)
-    row.frame:SetPoint("CENTER", row.slot, "CENTER")
-    if HasAtlas(BUTTON_FRAME_ATLAS) then
-        row.frame:SetAtlas(BUTTON_FRAME_ATLAS)
-    else
-        row.frame:Hide()
-    end
-
-    -- Everything below is anchored and coloured ONCE: only the row's own position, its
-    -- text and the two column widths change per refresh.
-    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.name:SetWordWrap(false)   -- clipped with an ellipsis; the tooltip has it in full
-    row.name:SetPoint("LEFT", row.slot, "RIGHT", 7, 0)
-    row.name:SetJustifyH("LEFT")
-    row.name:SetTextColor(unpack(INK))
-
-    row.cond = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.cond:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
-    row.cond:SetJustifyH("LEFT")
-    -- Never wrap: the row is a fixed 26px, and a second line silently broke the grid.
-    row.cond:SetWordWrap(false)
-    row.cond:SetTextColor(unpack(INK_DIM))
-
-    row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.rank:SetJustifyH("RIGHT")
-    row.rank:SetWidth(46)
-
-    row.rank:SetTextColor(unpack(BLUE))
-
-    row.remove = MakeButton(row, "x", L["Remove"], function()
-        local list = self:List()
-        if not (list and list[row.index]) then return end
-        table.remove(list, row.index)
-        if PriorityList.selected == row.id then PriorityList.selected = nil end
-        PriorityList.Changed(self.addon)
-    end)
-    row.edit = MakeButton(row, "...", L["Priority Edit Tip"], function()
-        -- Explicit if/else, never `x and nil or y`: `true and nil` is nil and `nil or y`
-        -- is y, so that idiom can never produce nil - the open row could not be closed.
-        if PriorityList.selected == row.id then
-            PriorityList.selected = nil
-        else
-            PriorityList.selected = row.id
-        end
-        PriorityList.Changed(self.addon)
-    end)
-    row.remove:SetPoint("RIGHT", -4, 0)
-    row.edit:SetPoint("RIGHT", row.remove, "LEFT", -2, 0)
-    -- Anchored to the buttons, not to the text: a disabled button keeps its position, so
-    -- the rank column lands in the same place whether the row is editable or read-only.
-    row.rank:SetPoint("RIGHT", row.edit, "LEFT", -6, 0)
-
-    self.rows[index] = row
-    return row
-end
 
 local methods = {}
 
@@ -992,14 +704,26 @@ end
 function methods:OnRelease()
     -- Widgets are pooled: anything left here is inherited by the next option that mounts
     -- this type.
-    if self.dragFrom then
-        self.dragFrom = nil
-        self.dropLine:Hide()
-        self.content:SetScript("OnUpdate", nil)
-    end
+    ListWidget.Reset(self)
     self.addon, self.disabled, self.refreshing = nil, false, nil
-    -- Pooled: a strip left open would keep the previous mount's dial contents.
-    if self.detail then self.detail.spellID = nil end
+end
+
+-- What the shared rows ask of this list (Options/ListWidget.lua).
+function methods:Commit() PriorityList.Changed(self.addon) end
+function methods:Reflow() PriorityList.Changed(self.addon) end
+function methods:RowTooltip(row)
+    for _, line in ipairs(PriorityList.DetailLines(row.id)) do
+        GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+    end
+end
+--- The "when it is used" column, between the name and the comparison.
+function methods:OnRowCreated(row)
+    row.cond = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.cond:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
+    row.cond:SetJustifyH("LEFT")
+    -- Never wrap: the row is a fixed 26px, and a second line silently broke the grid.
+    row.cond:SetWordWrap(false)
+    row.cond:SetTextColor(unpack(INK_DIM))
 end
 
 -- AceConfigDialog drives a description control with SetText/SetFontObject, and every
@@ -1051,7 +775,7 @@ function methods:Refresh()
             or tab.baseLabel)
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
-        Tooltip(tab, key == live and L["Priority Tab Live Tip"] or L["Priority Tab Use Tip"])
+        Tooltip(tab, key == live and L["Priority Tab Live"] or L["Priority Tab View"])
     end
 
     -- Position 1. The row the whole panel exists to explain, in the three states the lead
@@ -1072,65 +796,39 @@ function methods:Refresh()
     Tooltip(self.pin, pinTitle .. "|n|n" .. pinNote)
 
     local rows = PriorityList.Rows(self.addon, source)
-    local y = -(TAB_H + HEAD_H + PIN_H + 4)
-    local detailShown = false
-
     for i = 1, #rows do
-        local data = rows[i]
-        local row = AcquireRow(self, i)
-        row.index, row.id, row.tipName = i, data.id, data.name
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
-        row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
-        row.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.035 or 0)
-        row.idx:SetText(i + 1)
-        row.icon:SetTexture(data.icon)
-        row.name:SetText(data.name)
-        row.cond:SetText(data.cond or "")
-        row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
-        if data.move ~= nil then
-            if data.move == "new" then
-                row.rank:SetText(L["Priority Move New"])
-                row.rank:SetTextColor(unpack(BLUE))
-            elseif data.move == 0 then
-                row.rank:SetText("=")
-                row.rank:SetTextColor(unpack(INK_DIM))
+        local id = rows[i].id
+        rows[i].num = i + 1   -- position 1 is the pinned row above
+        if id > 0 then rows[i].controls = function() return RowControls(self.addon, id) end end
+    end
+    local _, detailShown = ListWidget.PlaceRows(self, rows, -(TAB_H + HEAD_H + PIN_H + 4), editable,
+        function(row, data)
+            row.cond:SetText(data.cond or "")
+            row.cond:SetTextColor(unpack(data.upkeep and GOLD or INK_DIM))
+            if data.move ~= nil then
+                if data.move == "new" then
+                    row.right:SetText(L["Priority Move New"])
+                    row.right:SetTextColor(unpack(BLUE))
+                elseif data.move == 0 then
+                    row.right:SetText("=")
+                    row.right:SetTextColor(unpack(INK_DIM))
+                else
+                    row.right:SetText((data.move > 0 and "+" or "") .. data.move)
+                    row.right:SetTextColor(unpack(data.move > 0 and GREEN or RED))
+                end
             else
-                row.rank:SetText((data.move > 0 and "+" or "") .. data.move)
-                row.rank:SetTextColor(unpack(data.move > 0 and GREEN or RED))
+                row.right:SetText(data.rank and ("#" .. data.rank) or "")
+                row.right:SetTextColor(unpack(BLUE))
             end
-        else
-            row.rank:SetText(data.rank and ("#" .. data.rank) or "")
-            row.rank:SetTextColor(unpack(BLUE))
-        end
-        row.edit:SetEnabled(editable)
-        row.remove:SetEnabled(editable)
-        row.canDrag = editable
-        row:Show()
-        y = y - ROW_H
-
-        -- The open ability's settings belong under IT, inside the list - not below the
-        -- whole table, where the row they belong to has scrolled out of sight.
-        if editable and PriorityList.selected == data.id and data.id > 0 then
-            detailShown = true
-            self.detail:ClearAllPoints()
-            self.detail:SetPoint("TOPLEFT", self.content, "TOPLEFT", 5, y)
-            self.detail:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -5, y)
-            self.detail.Rebind(data.id)
-            self.detail:Show()
-            y = y - DETAIL_H
-        end
-    end
-    for i = #rows + 1, #self.rows do self.rows[i]:Hide() end
-    if not detailShown then
-        self.detail:Hide()
-        self.detail.spellID = nil   -- so reopening the same row rebuilds its dial
-    end
+        end)
 
     -- Two ways to take one of the orders you did not write into a list of your own.
     -- Export replaces the whole thing and asks first; Merge only adds what is missing
     -- and never needs to. Both collapse to one wide Export before there is a list to
     -- protect, which is also where the long label fits and is most needed.
+    -- An empty list is the one thing that cannot be used: the queue would fall back to the
+    -- game's pool while every label claimed otherwise. That tab keeps its hint instead.
+    self.use:SetShown(not self.disabled and source ~= live and (source ~= "custom" or haveList))
     local offer = (source ~= "custom") and not self.disabled
     self.merge:SetShown(offer and haveList)
     self.useThis:SetShown(offer)
@@ -1168,24 +866,14 @@ local function Constructor()
         if f.obj and f.obj.rows then ApplyColumns(f.obj) end
     end)
 
-    local widget = { frame = frame, type = Type, rows = {}, tabs = {} }
+    local widget = { frame = frame, type = Type, tabs = {}, listKey = "custom" }
     for method, func in pairs(methods) do widget[method] = func end
 
     -- The list needs a pane for the tabs to sit ON, or they float over the panel with
     -- nothing joining them to the rows. Ace's own inline-group backdrop, so the pane
     -- matches every other bordered group around it; the tab strip then overlaps its top
     -- edge by two pixels, which is what reads as "joined".
-    local body = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    body:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(TAB_H - 2))
-    body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-    body:SetBackdrop({
-        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 3, right = 3, top = 5, bottom = 3 },
-    })
-    body:SetBackdropColor(0.09, 0.085, 0.07, 1)
-    body:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    local body = ListWidget.Pane(frame, TAB_H - 2)
     widget.body = body
 
     local content = CreateFrame("Frame", nil, frame)
@@ -1196,8 +884,7 @@ local function Constructor()
     content:SetFrameLevel(body:GetFrameLevel() + 1)
     -- Anything that draws ON the pane needs its level too; only the tabs go behind.
     local function onPane(f) f:SetFrameLevel(body:GetFrameLevel() + 1) end
-    widget.OnPane = onPane
-    widget.content = content
+    ListWidget.Attach(widget, content)
 
     -- Tab strip: the source the queue is using. Selecting a tab SWITCHES to it. There
     -- is no separate commit step: the player opened this to change what the queue
@@ -1214,22 +901,26 @@ local function Constructor()
         tab:SetPoint("BOTTOMLEFT", prev or body, prev and "BOTTOMRIGHT" or "TOPLEFT",
             prev and 3 or 8, prev and 0 or -3)
         tab:SetFrameLevel(math.max(0, body:GetFrameLevel() - 1))
+        -- A tab is a LOOK. Players open the game's order to read it, not to hand the
+        -- queue back to it, so switching is its own button (Use This Order, below).
         tab:SetScript("OnClick", function()
             PriorityList.view = key
-            -- An empty list is the one thing that cannot go live: the queue would fall
-            -- back to the game's pool while every label claimed otherwise. That tab
-            -- stays a look, with its own hint saying how to fill it.
-            local cq = CustomQueueFor(widget.addon and widget.addon:GetProfile())
-            if key ~= "custom" or (cq and cq.spells and #cq.spells > 0) then
-                PriorityList.SetLiveSource(widget.addon, key)   -- calls Changed itself
-            else
-                PriorityList.Changed(widget.addon)
-            end
+            local reg = LibStub("AceConfigRegistry-3.0", true)
+            if reg then reg:NotifyChange("JustAssistedCombat") end
         end)
         tab.baseLabel = label
         widget.tabs[key] = tab
         prev = tab
     end
+
+    -- Beside the tabs, so it reads as "the one I am looking at". Only there while that tab
+    -- is not already what the queue follows.
+    widget.use = MakeButton(frame, L["Priority Use"], L["Priority Use desc"], function()
+        PriorityList.SetLiveSource(widget.addon, widget:Source())
+    end, 104)
+    onPane(widget.use)
+    widget.use:SetHeight(TAB_H - 5)
+    widget.use:SetPoint("LEFT", widget.tabs.custom, "RIGHT", 8, 0)
 
     widget.useThis = MakeButton(frame, "", "", function()
         local source = widget:Source()
@@ -1367,10 +1058,23 @@ local function Constructor()
     -- Above the ring, not merely after it: same layer, and draw order within a layer
     -- is the sublevel, so the lock was being painted under the arc it sits beside.
     pin.lock = pin:CreateTexture(nil, "OVERLAY", nil, 7)
-    pin.lock:SetSize(12, 15)
-    pin.lock:SetTexture(LOCK_TEXTURE)
-    -- Top right: the ring covers the other corners.
-    pin.lock:SetPoint("TOPRIGHT", pin.icon, "TOPRIGHT", 3, 2)
+    -- The padlock the game itself puts on a locked action button, cropped to the glyph.
+    -- The old button texture was a 32px square with the lock in its middle third, so at
+    -- any size that fits a 16px icon the lock came out a few pixels tall and sat inside
+    -- the ring instead of on its corner.
+    local lockInfo = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(LOCK_ATLAS)
+    if lockInfo and lockInfo.height and lockInfo.height > 0 then
+        pin.lock:SetAtlas(LOCK_ATLAS)
+        pin.lock:SetSize(LOCK_H * lockInfo.width / lockInfo.height, LOCK_H)
+        -- Grey first, so the green / gold tint below reads the same as it did.
+        pin.lock:SetDesaturated(true)
+    else
+        pin.lock:SetTexture(LOCK_TEXTURE)
+        pin.lock:SetSize(12, 15)
+    end
+    -- Centred ON the icon's top-right corner: a badge on the button, not a mark inside
+    -- it. Nudged in just enough to stay within the row.
+    pin.lock:SetPoint("CENTER", pin.icon, "TOPRIGHT", -1, -2)
     pin.title = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pin.title:SetPoint("LEFT", pin, "LEFT", 55, 0)
     pin.note = pin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -1386,14 +1090,6 @@ local function Constructor()
     widget.emptyNote:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -(TAB_H + HEAD_H + PIN_H + 6))
     widget.emptyNote:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     widget.emptyNote:SetJustifyH("LEFT")
-
-    widget.dropLine = content:CreateTexture(nil, "OVERLAY")
-    widget.dropLine:SetHeight(2)
-    widget.dropLine:SetColorTexture(unpack(GOLD))
-    widget.dropLine:Hide()
-
-    widget.detail = BuildDetail(widget, content)
-    widget.detail:Hide()
 
     return AceGUI:RegisterAsWidget(widget)
 end

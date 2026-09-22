@@ -17,13 +17,11 @@ local Profiles      = LibStub("JustAC-OptionsProfiles", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 -------------------------------------------------------------------------------
--- Dynamic-list rebuild targets for RefreshAllDynamic below.
+-- Dynamic rebuild targets for RefreshAllDynamic below. The ability lists are not here:
+-- they draw straight from the profile each time the panel refreshes (Options/SpellLists.lua).
 -------------------------------------------------------------------------------
 local FORWARDERS = {
     { libName = "JustAC-OptionsAbilities",   methodName = "UpdateAbilitiesOptions"      },
-    { libName = "JustAC-OptionsDefensives",  methodName = "UpdateDefensivesOptions"     },
-    { libName = "JustAC-OptionsGapClosers",  methodName = "UpdateGapCloserOptions"      },
-    { libName = "JustAC-OptionsOffensive",   methodName = "UpdateBurstTriggerOptions"   },
     { libName = "JustAC-OptionsCustomQueue", methodName = "UpdateCustomQueueOptions"    },
 }
 
@@ -47,6 +45,9 @@ function Options.RefreshAllDynamic(addon)
             mod[f.methodName](addon)
         end
     end
+    -- The lists redraw on this alone: a spec change swaps which list every one of them shows.
+    local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
 end
 
 -------------------------------------------------------------------------------
@@ -206,7 +207,6 @@ local function HandleSlashCommand(addon, input)
         local p = addon.db and addon.db.profile
         if not p then return end
         p.panelInteraction  = "unlocked"
-        p.panelLocked       = nil            -- legacy key: left set, it re-locks on next load
         p.targetFrameAnchor = "DISABLED"
         -- The minimap button is the last way in when the panel is unreachable; a reset
         -- must bring it back too, or "I hid the button and locked the panel" has no exit.

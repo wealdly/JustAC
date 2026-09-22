@@ -1847,7 +1847,15 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         wantGlow = "burst"
     elseif usable and ready then
         if state == "down" then wantGlow = "burst"
-        elseif state == "refresh" then wantGlow = "ants" end
+        elseif state == "refresh" then wantGlow = "ants"
+        elseif entry and entry.chargeGated and profile.maintenanceCapGlow ~= false
+           and BlizzardAPI.IsSpellChargeCapped and BlizzardAPI.IsSpellChargeCapped(displayID) then
+            -- Every charge banked: recharge time is being thrown away. Charge-gated buffs
+            -- never get the early "refresh" cue (pressing early wastes buff time), but sitting
+            -- on a full stack wastes more, so this is their early warning. Fails safe: when
+            -- the charge state cannot be read, capped answers false and nothing glows.
+            wantGlow = "ants"
+        end
     end
 
     -- Marker cues, same rules as the other surfaces. Off-GCD is the valuable one here:
@@ -2962,10 +2970,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Visibility conditions (OOC, healer, mounted, hostile target) are owned by
     -- SpellQueue; UIRenderer only checks display mode and whether spells exist.
     local displayMode = profile.displayMode or "queue"
+    -- "Show in" is checked HERE rather than in SpellQueue's visibility gate: that gate
+    -- empties the build the nameplate overlay shares, so hiding this panel in raids would
+    -- blank the overlay too.
     local shouldShowFrame = hasSpells
         and displayMode ~= "disabled"
         and displayMode ~= "overlay"
         and SpellQueue.ShouldShowQueue()
+        and not BlizzardAPI.HiddenInContent(profile.hideIn)
 
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)

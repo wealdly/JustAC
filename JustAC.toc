@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 5.6.1
+## Version: 5.7.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -95,8 +95,10 @@ DebugHUD.lua
 
 # Options
 Options\Widgets.lua
+Options\ListWidget.lua
 Options\PriorityList.lua
 Options\SpellSearch.lua
+Options\SpellLists.lua
 Options\LiveSearchPopup.lua
 Options\General.lua
 Options\StandardQueue.lua

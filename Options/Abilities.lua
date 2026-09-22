@@ -1,20 +1,23 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: Options/Abilities - one per-ability card over the existing stores.
+-- JustAC: Options/Abilities - the Overrides tab: everything set on one spell or item.
 --
--- Lists answer WHEN (order, on their own tabs); this card answers HOW: visibility
--- (the blacklist), pins, item settings, list membership, and the hotkey override,
--- all for one searched ability. The card is a VIEW - it reads and writes the same
--- nine stores the engines already consume; no storage moved and no migration.
+-- Lists answer WHEN (order, on their own tabs); this tab answers HOW: visibility (the
+-- blacklist) and the action bars, queue settings, item settings, sets and the hotkey label.
+-- Its index is a list like the others, each row opening its ability's settings as panels
+-- under it. A VIEW - it reads and writes the stores the engines already consume.
 local Abilities = LibStub:NewLibrary("JustAC-OptionsAbilities", 1)
 if not Abilities then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local W = LibStub("JustAC-OptionsWidgets")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
--- Session-only selection; the card is rebuilt around it.
-local selectedID = nil
+-- The open ability is the index's open row: the list keeps it, as every list keeps its own.
+local ListWidget = LibStub("JustAC-ListWidget")
+local function Selected() return ListWidget.selected.abilityindex end
+local function Select(id) ListWidget.selected.abilityindex = id end
 
 local function GetSpecKey()
     local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -56,29 +59,6 @@ local function SpellSettings(profile, id, create)
     return d.spellSettings[id]
 end
 
---- The per-ability settings store, shared with the priority list widget so one accessor
---- owns the sparse-table rules.
-Abilities.SpellSettings = SpellSettings
-
--- Overt per-spec declaration: "I want the game's assist itself to skip this ability"
--- (which the engine only does for spells with no visible action-bar button). A separate
--- store from the blacklist VALUE deliberately: the blacklist says "don't show it to me",
--- this says "and I intend it off my bars" - a player may hide an ability from the queue
--- while keeping it on bars for manual presses, and the two intents must not be conflated
--- (that conflation is exactly what made the earlier bar hint a false-positive nag).
-local function EngineHideIntent(profile, create)
-    local specKey = GetSpecKey()
-    if not specKey then return nil end
-    if not profile.engineHideIntent then
-        if not create then return nil end
-        profile.engineHideIntent = {}
-    end
-    if not profile.engineHideIntent[specKey] then
-        if not create then return nil end
-        profile.engineHideIntent[specKey] = {}
-    end
-    return profile.engineHideIntent[specKey]
-end
 
 local function ItemSettings(profile, itemID, create)
     local d = profile.defensives
@@ -95,218 +75,320 @@ local function ItemSettings(profile, itemID, create)
 end
 
 -------------------------------------------------------------------------------
--- List descriptors for the membership section. resolve() returns the live list
--- table for the current spec (nil = list unavailable right now); after() runs
--- the same refresh chain that list's own tab uses. fits(id, roleFam) filters the
--- row by ability type - an ability already IN a list always shows its row, so
--- Remove can never be filtered away. roleFam is "offensive"/"defensive"/"both"
--- from SpellSearch.RoleTag ("both" covers Disruption, Utility, and items).
+-- One ability's settings as options-table-shaped controls. Every place that offers one - a
+-- list row's settings strip, the Overrides tab's panels (both Options/ListWidget.lua) - is
+-- handed the SAME description, so they cannot drift. `onChange` runs after every write, so each surface
+-- refreshes itself. The profile is read when a control is used, never captured: a
+-- profile switch with the panel open would otherwise write into the old one.
 -------------------------------------------------------------------------------
-local function FitsOffense(_, roleFam) return roleFam ~= "defensive" end
-local function FitsDefense(_, roleFam) return roleFam ~= "offensive" end
+local Controls = {}
+Abilities.Controls = Controls
 
--- Gap-closers: only the spec's curated movement spells qualify.
-local function FitsGapCloser(id)
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    local specKey = GetSpecKey()
-    local defaults = SpellDB and specKey and SpellDB.CLASS_GAPCLOSER_DEFAULTS
-        and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
-    if not defaults then return false end
-    for _, sid in ipairs(defaults) do
-        if sid == id then return true end
-    end
-    return false
-end
-
--- Burst triggers: offensive-family with a real cooldown - the spec's curated
--- trigger defaults qualify outright; anything else needs a base CD >= 30s.
-local function FitsBurstTrigger(id, roleFam)
-    if roleFam == "defensive" then return false end
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    local specKey = GetSpecKey()
-    local defaults = SpellDB and specKey and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS
-        and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
-    if defaults then
-        for _, sid in ipairs(defaults) do
-            if sid == id then return true end
-        end
-    end
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local cd = BlizzardAPI and BlizzardAPI.GetBaseCooldownSeconds
-        and BlizzardAPI.GetBaseCooldownSeconds(id)
-    return (cd or 0) >= 30
-end
-
-local LISTS = {
-    {
-        key = "custom", nameKey = "Custom Queue Spells",
-        spellsOnly = false, fits = FitsOffense,
-        resolve = function(profile)
-            local specKey = GetSpecKey()
-            local cq = specKey and profile.customQueue and profile.customQueue[specKey]
-            if not (cq and cq.enabled) then return nil, L["Custom Priority Disabled"] end
-            return cq.spells
+--- A per-spell flag in spellSettings. Default-on flags are stored only while OFF.
+function Controls.Pin(addon, id, field, name, desc, defaultOn, onChange)
+    return {
+        type = "toggle", name = name, desc = desc,
+        get = function()
+            local s = SpellSettings(addon:GetProfile(), id, false)
+            if defaultOn then return not s or s[field] ~= false end
+            return s and s[field] == true or false
         end,
-        after = function(addon)
+        set = function(_, val)
+            local profile = addon:GetProfile()
+            local s = SpellSettings(profile, id, true)
+            if not s then return end
+            -- Explicit if/else, NOT `(not val) and false or nil`: that idiom cannot
+            -- produce false - `x and false` is false, and `false or nil` is nil - so
+            -- unchecking a default-on pin wrote nil, which reads back as "on". The
+            -- Proc Priority box could not be unchecked at all (user-reported).
+            if defaultOn then
+                if val then s[field] = nil else s[field] = false end
+            else
+                if val then s[field] = true else s[field] = nil end
+            end
+            if not next(s) then profile.defensives.spellSettings[id] = nil end
+            -- Pins are read into the rotation SETUP cache, which only rebuilds on a list
+            -- change - a pin changes no list, so without this it read back correctly
+            -- and did nothing until a talent swap or reload.
             local SQ = LibStub("JustAC-SpellQueue", true)
             if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
-            local CQ = LibStub("JustAC-OptionsCustomQueue", true)
-            if CQ and CQ.UpdateCustomQueueOptions then CQ.UpdateCustomQueueOptions(addon) end
             addon:ForceUpdateAll()
+            if onChange then onChange() end
         end,
-    },
-    {
-        key = "defensive", nameKey = "Defensive Priority List",
-        spellsOnly = false, listField = "defensiveSpells", fits = FitsDefense,
-    },
-    {
-        key = "gap", nameKey = "Gap-Closers",
-        spellsOnly = true, fits = FitsGapCloser,
-        resolve = function(profile)
-            local specKey = GetSpecKey()
-            local gc = specKey and profile.gapClosers and profile.gapClosers.classSpells
-            return gc and gc[specKey]
-        end,
-        after = function(addon)
-            local GC = LibStub("JustAC-OptionsGapClosers", true)
-            if GC and GC.UpdateGapCloserOptions then GC.UpdateGapCloserOptions(addon) end
-            addon:ForceUpdate()
-        end,
-    },
-    {
-        key = "burst", nameKey = "Burst Triggers",
-        spellsOnly = true, fits = FitsBurstTrigger,
-        -- READ the EFFECTIVE list (custom override, else SimC, else curated) so the
-        -- card's status and Add/Remove label reflect what actually drives the burst
-        -- cue. The old resolver returned the raw override table, which is EMPTY for
-        -- most players - so a live SimC trigger read "not in list", and pressing Add
-        -- appended one entry to the empty override, which then WON outright and
-        -- silently discarded the whole SimC/curated set (SpellQueue.ResolveBurstTriggers
-        -- treats non-empty override as authoritative). Audit-found, 2026-08-16.
-        resolve = function(profile)
-            local specKey = GetSpecKey()
-            if not specKey then return nil end
-            local SQ = LibStub("JustAC-SpellQueue", true)
-            local list = SQ and SQ.GetBurstTriggerInfo and SQ.GetBurstTriggerInfo()
-            return list or (profile.burstTriggers and profile.burstTriggers[specKey]) or {}
-        end,
-        -- EDIT path: materialise the effective list into the override before the first
-        -- edit, so Add/Remove refine what the player already sees instead of replacing
-        -- it wholesale. Idempotent once the override exists.
-        ensure = function(profile)
-            local specKey = GetSpecKey()
-            if not specKey then return nil end
-            profile.burstTriggers = profile.burstTriggers or {}
-            local ov = profile.burstTriggers[specKey]
-            if not ov or #ov == 0 then
-                local SQ = LibStub("JustAC-SpellQueue", true)
-                local eff = SQ and SQ.GetBurstTriggerInfo and SQ.GetBurstTriggerInfo()
-                ov = {}
-                for i = 1, (eff and #eff or 0) do ov[i] = eff[i] end
-                profile.burstTriggers[specKey] = ov
-            end
-            return ov
-        end,
-        after = function(addon)
-            local SQ = LibStub("JustAC-SpellQueue", true)
-            if SQ and SQ.InvalidateBurstTriggers then SQ.InvalidateBurstTriggers() end
-            local Off = LibStub("JustAC-OptionsOffensive", true)
-            if Off and Off.UpdateBurstTriggerOptions then Off.UpdateBurstTriggerOptions(addon) end
-            addon:ForceUpdate()
-        end,
-    },
-    {
-        key = "petrez", nameKey = "Pet Rez/Summon Priority List",
-        spellsOnly = true, listField = "petRezSpells", petOnly = true, fits = FitsDefense,
-    },
-    {
-        key = "petheal", nameKey = "Pet Heal Priority List",
-        spellsOnly = false, listField = "petHealSpells", petOnly = true, fits = FitsDefense,
-    },
-}
-
--- Shared resolve/after for the three defensive-family lists (listField set above).
-local function ResolveClassList(profile, listField)
-    local specKey = GetSpecKey()
-    local cs = specKey and profile.defensives and profile.defensives.classSpells
-        and profile.defensives.classSpells[specKey]
-    return cs and cs[listField]
+    }
 end
 
--- Create-on-demand twin of ResolveClassList, for the Add/Remove buttons. The read-only
--- form returns nil until the spec has been given that list - and the button was disabled
--- on nil, so Add was greyed out precisely on the lists that were empty, with nothing to
--- say why (a fresh Hunter's pet lists). Seeds the same way DefensiveEngine does at login
--- (spec key, then class-key fallback for pre-spec data; defaults copied in), so a list
--- born here is indistinguishable from one born at login.
-local function EnsureClassList(profile, listField)
-    local specKey = GetSpecKey()
-    if not (specKey and profile.defensives) then return nil end
-    local def = profile.defensives
-    def.classSpells = def.classSpells or {}
-    def.classSpells[specKey] = def.classSpells[specKey] or {}
-    local cs = def.classSpells[specKey]
-    if not cs[listField] then
-        local DE = LibStub("JustAC-DefensiveEngine", true)
-        local SpellDB = LibStub("JustAC-SpellDB", true)
-        local defaultsKey = DE and DE.DefaultsKeyForList and DE.DefaultsKeyForList(listField)
-        local _, playerClass = UnitClass("player")
-        local defaults = defaultsKey and SpellDB and SpellDB[defaultsKey]
-            and SpellDB.ResolveDefaults and SpellDB.ResolveDefaults(SpellDB[defaultsKey], specKey, playerClass)
-        local list = {}
-        for i = 1, (defaults and #defaults or 0) do list[i] = defaults[i] end
-        cs[listField] = list
+function Controls.AlwaysShow(addon, id, onChange)
+    local c = Controls.Pin(addon, id, "alwaysShow", L["Always Show"], L["Always Show desc"], false, onChange)
+    -- Inert while this spec's visibility override (or an inactive situational set)
+    -- hides the spell: the blacklist branch runs before the pin could bypass any
+    -- filtering, so grey it rather than let it look live.
+    c.disabled = function()
+        local SQ = LibStub("JustAC-SpellQueue", true)
+        return (SQ and SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(id)) or false
     end
-    return cs[listField]
+    return c
 end
 
--- Same for the gap-closer list. An EMPTY stored list is read by the engine as "use the
--- defaults", so a bare {} would make Remove a no-op (the removed spell comes straight
--- back from the defaults). Materialise the effective defaults first, then edit those.
-local function EnsureGapCloserList(profile)
-    local specKey = GetSpecKey()
-    if not specKey then return nil end
-    profile.gapClosers = profile.gapClosers or {}
-    profile.gapClosers.classSpells = profile.gapClosers.classSpells or {}
-    local cs = profile.gapClosers.classSpells
-    if not cs[specKey] or #cs[specKey] == 0 then
-        local SpellDB = LibStub("JustAC-SpellDB", true)
-        local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS
-            and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
-        local list = {}
-        for i = 1, (defaults and #defaults or 0) do list[i] = defaults[i] end
-        cs[specKey] = list
+--- Proc Priority is the one pin that also acts in the defensive and pet lists.
+function Controls.ProcPriority(addon, id, onChange, name, desc)
+    return Controls.Pin(addon, id, "procPriority", name or L["Proc Priority"],
+        desc or L["Proc Priority desc"], true, onChange)
+end
+
+--- An item's settings: an aura that means "already active", and hiding it in combat.
+--- Only the defensive engine reads these, so only its lists and the Overrides tab offer them.
+function Controls.Item(addon, itemID, onChange)
+    local function settings(create) return ItemSettings(addon:GetProfile(), itemID, create) end
+    local function prune(s)
+        if not next(s) then addon:GetProfile().defensives.itemSettings[itemID] = nil end
     end
-    return cs[specKey]
+    local function changed()
+        addon:ForceUpdateAll()
+        if onChange then onChange() end
+    end
+    return {
+        {
+            type = "execute",
+            name = function()
+                local s = settings(false)
+                if s and s.linkedAura then
+                    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(s.linkedAura)
+                    return L["Linked: %s"]:format((info and info.name) or tostring(s.linkedAura))
+                end
+                return L["Link Aura..."]
+            end,
+            desc = L["Link Aura desc"],
+            func = function()
+                local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+                if not LiveSearchPopup then return end
+                LiveSearchPopup.Open({
+                    title      = L["Link Aura..."],
+                    searchFunc = SpellSearch.GetFilteredPlayerAuras,
+                    onSelect   = function(auraSpellID)
+                        local s = settings(true)
+                        if not s then return end
+                        s.linkedAura = auraSpellID
+                        -- combatHide defaults ON with a link (a linked-buff item is usually
+                        -- one you don't want cluttering the bar mid-fight, and its aura is
+                        -- almost certainly secret in combat). Remembered as auto-set so Clear
+                        -- Link can unwind it - a user who then flips the toggle themselves
+                        -- owns it, and Clear leaves their choice alone.
+                        if s.combatHide == nil then
+                            s.combatHide = true
+                            s.combatHideAuto = true
+                        end
+                        changed()
+                    end,
+                })
+            end,
+        },
+        {
+            type = "execute",
+            name = L["Clear Link"],
+            desc = L["Clear Link desc"],
+            hidden = function()
+                local s = settings(false)
+                return not (s and s.linkedAura)
+            end,
+            func = function()
+                local s = settings(false)
+                if s then
+                    s.linkedAura = nil
+                    -- Undo the combatHide the link switched on, unless the user set it.
+                    if s.combatHideAuto then s.combatHide, s.combatHideAuto = nil, nil end
+                    prune(s)
+                end
+                changed()
+            end,
+        },
+        {
+            type = "toggle",
+            name = L["Hide in Combat"],
+            desc = L["Hide in Combat desc"],
+            get = function()
+                local s = settings(false)
+                return s and s.combatHide or false
+            end,
+            set = function(_, val)
+                local s = settings(true)
+                if s then
+                    s.combatHide = val or nil
+                    s.combatHideAuto = nil   -- the user owns this value now
+                    prune(s)
+                end
+                changed()
+            end,
+        },
+    }
 end
 
-local function AfterDefensiveList(addon)
-    local Def = LibStub("JustAC-OptionsDefensives", true)
-    if Def and Def.UpdateDefensivesOptions then Def.UpdateDefensivesOptions(addon) end
-    local DE = LibStub("JustAC-DefensiveEngine", true)
-    if DE and DE.RegisterDefensivesForTracking then DE.RegisterDefensivesForTracking(addon) end
+-- "Wait until below": a defensive shows greyed out, marked WAIT, until health drops under
+-- the level picked. The engine fails safe (DefensiveEngine WaitSetting): it waits only on a
+-- DEFINITE reading, so the tooltip has to say the setting can silently stop holding.
+local WAIT_STEPS = { 90, 80, 70, 60, 50, 40, 30, 20 }
+
+local function WaitControl(addon, read, write, onChange)
+    local values, sorting = { auto = L["Wait Auto"], off = L["Wait Never"] }, { "auto" }
+    for _, pct in ipairs(WAIT_STEPS) do
+        values[pct] = string.format(L["Wait Pct"], pct)
+        sorting[#sorting + 1] = pct
+    end
+    sorting[#sorting + 1] = "off"
+    return {
+        type = "select",
+        name = L["Wait Until Below"],
+        desc = L["Wait Until Below desc"],
+        values = values,
+        sorting = sorting,
+        get = function()
+            local v = read()
+            if v == nil then return "auto" end
+            return v
+        end,
+        set = function(_, v)
+            if v == "auto" then v = nil end
+            write(v)
+            addon:ForceUpdateAll()
+            if onChange then onChange() end
+        end,
+    }
+end
+
+--- The dial for a list entry: a spell id, or a NEGATIVE id for an item.
+function Controls.WaitBelow(addon, id, onChange)
+    local itemID = (id < 0) and -id or nil
+    local function store(create)
+        local profile = addon:GetProfile()
+        if itemID then return ItemSettings(profile, itemID, create) end
+        return SpellSettings(profile, id, create)
+    end
+    return WaitControl(addon,
+        function()
+            local s = store(false)
+            return s and s.waitBelow
+        end,
+        function(v)
+            local s = store(v ~= nil)
+            if not s then return end
+            s.waitBelow = v
+            if next(s) then return end
+            local def = addon:GetProfile().defensives
+            if itemID then def.itemSettings[itemID] = nil else def.spellSettings[id] = nil end
+        end, onChange)
+end
+
+--- The Emergency Potion entry's own dial. Kept apart from any item's, because the pot it
+--- fires changes with what is in your bags.
+function Controls.PotionWaitBelow(addon, onChange)
+    return WaitControl(addon,
+        function()
+            local def = addon:GetProfile().defensives
+            return def and def.emergencyPotionWaitBelow
+        end,
+        function(v)
+            local def = addon:GetProfile().defensives
+            if def then def.emergencyPotionWaitBelow = v end
+        end, onChange)
+end
+
+-- Sections that apply to every spec say so, the way per-spec ones carry the class and spec
+-- (SpellSearch.SpecHeader). Without it a setting quietly followed the player to their
+-- other spec, or quietly did not.
+local function AllSpecs(label)
+    return label .. "  |cff888888(" .. L["Scope All Specs"] .. ")|r"
+end
+
+-- The lists themselves - where each lives, what fits it, how to edit it - are described
+-- once in Options/SpellLists.lua. Looked up on use: that file loads first but reads its
+-- controls from here, so neither captures the other at load time.
+local function Lists() return LibStub("JustAC-OptionsSpellLists") end
+
+-- ── Off the action bars ──────────────────────────────────────────────────
+-- What JustAC took off the bars, per character and spec (bar layouts are both), so Put
+-- Back can return it: { [spellID] = { slots = { {slot, id} }, prevVisibility } }.
+local function BarRecords(addon, create)
+    local c = addon.db and addon.db.char
+    local sk = GetSpecKey()
+    if not (c and sk) then return nil end
+    if not c.barRemovals then
+        if not create then return nil end
+        c.barRemovals = {}
+    end
+    if not c.barRemovals[sk] then
+        if not create then return nil end
+        c.barRemovals[sk] = {}
+    end
+    return c.barRemovals[sk]
+end
+
+--- "Action Bar 1 button 5": the names Edit Mode uses, so the player can find the slot.
+local function SlotName(slot)
+    local button = ((slot - 1) % 12) + 1
+    if slot <= 12 then return string.format(L["Bar Slot"], 1, button) end
+    if slot <= 24 then return string.format(L["Bar Slot Page 2"], button) end
+    if slot <= 36 then return string.format(L["Bar Slot"], 4, button) end
+    if slot <= 48 then return string.format(L["Bar Slot"], 5, button) end
+    if slot <= 60 then return string.format(L["Bar Slot"], 3, button) end
+    if slot <= 72 then return string.format(L["Bar Slot"], 2, button) end
+    if slot <= 120 then return string.format(L["Bar Slot Stance"], math.floor((slot - 73) / 12) + 1, button) end
+    return string.format(L["Bar Slot"], 6 + math.floor((slot - 145) / 12), button)
+end
+
+local function SlotNames(list)
+    local out = {}
+    for i, s in ipairs(list) do out[i] = SlotName(s.slot) end
+    return table.concat(out, ", ")
+end
+
+local function AbilityName(id)
+    local name = SpellSearch.DisplayInfo(id)
+    return name and SpellSearch.StripColor(name) or tostring(id)
+end
+
+--- Take an ability off every action bar slot it is on, and stop suggesting it here too.
+function Abilities.RemoveFromBars(addon, id)
+    if InCombatLockdown() then return end
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    if not (ABS and ABS.FindSpellSlots) then return end
+    local slots, macros = ABS.FindSpellSlots(id)
+    if #slots == 0 then return end
+    local cleared = ABS.ClearSlots(slots)
+    local profile = addon:GetProfile()
+    local rec, bl = BarRecords(addon, true), BlacklistTable(profile, true)
+    if not (rec and bl) then return end
+    rec[id] = { slots = slots, prevVisibility = bl[id] }
+    bl[id] = true
+    addon:Print(string.format(L["Bars Removed Chat"], AbilityName(id), cleared, SlotNames(slots)))
+    if #macros > 0 then addon:Print(string.format(L["Bars Macro Chat"], SlotNames(macros))) end
     addon:ForceUpdateAll()
+    Abilities.UpdateAbilitiesOptions(addon)
 end
 
-local function IsPetClass()
-    local _, pc = UnitClass("player")
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    return SpellDB and SpellDB.ClassHasPetDefaults and SpellDB.ClassHasPetDefaults(pc)
+--- Undo it: back into the same slots where they are still empty, and suggested as before.
+function Abilities.PutBackOnBars(addon, id)
+    if InCombatLockdown() then return end
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    local rec = BarRecords(addon, false)
+    local r = rec and rec[id]
+    if not (ABS and ABS.PlaceSpells and r) then return end
+    local placed, taken = ABS.PlaceSpells(r.slots)
+    local bl = BlacklistTable(addon:GetProfile(), true)
+    if bl then bl[id] = r.prevVisibility end
+    rec[id] = nil
+    addon:Print(string.format(L["Bars Put Back Chat"], AbilityName(id), placed))
+    if taken > 0 then addon:Print(string.format(L["Bars Slots Taken Chat"], taken)) end
+    addon:ForceUpdateAll()
+    Abilities.UpdateAbilitiesOptions(addon)
 end
 
-local function ListIndexOf(list, id)
-    if not list then return nil end
-    for i, v in ipairs(list) do
-        if v == id then return i end
-    end
-    return nil
-end
-
---- Wipe every customization this tab can set for one ability: visibility, pins, item
---- settings, hotkey override, and its entries in every priority list. ONE implementation
---- shared by the card's Clear button and the index rows' Remove buttons - two copies of
---- "everything" would drift the moment a new setting was added to one of them.
+--- Wipe every customization this tab can set for one ability: visibility, queue and item
+--- settings, sets, hotkey label, its entries in every priority list, and - if JustAC took
+--- it off the action bars - put it back. The index row's x runs this; keeping "everything"
+--- in one function means a setting added later is cleared too.
 local function ClearAbility(addon, profile, id)
+    local rec = BarRecords(addon, false)
+    if rec and rec[id] and not InCombatLockdown() then Abilities.PutBackOnBars(addon, id) end
     local isItem = id < 0
     local bl = BlacklistTable(profile, false)
     if bl then bl[id] = nil end
@@ -317,10 +399,6 @@ local function ClearAbility(addon, profile, id)
     if profile.hotkeyOverrides then
         profile.hotkeyOverrides[id] = nil
         addon:InvalidateCaches({hotkeys = true})
-    end
-    do
-        local intent = EngineHideIntent(profile, false)
-        if intent then intent[id] = nil end
     end
     -- Situational-set membership for this spec.
     do
@@ -334,26 +412,14 @@ local function ClearAbility(addon, profile, id)
             if UIR and UIR.RefreshSetIndicator then UIR.RefreshSetIndicator(addon) end
         end
     end
-    -- Pins live in the rotation setup cache (see pinToggle) - clearing them needs the
+    -- Pins live in the rotation setup cache (see Controls.Pin) - clearing them needs the
     -- same invalidation or the old pin keeps applying until the next list change.
     local SQ = LibStub("JustAC-SpellQueue", true)
     if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
-    for _, desc in ipairs(LISTS) do
-        -- Explicit branch, NOT `a and f(x) or g(x)`: ResolveClassList legitimately
-        -- returns nil (the spec has no such list yet - a hunter's pet lists, say),
-        -- and the idiom then fell through to desc.resolve, which listField entries
-        -- don't define - "attempt to call a nil value" (user-reported).
-        local list
-        if desc.listField then
-            list = ResolveClassList(profile, desc.listField)
-        else
-            list = desc.resolve(profile)
-        end
-        local at = ListIndexOf(list, id)
-        if at then
-            table.remove(list, at)
-            local after = desc.listField and AfterDefensiveList or desc.after
-            after(addon)
+    for _, desc in ipairs(Lists().LISTS) do
+        if not (desc.inactive and desc.inactive(addon))
+           and Lists().Remove(addon, desc, id) then
+            desc.after(addon)
         end
     end
     addon:ForceUpdateAll()
@@ -366,7 +432,7 @@ end
 -- Bare list membership is deliberately NOT a customization (the defensive lists
 -- are auto-seeded; indexing them would flood this with defaults).
 -------------------------------------------------------------------------------
-local function CollectCustomizations(profile)
+local function CollectCustomizations(profile, addon)
     local seen = {}
     local function badge(id, text)
         if not seen[id] then seen[id] = {} end
@@ -381,22 +447,30 @@ local function CollectCustomizations(profile)
             end
         end
     end
+    -- One badge per setting, saying which: "pinned" covered four different things, and
+    -- read wrongly for the wait level, which is not a pin at all.
+    local function waitBadge(id, w)
+        if type(w) == "number" then badge(id, string.format(L["Wait Badge"], w))
+        elseif w == "off" then badge(id, L["Badge Never Waits"]) end
+    end
     local ss = profile.defensives and profile.defensives.spellSettings
     if ss then
         for id, s in pairs(ss) do
-            if type(id) == "number" and type(s) == "table"
-               and (s.procPriority == false or s.alwaysShow == true
-                    or s.holdUntilCharged == true or s.holdMode ~= nil) then
-                badge(id, L["Pinned Badge"])
+            if type(id) == "number" and type(s) == "table" then
+                if s.holdMode ~= nil or s.holdUntilCharged == true then badge(id, L["Badge Hold"]) end
+                if s.alwaysShow == true then badge(id, L["Badge Always"]) end
+                if s.procPriority == false then badge(id, L["Badge Proc Off"]) end
+                waitBadge(id, s.waitBelow)
             end
         end
     end
     local is = profile.defensives and profile.defensives.itemSettings
     if is then
         for itemID, s in pairs(is) do
-            if type(itemID) == "number" and type(s) == "table"
-               and (s.linkedAura or s.combatHide) then
-                badge(-itemID, L["Item Settings Badge"])
+            if type(itemID) == "number" and type(s) == "table" then
+                if s.linkedAura then badge(-itemID, L["Badge Linked"]) end
+                if s.combatHide then badge(-itemID, L["Badge Combat Hide"]) end
+                waitBadge(-itemID, s.waitBelow)
             end
         end
     end
@@ -407,15 +481,11 @@ local function CollectCustomizations(profile)
             end
         end
     end
-    -- The off-bars declaration is a customization too - without this badge an
-    -- ability whose ONLY setting is that toggle would vanish from this list.
-    local intent = EngineHideIntent(profile, false)
-    if intent then
-        for id in pairs(intent) do
-            if type(id) == "number" and id > 0 then
-                badge(id, L["Keep Off Action Bars"])
-            end
-        end
+    -- Taken off the action bars by us (this spec): the one change that lives outside the
+    -- profile, so it must show here or it would be invisible.
+    local barRec = addon and BarRecords(addon, false)
+    if barRec then
+        for id in pairs(barRec) do badge(id, L["Badge Off Bars"]) end
     end
     -- Situational-set membership (current spec) is a customization too.
     local specKey = GetSpecKey()
@@ -446,314 +516,163 @@ local function CollectCustomizations(profile)
 end
 
 -------------------------------------------------------------------------------
--- Card builder: writes the dynamic args for the selected ability.
+-- An ability's settings, as the panels its row opens in the index. The list draws them
+-- (ListWidget.BindPanels) inside its own pane: the same tinted strip every list opens under
+-- an entry, one small titled panel per section, each title saying its scope.
 -------------------------------------------------------------------------------
-local function BuildCard(addon, args, profile)
-    local id = selectedID
-    local name, icon = SpellSearch.DisplayInfo(id)
+local function CardPanels(addon, id)
+    local profile = addon:GetProfile()
     local isItem = id < 0
-    local displayName = name or ((isItem and "Item #" or "Spell #") .. math.abs(id))
-    if isItem and name then displayName = displayName .. " |cff00ccff[Item]|r" end
     local specKey = GetSpecKey()
-
     local roleTag, roleFam = SpellSearch.RoleTag(id)
     roleFam = roleFam or "both"  -- items: role is context-specific, fits everywhere
+    local function refresh() Abilities.UpdateAbilitiesOptions(addon) end
+    local panels = {}
 
-    -- Card header: icon, name, id, role. Every section below sits under its own header
-    -- (Visibility, Pins, Item Settings, Lists, Custom Hotkey, Reset), so the card reads
-    -- as chunks rather than one stream - the design pass found the first two sections
-    -- unheaded and the visual grouping fell apart at the top of the card.
-    args.cardHeader = {
-        type = "description",
-        name = "|T" .. (icon or 134400) .. ":24:24:0:0|t  |cffFFD100" .. displayName .. "|r  |cff888888("
-            .. (isItem and ("item:" .. -id) or ("ID: " .. id)) .. ")|r"
-            .. (roleTag and ("  " .. roleTag) or ""),
-        order = 10,
-        fontSize = "large",
-    }
-
-    -- ── Visibility (per-spec; the blacklist behind its real name) ───────────
+    -- ── Visibility (per spec), and whether the game's own assist can see it ──
+    -- Spells only: nothing reads the blacklist on the item paths, and items do not go
+    -- through the game's assist, so an item's "visibility" IS its list membership.
     if not isItem then
-        args.visibilityHeader = {
-            type = "header",
-            name = SpellSearch.SpecHeader(L["Ability Visibility"]),
-            order = 10.5,
-        }
-    end
-    args.visibility = {
-        type = "select",
-        name = L["Ability Visibility"],
-        desc = L["Ability Visibility desc"],
-        order = 11,
-        width = "double",
-        values = function()
-            local v = {
-                normal     = L["Visibility Normal"],
-                everywhere = L["Visibility Everywhere"],
-            }
-            -- Items never appear in the AC slot, so the middle state is spells-only.
-            if not isItem then v.queueOnly = L["Visibility Queue Only"] end
-            return v
-        end,
-        sorting = function()
-            return isItem and { "normal", "everywhere" }
-                or { "normal", "queueOnly", "everywhere" }
-        end,
-        get = function()
-            local bl = BlacklistTable(profile, false)
-            local v = bl and bl[id]
-            if v == true then return "everywhere" end
-            if type(v) == "table" then return "queueOnly" end
-            return "normal"
-        end,
-        set = function(_, val)
-            local bl = BlacklistTable(profile, true)
-            if not bl then return end
-            if val == "normal" then bl[id] = nil
-            elseif val == "queueOnly" then bl[id] = { fixedQueue = true }
-            else bl[id] = true end
-            addon:ForceUpdate()
-            Abilities.UpdateAbilitiesOptions(addon)
-        end,
-        disabled = function() return not specKey end,
-        -- Items: nothing reads the blacklist on the item paths (SpellQueue's item branch
-        -- runs before the blacklist check; DefensiveEngine has none). An item is shown
-        -- exactly when it is in a list, so its "visibility" IS its list membership below.
-        -- Hidden rather than left as a dead control that appears to save.
-        hidden = isItem,
-    }
-    -- The engine-honored half of hiding an ability: the game's assist SKIPS spells
-    -- with no visible action-bar button and re-plans around them server-side -
-    -- strictly stronger than our display-side hide. Gated on DECLARED intent, not
-    -- inferred from bar state: a bare "it's blacklisted and on a bar" hint nagged
-    -- players who keep a hidden ability on bars for manual presses, or manage it
-    -- behind a macro (user-identified false positives). The toggle appears once the
-    -- ability is "Never suggested"; with it set, the card reports honestly in both
-    -- directions - still-on-bars (amber) or off-bars-and-skipped (green).
-    local function hasEngineIntent()
-        local intent = EngineHideIntent(profile, false)
-        return intent and intent[id] == true or false
-    end
-    local function onBars()
         local ABS = LibStub("JustAC-ActionBarScanner", true)
-        return (ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(id)) and true or false
-    end
-    args.engineHide = {
-        type = "toggle",
-        name = L["Keep Off Action Bars"],
-        desc = L["Keep Off Action Bars desc"],
-        order = 11.05,
-        width = "double",
-        -- A standalone declaration, deliberately NOT chained behind "Never suggested":
-        -- the engine-skip is real whatever the display setting says, and the coupling
-        -- was invisible logic (nothing in the UI explained why the toggle came and went).
-        hidden = isItem,
-        get = hasEngineIntent,
-        set = function(_, val)
-            local intent = EngineHideIntent(profile, true)
-            if intent then intent[id] = val or nil end
-        end,
-    }
-    args.visibilityBarHint = {
-        type = "description",
-        name = function()
-            if onBars() then
-                return "|cffffcc66" .. L["Visibility Bar Hint"] .. "|r"
-            end
-            return "|cff2ecc71" .. L["Visibility Bar Hint OK"] .. "|r"
-        end,
-        order = 11.1,
-        fontSize = "small",
-        hidden = function()
-            return isItem or not hasEngineIntent()
-        end,
-    }
-
-    -- ── Pins (global across specs; effective while the ability is in a list) ─
-    local function pinToggle(field, nameL, descL, order, defaultOn)
-        return {
-            type = "toggle",
-            name = L[nameL],
-            desc = L[descL],
-            order = order,
-            width = "normal",
-            get = function()
-                local s = SpellSettings(profile, id, false)
-                if defaultOn then return not s or s[field] ~= false end
-                return s and s[field] == true or false
-            end,
-            set = function(_, val)
-                local s = SpellSettings(profile, id, true)
-                if not s then return end
-                -- Explicit if/else, NOT `(not val) and false or nil`: that idiom cannot
-                -- produce false - `x and false` is false, and `false or nil` is nil - so
-                -- unchecking a default-on pin wrote nil, which reads back as "on". The
-                -- Proc Priority box could not be unchecked at all (user-reported).
-                if defaultOn then
-                    if val then s[field] = nil else s[field] = false end
-                else
-                    if val then s[field] = true else s[field] = nil end
-                end
-                if not next(s) then profile.defensives.spellSettings[id] = nil end
-                -- alwaysShow / holdUntilCharged are read into the rotation SETUP cache,
-                -- which only rebuilds on a list change - a pin toggle changes no list, so
-                -- without this the toggle read back correctly and did nothing until a
-                -- talent swap or reload. The twin control on the queue tab already does
-                -- this; the card was missing it (audit-found).
-                local SQ = LibStub("JustAC-SpellQueue", true)
-                if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
-                addon:ForceUpdateAll()
-                Abilities.UpdateAbilitiesOptions(addon)
-            end,
-        }
-    end
-    -- Spells only: no item path reads spellSettings (EvalDefensiveItem and SpellQueue's
-    -- item branch both skip it), so for an item every pin was a toggle that saved and
-    -- did nothing - and still earned a "Pinned" badge in the index. Hidden as a block.
-    if not isItem then
-        args.pinHeader = { type = "header", name = L["Ability Pins"], order = 11.5 }
-        -- Same family order as the custom-queue rows: Hold -> Always Show -> Proc
-        -- Priority. Proc Priority reads last (and never greys on visibility): it
-        -- is the one pin that also acts in the defensive and pet lists.
-        args.pinProc   = pinToggle("procPriority", "Proc Priority", "Proc Priority desc", 14, true)
-        args.pinAlways = pinToggle("alwaysShow", "Always Show", "Always Show desc", 13, false)
-        -- Inert while this spec's visibility override (or an inactive situational
-        -- set) hides the spell: the blacklist branch runs before the pin could
-        -- bypass any filtering, so grey it rather than let it look live.
-        args.pinAlways.disabled = function()
-            local SQ = LibStub("JustAC-SpellQueue", true)
-            return (SQ and SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(id)) or false
+        local function record()
+            local rec = BarRecords(addon, false)
+            return rec and rec[id]
         end
-        -- The Hold Until dial acts only while the custom queue is the rotation
-        -- source AND "Unavailable last" sinking is on; the shared control greys
-        -- the sink half itself and takes the custom-queue half as extraDisabled.
-        args.pinHold = SpellSearch and SpellSearch.HoldModeControl
-            and SpellSearch.HoldModeControl(addon, id, 12, "normal", function()
+        local function find()
+            if not (ABS and ABS.FindSpellSlots) then return {}, {} end
+            return ABS.FindSpellSlots(id)
+        end
+        -- Where it is, said before anything is pressed, so the button's effect is plain.
+        local function barText()
+            local r = record()
+            if r then return "|cffffcc66" .. string.format(L["Bars Status Removed"], SlotNames(r.slots)) .. "|r" end
+            local slots = find()
+            if #slots > 0 then return string.format(L["Bars Status On"], SlotNames(slots)) end
+            return "|cff888888" .. L["Bars Status Off"] .. "|r"
+        end
+        panels[#panels + 1] = {
+            title = SpellSearch.SpecHeader(L["Ability Visibility"]),
+            lines = {
+                { {
+                    type = "select",
+                    name = L["Ability Visibility"],
+                    -- The action-bar advice lives here: shown on its own it nagged players who
+                    -- keep a hidden ability on their bars for manual presses.
+                    desc = function() return L["Ability Visibility desc"] .. "\n\n" .. L["Visibility Bar Tip"] end,
+                    values = {
+                        normal     = L["Visibility Normal"],
+                        queueOnly  = L["Visibility Queue Only"],
+                        everywhere = L["Visibility Everywhere"],
+                    },
+                    sorting = { "normal", "queueOnly", "everywhere" },
+                    get = function()
+                        local bl = BlacklistTable(profile, false)
+                        local v = bl and bl[id]
+                        if v == true then return "everywhere" end
+                        if type(v) == "table" then return "queueOnly" end
+                        return "normal"
+                    end,
+                    set = function(_, val)
+                        local bl = BlacklistTable(profile, true)
+                        if not bl then return end
+                        if val == "normal" then bl[id] = nil
+                        elseif val == "queueOnly" then bl[id] = { fixedQueue = true }
+                        else bl[id] = true end
+                        addon:ForceUpdate()
+                        refresh()
+                    end,
+                    disabled = function() return not specKey end,
+                } },
+                { { type = "description", name = barText } },
+                { {
+                    type = "description",
+                    name = function()
+                        local _, macros = find()
+                        return string.format(L["Bars Status Macro"], SlotNames(macros))
+                    end,
+                    hidden = function()
+                        local _, macros = find()
+                        return #macros == 0
+                    end,
+                } },
+                { {
+                    type = "execute",
+                    name = W.risky(L["Bars Remove"]),
+                    desc = L["Bars Remove desc"],
+                    hidden = function() return record() ~= nil or #(find()) == 0 end,
+                    disabled = function() return InCombatLockdown() end,
+                    -- The question names every slot it will empty and what changes as a result.
+                    confirm = function()
+                        return string.format(L["Bars Remove Confirm"], AbilityName(id), SlotNames((find())))
+                    end,
+                    func = function() Abilities.RemoveFromBars(addon, id) end,
+                }, {
+                    type = "execute",
+                    name = L["Bars Put Back"],
+                    desc = L["Bars Put Back desc"],
+                    hidden = function() return record() == nil end,
+                    disabled = function() return InCombatLockdown() end,
+                    func = function() Abilities.PutBackOnBars(addon, id) end,
+                } },
+            },
+        }
+
+        -- ── Queue settings (all specs) ───────────────────────────────────────────
+        -- Each shows only where it can matter: it is read by one kind of list, so an ability
+        -- that neither fits that kind nor sits in such a list gets a line saying so instead
+        -- of a control that does nothing. Proc Priority is read by every list.
+        local SL = Lists()
+        local function inList(key)
+            local d = SL.Get(key)
+            return d and SL.IndexOf(d.resolve(addon), id) ~= nil
+        end
+        local offensive = roleFam ~= "defensive" or inList("custom")
+        local defensive = roleFam ~= "offensive" or inList("defensive")
+        -- One line; the panel wraps it if it runs out of room.
+        local queue = {}
+        if offensive then queue[#queue + 1] = Controls.AlwaysShow(addon, id, refresh) end
+        queue[#queue + 1] = Controls.ProcPriority(addon, id, refresh)
+        if offensive and SpellSearch.HoldModeControl then
+            -- Acts only while your own list is the rotation source; the shared control greys
+            -- the "unavailable last" half itself and takes this half as extraDisabled.
+            queue[#queue + 1] = SpellSearch.HoldModeControl(addon, id, function()
                 local p = addon.db.profile
                 local sk = GetSpecKey()
                 local cq = sk and p.customQueue and p.customQueue[sk]
                 return not (cq and cq.enabled)
-            end) or nil
-        args.pinNote = {
-            type = "description",
-            name = "|cff888888" .. L["Ability Pins Note"] .. "|r",
-            order = 15,
-            fontSize = "small",
-        }
+            end, refresh)
+        end
+        if defensive then queue[#queue + 1] = Controls.WaitBelow(addon, id, refresh) end
+        local lines = { queue }
+        if not (offensive and defensive) then
+            lines[2] = { { type = "description", name = "|cff888888" .. L["Ability Settings Filtered"] .. "|r" } }
+        end
+        panels[#panels + 1] = { title = AllSpecs(L["Ability Queue Settings"]), lines = lines }
     end
 
-    -- ── Item settings (mirror the defensive-row controls) ───────────────────
+    -- ── Item settings (all specs) ───────────────────────────────────────────────
     if isItem then
-        local itemID = -id
-        -- Item cards skip Visibility and Pins, so this is their first section: without a
-        -- header the card opened straight into a "Link Aura..." button under the name.
-        args.itemHeader = { type = "header", name = L["Item Settings"], order = 15.5 }
-        args.linkAura = {
-            type = "execute",
-            name = function()
-                local s = ItemSettings(profile, itemID, false)
-                if s and s.linkedAura then
-                    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(s.linkedAura)
-                    return (info and info.name) or tostring(s.linkedAura)
-                end
-                return L["Link Aura..."]
-            end,
-            desc = L["Link Aura desc"],
-            order = 16,
-            width = "double",
-            func = function()
-                local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
-                if not LiveSearchPopup then return end
-                LiveSearchPopup.Open({
-                    title      = L["Link Aura..."],
-                    searchFunc = SpellSearch.GetFilteredPlayerAuras,
-                    onSelect   = function(auraSpellID)
-                        local s = ItemSettings(profile, itemID, true)
-                        if not s then return end
-                        s.linkedAura = auraSpellID
-                        -- combatHide defaults ON with a link (a linked-buff item is usually
-                        -- one you don't want cluttering the bar mid-fight). Remembered as
-                        -- auto-set so Clear Link can unwind it - a user who then flips the
-                        -- toggle themselves owns it, and Clear leaves their choice alone.
-                        if s.combatHide == nil then
-                            s.combatHide = true
-                            s.combatHideAuto = true
-                        end
-                        addon:ForceUpdateAll()
-                        Abilities.UpdateAbilitiesOptions(addon)
-                    end,
-                })
-            end,
-        }
-        args.clearAura = {
-            type = "execute",
-            name = L["Clear Link"],
-            desc = L["Clear Link desc"],
-            order = 17,
-            width = "half",
-            hidden = function()
-                local s = ItemSettings(profile, itemID, false)
-                return not (s and s.linkedAura)
-            end,
-            func = function()
-                local s = ItemSettings(profile, itemID, false)
-                if s then
-                    s.linkedAura = nil
-                    -- Undo the combatHide the link switched on, unless the user set it.
-                    if s.combatHideAuto then s.combatHide, s.combatHideAuto = nil, nil end
-                    if not next(s) then profile.defensives.itemSettings[itemID] = nil end
-                end
-                addon:ForceUpdateAll()
-                Abilities.UpdateAbilitiesOptions(addon)
-            end,
-        }
-        args.combatHide = {
-            type = "toggle",
-            name = L["Hide in Combat"],
-            desc = L["Hide in Combat desc"],
-            order = 18,
-            width = "normal",
-            get = function()
-                local s = ItemSettings(profile, itemID, false)
-                return s and s.combatHide or false
-            end,
-            set = function(_, val)
-                local s = ItemSettings(profile, itemID, true)
-                if s then
-                    s.combatHide = val or nil
-                    s.combatHideAuto = nil   -- the user owns this value now
-                    if not next(s) then profile.defensives.itemSettings[itemID] = nil end
-                end
-                addon:ForceUpdateAll()
-                Abilities.UpdateAbilitiesOptions(addon)   -- the index badge tracks this
-            end,
+        local item = Controls.Item(addon, -id, refresh)
+        panels[#panels + 1] = {
+            title = AllSpecs(L["Item Settings"]),
+            lines = { { item[1], item[2] }, { item[3], Controls.WaitBelow(addon, id, refresh) } },
         }
     end
 
-    -- ── Situational sets (spells only; per-spec; toggled by keybind) ─────────
-    -- Membership lives here beside the ability; the sets are named on the General
-    -- tab and flipped from Key Bindings. Storage: profile.situationalSets[specKey][slot]
-    -- = { name = "...", spells = { [id] = true } }.
+    -- ── Situational sets (per spec; toggled by keybind) ──────────────────────
+    -- Storage: profile.situationalSets[specKey][slot] = { name = "...", spells = { [id] = true } }.
     if not isItem and specKey then
-        args.setsHeader = { type = "header", name = SpellSearch.SpecHeader(L["Situational Sets"]), order = 18 }
-        args.setsNote = {
-            type = "description",
-            name = "|cff888888" .. L["Situational Sets Note"] .. "|r",
-            order = 18.1,
-            fontSize = "small",
-        }
         local SQ = LibStub("JustAC-SpellQueue", true)
+        local line = {}
         for slot = 1, (SQ and SQ.SET_SLOTS or 3) do
-            args["set" .. slot] = {
+            line[slot] = {
                 type = "toggle",
                 name = function() return addon:GetSituationalSetName(slot) end,
-                desc = L["Situational Set Member desc"],
-                order = 18.1 + slot * 0.1,
-                width = "normal",
+                desc = L["Situational Sets Note"],
                 get = function()
                     local sets = profile.situationalSets and profile.situationalSets[specKey]
-                    local s = sets and sets[slot]
-                    return s and s.spells and s.spells[id] == true or false
+                    local st = sets and sets[slot]
+                    return st and st.spells and st.spells[id] == true or false
                 end,
                 set = function(_, val)
                     profile.situationalSets = profile.situationalSets or {}
@@ -768,155 +687,111 @@ local function BuildCard(addon, args, profile)
                     local UIR = LibStub("JustAC-UIRenderer", true)
                     if UIR and UIR.RefreshSetIndicator then UIR.RefreshSetIndicator(addon) end
                     addon:ForceUpdate()
-                    Abilities.UpdateAbilitiesOptions(addon)
+                    refresh()
                 end,
             }
         end
+        panels[#panels + 1] = { title = SpellSearch.SpecHeader(L["Situational Sets"]), lines = { line } }
     end
 
-    -- ── List membership ─────────────────────────────────────────────────────
-    args.listsHeader = {
-        type = "header",
-        name = SpellSearch.SpecHeader(L["Ability Lists"]),
-        order = 20,
+    -- ── Hotkey label (all specs) ─────────────────────────────────────────────
+    panels[#panels + 1] = {
+        title = AllSpecs(L["Custom Hotkey"]),
+        lines = { { {
+            type = "input",
+            name = L["Custom Hotkey"],
+            desc = L["Enter the hotkey text to display (e.g. 1, F1, S-2)"],
+            get = function()
+                return (profile.hotkeyOverrides and profile.hotkeyOverrides[id]) or ""
+            end,
+            set = function(_, val)
+                if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
+                local trimmed = val and val:trim() or ""
+                profile.hotkeyOverrides[id] = trimmed ~= "" and trimmed or nil
+                addon:InvalidateCaches({hotkeys = true})   -- icons cache the string
+                addon:ForceUpdate()
+                refresh()
+            end,
+        } } },
     }
-    local order = 21
-    for _, desc in ipairs(LISTS) do
-        local list, naText
-        if desc.listField then
-            list = ResolveClassList(profile, desc.listField)
-        else
-            list, naText = desc.resolve(profile)
-        end
-        local pos = ListIndexOf(list, id)
 
-        -- Type-filtered: a row appears when the ability is already in that list
-        -- (Remove must always be reachable) or genuinely fits it.
-        if (not desc.petOnly or IsPetClass())
-           and not (desc.spellsOnly and isItem)
-           and (pos or desc.fits(id, roleFam)) then
-            local after = desc.listField and AfterDefensiveList or desc.after
-
-            args["list_" .. desc.key] = {
-                type = "description",
-                name = L[desc.nameKey] .. ": " .. (pos and ("|cff2ecc71#" .. pos .. "|r")
-                    or ("|cff888888" .. (naText or L["Not In List"]) .. "|r")),
-                order = order,
-                width = "double",
-            }
-            -- Resolved at PRESS time, not captured from the card build: a rotation
-            -- re-snapshot replaces the underlying table (SnapshotRotation builds a
-            -- fresh one), and mutating the stale capture was a silent no-op.
-            local function LiveList()
-                if desc.listField then return ResolveClassList(profile, desc.listField) end
-                return (desc.resolve(profile))
-            end
-            -- The list to EDIT: created on demand (defaults materialised) so Add works
-            -- on a spec that has never stored one, and Remove edits a real list rather
-            -- than a defaults fallback the removed spell would resurface from.
-            local function EditList()
-                if desc.listField then return EnsureClassList(profile, desc.listField) end
-                if desc.key == "gap" then return EnsureGapCloserList(profile) end
-                if desc.ensure then return desc.ensure(profile) end
-                return (desc.resolve(profile))
-            end
-            args["listbtn_" .. desc.key] = {
-                type = "execute",
-                name = pos and L["Remove"] or L["Add"],
-                order = order + 0.1,
-                width = "half",
-                -- Disabled only when the list can never exist here (no spec key, or the
-                -- Custom Queue is switched off) - not merely because it is empty.
-                disabled = function()
-                    if desc.listField or desc.key == "gap" then return not GetSpecKey() end
-                    return not LiveList()
-                end,
-                func = function()
-                    local live = EditList()
-                    if not live then return end
-                    local at = ListIndexOf(live, id)
-                    if at then
-                        table.remove(live, at)
-                    else
-                        if not SpellSearch.AddSpellToList(addon, live, id) then return end
-                    end
-                    after(addon)
-                    Abilities.UpdateAbilitiesOptions(addon)
-                end,
-            }
-            order = order + 1
-        end
+    -- ── Footer: which of this spec's lists hold it, its ID and role ──────────
+    -- Read-only: adding and removing happen on the list tabs.
+    local parts = {}
+    local SL = Lists()
+    for _, desc in ipairs(SL.LISTS) do
+        local pos = (not desc.available or desc.available()) and SL.IndexOf(desc.resolve(addon), id)
+        if pos then parts[#parts + 1] = desc.name .. " |cff2ecc71#" .. pos .. "|r" end
     end
-
-    -- ── Hotkey override (global) ────────────────────────────────────────────
-    args.hotkeyHeader = { type = "header", name = L["Custom Hotkey"], order = 40 }
-    args.hotkey = {
-        type = "input",
-        name = L["Custom Hotkey"],
-        desc = L["Enter the hotkey text to display (e.g. 1, F1, S-2)"],
-        order = 41,
-        width = "normal",
-        get = function()
-            return (profile.hotkeyOverrides and profile.hotkeyOverrides[id]) or ""
-        end,
-        set = function(_, val)
-            if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
-            local trimmed = val and val:trim() or ""
-            profile.hotkeyOverrides[id] = trimmed ~= "" and trimmed or nil
-            addon:InvalidateCaches({hotkeys = true})   -- icons cache the string
-            addon:ForceUpdate()
-            Abilities.UpdateAbilitiesOptions(addon)
-        end,
-    }
-
-    -- ── Clear everything for this ability ───────────────────────────────────
-    -- Own section, under its own header: without one it landed on the same visual row as
-    -- the hotkey field and read as that field's control (user-reported). It is the one
-    -- destructive action on the card, so it should look set apart, not attached.
-    args.clearHeader = { type = "header", name = L["Reset Ability"], order = 49 }
-    args.clearAbility = {
-        type = "execute",
-        name = L["Clear Ability"],
-        desc = L["Clear Ability desc"],
-        order = 50,
-        width = "normal",
-        confirm = true,
-        func = function() ClearAbility(addon, profile, id) end,
-    }
-    -- Done closes the card. It lives HERE, at the foot beside Reset - where you finish
-    -- with the card - not up by the picker where it first went: an affordance far from
-    -- the thing it dismisses is one the eye does not connect. Without it a selected card
-    -- sat open until another ability was picked, and the customizations list below read
-    -- as a page you could not get back to (user-reported).
-    args.closeAbility = {
-        type = "execute",
-        name = L["Done"],
-        desc = L["Done desc"],
-        order = 51,
-        width = "half",
-        func = function()
-            selectedID = nil
-            Abilities.UpdateAbilitiesOptions(addon)
-        end,
-    }
+    local footer = "|cff888888(" .. (isItem and ("item:" .. -id) or ("ID: " .. id)) .. ")|r"
+        .. (roleTag and ("  " .. roleTag) or "") .. "    "
+        .. ((#parts > 0) and (L["In Your Lists"] .. " " .. table.concat(parts, ", ")) or L["In No Lists"])
+    return { panels = panels, footer = footer }
 end
 
--------------------------------------------------------------------------------
--- Tab skeleton + dynamic rebuild
--------------------------------------------------------------------------------
+-- ── The customizations index ────────────────────────────────────────────────
+-- Drawn with the rows every list uses; a row opens its ability's panels under it like any
+-- list opens an entry, and a second click closes them. A VIEW, not a list: worked out from
+-- the stores each time, and registered apart from the lists, so nothing that walks them sees
+-- it. The x clears every override without opening it - the quick way, and why it asks first.
+local indexBadges, indexNames = {}, {}
+local function IndexIDs(addon)
+    local rows = CollectCustomizations(addon:GetProfile(), addon)
+    wipe(indexBadges)
+    wipe(indexNames)
+    local ids = {}
+    for i, r in ipairs(rows) do
+        ids[i] = r.id
+        indexBadges[r.id], indexNames[r.id] = r.badges, r.name
+    end
+    -- An ability searched for with nothing set yet still gets a row - at the top, where the
+    -- search was - so it opens the same way as the rest. It stays only while it is open.
+    local open = Selected()
+    if open and not Lists().IndexOf(ids, open) then table.insert(ids, 1, open) end
+    return ids
+end
+
+Lists().RegisterView("abilityindex", {
+    name = L["Your Customizations"], empty = L["No Customizations"], ordered = false,
+    resolve = IndexIDs, ensure = IndexIDs,
+    after = function(addon) Abilities.UpdateAbilitiesOptions(addon) end,
+    controls = function(addon, id) return CardPanels(addon, id) end,
+    -- What is set reads beside the name; the cooldown column means nothing here.
+    decorate = function(_, id, row)
+        -- The open one in gold, so it is plain which row a second click closes.
+        if id == Selected() then row.name = "|cffffd100" .. row.name .. "|r" end
+        row.name = row.name .. "  |cff888888" .. (indexBadges[id] or L["Nothing Set Yet"]) .. "|r"
+        if id > 0 then row.right = nil end
+    end,
+    -- A second click on the open ability closes it again. Explicit if/else, never
+    -- `x and nil or y`: that idiom cannot produce nil, so it could never close.
+    click = function(addon, id)
+        if Selected() == id then Select(nil) else Select(id) end
+        Abilities.UpdateAbilitiesOptions(addon)
+    end,
+    confirmRemove = function(_, id)
+        return string.format(L["Remove Customizations confirm"],
+            SpellSearch.StripColor(indexNames[id] or AbilityName(id)))
+    end,
+    forget = function(addon, id)
+        ClearAbility(addon, addon:GetProfile(), id)
+        if Selected() == id then Select(nil) end
+        Abilities.UpdateAbilitiesOptions(addon)
+    end,
+})
+
 function Abilities.CreateTabArgs(addon)
     return {
         type = "group",
-        name = L["Abilities"],
+        name = L["Overrides Tab"],
         order = 5.5,  -- exceptions come after the queues they override, above Profiles
         args = {
             info = {
                 type = "description",
-                name = L["Abilities Info"],
+                name = L["Abilities Intro"],
                 order = 1,
                 fontSize = "medium",
             },
-            -- Dynamic content added by UpdateAbilitiesOptions
         },
     }
 end
@@ -940,67 +815,28 @@ function Abilities.UpdateAbilitiesOptions(addon)
             if not LiveSearchPopup then return end
             SpellSearch.BuildSpellbookCache()
             LiveSearchPopup.Open({
-                title      = L["Abilities"],
+                title      = L["Overrides Tab"],
                 searchFunc = SpellSearch.GetFilteredResults,
                 onSelect   = function(id)
                     if not id or id == 0 then return end
-                    selectedID = id
+                    Select(id)
                     Abilities.UpdateAbilitiesOptions(addon)
                 end,
             })
         end,
     }
-
-    if selectedID then
-        BuildCard(addon, args, profile)
-    end
-
-    -- ── Customizations index ────────────────────────────────────────────────
-    args.customHeader = {
-        type = "header",
-        name = L["Your Customizations"],
-        order = 60,
-    }
-    local rows = CollectCustomizations(profile)
-    if #rows == 0 then
-        args.noCustomizations = {
-            type = "description",
-            name = "|cff888888" .. L["No Customizations"] .. "|r",
-            order = 61,
-        }
-    else
-        for i, row in ipairs(rows) do
-            local _, icon = SpellSearch.DisplayInfo(row.id)
-            -- Two controls per row, not one full-width bar: the ability (opens its card)
-            -- and a compact Remove that wipes every customization without opening it.
-            args["cust_" .. tostring(row.id)] = {
-                type = "execute",
-                name = "|T" .. (icon or 134400) .. ":16:16:0:0|t " .. row.name
-                    .. "  |cff888888" .. row.badges .. "|r",
-                desc = L["Open Ability desc"],
-                order = 60 + i,
-                width = "double",
-                func = function()
-                    selectedID = row.id
-                    Abilities.UpdateAbilitiesOptions(addon)
-                end,
-            }
-            args["custrm_" .. tostring(row.id)] = {
-                type = "execute",
-                name = L["Remove"],
-                desc = L["Clear Ability desc"],
-                order = 60 + i + 0.5,
-                width = "half",
-                confirm = true,
-                confirmText = string.format(L["Remove Customizations confirm"], row.name),
-                func = function()
-                    ClearAbility(addon, profile, row.id)
-                    if selectedID == row.id then selectedID = nil end
-                    Abilities.UpdateAbilitiesOptions(addon)
-                end,
-            }
-        end
-    end
-
+    args.customHeader = { type = "header", name = L["Your Customizations"], order = 60 }
+    args.indexList = Lists().Control("abilityindex", 61)
     NotifyChange()
+end
+
+--- Open an ability from anywhere - a list row's right click. Every setting it has is here,
+--- where a list row can show only its own list's.
+function Abilities.Open(id)
+    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    if not (addon and id) then return end
+    Select(id)
+    Abilities.UpdateAbilitiesOptions(addon)
+    local ACD = LibStub("AceConfigDialog-3.0", true)
+    if ACD then ACD:SelectGroup("JustAssistedCombat", "abilities") end
 end

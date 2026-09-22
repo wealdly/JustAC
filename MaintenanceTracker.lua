@@ -851,6 +851,15 @@ end
 MaintenanceTracker.ResolveCooldownIDs = ResolveCooldownIDs
 MaintenanceTracker.MatchesCooldownInfo = Matches
 
+--- The player's own warning time for this spec, in seconds, or nil for the entry's own.
+--- Per spec, because each spec maintains a different buff with a different duration.
+local function UserLead()
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile and BlizzardAPI.GetProfile()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local v = profile and specKey and profile.maintenanceLead and profile.maintenanceLead[specKey]
+    return type(v) == "number" and v or nil
+end
+
 --- Live-buff verdict: "refresh" once inside the refresh window (when the entry has a
 --- clock), else "up". Shared by the instance path and the viewer-boolean path.
 --- chargeGated entries never pre-warn (pressing early throws away buff time); lead in
@@ -866,6 +875,8 @@ local function LiveVerdict(entry, s, instanceID)
     -- carry a real 30s duration the engine would happily threshold, and asking it
     -- would resurrect the fabricated warning the curation exists to prevent.
     if not effDur then return "up" end
+    -- SECONDS lead: the player's own if set, else the entry's, else the proportional fallback.
+    local lead = UserLead() or entry.lead
 
     -- ENGINE TRUTH, when we hold the live instance. The aura's own remaining time,
     -- thresholded by the engine and read through the zero-gate (field-verified in
@@ -887,8 +898,8 @@ local function LiveVerdict(entry, s, instanceID)
             and BlizzardAPI.GetAuraDurationObject("player", instanceID)
         if durObj then
             local below
-            if entry.lead and BlizzardAPI.IsDurationBelowSeconds then
-                below = BlizzardAPI.IsDurationBelowSeconds(durObj, entry.lead)
+            if lead and BlizzardAPI.IsDurationBelowSeconds then
+                below = BlizzardAPI.IsDurationBelowSeconds(durObj, lead)
             elseif BlizzardAPI.IsDurationBelowPercent then
                 below = BlizzardAPI.IsDurationBelowPercent(durObj, REFRESH_LEAD * 100)
             end
@@ -900,7 +911,7 @@ local function LiveVerdict(entry, s, instanceID)
     -- projected/stacking entries, which reach here with no instance.
     if s.lastCastAt then
         local elapsed = GetTime() - s.lastCastAt
-        local fireAt = entry.lead and (effDur - entry.lead)
+        local fireAt = lead and (effDur - lead)
                        or (effDur * (1 - REFRESH_LEAD))
         if fireAt < 0 then fireAt = 0 end
         if elapsed >= fireAt then return "refresh" end
@@ -1080,7 +1091,33 @@ end
 -- Store on EVERY exit, not just the timestamp: setting `t` alone made the second call
 -- in a frame hit the cache and return nils, blanking the slot. Module-level: as an
 -- inline closure this allocated once per rendered frame while the slot was live.
+-- Sound cue: an EDGE, not a level - "it just dropped", played once. Detected here, where
+-- the pick is computed once per frame, so the main panel and the nameplate overlay (which
+-- both draw this slot) cannot each play it. A previous state older than a second is
+-- forgotten: GetState only runs while the slot is live in combat, so a stale "up" from the
+-- last pull must not make a buff that simply is not up yet at this one read as a drop.
+local lastCueState, lastCueAt = nil, 0
+local function CueSound(state, now)
+    local prev = (now - lastCueAt <= 1) and lastCueState or nil
+    lastCueState, lastCueAt = state, now
+    if prev == nil or prev == state then return end
+    if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return end
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile and BlizzardAPI.GetProfile()
+    local key = profile and profile.maintenanceSound
+    if not key or key == "None" then return end
+    local at = profile.maintenanceSoundAt or "drop"
+    -- A drop is only a drop from a state that had the buff: "unknown" -> "down" is the
+    -- tracker making up its mind, not the buff going away.
+    local dropped = state == "down" and (prev == "up" or prev == "refresh")
+    local warned = state == "refresh" and prev == "up"
+    if not ((dropped and at ~= "refresh") or (warned and at ~= "drop")) then return end
+    local LSM = LibStub("LibSharedMedia-3.0", true)
+    local file = LSM and LSM:Fetch(LSM.MediaType.SOUND, key, true)
+    if file then PlaySoundFile(file, "Master") end
+end
+
 local function MemoPick(now, state, entry, inst)
+    CueSound(state, now)
     pickCache.t, pickCache.state, pickCache.entry, pickCache.inst = now, state, entry, inst
     MaintenanceTracker._activeEntry = entry
     return state, entry, inst
