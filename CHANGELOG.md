@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [5.6.1] - 2026-09-21
+
+### Fixed
+- An ability a talent has turned passive (Crusader Strike under Retribution's Crusading Strikes) no longer appears in the queue, whether from the game's own rotation or a custom list.
+- Spell data refreshed for the current game build.
+
 ## [5.6.0] - 2026-09-20
 
 ### Improved

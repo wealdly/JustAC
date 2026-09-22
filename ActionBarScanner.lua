@@ -20,7 +20,6 @@ local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local C_ActionBar_FindSpellActionButtons = C_ActionBar and C_ActionBar.FindSpellActionButtons
 local FindBaseSpellByID = FindBaseSpellByID
-local FindSpellOverrideByID = FindSpellOverrideByID
 local C_GamePad = C_GamePad
 local pairs = pairs
 local ipairs = ipairs
@@ -408,21 +407,6 @@ local function SearchSlots(slotSet, spellID, spellName)
                         local targetOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID, 0, false)
                         if targetOverride and targetOverride ~= 0 and targetOverride ~= spellID and id == targetOverride then
                             isMatch = true
-                        end
-                    end
-
-                    -- FindSpellOverrideByID fallback - separate native API for talent/aura overrides
-                    -- that C_Spell.GetOverrideSpell may miss (different internal lookup path)
-                    if not isMatch and FindSpellOverrideByID then
-                        local slotOverride = FindSpellOverrideByID(id)
-                        if slotOverride and slotOverride ~= id and slotOverride == spellID then
-                            isMatch = true
-                        end
-                        if not isMatch then
-                            local targetOverride = FindSpellOverrideByID(spellID)
-                            if targetOverride and targetOverride ~= spellID and targetOverride == id then
-                                isMatch = true
-                            end
                         end
                     end
 

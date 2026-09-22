@@ -21,7 +21,6 @@ local C_Spell_GetSpellCooldown          = C_Spell and C_Spell.GetSpellCooldown
 local C_Spell_IsSpellUsable             = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell          = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local FindSpellOverrideByID             = FindSpellOverrideByID
 local GetInventoryItemID                = GetInventoryItemID ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 
@@ -101,15 +100,29 @@ end
 -- nothing can press. IsSpellAvailable already refuses passives for OUR lists; these
 -- two ingest points returned Blizzard's ids verbatim, bypassing it. Memoized:
 -- passive-ness is static spell data, and the demand probe runs per queue build.
+-- Two sources, because they disagree: the SPELL's own passive flag, and the SPELLBOOK
+-- ENTRY's. A talent can turn a castable button passive without touching the spell (Ret's
+-- Crusading Strikes: Crusader Strike 35395 still reads known, usable and non-passive, while
+-- its spellbook entry says Passive and the button cannot be pressed). Memoized; wiped with
+-- the availability cache on talent/spec/spellbook changes, since the book half can flip.
 local passiveMemo = {}
 local function IsPassiveID(spellID)
-    if not C_Spell_IsSpellPassive then return false end
     local v = passiveMemo[spellID]
-    if v == nil then
+    if v ~= nil then return v end
+    v = false
+    if C_Spell_IsSpellPassive then
         local ok, isPassive = pcall(C_Spell_IsSpellPassive, spellID)
         v = (ok and isPassive) and true or false
-        passiveMemo[spellID] = v
     end
+    if not v and C_SpellBook and C_SpellBook.FindSpellBookSlotForSpell and C_SpellBook.GetSpellBookItemInfo then
+        local ok, slot, bank = pcall(C_SpellBook.FindSpellBookSlotForSpell, spellID)
+        if ok and slot then
+            local okI, info = pcall(C_SpellBook.GetSpellBookItemInfo, slot,
+                bank or (Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player) or 0)
+            if okI and type(info) == "table" and info.isPassive == true then v = true end
+        end
+    end
+    passiveMemo[spellID] = v
     return v
 end
 -- Exported for gates that deliberately can't use IsSpellAvailable (its castability
@@ -448,24 +461,11 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
     return spellID
 end
 
---- Resolves a talent override for a spell using FindSpellOverrideByID.
---- Used across the queue, engines and options for proc/rotation dedup.
---- Distinct from GetDisplaySpellID (which uses C_Spell.GetOverrideSpell for
---- action-bar display transforms like Metamorphosis).
---- Returns the override ID when a talent replaces the spell, or spellID otherwise.
-function BlizzardAPI.ResolveSpellID(spellID)
-    if FindSpellOverrideByID then
-        local overrideID = FindSpellOverrideByID(spellID)
-        -- Same passive refusal as GetDisplaySpellID above; this is the hop every
-        -- defensive/precombat entry takes on its way to an icon (user-confirmed live:
-        -- the topoff heal's Renew resolved to a passive Priest talent and rendered it).
-        if overrideID and overrideID ~= 0 and overrideID ~= spellID
-           and not IsPassiveID(overrideID) then
-            return overrideID
-        end
-    end
-    return spellID
-end
+--- The talent/transform override for a spell, or spellID itself. One resolver: this used
+--- to be a second copy over FindSpellOverrideByID, documented as "distinct from
+--- GetDisplaySpellID" - measured 2026-09-21 across a Druid's whole spellbook, in and out
+--- of form, the two APIs never disagreed (0 of 111). Same passive refusal, one cache.
+BlizzardAPI.ResolveSpellID = BlizzardAPI.GetDisplaySpellID
 
 --- Resolve a possibly-stale stored spellID to a form the player actually knows:
 --- the ID itself, its current talent override, or its base spell - in that
@@ -554,6 +554,7 @@ local spellAvailabilityCache = {}
 
 function BlizzardAPI.ClearAvailabilityCache()
     wipe(spellAvailabilityCache)
+    wipe(passiveMemo)   -- the spellbook half of IsPassiveID moves with talents
 end
 
 -- Event-only invalidation: cleared by SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
@@ -572,12 +573,9 @@ function BlizzardAPI.IsSpellAvailable(spellID)
     -- authoritative checks below answer TRUE for a passive you know. This must
     -- therefore run BEFORE them - it used to sit at the bottom, where it could
     -- only ever confirm a false the function was already returning.
-    if C_Spell_IsSpellPassive then
-        local ok, isPassive = pcall(C_Spell_IsSpellPassive, spellID)
-        if ok and isPassive then
-            spellAvailabilityCache[spellID] = false
-            return false
-        end
+    if IsPassiveID(spellID) then
+        spellAvailabilityCache[spellID] = false
+        return false
     end
 
     -- Authoritative checks first: IsSpellKnown/IsPlayerSpell are definitive
