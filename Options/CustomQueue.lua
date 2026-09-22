@@ -336,6 +336,19 @@ function CustomQueue.CreateTabArgs(addon)
                         -- switch, and sitting above the list it read as a headline feature.
                         order = 40,
                         width = "full",
+                        -- Only your own list can contest the game's pick, so on any
+                        -- other tab this switch has nothing to act on and nothing on
+                        -- screen would answer it. Greyed there, not silently inert.
+                        disabled = function()
+                            local PL = LibStub("JustAC-PriorityList", true)
+                            if not (PL and PL.CurrentSource) then return true end
+                            local profile = addon:GetProfile()
+                            local specKey = GetSpecKey()
+                            local cq = profile and specKey and profile.customQueue
+                                and profile.customQueue[specKey]
+                            return PL.CurrentSource(profile) ~= "custom"
+                                or not (cq and cq.spells and #cq.spells > 0)
+                        end,
                         get = function()
                             local profile = addon:GetProfile()
                             local specKey = GetSpecKey()
