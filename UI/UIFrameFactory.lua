@@ -663,16 +663,22 @@ local function AddAssistRing(button, size)
     button.AssistRing = f
 end
 
---- Swap the ring between its two states, on the combat edge rather than per frame. The
---- glow only turns while it is shown, so stopping it is not an optimisation, it is what
---- keeps the animation from drifting out of phase with the art behind it.
-function UIFrameFactory.SetAssistRingCombat(icon, inCombat)
+--- The ring is the GAME's mark, so it is shown only while slot 1 holds the game's own
+--- pick. When the lead setting puts something of ours there we drop it and the slot wears
+--- our own cue instead: one mark, one meaning, never both claiming the same slot.
+---
+--- Within that, the two states follow combat exactly as the game does. Stopping the
+--- animation when it hides is not an optimisation; a group left playing behind a hidden
+--- frame comes back at whatever phase it drifted to.
+function UIFrameFactory.SetAssistRing(icon, isGamePick, inCombat)
     local f = icon and icon.AssistRing
     if not f then return end
-    f.idle:SetShown(not inCombat)
-    f.lit:SetShown(inCombat and true or false)
+    f:SetShown(isGamePick and true or false)
+    local lit = isGamePick and inCombat and true or false
+    f.idle:SetShown(isGamePick and not inCombat)
+    f.lit:SetShown(lit)
     if f.lit.anim then
-        if inCombat then f.lit.anim:Play() else f.lit.anim:Stop() end
+        if lit then f.lit.anim:Play() else f.lit.anim:Stop() end
     end
 end
 
