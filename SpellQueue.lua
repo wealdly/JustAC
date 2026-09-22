@@ -431,6 +431,13 @@ local function PassesRotationFilters(spellID, profile, sourceID)
     local result = (BlizzardAPI.IsSpellAvailable(spellID)
             or (sourceID and sourceID ~= spellID and BlizzardAPI.IsSpellAvailable(sourceID)) or false)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
+       -- Upkeep never belongs in the TAIL: poisons, imbues and long raid buffs are offered
+       -- before the pull by the pre-combat reminder, and in positions 2+ they are just
+       -- clutter the player cannot act on mid-fight. The redundancy filter already drops
+       -- them once combat starts; this covers out of combat too. Slot 1 is untouched -
+       -- that is the game's own pick and there is no way to talk it out of one.
+       and not (RedundancyFilter and RedundancyFilter.IsUpkeepSpell
+                and RedundancyFilter.IsUpkeepSpell(spellID))
     rotationFilterCache[spellID] = result
     return result
 end
