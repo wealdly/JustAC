@@ -970,6 +970,12 @@ end
 -- heals (stay up top in the user's order), 1 = hold-worthy big heal / heal item, 2 = immunity
 -- bubble (very bottom). Combat-safe: tier is static, base CD is a cached OOC value.
 local function EmergencyRank(sid)
+    -- A level of its own (SpellDB.GetDefaultWaitBelow): with the bubbles at the bubble
+    -- band, with the big heals up to this ordering's own line (80%). Above it (heals over
+    -- time) it keeps its place: in that stretch it may well be live.
+    local auto = SpellDB and SpellDB.GetDefaultWaitBelow and SpellDB.GetDefaultWaitBelow(sid)
+    if auto and auto <= HEALTH_BANDS[1] then return 2 end
+    if auto and auto <= HEALTH_BANDS[3] then return 1 end
     if not IsHoldWorthy(sid) then return 0 end
     if sid > 0 and TierOf(sid) == 1 then return 2 end  -- immunity bubble → very bottom
     return 1  -- hold-worthy big heal / heal item
@@ -1049,11 +1055,23 @@ local function AutoLive(entry, isLow)
     return true
 end
 
+--- Auto's own level for an entry (SpellDB.GetDefaultWaitBelow), by the id in the list and
+--- then by the form a talent turned it into. nil = the kind rule (AutoLive).
+local function AutoWaitBelow(e)
+    if e.isItem or not (SpellDB and SpellDB.GetDefaultWaitBelow) then return nil end
+    return (e.storedID and SpellDB.GetDefaultWaitBelow(e.storedID)) or SpellDB.GetDefaultWaitBelow(e.spellID)
+end
+
 local function MarkWaiting(def, results, isLow)
     for _, entry in ipairs(results) do
         if not entry.isProcced and not entry.precombat then
             local w = WaitSetting(def, entry)
-            if w == nil then
+            local auto = w == nil and def.hideEmergencyUntilLow and AutoWaitBelow(entry)
+            if auto then
+                -- Auto with a level of its own: the same fail-safe as a level the player
+                -- picks - it waits only on a definite "not below".
+                if PlayerBelow(auto) == false then entry.waiting = true end
+            elseif w == nil then
                 -- Auto: with "hide until low" on, the parked panic buttons wait until the
                 -- band their kind calls for (AutoLive).
                 if def.hideEmergencyUntilLow and IsHoldWorthy(entry.spellID, entry.isItem)

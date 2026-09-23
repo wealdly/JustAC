@@ -228,8 +228,11 @@ end
 -- DEFINITE reading, so the tooltip has to say the setting can silently stop holding.
 local WAIT_STEPS = { 90, 80, 70, 60, 50, 40, 30, 20 }
 
-local function WaitControl(addon, read, write, onChange)
-    local values, sorting = { auto = L["Wait Auto"], off = L["Wait Never"] }, { "auto" }
+--- autoPct: the level Auto means for this ability, when it has one of its own.
+local function WaitControl(addon, read, write, onChange, autoPct)
+    local auto = L["Wait Auto"]
+    if autoPct then auto = auto .. " (" .. string.format(L["Wait Pct"], autoPct) .. ")" end
+    local values, sorting = { auto = auto, off = L["Wait Never"] }, { "auto" }
     for _, pct in ipairs(WAIT_STEPS) do
         values[pct] = string.format(L["Wait Pct"], pct)
         sorting[#sorting + 1] = pct
@@ -258,6 +261,8 @@ end
 --- The dial for a list entry: a spell id, or a NEGATIVE id for an item.
 function Controls.WaitBelow(addon, id, onChange)
     local itemID = (id < 0) and -id or nil
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local autoPct = SpellDB and SpellDB.GetDefaultWaitBelow and SpellDB.GetDefaultWaitBelow(id)
     local function store(create)
         local profile = addon:GetProfile()
         if itemID then return ItemSettings(profile, itemID, create) end
@@ -275,7 +280,7 @@ function Controls.WaitBelow(addon, id, onChange)
             if next(s) then return end
             local def = addon:GetProfile().defensives
             if itemID then def.itemSettings[itemID] = nil else def.spellSettings[id] = nil end
-        end, onChange)
+        end, onChange, autoPct)
 end
 
 --- The Emergency Potion entry's own dial. Kept apart from any item's, because the pot it

@@ -4,136 +4,83 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ## Features
 
-### Dual Display Surfaces
+### Where it shows
 
-- **Main Queue** - Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring. One settings page: layout, DPS icons, defensive icons, appearance.
-- **Nameplate Queue** - Icon cluster attached directly to the target nameplate. Mirrors the Main Queue's settings page with independent values. Falls back to the main queue when the nameplate isn't rendered.
-- Either or both surfaces can run simultaneously - each is enabled at the top of its own panel under the Display tab.
-- **Resource bar** (optional, per surface) - your primary power plus a segmented secondary point resource (combo points, runes, chi, holy power, soul shards, essence). Anchors to the outermost health bar in view; segments render through a display-only path so they stay correct in 12.0 combat.
+- **Main Queue** - a draggable panel: icon count, size, spacing and direction are yours to set, and it can dock to the target frame.
+- **Nameplate Queue** - the same queue attached to your target's nameplate, with its own settings. Falls back to the main queue when the nameplate isn't on screen.
+- Run either or both. Each has a **Show in** setting for the content it appears in (open world, delves and scenarios, dungeons, raids, PvP), so you can keep the queue for dungeons and hide it in raids.
+- **Resource bar** (optional, per surface) - your primary power plus a segmented bar for combo points, runes, chi, holy power, soul shards or essence.
 
-### Offensive Queue
+### Damage queue
 
-- The **AC slot** shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
-- The **queue** (everything after the AC slot) displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
-- **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Abilities the game won't let you use sink to the back: out-of-range melee, Cat/Bear-only abilities in the wrong form (skipped when Fluid Form makes them castable anywhere), stealth-only openers while unstealthed (Subterfuge/Shadow Dance respected), and abilities missing their enabling buff (e.g. Arcane Missiles without Clearcasting) - procs always outrank the sink. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; pick the Fixed source order preset under DPS Queue → General to keep a fixed order
-- Dynamic insertion of procs and gap-closers (melee specs), a burst-ready cue (purple glow on your spec's major cooldown when it's ready), and a separate icon for interrupts
-- **DoT awareness** - a damage-over-time ability already applied to your target sinks to the back of the queue while its debuff is live, reappearing in time to refresh (pandemic window), the moment it drops or is dispelled, or on a target that doesn't have it. When Assisted Combat keeps recommending a DoT that's already up, a switch-target arrow appears on the AC slot as a cue to spread it to another enemy. Stacking DoTs are left alone so you can keep building stacks. On by default; toggle in the General tab
-- **SimC priority ordering** *(on by default; specs without imported data fall back to context-aware ranking)* - orders the abilities after Blizzard's pick using SimulationCraft's priority for your spec, re-ranked against what Blizzard is recommending right now (single-target vs. multi-target, building vs. spending). It also reads point-based resources - combo points, holy power, chi, soul shards, runes - so spenders sink until you can afford them and surface as you reach the threshold. Where the amount can't be read, ordering is left untouched rather than guessed. Multi-target abilities stay out of your single-target order, and openers, execute-only casts, interrupts, defensives and movement abilities are kept out of the damage queue entirely
-- **Ability markers** - an azure dot marks abilities you can cast while moving; an amber marker (opt-in) marks abilities that don't trigger the global cooldown, so you can fire one and go straight to the next suggestion. Both sit in the lower-left corner and share it when both apply, the dot splitting half azure and half amber. Shown on the offensive and defensive queues alike, on both display surfaces. Configured under Display → Shared Behavior
-- Spells and on-use items (trinkets, potions) supported throughout the queue
-- Icons grey out during hardcasts and channels so you can see what's next at a glance
-- Configurable: font attributes, icon count, size, orientation, glow modes, charge counts, and more
+- The **first slot** is the game's own Assisted Combat pick, with your keybind. A spell you've hidden is replaced by the next one the game would suggest.
+- The **queue** after it is ordered by the **Priority** you choose - the game's order, the theorycraft (SimulationCraft) order, or your own list - and re-ranked for the fight in front of you: area abilities rise for a pack, abilities you can't use right now (out of range, wrong form, not in stealth, missing their proc) drop to the back, and procs come first.
+- **DoT awareness** - a damage-over-time effect already on your target steps back until it's time to refresh. When the game keeps recommending one that's already up, an arrow on the first slot suggests spreading it to another enemy.
+- **Burst-ready cue** - your major cooldown glows purple when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
+- **Gap-closers** - melee specs get a movement ability suggested when the target is out of range (DPS Queue → Gap-Closers).
+- **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
+- Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
 
-### Custom Queue
+### Priority
 
-- Define a custom spell/item ordering for the queue (per spec, stored in profile)
-- **Ordering preset** - one setting: Smart (procs first, SimC/context ranking, unavailable last - the default), Match Blizzard's pick, or Fixed source order; a Customize expander still exposes the individual toggles for mixed setups. Applies to both the Custom Queue and Blizzard's default rotation
-- Auto-seeds from Blizzard's rotation on first enable; unavailable or on-cooldown entries collapse automatically
-- Stale queue detection warns when Blizzard's rotation changes - "Merge Changes" preserves custom ordering while syncing additions/removals
-- Supports trinkets and on-use items alongside spells
-- **Talent-proof** - a stored ability whose spell ID belongs to a different talent variant resolves to the version you currently know instead of silently vanishing
-- **Always Show** pin per entry - a pinned ability is never hidden by filtering (active buff, running DoT, gap-closer management); it stays in the queue and only steps back while on cooldown or out of range
-- **Hold Until Charged** pin per entry - holds an ability at the back of the queue until every charge is banked, so a two-charge ability isn't spent into an overcap. It keeps its place rather than vanishing; an ability without charges is held until it's off cooldown. Off by default, and requires the "Unavailable last" ordering toggle
-- **`/jac why <spell>`** - explains exactly why an ability is or isn't showing right now, stage by stage (known, blacklisted, redundant, cooldown, range, DoT state, icon cap)
+- **Three orders, one queue** - tabs show the game's order, the theorycraft order and your own list, one line per ability with what it waits for. Looking at a tab never changes the queue; **Use This Order** does, and a green dot marks the one in use.
+- **Your own list** (per spec) - start from **Export to My List** or **Merge** from another tab, then drag rows to reorder. Click a row for its settings, right-click to open it on the Overrides tab, and undo the last ten changes. If the game's rotation changes later, **Merge Changes** brings your list up to date without reordering it.
+- **Who leads** - the first slot is the game's by default. **Fill the gaps** lets the queue use it only while the game has nothing to recommend; **Replace with my list** gives it to your list's first ready entry.
+- **Ordering** - Procs first, Unavailable last, and **Use my order exactly** to turn off re-ranking for the fight.
+- Per ability: **Always Show** keeps it from being filtered out, and **Hold Until** parks it at the back until it's fully charged.
+- Talent variants of the same ability are recognised, so a list survives a talent swap.
+- **`/jac why <spell>`** explains why an ability is or isn't showing right now.
 
-### Disruption Slot (interrupts, CC, enrage cleanse)
+### Disruption slot
 
-The slot ahead of the DPS queue, holding everything that takes away what the enemy is doing. Each member is independent - you can run the enrage cleanse with interrupt reminders switched off, or the reverse.
+The slot ahead of the damage queue, for anything that stops what the enemy is doing. Each part can be turned on or off on its own.
 
-- Shows your interrupt ability before the DPS queue when the target is casting
-- **Important Only** mode filters to lethal/must-interrupt casts (`C_Spell.IsSpellImportant`)
-- **CC Non-Important Casts** - Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts; prefers a stun over a silence when only CC can stop an uninterruptible cast (a silence can't stop a physical channel)
-- **Creature-type-aware CC** - won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
-- Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
-- The interrupt is correctly hidden on casts that can't be interrupted - driven straight from the cast's protected interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use. (Auto-substituting a CC for a kick on a non-interruptible cast still needs the Blizzard default cast bar; with a replaced cast bar you simply get no suggestion there instead of a CC - never a wrongly-shown kick)
-- **Enrage cleanses** - when an enemy enrages and you carry a dispel that removes it (Soothe, Tranquilizing Shot, Shiv and the like), the dispel surfaces in the Disruption slot with a green glow, named with the enrage it clears. Detected through a display-only colour path, so it works in 12.0 combat without reading the aura. On by default where the spec has one, under General → Disruption → Show Enrage Cleanse
-- Nameplate cast-bar support - auto-discovers cast bars from the Blizzard default nameplate and from nameplate addons that expose a compatible frame structure
+- **Interrupts** when your target is casting, optionally only for casts the game marks as important. Hidden on casts that can't be interrupted.
+- **Crowd control** on unimportant casts, saving your interrupt for dangerous ones. Knows which crowd control works on which creature type, and which targets are immune.
+- **Enrage cleanses** - when an enemy enrages and you carry a dispel for it (Soothe, Tranquilizing Shot, Shiv and the like), it shows here with a green glow.
+- Works with the default nameplates and with nameplate addons that keep a compatible cast bar.
 
-### Defensive Suggestions
+### Defensives
 
-- Unified priority list: self-heals and major cooldowns combined with configurable per-class ordering
+- **Your defensive list** - self-heals and major cooldowns in one list with per-spec defaults, arranged the same way as the damage priority. Pet rez/summon and pet heal have lists of their own.
+- **Help Your Group** - party-wide buttons (Rallying Cry, Darkness, Anti-Magic Zone, Vampiric Embrace and the like) in a list of their own, offered when your group could use the help or your own health is low.
+- **Emergency heals held until you need them** *(on by default)* - immunity bubbles, big instant heals and health potions wait at the end of the queue with a WAIT tag while you're healthy. Damage-reduction cooldowns stay live, since a wall is meant to be pressed before the hit lands.
+- The order follows how much trouble you're in: damage reduction first while you're taking damage, big heals after a real hit, bubbles only when you're close to dying.
+- **Best healing potion** - picks the potion you're carrying that heals you most.
+- Absorb shields step back while their barrier holds, instead of being suggested into a wasted overwrite.
+- Druid defensives that need Bear or Cat Form only show in that form (unless you have Fluid Form).
+- Compact health bar for you and your pet.
 
-#### Sustain Slot
+#### Sustain slot
 
-The defensive queue's "position 0", holding what keeps you *contributing* rather than what keeps you alive - a lapsed mitigation buff, a stun and a dying pet all cost you the same thing. Which member claims it depends on your class and what is happening; they never collide, because the tank buff and the pet cue belong to mutually exclusive classes.
+Ahead of the defensives, for what keeps you contributing rather than what keeps you alive:
 
-- **Tank maintenance** - tanks get the slot for the one mitigation buff the spec keeps rolling (Ignore Pain, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield). It counts down the buff's remaining time, shows the keybind, and greys out when the cast is out of reach or unaffordable. The refresh cue is two-stage: a marching-ants ring at the refresh threshold (~3s before decay), escalating to a full proc glow once the buff has actually lapsed - an early warning you can finish a cast through reads differently from one you can't. Buffs with no timer of their own (Bone Shield, whose stacks are spent by damage rather than time) only ever reach the second stage. It also adapts per ability: a charge-limited button like Demon Spikes shows charges and its recharge, while a resource button like Ignore Pain shows the shield remaining. Blood's slot points at Marrowrend, so it can appear in the rotation and here at once. Combat only, tank specs only, on by default under Defensive Queue → Tank Maintenance Slot. Brewmaster isn't covered yet
-- **Crowd Control Escape** *(Experimental, opt-in)* - while you're held by crowd control the game reports to addons (stuns, roots, fears) and carry something ready to break it, the Sustain slot turns into that escape button, counting down the effect until you're free. Any spec, tank or not. Movement slows can't be detected in combat, so they aren't covered. Off by default under Defensive Queue → Crowd Control Escape
-- **Pet heal reminder** - Hunters get the slot when their pet drops low, **in combat as well as out**. (Warlocks are uncovered at 12.1: Health Funnel is gone and no castable Warlock pet heal has replaced it. The moment one exists the cue returns.) Pet health can't be read by an addon mid-fight, so the cue is rendered without ever reading it: the pet's health fraction is handed to the engine as a curve index and the engine decides whether the icon is visible. Threshold configurable from 10-90% (default 50) under Defensive Queue → Sustain
-- **Exact vs. estimated maintenance tracking** - in combat the game hides which buff is which, so the slot identifies yours through Blizzard's Cooldown Manager. That needs two things: the Cooldown Manager enabled, and its **Tracked Bars** widget left visible in Edit Mode (that one widget is enough - the other Cooldown Manager panels can stay hidden). With it, a single-instance refresh buff like Shield of the Righteous is thresholded against the aura's own remaining time, and Bone Shield gets a live stack count. Stacking buffs (Ironfur, Ignore Pain) are deliberately tracked from your own casts either way: each application is a separate aura instance with its own expiry, so one instance's clock is a single stack's, not the buff's. Without the Cooldown Manager everything falls back to the cast-time projection - the refresh cue works either way. Background: [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
-- **Absorb-barrier awareness** - a shield that outlasts its own cooldown (Ice Barrier, Blazing Barrier, Prismatic Barrier, Rune Tap) sinks to the back while the barrier holds and returns as it runs low, instead of being re-suggested into a wasted overwrite. Defensives that genuinely stack, like Ironfur and Ignore Pain, are exempt
-- **Graded emergency ordering** - the queue sorts by how much trouble you're actually in, across three bands rather than one on/off threshold: damage reduction leads while you're taking chip damage (below 80%), big heals lead once you've taken a real hit (below 50%), and immunity bubbles jump the queue only when you're close to dying (below 25%). Above all three, fast/free fillers and procs stay first for routine upkeep. Sustained incoming damage promotes you one band early
-- **Emergency heals held until you need them** *(on by default)* - above the low-health threshold, panic buttons (immunity bubbles, big instant heals, health potions) sit parked at the end of the queue with a WAIT tag instead of being suggested while you're healthy. Damage-reduction cooldowns are deliberately exempt and stay live at any health: a wall like Shield Wall or Pain Suppression is meant to be pressed *before* a hit lands, so holding it back would coach the wrong habit
-- **Execute-range cue** - when your target drops into execute range, the HP-gated finisher (Kill Shot, Touch of Death and the like) lights up wherever it sits in the queue. Target health is secret in combat, so this too is engine-rendered rather than read
-- Procced defensives (Victory Rush, free heals) shown at any health level
-- Usability-aware visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate on cooldown
-- Pet rez/summon support for Hunter, Warlock, Death Knight (pet *heal* lives in the Sustain slot above)
-- Compact health bar (player + pet) with automatic resize
-- Items supported (potions, healthstones) with auto-detection from action bars - optional aura linking and combat hiding per item
-- **Emergency healing potion** auto-picks the best potion you're carrying, ranked by how much it actually restores - a potion that heals a share of your maximum health can out-rank a bigger fixed-amount one, and the reverse; the tile's tooltip explains the pick
-- **Form-aware (Druid)** - defensives that strictly require Bear Form leave the row while you're in Cat Form and vice versa, in combat too (where usability normally can't be read); automatically disabled with Fluid Form
-- Combat-safe health detection: the engine compares your (secret) health against a threshold the addon authors and reports only whether it crossed, so exact bands work in combat without the addon ever reading a number. The low-health vignette (~35% binary) and the health-event activity signal remain as fallbacks where that path is unavailable
+- **Tank maintenance** - your spec's mitigation buff (Ignore Pain, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield) with its time left, a warning ring before it drops and a full glow once it has. Set how early it warns, add an alert sound, and have charge-based buffs glow while every charge is ready. Brewmaster isn't covered yet. Most accurate with the Cooldown Manager's **Tracked Bars** left visible in Edit Mode.
+- **Crowd Control Escape** *(experimental, opt-in)* - while you're stunned, rooted or feared and have something ready to break it, the slot shows that button.
+- **Pet heal** - Hunters are reminded when their pet is low, in combat too.
 
-### Healer Support
+### Healers
 
-JustAC is not a healing addon and doesn't try to be one - keep yours. What it adds is the *other* half of a healer's job, plus a nudge when the group is in trouble.
+JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 
-- **Damage priority with your heals filtered out** - the assist queue reads as a damage rotation rather than a mixed bag, so filler time between casts still contributes. Every healer spec has its own single- and multi-target damage priority behind it. Fails open: if removing heals would empty the list, the unfiltered one comes back rather than leaving you with nothing
-- **Caster mode** *(per spec, opt-in)* - suppresses melee-weave suggestions and form-shift buttons for healers who stay at range. Blizzard's own pick still adapts to where you're standing
-- **Group heal suggestions** - an ally who has taken meaningful damage counts toward an area heal, and a group in serious trouble raises your biggest save (Tranquility, Aura Mastery, Healing Tide, Divine Hymn, Restoral, Rewind). Multi-target only by design - aiming a heal at one specific person is a job for your group frames
-- **No accessibility CVar required** - the party health alert is used automatically where it's the only signal available, but group heals no longer depend on it and no longer stop at the first four party members. **"Set Up The Alert For Me"** configures it in one click if you'd rather have it, states exactly what it changes, and puts your settings back when switched off
+- **Damage priority with your heals filtered out**, so the time between heals still does damage. Every healer spec has its own damage priority.
+- **Caster mode** *(per spec, opt-in)* - no melee-range or form-shift suggestions for healers who stay at range.
+- **Group heal suggestions** - area heals when several allies are hurt, and your biggest save (Tranquility, Aura Mastery, Healing Tide, Divine Hymn, Restoral, Rewind) when the group is in serious trouble.
 
-### Pre-Combat Buffs
+### Pre-combat buffs
 
-- Out of combat, the defensive queue surfaces the buffs you're **missing but own** as clickable icons with a green glow - flask, food, augment rune, weapon enchant
-- **Class maintained buffs** - rogue poisons, shaman shields and weapon imbues, and the standard party/raid buffs. You're reminded when one is missing or has dropped below half its remaining duration; a lapsed buff is refilled with whatever your rotation ranks highest, and rogues get both a lethal and a non-lethal poison at once
-- **Party-aware group buffs** - if you have a group buff up but a party member doesn't (they joined late, released, or were out of range), the buff is offered again so one re-cast covers everyone. Party only, and only for members who are alive, online and in range, so every reminder is actionable. Personal buffs like poisons and shields are unaffected
-- **Recuperate** *(opt-in, off by default)* - the all-classes out-of-combat self-heal is offered like any other missing buff whenever you're below your **Top-Off Threshold**, and hides while its heal-over-time is running. The threshold is honoured anywhere in the world, and the cue waits a couple of seconds before appearing so a scratch that heals on its own never makes it pop up. Enable under Defensive Queue → Pre-Combat Buffs
-- **Click-to-use** - a hover highlight and click-to-use layer sits over every out-of-combat icon (like an action button), casting the spell or using the item straight from the queue
-- **Eating / applying feedback** - while a buff is being applied (eating food and the like) the whole queue greys out with a channel-style progress sweep across the buff window
-- Buff data is DB2-generated (discovered by item class and buff aura, stat decoded from the effect chain) and spans all expansions, so leveling characters are covered too; weapon-enchant suggestions respect your equipped weapon so you're never offered an oil or stone it can't take
-- Detection is aura-based and runs out of combat only, sidestepping 12.0 secret values entirely
+- Out of combat, the defensive queue shows buffs you're **missing but own** - flask, food, augment rune, weapon enchant, poisons, shields, imbues and the group buffs - as icons you can click to use.
+- Group buffs are offered again when a party member is missing one, so one cast covers everyone.
+- **Recuperate** *(opt-in)* - offered when you're below your top-off level out of combat.
+- Covers every expansion's consumables, so leveling characters are covered too, and weapon enchants match the weapon you have equipped.
 
-### Gap-Closer Suggestions
+### Keybinds and filtering
 
-- Suggests movement/gap-closer spells when the target is out of melee range - on by default with per-spec defaults, configurable under DPS Queue → Gap-Closers
-- Injects into the offensive queue for natural flow
-- Push-based range detection via `C_ActionBar.EnableActionRangeCheck` for minimal polling
-
-### Burst-Ready Cue
-
-- In combat, your spec's major offensive cooldown glows purple when a burst window is actually called for - not merely when it's off cooldown. The window is inferred from Blizzard's own recommendation (the only system that can read the secret in-combat context) combined with SimulationCraft's burst conditions: the cue fires when Assisted Combat recommends the trigger itself, when the trigger's SimC window is up (e.g. Berserk during Tiger's Fury), or when Blizzard is recommending the ability that opens that window
-- A called-for trigger surfaces at the second queue position (promoted, or inserted when Assisted Combat leaves the cooldown entirely to you), so the signal sits where you're already looking
-- Trigger lists are SimC-derived: SimulationCraft's own burst-window markers (potion/trinket/Power Infusion sync) define them per spec, with curated class defaults where no data exists - and you can set your own list per spec under DPS Queue → General
-- Readiness and buff windows are read as engine truth, so the cue is combat-safe under 12.0 secret values; on by default - toggle under DPS Queue → General
-
-### Smart Hotkey Detection
-
-- Scans all action bars to find your keybinds for any spell
-- Parses macro conditionals (`[mod]`, `[form]`, `[spec]`, `[stealth]`, `[combat]`)
-- Handles dynamic spell transforms (e.g. Templar Strike → Templar Slash) via override scanning
-- Gamepad support with Xbox/PlayStation/Generic button icon styles
-- Custom hotkey overrides via right-click menu
-- Flash feedback on every icon when you press its keybind or use the ability (macros, click-casting and mouse buttons included)
-
-### Intelligent Filtering
-
-- Hides redundant suggestions (buffs already active, current form, existing pet) - self-buff detection is generated from client data across all classes (pure self-buffs like Slice and Dice suppress while active, reappear in the pandemic window)
-- **Stack-aware** - buffs that can stack are never suppressed as "already active", backed by client-data stack counts, so stacking abilities keep getting suggested while building stacks; defensives are always exempt (application-stacking like Ironfur must keep being suggested)
-- Per-spell blacklist (Shift+Right-click to toggle) - a blacklisted AC-slot spell auto-substitutes via highlight-mode lookahead
-- Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
-- Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
-- Combat-safe aura tracking via `auraInstanceID` mapping - detects buff removal and reapply even when `spellId` is secret
-- NeverSecret aura whitelist (~50 spells) for direct resolution without instance-map lookup
-
-### Performance Optimized
-
-- Event-driven updates with minimal polling
-- Engine-level unit event filtering (`RegisterUnitEvent`) - other players' aura, health, and cast events never reach the addon, keeping idle CPU low in crowded cities
-- Push-based cooldown and range events (`SPELL_UPDATE_COOLDOWN`, `ACTION_RANGE_CHECK_UPDATE`)
-- Pooled table allocation to reduce garbage collection pressure
-- Cached spell info, override lookups, and filter results per update cycle - macro parses are cached per action slot (including misses) and invalidated slot-by-slot
-- 12.0 opaque cooldown pipeline (`SetCooldownFromDurationObject`) bypasses secret-value handling entirely
+- Finds your keybind for every suggestion across all action bars, including macros with conditions (`[mod]`, `[form]`, `[spec]`, `[stealth]`, `[combat]`) and transformed spells. Gamepad button icons for Xbox, PlayStation and generic controllers.
+- Right-click an icon to set your own hotkey label; icons flash when you press their key.
+- Buffs you already have, your current form and a pet that's already out aren't suggested. Abilities that stack keep being suggested while you build stacks.
+- **Overrides** tab - hide a spell (or Shift+Right-click it in the queue), change its queue settings, or **take it off your action bars** so the game's assist stops suggesting it too. **Put Back** restores it to the same buttons; macros are never touched.
+- Light on your CPU: event-driven, with other players' events filtered out before they reach the addon.
 
 ## Installation
 
@@ -149,9 +96,9 @@ Options are organized into 6 tabs:
 |-----|--------|
 | **General** | Disruption slot (interrupts, enrage cleanse, dangerous-cast warning), input, Blizzard UI integration (action-bar highlight, Cooldown Manager) |
 | **Display** | 3 sub-tabs: Main Queue (the draggable surface: layout/docking, DPS icons, defensive icons, appearance), Nameplate Queue (the nameplate surface), and Shared Behavior (highlight mode, ability markers, icon labels) |
-| **DPS Queue** | The priority (the game's order, the theorycraft order, or your own list), ordering, queue content, burst triggers and cue, gap-closers |
+| **DPS Queue** | Priority (the game's order, the theorycraft order, or your own list, and who leads), ordering, queue content, burst triggers and cue, gap-closers |
 | **Defensive Queue** | 2 sub-tabs: General (the priority lists, Help Your Group, ordering, Sustain slot: tank maintenance, CC escape, pet heal), Pre-Combat Buffs |
-| **Overrides** | One card per spell or item: visibility (the blacklist) and taking it off your action bars, queue and item settings, situational sets, hotkey label - plus a list of everything you've customized |
+| **Overrides** | Everything set on one spell or item: visibility (the blacklist) and taking it off your action bars, queue and item settings, situational sets, hotkey label. Lists everything you've customized; click an entry to open its settings under it |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
 - **Localization** - English, German, French, Italian, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
@@ -202,7 +149,6 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 - **Midnight compliant, currently live on 12.1.0** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
-- **Curve selectors** - The same idea generalised: a secret number is handed to the engine as an *index* into a curve the addon authors, and the resulting colour sinks into a display property. The enrage cleanse indexes by dispel type; the pet-heal, execute and health top-off cues index by health fraction (`UnitHealthPercent` + `C_CurveUtil`). Graded alphas let one evaluation express several thresholds at once, so a two-tier policy needs no comparison. Display-only by construction - the result is secret, so it can never feed ordering or a gate
 - **Taint is fatal around secrets** - Tainted execution cannot read a secret at all, so writing any Lua field on a frame that reads secrets (Blizzard's Cooldown Manager viewers) breaks *Blizzard's* code, not just ours. Reads and widget C methods are safe; mixin methods that store state are not. See [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
 - **Threshold gates** - The engine evaluates a curve the addon authors against a secret value and returns a secret result; the addon reads only whether that result is *zero*. Nothing is compared, ordered or read in Lua, but the answer to "is this below N" is an ordinary branchable boolean. Health, power and aura/cooldown remaining time all go through the same path, which is what makes graded defensive bands and stack-aware ordering possible in combat. Deliberately scoped to answering *questions*, never recovering values
 - **Never-secret signals** - Readable side-channels stand in where even that is unavailable: the low-health vignette (~35% binary), and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
@@ -225,7 +171,7 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 /jac help                     - Every command and inspect topic, with descriptions
 ```
 
-`/jac inspect <topic>` covers ~47 diagnostics. The list isn't duplicated here - it
+`/jac inspect <topic>` covers dozens of diagnostics. The list isn't duplicated here - it
 lives next to the code it inspects and `/jac help` prints it, so the two can't
 drift apart. Three are worth knowing by name if something stops working, because
 they separate "the game changed" from "the addon broke":
