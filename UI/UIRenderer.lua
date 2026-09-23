@@ -1459,6 +1459,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         SetDefensiveIconVisible(icon, true)
         icon:SetAlpha(icon.overlayOpacity or 1)
         icon._maintShown = true
+        if icon:IsVisible() and MT.NoteSlotShown then MT.NoteSlotShown() end
         -- The swipe below is the CC's remaining time, not a buff's, so the engine-drawn aura
         -- displays must stand down or they would draw a second clock over it.
         if UIMaintenanceAura then UIMaintenanceAura.Detach(icon) end
@@ -1611,6 +1612,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     SetDefensiveIconVisible(icon, true)
     icon:SetAlpha(icon.overlayOpacity or 1)
     icon._maintShown = true
+    -- IsVisible, not IsShown: "Show in" hides the parent panel, not this icon.
+    if MT and icon:IsVisible() and MT.NoteSlotShown then MT.NoteSlotShown() end
 
     -- Pet-heal claim: hand the alpha we just set straight over to the engine, keyed on the pet's
     -- health. SHOWN at whatever alpha the curve returns - never hidden, because a hidden frame
@@ -2221,8 +2224,11 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
                 SetIconHotkey(intIcon, hotkey, ctx.showHotkeys)
             end
 
-            -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
-            UpdateRangeHotkeyColor(intIcon, CheckSpellRange(intIcon, intSpellID, nil), ctx.hotkeyColor)
+            -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap). A
+            -- self-centred CC has no range to ask about, so the tracker says when it picked
+            -- one it cannot prove reaches (EvaluateInterrupt's last resort).
+            UpdateRangeHotkeyColor(intIcon,
+                CheckSpellRange(intIcon, intSpellID, nil) or intResult.unreachable == true, ctx.hotkeyColor)
 
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.

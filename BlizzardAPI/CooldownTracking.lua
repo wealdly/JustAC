@@ -252,9 +252,8 @@ function BlizzardAPI.NoteOwnCast(spellID)
 end
 
 --- True while our own self-buff (spellID) is active on the player. Three sources, best
---- first: the stance bar for a form (plain, always), the aura's DurationObject (engine
---- truth, but blind to secret auras - i.e. most of combat), then our own cast of the spell
---- within its base duration.
+--- first: the stance bar for a form (plain, always), the aura itself (blind to secret
+--- auras - i.e. most of combat), then our own cast of the spell within its base duration.
 --- ponytail: the cast window is the BASE length - blind to early cancels and to talents that
 --- extend it; the game's pick still reveals a window this under-calls.
 --- @param spellID number the spell a SimC buff-window gate references (5217, ...)
@@ -266,23 +265,16 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
     if formID then return formCache.GetActiveForm() == formID end
     local castAt = durSecs and ownCastAt[spellID]
     local castLive = castAt and (GetTime() - castAt) < durSecs or false
-    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID and C_UnitAuras.GetAuraDuration) then
+    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
         return castLive
     end
+    -- The aura table in hand proves the buff is up. Its duration adds nothing and cost
+    -- two answers: GetAuraDuration is access-denied to a tainted caller while auras are
+    -- secret (12.1.0), and a buff with no expiry (Prowl, Shadowmeld) has an empty duration
+    -- that read as down while it was up.
     local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
-    local instId = aura and aura.auraInstanceID
-    if not instId then return castLive end
-    -- 12.1.0: GetAuraDuration is ACCESS-DENIED to a tainted caller while auras are secret,
-    -- and the denial ignores the aura's OWN exemption - a NeverSecret buff whose data reads
-    -- fully plain still throws here. That is why this needs a pcall even though the lookup
-    -- above just succeeded: reaching an aura and reading its duration are separate permissions.
-    -- Unguarded, the throw propagated into the queue build (SimcBuffWindowActive /
-    -- SimcNegativeBuffBlocks) and blanked the queue mid-fight rather than degrading it.
-    -- false on denial is the same answer as "no such aura", which the SimC gate layer already
-    -- compensates for: positive windows fall back to AC's pick, negative gates fail open.
-    local ok, dur = pcall(C_UnitAuras.GetAuraDuration, "player", instId)
-    if not ok then return true end   -- denied, but the aura table in hand proves it is up
-    return DurationObjectActive(dur)
+    if aura and aura.auraInstanceID then return true end
+    return castLive
 end
 
 --- Diagnostic: which of the given self-buff ids are active right now.

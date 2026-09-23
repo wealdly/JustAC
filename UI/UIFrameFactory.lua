@@ -61,6 +61,14 @@ function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
     return "BOTTOM", "TOP", 2 + shift
 end
 
+-- Which pooled popup frames carry our OnHide hook. Kept here, weakly: a field written onto
+-- Blizzard's frame would taint it.
+local strataHooked = setmetatable({}, { __mode = "k" })
+-- Only the strata goes back: toplevel is Blizzard's setting (on), never ours to change.
+local function RestorePopupStrata(dialog)
+    dialog:SetFrameStrata("DIALOG")
+end
+
 --- Show a confirmation ABOVE the addon's own windows. Popups live in DIALOG, while the
 --- options window sits a strata higher AND raises itself whenever it is clicked - which
 --- is the click that asked the question - so a confirmation opened from the panel or
@@ -74,21 +82,13 @@ function UIFrameFactory.ShowPopupAbove(which, data, text1, text2)
     local dialog = StaticPopup_Show(which, text1, text2, data)
     if not dialog then return nil end
     dialog:SetFrameStrata("TOOLTIP")
-    dialog:SetToplevel(true)
-    -- Put back here rather than by each dialog, which had three copies of one OnHide.
-    -- Hooked once per frame: these come from a shared pool and are shown again and
-    -- again, so an unguarded hook would stack handlers up.
-    if not dialog.justacStrataHooked then
-        dialog.justacStrataHooked = true
-        dialog:HookScript("OnHide", UIFrameFactory.RestorePopupStrata)
+    -- Hooked once per frame: they are shown again and again, and an unguarded hook would
+    -- stack handlers up.
+    if not strataHooked[dialog] then
+        strataHooked[dialog] = true
+        dialog:HookScript("OnHide", RestorePopupStrata)
     end
     return dialog
-end
-
---- Hand the pooled popup frame back as we found it. Wire this to a dialog's OnHide.
-function UIFrameFactory.RestorePopupStrata(dialog)
-    dialog:SetFrameStrata("DIALOG")
-    dialog:SetToplevel(false)
 end
 
 

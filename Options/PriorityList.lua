@@ -88,7 +88,11 @@ end
 --- The source ON SCREEN: the previewed tab, else whichever is live. Controls outside the
 --- widget key off this so they can hide when they make no sense for the tab being shown.
 function PriorityList.CurrentSource(profile)
-    return PriorityList.view or PriorityList.LiveSource(profile)
+    local view = PriorityList.view
+    -- Module state outlives a spec change: a theorycraft preview kept into a spec with no
+    -- theorycraft data drew a hidden tab and offered a Use button that could not take.
+    if view == "simc" and not PriorityList.HasSimc() then view = nil end
+    return view or PriorityList.LiveSource(profile)
 end
 
 --- Point the queue at a source. The settings that decide it are written together, so a
@@ -265,9 +269,8 @@ function PriorityList.Rows(addon, source)
     --- to mean the same thing whichever source happens to be live.
     local function poolFor(src)
         local out, have = {}, {}
-        for _, id in ipairs((BAPI.GetRotationSpells and BAPI.GetRotationSpells()) or {}) do
-            local inserted = BAPI.IsInsertedSpell and BAPI.IsInsertedSpell(id)
-            if not PriorityList.IsUpkeep(id) and not (src == "blizzard" and inserted) then
+        for _, id in ipairs((BAPI.GetRotationSpells and BAPI.GetRotationSpells(src == "blizzard")) or {}) do
+            if not PriorityList.IsUpkeep(id) then
                 out[#out + 1] = id
                 have[id] = true
                 local base = BAPI.ResolveSpellID and BAPI.ResolveSpellID(id)
@@ -531,6 +534,7 @@ local undoStack, undoSpec, undoProfile, undoLast = {}, nil, nil, nil
 local function ListCopy(cq)
     local out = {}
     for i, id in ipairs((cq and cq.spells) or {}) do out[i] = id end
+    out.live = (cq and cq.enabled) or nil   -- was the queue following it
     return out
 end
 
@@ -568,7 +572,12 @@ function PriorityList.Undo(addon)
     local prev = table.remove(undoStack)
     local cq = CustomQueueFor(addon and addon:GetProfile())
     if not (prev and cq) then return end
-    cq.spells = prev
+    local wasEmpty = not (cq.spells and #cq.spells > 0)
+    local restored = {}
+    for i, id in ipairs(prev) do restored[i] = id end
+    cq.spells = restored
+    -- Clear also handed the queue back to the game; bringing the list back brings that too.
+    if wasEmpty and prev.live then cq.enabled = true end
     -- Set BEFORE the rebuild: Changed calls NoteEdit, which would otherwise see the
     -- restore as an edit and push the state we just undid back onto the stack.
     undoLast = ListCopy(cq)
@@ -757,6 +766,10 @@ end
 function methods:Refresh()
     if not self.addon or self.refreshing then return end
     self.refreshing = true
+    -- Every redraw notes the list as seen. That makes the first edit after a reload
+    -- undoable, and wipes the history the moment the spec or profile under it changes -
+    -- before an Undo from the old one could paste its list over this one.
+    NoteEdit(self.addon)
     local profile = self.addon:GetProfile()
     local source, live = self:Source(), PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
@@ -931,7 +944,7 @@ local function Constructor()
             -- player wandered to while the question was on screen.
             if UIFrameFactory then
                 UIFrameFactory.ShowPopupAbove("JUSTAC_REPLACE_PRIORITY_LIST",
-                    { w = widget, src = source })
+                    { addon = widget.addon, src = source })
             end
         else
             PriorityList.StartFrom(widget.addon, source)
@@ -950,7 +963,7 @@ local function Constructor()
         hideOnEscape = true,
         OnAccept = function(self)
             local d = self.data
-            if d and d.w then PriorityList.StartFrom(d.w.addon, d.src) end
+            if d and d.addon then PriorityList.StartFrom(d.addon, d.src) end
         end,
     }
 
@@ -968,15 +981,16 @@ local function Constructor()
         whileDead = true,
         hideOnEscape = true,
         OnAccept = function(self)
-            local w = self.data
-            if not w then return end
-            PriorityList.view = nil
-            PriorityList.ClearList(w.addon)
+            local d = self.data
+            if not (d and d.addon) then return end
+            -- Stay on the emptied list: its Undo is right there.
+            PriorityList.view = "custom"
+            PriorityList.ClearList(d.addon)
         end,
     }
     widget.clear = MakeButton(frame, L["Priority Clear"], L["Priority Clear desc"], function()
         if UIFrameFactory then
-            UIFrameFactory.ShowPopupAbove("JUSTAC_CLEAR_PRIORITY_LIST", widget)
+            UIFrameFactory.ShowPopupAbove("JUSTAC_CLEAR_PRIORITY_LIST", { addon = widget.addon })
         end
     end, 56)
     onPane(widget.clear)

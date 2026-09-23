@@ -1364,10 +1364,12 @@ function ActionBarScanner.ClearSlots(slots)
 end
 
 --- Put abilities back where they were. A slot that has since been given something else is
---- left alone, never overwritten.
---- @return number placed, number taken
+--- left alone, never overwritten. A spell that cannot be picked up (no longer known after
+--- a talent change) is not placed and is handed back, so the caller can keep it on record.
+--- @return number placed, number taken, table unplaced slots still waiting for their spell
 function ActionBarScanner.PlaceSpells(slots)
-    if InCombatLockdown() then return 0, 0 end
+    local unplaced = {}
+    if InCombatLockdown() then return 0, 0, unplaced end
     ClearCursor()
     local placed, taken = 0, 0
     for _, s in ipairs(slots) do
@@ -1375,10 +1377,14 @@ function ActionBarScanner.PlaceSpells(slots)
             taken = taken + 1
         elseif C_Spell and C_Spell.PickupSpell then
             C_Spell.PickupSpell(s.id)
-            PlaceAction(s.slot)
+            if GetCursorInfo() then
+                PlaceAction(s.slot)
+                placed = placed + 1
+            else
+                unplaced[#unplaced + 1] = s
+            end
             ClearCursor()
-            placed = placed + 1
         end
     end
-    return placed, taken
+    return placed, taken, unplaced
 end

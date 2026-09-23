@@ -20,37 +20,37 @@ PRELUDE = """
 health = nil            -- what IsUnitHealthBelow answers: true / false / nil (unreadable)
 exact = nil             -- what GetPlayerHealthPercentSafe answers: { pct, estimated } or nil
 BlizzardAPI = {
+    ResolveSpellID = function(id) return id end,
     IsUnitHealthBelow = function(_, pct) return health and health(pct) end,
     GetPlayerHealthPercentSafe = function()
         if exact then return exact[1], exact[2] end
         return nil
     end,
 }
+function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 holdWorthy, tiers, autoLevels = {}, {}, {}
 SpellDB = { GetDefaultWaitBelow = function(id) return autoLevels[id] end }
 function IsHoldWorthy(id) return holdWorthy[id] == true end
 function TierOf(id) return tiers[id] or 3 end
 BAND_PANIC, healthBand, healthBandSource = 1, 4, "gate"
 function entry(t) return t end
-function waits(def, e, isLow)
-    e.waiting = nil
-    MarkWaiting(def, { e }, isLow)
-    return e.waiting == true
-end
+function waits(def, e, isLow) return EntryWaits(def, e, isLow) end
+function sunk(def, list, isLow) return table.concat(SinkWaiting(def, list, isLow), ",") end
 """
 
 
 def extract(text):
-    """From the potion id's declaration to the end of MarkWaiting."""
+    """From the potion id's declaration to the end of SinkWaiting."""
     start = text.index("local resolvedPotionID = nil")
-    end = text.index("\nend\n", text.index("local function MarkWaiting(", start))
+    end = text.index("\nend\n", text.index("local function SinkWaiting(", start))
     block = text[start:end + len("\nend\n")]
     return (block.replace("local resolvedPotionID", "resolvedPotionID", 1)
                  .replace("local function WaitSetting", "function WaitSetting", 1)
                  .replace("local function PlayerBelow", "function PlayerBelow", 1)
                  .replace("local function AutoLive", "function AutoLive", 1)
                  .replace("local function AutoWaitBelow", "function AutoWaitBelow", 1)
-                 .replace("local function MarkWaiting", "function MarkWaiting", 1))
+                 .replace("local function EntryWaits", "function EntryWaits", 1)
+                 .replace("local function SinkWaiting", "function SinkWaiting", 1))
 
 
 def main():
@@ -135,13 +135,20 @@ def main():
     check(False, "return waits(def, entry{ spellID = 600, isItem = true }, true)",
           "...but that pot's own setting wins")
 
+    # Ordering: entries that wait move behind the live ones before the cluster is cut.
+    run("autoLevels = {}; holdWorthy = {}; def.spellSettings = { [2] = { waitBelow = 40 } }")
+    run("health = function(pct) return 70 < pct end")        # at 70% health
+    check("1,3,2", "return sunk(def, {1,2,3}, false)", "a waiting entry sinks behind the live ones")
+    run("health = nil")
+    check("1,2,3", "return sunk(def, {1,2,3}, false)", "FAIL SAFE: unreadable health keeps the order")
+
     # Exempt entries.
     check(False, "return waits(def, entry{ spellID = 10, isProcced = true }, false)", "a proc never waits")
     check(False, "return waits(def, entry{ spellID = 10, precombat = true }, false)", "a pre-combat buff never waits")
 
     for line in bad:
         print(line)
-    print("defensive wait: 26 case(s), %d failure(s)" % len(bad))
+    print("defensive wait: 28 case(s), %d failure(s)" % len(bad))
     return 1 if bad else 0
 
 

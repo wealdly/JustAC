@@ -353,16 +353,20 @@ end
 
 --- Take an ability off every action bar slot it is on, and stop suggesting it here too.
 function Abilities.RemoveFromBars(addon, id)
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then addon:Print(ERR_NOT_IN_COMBAT) return end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     if not (ABS and ABS.FindSpellSlots) then return end
     local slots, macros = ABS.FindSpellSlots(id)
     if #slots == 0 then return end
-    local cleared = ABS.ClearSlots(slots)
+    -- Somewhere to record it FIRST: emptied slots with no record are slots Put Back cannot
+    -- find again.
     local profile = addon:GetProfile()
     local rec, bl = BarRecords(addon, true), BlacklistTable(profile, true)
     if not (rec and bl) then return end
-    rec[id] = { slots = slots, prevVisibility = bl[id] }
+    local cleared = ABS.ClearSlots(slots)
+    -- The bars are per character, the visibility setting is per profile: remember which
+    -- profile it was set in, so Put Back restores it there and not in whichever is active.
+    rec[id] = { slots = slots, prevVisibility = bl[id], profile = addon.db:GetCurrentProfile() }
     bl[id] = true
     addon:Print(string.format(L["Bars Removed Chat"], AbilityName(id), cleared, SlotNames(slots)))
     if #macros > 0 then addon:Print(string.format(L["Bars Macro Chat"], SlotNames(macros))) end
@@ -372,15 +376,24 @@ end
 
 --- Undo it: back into the same slots where they are still empty, and suggested as before.
 function Abilities.PutBackOnBars(addon, id)
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then addon:Print(ERR_NOT_IN_COMBAT) return end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     local rec = BarRecords(addon, false)
     local r = rec and rec[id]
     if not (ABS and ABS.PlaceSpells and r) then return end
-    local placed, taken = ABS.PlaceSpells(r.slots)
-    local bl = BlacklistTable(addon:GetProfile(), true)
-    if bl then bl[id] = r.prevVisibility end
-    rec[id] = nil
+    local placed, taken, unplaced = ABS.PlaceSpells(r.slots)
+    -- Visibility goes back in the profile it was set in, and only while it is still what
+    -- Remove set: a player who has since changed it (or cleared the ability) keeps theirs.
+    local owner = (r.profile and addon.db.profiles[r.profile]) or (not r.profile and addon:GetProfile())
+    local bl = owner and BlacklistTable(owner, false)
+    if bl and bl[id] == true then bl[id] = r.prevVisibility end
+    if #unplaced > 0 then
+        -- Not known right now (a talent change): keep what is left, so Put Back stays offered.
+        r.slots, r.prevVisibility = unplaced, nil
+        addon:Print(AbilityName(id) .. ": " .. SPELL_FAILED_NOT_KNOWN)
+    else
+        rec[id] = nil
+    end
     addon:Print(string.format(L["Bars Put Back Chat"], AbilityName(id), placed))
     if taken > 0 then addon:Print(string.format(L["Bars Slots Taken Chat"], taken)) end
     addon:ForceUpdateAll()

@@ -92,16 +92,24 @@ def main():
     check("5,6", run("return ids()"),
           "and undo cannot reach the other spec's list")
 
-    # The panel calls Changed when it opens and when a tab is picked, which seeds the copy,
-    # so in the game the FIRST edit after a spec change is undoable. Nothing else does.
+    # The panel notes the list on every redraw (the widget's Refresh), which seeds the copy,
+    # so in the game the FIRST edit after a reload or a spec change is undoable.
     run("NoteEdit(addon)")
     run("edit(5,6,7)")
     run("PriorityList.Undo(addon)")
     check("5,6", run("return ids()"), "a seen list makes the next edit undoable")
 
+    # Clear empties the list AND hands the queue back to the game; undo brings back both.
+    run("cq = { spells = { 4, 5 }, enabled = true }; NoteEdit(addon)")
+    run("cq.spells, cq.enabled = {}, false; NoteEdit(addon)")
+    run("PriorityList.Undo(addon)")
+    check("4,5", run("return ids()"), "undo after clear restores the list")
+    check(True, run("return cq.enabled"), "...and puts it back in use")
+    check(None, run("return cq.spells.live"), "the in-use flag never lands in the saved list")
+
     for line in bad:
         print(line)
-    print("list undo: 10 case(s), %d failure(s)" % len(bad))
+    print("list undo: 13 case(s), %d failure(s)" % len(bad))
     return 1 if bad else 0
 
 

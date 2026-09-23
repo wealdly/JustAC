@@ -1203,6 +1203,13 @@ local function rankOf(spellID, simcRec)
     return 1
 end
 
+-- An item has no context profile and no theorycraft rank: the neutral middle, unranked.
+-- A flat 1 (the "off" value) sorted it ahead of every spell in the ranked modes.
+local function itemRank()
+    if rankSimcMode or rankContextOrder == "ac" then return ARCH_UNK * CONTEXT_STRIDE + SIMC_UNRANKED end
+    return 1
+end
+
 local function CategorizeAndAssembleRotation(rotationList, b)
     -- Unpack the build context once; the body below is unchanged from the
     -- 18-positional-argument era.
@@ -1273,7 +1280,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = spellID
-                        normalRank[normalCount] = 1  -- items: neutral
+                        -- Nothing the addon can time, so it never leads in leads mode.
+                        normalRank[normalCount] = itemRank() + (leadsMode and LEAD_BARRED_PENALTY or 0)
                     end
                 end
             elseif formEntryBase[spellID]
@@ -1601,9 +1609,8 @@ function SpellQueue._StageTail(b)
     local sinkCooldowns = profile.orderSinkCooldowns ~= false
     -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
     -- priority, the default - falls back to "ac" below when no data for this spec).
-    local contextOrder = profile.contextOrder or "simc"
     -- "Use my order exactly" is a separate setting from which list is in use.
-    if profile.orderExact then contextOrder = "off" end
+    local contextOrder = BlizzardAPI.GetEffectiveOrdering(profile)
     -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
     local simcCtx = (b.ctxArch == "aoe" and "aoe") or (b.ctxArch == "cleave" and "cleave") or "st"
     if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
@@ -2004,6 +2011,7 @@ function SpellQueue._StageGapCloser(b)
             or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
     end
 
+    local injected = false
     if not pos1IsGapCloser then
         local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
         -- My List Leads: the slot still needs filling, but WHICH closer is the game's call
@@ -2038,8 +2046,15 @@ function SpellQueue._StageGapCloser(b)
             end
             syntheticProcs[gcSpell] = true
             syntheticProcs[gcDisplay] = true
+            injected = true
         end
     end
+
+    -- My List Leads: the game's pick is not at slot 1, it is an entry of the list like any
+    -- other. When it is a closer picked for its damage (Shadowstrike in melee - nothing was
+    -- injected), suppressing it below would take it off the screen entirely.
+    local keepPick = (b.leadMode == "mylist") and pickIsGapCloser and not injected
+    local keepPickDisplay = keepPick and BlizzardAPI.GetDisplaySpellID(primarySpellID) or nil
 
     -- Suppress gap-closers from rotation list - our injection controls placement.
     -- (MarkGapCloserSpellIDs is a no-op while gap-closers are disabled.) Marks go
@@ -2051,7 +2066,8 @@ function SpellQueue._StageGapCloser(b)
         wipe(gcSuppressScratch)
         cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, gcSuppressScratch)
         for sid in pairs(gcSuppressScratch) do
-            if not pinnedAlwaysShow[sid] then
+            if not pinnedAlwaysShow[sid]
+               and not (keepPick and (sid == primarySpellID or sid == keepPickDisplay)) then
                 addedSpellIDs[sid] = true
             end
         end

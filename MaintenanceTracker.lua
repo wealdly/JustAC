@@ -1094,18 +1094,24 @@ end
 -- Sound cue: an EDGE, not a level - "it just dropped", played once. Detected here, where
 -- the pick is computed once per frame, so the main panel and the nameplate overlay (which
 -- both draw this slot) cannot each play it. A previous state older than a second is
--- forgotten: GetState only runs while the slot is live in combat, so a stale "up" from the
--- last pull must not make a buff that simply is not up yet at this one read as a drop.
-local lastCueState, lastCueAt = nil, 0
-local function CueSound(state, now)
+-- forgotten: GetState only runs in combat, so a stale "up" from the last pull must not
+-- make a buff that simply is not up yet at this one read as a drop. Heard only while the
+-- slot is on screen ("Show in" can hide every surface that draws it): the renderer notes
+-- each frame it draws the slot (NoteSlotShown).
+local lastCueState, lastCueAt, slotShownAt = nil, 0, -1
+local function CueSound(state, now, entry)
     local prev = (now - lastCueAt <= 1) and lastCueState or nil
     lastCueState, lastCueAt = state, now
     if prev == nil or prev == state then return end
     if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return end
+    if now - slotShownAt > 0.5 then return end
     local profile = BlizzardAPI and BlizzardAPI.GetProfile and BlizzardAPI.GetProfile()
     local key = profile and profile.maintenanceSound
     if not key or key == "None" then return end
     local at = profile.maintenanceSoundAt or "drop"
+    -- "Needs refreshing" only exists for a buff with a clock (the option is hidden for the
+    -- rest), so a saved "refresh" from another spec must not silence the drop here.
+    if at == "refresh" and not (entry and entry.dur and not entry.chargeGated) then at = "both" end
     -- A drop is only a drop from a state that had the buff: "unknown" -> "down" is the
     -- tracker making up its mind, not the buff going away.
     local dropped = state == "down" and (prev == "up" or prev == "refresh")
@@ -1116,8 +1122,13 @@ local function CueSound(state, now)
     if file then PlaySoundFile(file, "Master") end
 end
 
+--- The renderer drew the slot this frame. Gates the sound cue (CueSound).
+function MaintenanceTracker.NoteSlotShown()
+    slotShownAt = GetTime()
+end
+
 local function MemoPick(now, state, entry, inst)
-    CueSound(state, now)
+    CueSound(state, now, entry)
     pickCache.t, pickCache.state, pickCache.entry, pickCache.inst = now, state, entry, inst
     MaintenanceTracker._activeEntry = entry
     return state, entry, inst
@@ -1286,6 +1297,10 @@ function MaintenanceTracker.IsSlotActive(profile)
     -- Combat only, matching the renderer - out of combat the ability belongs in the normal
     -- defensive queue like any other, so the exclusion must lift with the slot.
     if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return false, nil end
+    -- Upkeep is read even while the escape below holds the slot: the sound cue is an edge
+    -- between two reads, and a buff that drops during a stun has to be heard after it.
+    local upkeep = profile.showMaintenanceSlot ~= false
+    local entry = upkeep and select(2, MaintenanceTracker.GetState()) or nil
     -- The frame has TWO independent uses, not one feature with a sub-feature: upkeep, and
     -- escaping crowd control. Either can claim it alone. A caster with no maintenance buff can
     -- still want the escape button, and a tank can want upkeep without it - so the slot is live
@@ -1295,13 +1310,13 @@ function MaintenanceTracker.IsSlotActive(profile)
     if profile.showCCBreak and MaintenanceTracker.GetCCBreak and MaintenanceTracker.GetCCBreak() then
         return true, nil
     end
-    if profile.showMaintenanceSlot == false then return false, nil end
-    -- The PICKED entry, not list[1]. This used to return the spec's first entry, so a spec
-    -- maintaining two buffs always drew the first one while GetState reported the other's
-    -- state - the icon said Shield Block while the timer belonged to Ignore Pain. It also
+    if not upkeep then return false, nil end
+    -- The PICKED entry (GetState above), not list[1]. This used to return the spec's first
+    -- entry, so a spec maintaining two buffs always drew the first one while GetState
+    -- reported the other's state - the icon said Shield Block while the timer belonged to
+    -- Ignore Pain. It also
     -- decides what the defensive queue excludes, so returning the wrong one hid the buff that
     -- was not being shown from BOTH surfaces.
-    local _, entry = MaintenanceTracker.GetState()
     if not entry then return false, nil end
     return true, entry
 end
