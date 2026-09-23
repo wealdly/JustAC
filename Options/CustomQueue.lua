@@ -89,7 +89,9 @@ end
 --- list (never empty), or nil when unavailable.
 local function snapshotBaseline(cq)
     if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return nil end
-    local rotationSpells = BlizzardAPI.GetRotationSpells()
+    -- The game's own list: what "the rotation changed" compares against must not move
+    -- with the ordering setting, which adds theorycraft abilities to the pool.
+    local rotationSpells = BlizzardAPI.GetRotationSpells(true)
     if not rotationSpells then return nil end
     cq.baseline = {}
     for i, spellID in ipairs(rotationSpells) do
@@ -139,7 +141,7 @@ local function DiffRotation(addon, specKey)
     local cq = profile.customQueue[specKey]
     if not cq.baseline then return nil, nil end
 
-    local rotationSpells = BlizzardAPI.GetRotationSpells()
+    local rotationSpells = BlizzardAPI.GetRotationSpells(true)
     if not rotationSpells then return nil, nil end
 
     -- Build sets for comparison, keyed so talent overrides and form variants of the
@@ -157,6 +159,15 @@ local function DiffRotation(addon, specKey)
         end
     end
 
+    -- What the pool adds by itself (theorycraft insertions) is not the game's to remove. A
+    -- baseline taken before baselines kept to the game's own list can hold them, and reading
+    -- them as removed would have Merge Changes delete them from the player's list.
+    local ours = {}
+    local RI = LibStub("JustAC-RotationImport", true)
+    for _, raw in ipairs((RI and RI.GetInsertable and RI.GetInsertable()) or {}) do
+        ours[RotationKey(raw)] = true
+    end
+
     local added = {}
     local removed = {}
     for key, sid in pairs(currentSet) do
@@ -165,7 +176,7 @@ local function DiffRotation(addon, specKey)
         end
     end
     for key, sid in pairs(baselineSet) do
-        if not currentSet[key] then
+        if not currentSet[key] and not ours[key] then
             removed[#removed + 1] = sid
         end
     end
@@ -290,9 +301,14 @@ function CustomQueue.CreateTabArgs(addon)
                     if added then
                         if not cq.spells then cq.spells = {} end
                         local PL = LibStub("JustAC-PriorityList", true)
+                        -- New to the game's list is not new to yours: a list copied from
+                        -- the theorycraft tab can already carry it.
+                        local have = {}
+                        for _, sid in ipairs(cq.spells) do have[RotationKey(sid)] = true end
                         for _, sid in ipairs(added) do
-                            if not (PL and PL.IsUpkeep and PL.IsUpkeep(sid)) then
+                            if not (PL and PL.IsUpkeep and PL.IsUpkeep(sid)) and not have[RotationKey(sid)] then
                                 cq.spells[#cq.spells + 1] = sid
+                                have[RotationKey(sid)] = true
                             end
                         end
                     end

@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [5.7.2] - 2026-09-22
+
+### Fixed
+- A trinket or other item in your own list no longer jumps ahead of every spell, or takes the first slot with "Replace with my list".
+- Hiding the damage queue with "Show in" no longer hides abilities from your defensives shown on their own, and the tank buff sound stays quiet while the slot is hidden.
+- Greyed WAIT defensives no longer push live ones off the end of the row, and group heals no longer show WAIT while your group needs them.
+- With "Replace with my list", an ability the game picks for its damage that doubles as a gap closer (Shadowstrike, Felblade) no longer disappears.
+- "Use my order exactly" no longer adds theorycraft-only abilities without their timing.
+- A crowd-control stun that cannot reach your target now shows dimmed instead of ready.
+- Rake from Prowl, and other abilities tied to a buff with no end time, are now timed correctly.
+- Undo no longer reaches into another spec's or profile's list, the first change after logging in can be undone, and undoing Clear puts your list back in use.
+- The "rotation changed" warning no longer depends on which ordering was active, and Merge Changes no longer adds abilities you already have.
+- Put Back no longer forgets an ability it could not place (after a talent change), and restores its visibility in the profile it was removed from.
+- Help Your Group stays empty once you empty it, instead of refilling with the defaults.
+- The tank buff sound plays for a buff that drops while you are stunned, and on specs where "Play when" is not offered.
+- Clicking a game popup after using a JustAC one brings it to the front again.
+
 ## [5.7.1] - 2026-09-22
 
 ### Improved

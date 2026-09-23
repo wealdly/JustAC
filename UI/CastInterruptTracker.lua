@@ -359,6 +359,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
     -- interruptible" from a previous cast would let the alert fire for an icon the sink hides.
     cachedIntResult.interruptible      = nil
     cachedIntResult.interruptibleKnown = false
+    cachedIntResult.unreachable        = false
 
     -- Fears scatter packs and break on damage; excluded from suggestions by default.
     -- nil profile → exclude (fail-safe to the default-off behavior).
@@ -451,6 +452,8 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                 if not shouldShow then
                     intSpellID = silenceFallbackID or fallbackID or outOfRangeFallbackID
                     if intSpellID then shouldShow = true end
+                    -- The last resort cannot be shown to reach: the renderer dims it.
+                    cachedIntResult.unreachable = intSpellID ~= nil and intSpellID == outOfRangeFallbackID
                 end
             end
             -- castBar is nil for API fallback; callers gracefully hide cast aura.

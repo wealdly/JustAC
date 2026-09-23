@@ -31,7 +31,8 @@ local lastHealthUpdate = 0
 local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue updates
 
 
-local dpsQueueExclusions = {}
+-- What each surface's damage queue already shows (see FillExclusions).
+local dpsQueueExclusions, overlayExclusions = {}, {}
 local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
 local usableResults = {}
@@ -100,7 +101,10 @@ local SPELL_LIST_CONFIG = {
     -- the list is never created and the heal pass below finds nothing.
     { listKey = "groupHealSpells", restoreKey = "groupheal", defaultsKey = "CLASS_GROUPHEAL_DEFAULTS" },
     -- Party-wide buttons for DPS and tanks (see "group help" in GetDefensiveSpellQueue).
-    { listKey = "groupHelpSpells", restoreKey = "grouphelp", defaultsKey = "CLASS_GROUP_HELP_DEFAULTS" },
+    -- keepEmpty: this list has no on/off of its own, so emptying it IS turning it off, and
+    -- seeding an empty one would switch it back on at the next login or spec change.
+    { listKey = "groupHelpSpells", restoreKey = "grouphelp", defaultsKey = "CLASS_GROUP_HELP_DEFAULTS",
+      keepEmpty = true },
 }
 
 --- Per-spell proc-priority pin (profile.defensives.spellSettings[id].procPriority,
@@ -410,7 +414,7 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
 
     -- Populate empty spell lists from SpellDB defaults (spec→class fallback)
     for _, cfg in ipairs(SPELL_LIST_CONFIG) do
-        if not cs[cfg.listKey] or #cs[cfg.listKey] == 0 then
+        if not cs[cfg.listKey] or (#cs[cfg.listKey] == 0 and not cfg.keepEmpty) then
             local defaults = SpellDB and SpellDB[cfg.defaultsKey]
                 and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
@@ -518,6 +522,16 @@ end
 -- Health change handler - main defensive queue dispatch
 --------------------------------------------------------------------------------
 
+--- Fill `set` with the first `count` ids of the damage queue, or leave it empty when that
+--- queue is not on screen.
+local function FillExclusions(set, dpsQueue, count, shown)
+    wipe(set)
+    if not (shown and dpsQueue) then return end
+    for i = 1, math_min(#dpsQueue, count) do
+        if dpsQueue[i] then set[dpsQueue[i]] = true end
+    end
+end
+
 function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if addon.isDisabledMode then return end
     if unit ~= "player" and unit ~= "pet" then return end
@@ -584,15 +598,16 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local petlessByChoice = BlizzardAPI and BlizzardAPI.IsPetlessByChoice and BlizzardAPI.IsPetlessByChoice()
     local petNeedsRez = (petStatus == "dead" or petStatus == "missing") and not petlessByChoice
 
-    -- DPS exclusions shared by both paths (reuse pooled table)
-    wipe(dpsQueueExclusions)
-    if SpellQueue and SpellQueue.GetCurrentSpellQueue then
-        local dpsQueue = SpellQueue.GetCurrentSpellQueue()
-        local maxDpsIcons = profile.maxIcons or 4
-        for i = 1, math_min(#dpsQueue, maxDpsIcons) do
-            if dpsQueue[i] then dpsQueueExclusions[dpsQueue[i]] = true end
-        end
-    end
+    -- What a surface's damage queue already shows, its defensive cluster leaves out - but
+    -- only while that queue IS on screen. "Show in" hides a surface in the renderer, not in
+    -- the queue build, so the queue still holds these; excluding them anyway made an
+    -- ability hidden with the damage queue vanish from a defensive cluster still showing.
+    local dpsQueue = SpellQueue and SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue()
+    local mainDM = profile.displayMode or "queue"
+    FillExclusions(dpsQueueExclusions, dpsQueue, profile.maxIcons or 4,
+        mainDM ~= "disabled" and mainDM ~= "overlay" and not BlizzardAPI.HiddenInContent(profile.hideIn))
+    FillExclusions(overlayExclusions, dpsQueue, profile.maxIcons or 4,
+        overlayActive and not BlizzardAPI.HiddenInContent(npo.hideIn))
 
     -- The tank maintenance slot renders INSIDE the defensive cluster, so an ability shown
     -- there must not also be listed in the queue beside it - that is the same icon twice in
@@ -606,6 +621,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         -- The slot takes the most urgent; the other still flows through the normal queue.
         if slotActive and mEntry and mEntry.cast then
             dpsQueueExclusions[mEntry.cast] = true
+            overlayExclusions[mEntry.cast] = true
         end
     end
 
@@ -633,7 +649,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "always"
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
-        local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons})
+        local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, overlayExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons})
 
         -- Pet rez: parity with main panel (capped at one icon). Pet HEAL is the Sustain slot's
         -- now, on both surfaces - the overlay has its own maintenance icon and renders through
@@ -970,12 +986,6 @@ end
 -- heals (stay up top in the user's order), 1 = hold-worthy big heal / heal item, 2 = immunity
 -- bubble (very bottom). Combat-safe: tier is static, base CD is a cached OOC value.
 local function EmergencyRank(sid)
-    -- A level of its own (SpellDB.GetDefaultWaitBelow): with the bubbles at the bubble
-    -- band, with the big heals up to this ordering's own line (80%). Above it (heals over
-    -- time) it keeps its place: in that stretch it may well be live.
-    local auto = SpellDB and SpellDB.GetDefaultWaitBelow and SpellDB.GetDefaultWaitBelow(sid)
-    if auto and auto <= HEALTH_BANDS[1] then return 2 end
-    if auto and auto <= HEALTH_BANDS[3] then return 1 end
     if not IsHoldWorthy(sid) then return 0 end
     if sid > 0 and TierOf(sid) == 1 then return 2 end  -- immunity bubble → very bottom
     return 1  -- hold-worthy big heal / heal item
@@ -1062,29 +1072,44 @@ local function AutoWaitBelow(e)
     return (e.storedID and SpellDB.GetDefaultWaitBelow(e.storedID)) or SpellDB.GetDefaultWaitBelow(e.spellID)
 end
 
-local function MarkWaiting(def, results, isLow)
-    for _, entry in ipairs(results) do
-        if not entry.isProcced and not entry.precombat then
-            local w = WaitSetting(def, entry)
-            local auto = w == nil and def.hideEmergencyUntilLow and AutoWaitBelow(entry)
-            if auto then
-                -- Auto with a level of its own: the same fail-safe as a level the player
-                -- picks - it waits only on a definite "not below".
-                if PlayerBelow(auto) == false then entry.waiting = true end
-            elseif w == nil then
-                -- Auto: with "hide until low" on, the parked panic buttons wait until the
-                -- band their kind calls for (AutoLive).
-                if def.hideEmergencyUntilLow and IsHoldWorthy(entry.spellID, entry.isItem)
-                   and not AutoLive(entry, isLow) then
-                    entry.waiting = true
-                end
-            elseif type(w) == "number" and PlayerBelow(w) == false then
-                -- FAIL SAFE: waits only on a DEFINITE "not below" (see PlayerBelow).
-                entry.waiting = true
+--- Does this defensive wait right now? The one answer both the ordering and the WAIT tag
+--- use, so a waiting button can never sort ahead of a live one.
+local function EntryWaits(def, e, isLow)
+    if e.isProcced or e.precombat then return false end
+    local w = WaitSetting(def, e)
+    if w == nil then
+        if not def.hideEmergencyUntilLow then return false end
+        -- Auto with a level of its own: the same fail-safe as a level the player picks.
+        local auto = AutoWaitBelow(e)
+        if auto then return PlayerBelow(auto) == false end
+        -- Auto by kind: the parked panic buttons wait for the band their kind calls for.
+        return IsHoldWorthy(e.spellID, e.isItem) and not AutoLive(e, isLow)
+    end
+    -- FAIL SAFE: waits only on a DEFINITE "not below" (see PlayerBelow). "off": never.
+    return type(w) == "number" and PlayerBelow(w) == false
+end
+
+--- The personal list with every entry that will wait moved behind the live ones (stable,
+--- so the band's order still decides inside each half). Only this list waits: the group
+--- lists carry no per-entry settings. Fills `waitingIDs` with the list ids that wait.
+local waitSortBuf, waitScratch, waitingIDs = {}, {}, {}
+local function SinkWaiting(def, list, isLow)
+    wipe(waitSortBuf)
+    wipe(waitingIDs)
+    for pass = 1, 2 do
+        for _, id in ipairs(list) do
+            if pass == 1 then
+                waitScratch.isItem = id < 0
+                waitScratch.storedID = (id > 0) and id or nil
+                waitScratch.spellID = (id < 0) and -id or (BlizzardAPI.ResolveSpellID(id) or id)
+                if EntryWaits(def, waitScratch, isLow) then waitingIDs[id] = true end
             end
-            -- "off": never waits.
+            if (pass == 2) == (waitingIDs[id] == true) then
+                waitSortBuf[#waitSortBuf + 1] = id
+            end
         end
     end
+    return waitSortBuf
 end
 
 -- Replace the Emergency Potion sentinel (a user-positioned tile in the defensive list)
@@ -1304,10 +1329,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     local partyHurting = groupHelp and #groupHelp > 0 and PartyHurting(profile.healing)
     if partyHurting then
         AppendUsableSpells(addon, results, groupHelp, maxIcons, alreadyAdded)
-        if #results >= maxIcons then
-            MarkWaiting(profile.defensives, results, isLow)
-            return results, alreadyAdded
-        end
+        if #results >= maxIcons then return results, alreadyAdded end
     end
 
     -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
@@ -1330,12 +1352,19 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                 listToShow = OrderEmergencyLast(defensiveSpells)
             end
         end
+        -- Waiting entries sink BEFORE the cut to maxIcons, so a WAIT icon never takes the
+        -- slot of a button that is live right now.
+        if listToShow then listToShow = SinkWaiting(profile.defensives, listToShow, isLow) end
+        local first = #results + 1
         AppendUsableSpells(addon, results, listToShow, maxIcons, alreadyAdded)
+        for i = first, #results do
+            local e = results[i]
+            local id = e.storedID or (e.isItem and -e.spellID)
+            if not e.isProcced and id and waitingIDs[id] then e.waiting = true end
+        end
         if groupHelp and isLow and not partyHurting then
             AppendUsableSpells(addon, results, groupHelp, maxIcons, alreadyAdded)
         end
-
-        MarkWaiting(profile.defensives, results, isLow)
     end
 
     return results, alreadyAdded

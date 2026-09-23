@@ -181,14 +181,29 @@ end
 -- The ids the last WithAdditions pass ADDED to the game's pool: abilities the game itself
 -- never recommends (its live list omits them). Safe Lead evidence class 1 reads this.
 local insertedIDs = {}
+--- By the id the queue shows or by its base: an inserted ability can be on screen in
+--- another form (a transform's override) while the set holds the id it was added as.
 function BlizzardAPI.IsInsertedSpell(spellID)
-    return spellID ~= nil and insertedIDs[spellID] == true
+    if spellID == nil then return false end
+    if insertedIDs[spellID] then return true end
+    local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(spellID)
+    return base ~= nil and insertedIDs[base] == true
+end
+
+--- The ordering setting as it takes effect: "Use my order exactly" turns ranking off
+--- whichever order is chosen. One reading for the queue build and for the pool additions,
+--- which only belong in the pool while theorycraft is actually timing them.
+--- @return string "off" | "ac" | "simc"
+function BlizzardAPI.GetEffectiveOrdering(profile)
+    if not profile then return "simc" end
+    if profile.orderExact then return "off" end
+    return profile.contextOrder or "simc"
 end
 
 local function WithAdditions(list)
     wipe(insertedIDs)
     local profile = BlizzardAPI.GetProfile()
-    if not profile or (profile.contextOrder or "simc") ~= "simc" then
+    if not profile or BlizzardAPI.GetEffectiveOrdering(profile) ~= "simc" then
         return list
     end
     local RI = LibStub("JustAC-RotationImport", true)
@@ -231,7 +246,10 @@ function BlizzardAPI.IsWaitPlaceholder(spellID)
     return (info and info.iconID == 134377) or false
 end
 
-function BlizzardAPI.GetRotationSpells()
+--- The rotation pool: the game's list plus the abilities theorycraft ordering can time
+--- (WithAdditions). gameOnly = the game's own list alone - what "the rotation changed"
+--- compares against, which must not depend on which ordering happened to be on.
+function BlizzardAPI.GetRotationSpells(gameOnly)
     if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then return nil end
 
     local success, result = pcall(C_AssistedCombat.GetRotationSpells)
@@ -251,9 +269,9 @@ function BlizzardAPI.GetRotationSpells()
                 if not IsPassiveID(result[i]) then filtered[#filtered + 1] = result[i] end
             end
             if #filtered == 0 then return nil end
-            return WithAdditions(filtered)
+            return gameOnly and filtered or WithAdditions(filtered)
         end
-        return WithAdditions(result)
+        return gameOnly and result or WithAdditions(result)
     end
     return nil
 end
@@ -396,8 +414,10 @@ local procCacheTime = 0
 local PROC_CACHE_DURATION = 0.05  -- 50ms - cleared on each update cycle
 
 -- Override spell cache - spell morphs change infrequently (Metamorphosis, etc.)
--- Cache per update cycle, cleared along with proc cache
+-- Valid for one frame: ClearProcCache wipes it per queue build too, but the defensive and
+-- gap-closer engines resolve through it while that build is not running (queue hidden).
 local overrideSpellCache = {}
+local overrideCacheTime = -1
 
 function BlizzardAPI.ClearProcCache()
     wipe(procResultCache)
@@ -460,7 +480,11 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
     if not spellID or spellID <= 0 then return spellID end
     if not C_Spell_GetOverrideSpell then return spellID end
 
-    -- Check cache first (cleared each update cycle by ClearProcCache)
+    local now = GetTime()
+    if now ~= overrideCacheTime then
+        wipe(overrideSpellCache)
+        overrideCacheTime = now
+    end
     local cached = overrideSpellCache[spellID]
     if cached ~= nil then
         return cached
