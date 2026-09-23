@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+## [5.7.1] - 2026-09-22
+
+### Improved
+- Small heals no longer show as ready at full health. Heals over time (Rejuvenation, Frenzied Regeneration, Crimson Vial) come up as soon as you are a little hurt; Word of Glory, Expel Harm, Impending Victory and the like once you have taken some damage; cast-time heals such as Regrowth, Healing Surge and Vivify a little later. Blood's Death Strike is unchanged. The level each one uses is shown on its Wait until below setting, where you can change it.
+- Lay on Hands, Blessing of Protection and Blessing of Spellwarding now wait until you are close to dying, like Divine Shield, since each locks out the others. Protection's Divine Shield waits the same way.
+- Cloak of Shadows no longer waits for low health: like Anti-Magic Shell, it belongs up before the spell lands.
+
 ## [5.7.0] - 2026-09-22
 
 ### Improved

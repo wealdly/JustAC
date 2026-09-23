@@ -26,7 +26,8 @@ BlizzardAPI = {
         return nil
     end,
 }
-holdWorthy, tiers = {}, {}
+holdWorthy, tiers, autoLevels = {}, {}, {}
+SpellDB = { GetDefaultWaitBelow = function(id) return autoLevels[id] end }
 function IsHoldWorthy(id) return holdWorthy[id] == true end
 function TierOf(id) return tiers[id] or 3 end
 BAND_PANIC, healthBand, healthBandSource = 1, 4, "gate"
@@ -48,6 +49,7 @@ def extract(text):
                  .replace("local function WaitSetting", "function WaitSetting", 1)
                  .replace("local function PlayerBelow", "function PlayerBelow", 1)
                  .replace("local function AutoLive", "function AutoLive", 1)
+                 .replace("local function AutoWaitBelow", "function AutoWaitBelow", 1)
                  .replace("local function MarkWaiting", "function MarkWaiting", 1))
 
 
@@ -103,6 +105,26 @@ def main():
     check(False, "return waits(def, entry{ spellID = 13 }, false)", "auto: follows the list-wide switch")
     run("def.hideEmergencyUntilLow = true")
 
+    # Auto with a level of its own (a cheap heal at 80%, say).
+    run("autoLevels[15] = 80")
+    run("health = function(pct) return 95 < pct end")        # at 95% health
+    check(True, "return waits(def, entry{ spellID = 15 }, false)", "auto level: waits above it")
+    run("health = function(pct) return 70 < pct end")        # at 70% health
+    check(False, "return waits(def, entry{ spellID = 15 }, false)", "auto level: live below it")
+    run("health = nil")
+    check(False, "return waits(def, entry{ spellID = 15 }, false)", "FAIL SAFE: unreadable health never holds an auto level")
+    run("exact = { 70, true }")
+    check(False, "return waits(def, entry{ spellID = 15 }, false)", "FAIL SAFE: an estimate never holds an auto level")
+    run("exact = nil; health = function(pct) return 95 < pct end")
+    check(True, "return waits(def, entry{ spellID = 99, storedID = 15 }, false)", "auto level: found through a talent swap")
+    run("holdWorthy[15] = true")
+    check(True, "return waits(def, entry{ spellID = 15 }, true)", "auto level: beats the low-band rule for a panic button")
+    run("def.spellSettings[15] = { waitBelow = 'off' }")
+    check(False, "return waits(def, entry{ spellID = 15 }, false)", "auto level: the player's own setting wins")
+    run("def.spellSettings[15] = nil; def.hideEmergencyUntilLow = false")
+    check(False, "return waits(def, entry{ spellID = 15 }, false)", "auto level: follows the list-wide switch")
+    run("def.hideEmergencyUntilLow = true")
+
     # Items, and the Emergency Potion entry's own setting.
     run("def.itemSettings[500] = { waitBelow = 40 }")
     check(True, "return waits(def, entry{ spellID = 500, isItem = true }, false)", "an item's own threshold")
@@ -119,7 +141,7 @@ def main():
 
     for line in bad:
         print(line)
-    print("defensive wait: 18 case(s), %d failure(s)" % len(bad))
+    print("defensive wait: 26 case(s), %d failure(s)" % len(bad))
     return 1 if bad else 0
 
 

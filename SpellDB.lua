@@ -1230,7 +1230,6 @@ local DEFENSE_TIER = {
     [642]    = 1,  -- Divine Shield (Paladin)
     [45438]  = 1,  -- Ice Block (Mage)
     [186265] = 1,  -- Aspect of the Turtle (Hunter)
-    [31224]  = 1,  -- Cloak of Shadows (Rogue, magic immunity)
     [196555] = 1,  -- Netherwalk (Demon Hunter, full damage immunity - a true bubble, not
                    -- the partial avoidance Blur gives, which is why only this one is tiered)
     -- Tier 2 - big instant heals
@@ -1265,7 +1264,8 @@ local DEFENSE_TIER = {
     -- Life Cocoon is deliberately NOT here despite being an absorb: JustAC only ever renders it
     -- self-cast, and self-cast it is the spec's panic button, not a pre-applied shield.
     -- NOT tiered at all, on purpose: semi-rotational short DR (Blur, Barkskin, Ignore Pain, Ironbark),
-    -- school-limited walls (AMS, Anti-Magic Zone, Spell Reflection, Diffuse Magic, and both
+    -- school-limited walls (AMS, Anti-Magic Zone, Spell Reflection, Diffuse Magic, Cloak of
+    -- Shadows - a magic-only immunity pressed before the spell lands, like AMS - and both
     -- Blessings - Protection stops physical only, Spellwarding magic only, so neither
     -- "survives any hit" the way a tier 1 bubble does), group utility that is not a personal
     -- answer (Zephyr, Spirit Link Totem), maintenance buffs (Earth Shield), and situational
@@ -1307,6 +1307,51 @@ local DEFENSE_TIER = {
 local DEFENSE_TIER_SPEC = {
     PALADIN_2 = { [642] = 3 },  -- Divine Shield
 }
+
+-- Auto's own "wait until below" for defensives that are not panic buttons but have no
+-- business lit at full health. Only read while "Hold Emergency Heals Until Low Health" is
+-- on, and a player's own setting always wins. Goes through the same fail-safe as a level
+-- the player picks (DefensiveEngine.PlayerBelow): an unreadable health shows it as usual.
+--   90 - heals over time: rolling one early is how they are meant to be used, so only a
+--        top-of-the-bar health holds them.
+--   80 - cheap instant heals: once you have taken some damage.
+--   60 / 50 - cast-time and channelled heals; their instant procs are promoted anyway.
+--   25 - the bubble band, for panic buttons that are not tier 1: a ten-minute full heal,
+--        and the immunities that lock out Divine Shield and Lay on Hands (Forbearance).
+local DEFAULT_WAIT_BELOW = {
+    [85673]  = 80,  -- Word of Glory
+    [49998]  = 80,  -- Death Strike (not Blood's, see below)
+    [202168] = 80,  -- Impending Victory
+    [360995] = 80,  -- Verdant Embrace
+    [322101] = 80,  -- Expel Harm
+    [185311] = 90,  -- Crimson Vial (heal over time)
+    [774]    = 90,  -- Rejuvenation (heal over time)
+    [22842]  = 90,  -- Frenzied Regeneration (heal over time)
+    [8936]   = 60,  -- Regrowth
+    [8004]   = 60,  -- Healing Surge
+    [116670] = 60,  -- Vivify
+    [234153] = 60,  -- Drain Life
+    [370960] = 50,  -- Emerald Communion (three-minute channel)
+    [633]    = 25,  -- Lay on Hands
+    [1022]   = 25,  -- Blessing of Protection
+    [204018] = 25,  -- Blessing of Spellwarding
+}
+-- Per spec, over the table above. false = no level of its own.
+local DEFAULT_WAIT_SPEC = {
+    DEATHKNIGHT_1 = { [49998] = false },  -- Blood: Death Strike IS the rotation
+    PALADIN_2     = { [642] = 25 },       -- Divine Shield: kept out of the bubble tier so it
+                                          -- never floats (threat), but still waits like one
+}
+
+--- Auto's own wait level for a spell, or nil when the kind rule applies.
+function SpellDB.GetDefaultWaitBelow(spellID)
+    if not spellID or spellID < 0 then return nil end
+    local specKey = SpellDB.GetSpecKey()
+    local spec = specKey and DEFAULT_WAIT_SPEC[specKey]
+    local v = spec and StaticLookup(spec, spellID)
+    if v == nil then v = StaticLookup(DEFAULT_WAIT_BELOW, spellID) end
+    return v or nil
+end
 
 --- Emergency tier for the low-health defensive reorder: 1 = immunity bubble, 2 = big instant
 --- heal, 4 = pre-emptive wall (major DR / cheat-death), 3 = everything else (the default for

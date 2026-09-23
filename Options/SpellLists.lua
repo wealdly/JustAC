@@ -636,6 +636,14 @@ function methods:RowTooltip(row)
         GameTooltip:AddLine(string.format(L["Wait Row Note"], w), 1, 0.82, 0.4, true)
     elseif w == "off" then
         GameTooltip:AddLine(L["Wait Row Never"], 1, 0.82, 0.4, true)
+    elseif w == nil and row.id > 0 then
+        -- Auto, for a spell with a level of its own (SpellDB.GetDefaultWaitBelow).
+        local d = BY_KEY[self.listKey]
+        local def = d and d.wait and self.addon and self.addon:GetProfile().defensives
+        local SpellDB = LibStub("JustAC-SpellDB", true)
+        local auto = def and def.hideEmergencyUntilLow and SpellDB and SpellDB.GetDefaultWaitBelow
+            and SpellDB.GetDefaultWaitBelow(row.id)
+        if auto then GameTooltip:AddLine(string.format(L["Wait Row Note"], auto), 1, 0.82, 0.4, true) end
     end
 end
 function methods:OnRowCreated(row)
