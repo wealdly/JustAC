@@ -1,11 +1,25 @@
-# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
-# plain damage filler - core abilities, DoT refresh and target-count conditions only, no
-# hero-talent branches. Anything the character does not know is dropped at runtime, and
-# healing spells never reach the damage queue.
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. Discipline's
+# damage priority between heals (Atonement turns this damage into healing): Shadow Word:
+# Pain upkeep first (Expiation consumes it, Power of the Dark Side procs from it), the
+# Shadow Word: Death execute, then Mind Blast and Penance on cooldown, Void Blast while a
+# Voidweaver's Entropic Rift is open, Holy Nova as a Lightburst nuke or a 3+ target spender,
+# and Smite as filler. Healing cooldowns, ramps (Radiance, Evangelism, Ultimate Penitence)
+# and shields are left to the healer. In 12.1 Shadowfiend, Mindbender and Voidwraith are
+# passive summons (Shadow Word: Death, Evangelism, Entropic Rift), Purge the Wicked is a
+# passive upgrade of Shadow Word: Pain, and Halo / Divine Star are not in the Discipline
+# tree, so none of them appear. Grounded against client build 12.1.0.69875.
 
+# Shadow Word: Death below 20% is the execute (+150% damage, Death's Torment repeats,
+# Shadowfiend proc chance), so it goes ahead of Mind Blast.
 actions=shadow_word_pain,if=refreshable
-actions+=/penance
-actions+=/mind_blast
 actions+=/shadow_word_death,if=target.health.pct<20
+# Mind Blast opens Entropic Rift for Voidweaver; Penance spreads Shadow Word: Pain
+# (Encroaching Shadows) and spends the Power of the Dark Side empowerment.
+actions+=/mind_blast
+actions+=/penance
+# Smite becomes Void Blast only while Entropic Rift is up (Darkening Horizon extends the rift).
+actions+=/void_blast,if=hero_tree.voidweaver
+# Lightburst makes Holy Nova a 30 sec cooldown nuke worth pressing on one target (12 yd).
+actions+=/holy_nova,if=talent.lightburst
 actions+=/holy_nova,if=active_enemies>=3
 actions+=/smite

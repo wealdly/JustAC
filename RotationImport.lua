@@ -4,9 +4,10 @@
 --
 -- Consumes imported action priority lists (flattened, per context) and hands the
 -- queue a spell list for positions 2+. Each entry may carry secret-safe GATES
--- (buff-window / cooldown / dot / execute / health / power / resource / stack / stealth) classified
--- offline by tools/gen_simc_rotations.py; SpellQueue evaluates the buff, resource, power,
--- health, stack, stealth and execute kinds (cd/dot are informational, read by the diagnostics).
+-- (buff-window / cooldown / dot / execute / health / last cast / power / resource / stack /
+-- stealth) classified offline by tools/gen_simc_rotations.py; SpellQueue evaluates them in
+-- GateVerdict (dot is informational, read by the diagnostics). Which lines apply at all is
+-- decided here, once per talent change, from the talents and hero tree each line is for.
 -- This module reads no combat state, so it is safe under 12.0 secret values.
 --
 -- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
@@ -15,15 +16,20 @@
 local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
 if not RotationImport then return end
 
--- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
--- entry = { id = <spellID>, gates = { {t="buff",id=..,dur=secs|nil,neg=bool}, {t="cd"}, {t="dot",id=..},
+-- specKey (e.g. "DRUID_2") -> { st = {line,...}, aoe = {...}, burst = {id,...} }
+-- line = { id = <spellID>, gates = { {t="buff",id=..,dur=secs|nil,neg=bool}, {t="cd"}, {t="dot",id=..},
 --           {t="execute",pct=..}, {t="health",pct=..}, {t="power",..}, {t="resource",..},
 --           {t="stack",id=..,op=..,n=..}, {t="stealth",neg=bool} }, delegated = bool,
---           empower = <release stage for an empowered cast, absent for everything else> }
+--           empower = <release stage for an empowered cast, absent for everything else>,
+--           b = { {k="talent"|"hero", id=.., neg=bool}, ... } the build the line is for }
+-- A context holds every priority LINE, not one entry per spell: which lines count depends
+-- on the player's talents and hero tree, so the per-spell list is merged here, per build
+-- (Resolved), and every reader below goes through that.
 -- burst = plain spell ids: the APL's sync anchors (what SimC pots/trinkets
 -- into), consumed by SpellQueue's burst-ready cue.
 local rotations = RotationImport._rotations or {}
 RotationImport._rotations = rotations
+local resolvedCache = {} -- specKey -> ctx -> merged entries for the current build
 local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
 local empowerCache = {} -- specKey -> (id|baseID) -> tier | false (contexts disagree)
 local insertableCache = {} -- specKey -> ids the pool may gain (see GetInsertable)
@@ -51,18 +57,139 @@ function RotationImport.RegisterGated(data)
     if type(data) ~= "table" then return end
     for specKey, entry in pairs(data) do
         rotations[specKey] = entry
+        resolvedCache[specKey] = nil
         lookupCache[specKey] = nil
         empowerCache[specKey] = nil
     end
     wipe(insertableCache)
 end
 
+--------------------------------------------------------------------------------
+-- The build. A line's `b` says which talents and hero tree it is for. Both are plain at
+-- all times and change only with a talent change (SPELLS_CHANGED -> InvalidateLookup).
+--------------------------------------------------------------------------------
+local function BuildHolds(b)
+    if not b then return true end
+    for i = 1, #b do
+        local c = b[i]
+        local have
+        if c.k == "talent" then
+            -- No answer, no opinion: a missing API keeps the line, as before build awareness.
+            -- `ids`: a talent name several specs share - known if any of them is.
+            if not IsPlayerSpell then
+                have = not c.neg
+            elseif c.ids then
+                have = false
+                for j = 1, #c.ids do
+                    if IsPlayerSpell(c.ids[j]) then have = true break end
+                end
+            else
+                have = IsPlayerSpell(c.id) and true or false
+            end
+        elseif c.k == "hero" then
+            local active = C_ClassTalents and C_ClassTalents.GetActiveHeroTalentSpec
+                and C_ClassTalents.GetActiveHeroTalentSpec()
+            if c.ids then
+                -- `ids`: a hero name that exists in several loaded trees (Shaman) - any match.
+                have = false
+                for j = 1, #c.ids do
+                    if active == c.ids[j] then have = true break end
+                end
+            else
+                have = (active == c.id)
+            end
+        else
+            have = not c.neg                     -- unknown kind: no opinion
+        end
+        if have == (c.neg == true) then return false end
+    end
+    return true
+end
+
+-- Gates compare by content, not identity: the same condition on two lines is two tables.
+local function GateKey(g)
+    local keys = {}
+    for k in pairs(g) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local parts = {}
+    for i = 1, #keys do
+        local k, v = keys[i], g[keys[i]]
+        if k == "g" then
+            local sub = {}
+            for j = 1, #v do sub[j] = GateKey(v[j]) end
+            v = "{" .. table.concat(sub, ",") .. "}"
+        end
+        parts[i] = k .. "=" .. tostring(v)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function HasGate(gates, key)
+    for i = 1, #gates do
+        if GateKey(gates[i]) == key then return true end
+    end
+    return false
+end
+
+--- The lines this build satisfies -> one entry per spell, ranked by its FIRST such line.
+--- Mirror of tools/gen_simc_rotations.py `merge` (tools/test_simc_build.py holds them to
+--- the same answer on the shipped data):
+---   * a stealth gate survives only while every later line for the spell also has it;
+---   * a later line read IN FULL (not delegated) drops the first line's gates it lacks -
+---     SimC casts the spell there without them, so they are not requirements;
+---   * lines disagreeing on an empower release stage leave none.
+local function Resolve(lines)
+    local out, seen = {}, {}
+    for i = 1, #lines do
+        local e = lines[i]
+        if e and e.id and BuildHolds(e.b) then
+            local kept = seen[e.id]
+            if not kept then
+                kept = { id = e.id, gates = e.gates or {}, delegated = e.delegated, empower = e.empower }
+                seen[e.id] = kept
+                out[#out + 1] = kept
+            else
+                local later = e.gates or {}
+                local keep, changed = {}, false
+                local stealthLost = false
+                for j = 1, #kept.gates do
+                    local g = kept.gates[j]
+                    if g.t == "stealth" and not HasGate(later, GateKey(g)) then stealthLost = true end
+                end
+                for j = 1, #kept.gates do
+                    local g = kept.gates[j]
+                    local drop = (g.t == "stealth" and stealthLost)
+                        or (not e.delegated and not HasGate(later, GateKey(g)))
+                    if drop then changed = true else keep[#keep + 1] = g end
+                end
+                if changed then kept.gates = keep end   -- a copy: the shipped line stays whole
+                if kept.empower ~= e.empower then kept.empower = nil end
+            end
+        end
+    end
+    return out
+end
+
+--- context -> merged entries for the current spec and build, or nil without data.
+local function Resolved(specKey)
+    local rot = specKey and rotations[specKey]
+    if not rot then return nil end
+    local r = resolvedCache[specKey]
+    if r then return r end
+    r = {}
+    for ctx, list in pairs(rot) do
+        if ctx ~= "burst" and type(list) == "table" then r[ctx] = Resolve(list) end
+    end
+    resolvedCache[specKey] = r
+    return r
+end
+
 local function EntriesFor(context)
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    local entry = specKey and rotations[specKey]
-    if not entry then return nil end
-    local list = entry[context or "st"] or entry.st
+    local r = Resolved(specKey)
+    if not r then return nil end
+    local list = r[context or "st"] or r.st
     return (type(list) == "table") and list or nil
 end
 
@@ -102,13 +229,13 @@ end
 function RotationImport.GetInsertable()
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    local rot = specKey and rotations[specKey]
+    local rot = Resolved(specKey)
     if not rot then return nil end
     local cached = insertableCache[specKey]
     if cached then return cached end
     local ok, order = {}, {}
-    for ctx, list in pairs(rot) do
-        if ctx ~= "burst" and type(list) == "table" then
+    for _, list in pairs(rot) do
+        do
             for i = 1, #list do
                 local e = list[i]
                 if e and e.id then
@@ -185,12 +312,11 @@ function RotationImport.GetBlizzardRank(spellID)
 end
 
 local function BuildLookup(specKey)
-    local rot = rotations[specKey]
+    local rot = Resolved(specKey)
     if not rot then return nil end
     local byCtx = {}
     for ctx, list in pairs(rot) do
-        -- "burst" holds plain ids for the cue, not gated entries - never a context.
-        if ctx ~= "burst" and type(list) == "table" then
+        do
             local m = {}
             for i = 1, #list do
                 local e = list[i]
@@ -208,12 +334,15 @@ local function BuildLookup(specKey)
     return byCtx
 end
 
---- Wipe the rank-lookup cache. BuildLookup bakes talent-DEPENDENT override
---- resolution (baseID via ResolveSpellID) into the map, so a talent change
---- within the same spec must invalidate it - specKey alone doesn't move.
+--- Wipe everything derived from the player's build: which lines apply (talents, hero
+--- tree), and the talent-DEPENDENT override resolution the lookup bakes in (baseID via
+--- ResolveSpellID). A talent change within the same spec must invalidate it - specKey
+--- alone doesn't move.
 function RotationImport.InvalidateLookup()
+    wipe(resolvedCache)
     wipe(lookupCache)
     wipe(empowerCache)
+    wipe(insertableCache)
 end
 
 --------------------------------------------------------------------------------
@@ -232,11 +361,11 @@ end
 -- ambiguous this way (Devastation's Eternity Surge: tier 1 at single target, undecidable
 -- in AoE because SimC's thresholds there are talent-dependent), so the cost is one hint.
 local function BuildEmpower(specKey)
-    local rot = rotations[specKey]
+    local rot = Resolved(specKey)
     if not rot then return nil end
     local m, seenAt = {}, {}
-    for ctx, list in pairs(rot) do
-        if ctx ~= "burst" and type(list) == "table" then
+    for _, list in pairs(rot) do
+        do
             for i = 1, #list do
                 local e = list[i]
                 if e and e.id then

@@ -227,13 +227,14 @@ local HEALING_SPELLS = {
     [85222] = true,   -- Light of Dawn
     [85673] = true,   -- Word of Glory (can proc free via Divine Purpose)
     [633] = true,     -- Lay on Hands
-    [20473] = true,   -- Holy Shock
+    -- SKIPPED: Holy Shock (20473) - Holy's main damage builder too (Blizzard's own damage
+    -- rotation lists it). Dual-use spells stay uncategorized.
     [53563] = true,   -- Beacon of Light
     [156910] = true,  -- Beacon of Faith
     -- SKIPPED: Divine Toll (375576) - heals as Holy but is a damage cooldown
     -- for Ret/Prot (role-conditional). Dual-use spells stay uncategorized.
     [114158] = true,  -- Light's Hammer
-    [114165] = true,  -- Holy Prism
+    -- SKIPPED: Holy Prism (114165) - damages an enemy target. Dual-use, stays uncategorized.
     -- REMOVED: Light of the Protector (183998) - replaced by Word of Glory
     -- MOVED: Cleanse Toxins (213644) - dispel, classified as utility
     [223306] = true,  -- Bestow Faith
@@ -260,7 +261,8 @@ local HEALING_SPELLS = {
     [64843] = true,   -- Divine Hymn
     -- MOVED: Holy Word: Chastise (88625) - damage + incapacitate, classified as CC
     [110744] = true,  -- Divine Star (heal)
-    [120517] = true,  -- Halo (heal)
+    -- SKIPPED: Halo (120517) - the Archon hero button for Holy and Shadow, damage as well as
+    -- healing. Dual-use, stays uncategorized (group-heal injection lists it separately).
     [200183] = true,  -- Apotheosis
     [204883] = true,  -- Circle of Healing
     -- REMOVED: Greater Heal (289666) - not a learnable spell in retail

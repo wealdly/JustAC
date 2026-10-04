@@ -170,6 +170,17 @@ local function GetSpellAndOverride(spellID, spellName)
             spells[overrideSpellID] = overrideSpellInfo.name
         end
     end
+    -- And the BASE, the other way along the same chain: a spell that transforms while you
+    -- use it (a channel's in-flight form) reaches here as the transformed id, but a macro
+    -- names the base. Without it the keyed macro stopped matching mid-channel and a keyless
+    -- slot holding the plain spell - which slot matching does resolve by base - won.
+    local baseSpellID = FindBaseSpellByID and FindBaseSpellByID(spellID)
+    if baseSpellID and baseSpellID ~= spellID and BlizzardAPI then
+        local baseInfo = BlizzardAPI.GetSpellInfo(baseSpellID)
+        if baseInfo and baseInfo.name then
+            spells[baseSpellID] = baseInfo.name
+        end
+    end
 
     spellOverrideCache[spellID] = spells
     return spells

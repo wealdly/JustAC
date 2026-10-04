@@ -7410,8 +7410,10 @@ function DebugCommands.HotkeyProbe(addon)
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     if not ABS then addon:Print("|cffff6600ActionBarScanner unavailable|r") return end
 
-    local channeling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true
-    local casting    = PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true
+    -- The player's own cast info, as the renderer reads it (the cast bar's fields freeze
+    -- when an addon replaces it). Plain for the player's own unit.
+    local channeling = UnitChannelInfo("player") ~= nil
+    local casting    = UnitCastingInfo("player") ~= nil
     addon:Print(string.format("state: channeling=%s casting=%s combat=%s",
         tostring(channeling), tostring(casting),
         tostring(UnitAffectingCombat and UnitAffectingCombat("player") or false)))

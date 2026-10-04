@@ -481,12 +481,30 @@ end
 --
 -- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge -
 -- tune by eye in-game; the structural anchor is what matters here.
+
+--- The health bar a nameplate addon draws in place of Blizzard's, or nil on a Blizzard
+--- plate. Such plates are a child of the base nameplate stored as `.unitFrame` (lowercase),
+--- the bar as `.Health` (unit-frame library) or `.healthBar`. Blizzard's own UnitFrame is
+--- then hidden under a hidden parent yet still resolvable, so anchoring to it lays our
+--- icons out around a bar nobody sees, and moving its CC/buff lists is invisible work.
+--- Existence, not visibility: the addon shows its plate from the same plate-added event we
+--- attach on, and an anchor resolves on a hidden frame anyway. No Blizzard frame is read.
+local function ReplacementHealthBar(nameplate)
+    local puf = nameplate and nameplate.unitFrame
+    if type(puf) ~= "table" or puf == nameplate.UnitFrame then return nil end
+    local bar = puf.Health or puf.healthBar
+    if type(bar) == "table" and bar.GetObjectType then return bar end
+    return nil
+end
+
 local function PositionEnrageIndicator(npo, expansion)
     local uf        = currentNameplate and currentNameplate.UnitFrame
     local af        = uf and uf.AurasFrame
     local buffFrame = af and af.BuffListFrame
     local anchorFrame = defRowAnchor.frame
-    if not buffFrame or not anchorFrame or #defIcons == 0 then RestoreEnrageIndicator(); return false end
+    if not buffFrame or not anchorFrame or #defIcons == 0 or ReplacementHealthBar(currentNameplate) then
+        RestoreEnrageIndicator(); return false
+    end
 
     local iconSize = npo.iconSize or 32
     local defScale = npo.defensiveIconScale or 1  -- defensive icons render at iconSize * this
@@ -668,7 +686,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, ic
 
     local uf = nameplate and nameplate.UnitFrame
     local af = uf and uf.AurasFrame
-    if not af then return end
+    if not af or ReplacementHealthBar(nameplate) then return end
 
     local ccList   = af.CrowdControlListFrame
     local locFrame = af.LossOfControlFrame
@@ -748,10 +766,11 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     -- geometry so the CC/enrage consumers line up with what actually renders.
     local defScale  = (npo and npo.defensiveIconScale) or 1
     local dpsScale1 = (npo and npo.firstIconScale) or 1
-    -- Anchor to HealthBarsContainer so icons center on the health bar strip,
-    -- not on the root nameplate frame (which also includes auras/name/castbar).
+    -- Anchor to the health bar strip, not the root nameplate frame (which also includes
+    -- auras/name/castbar): a nameplate addon's bar when one replaced Blizzard's, else
+    -- HealthBarsContainer.
     local uf          = nameplate.UnitFrame
-    local anchorFrame = (uf and uf.HealthBarsContainer) or nameplate
+    local anchorFrame = ReplacementHealthBar(nameplate) or (uf and uf.HealthBarsContainer) or nameplate
 
     local isLeft    = (anchor == "LEFT")
     -- Point on the icon that touches the nameplate / previous icon
