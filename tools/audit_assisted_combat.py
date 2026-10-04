@@ -90,11 +90,21 @@ def insertable_by_spec():
     out = {}
     for k in range(1, len(parts), 2):
         key, body, ok = parts[k], parts[k + 1], {}
-        # Anchored on the trailing "-- name" comment: gates nest braces, and without the
-        # anchor the lazy match stops inside them and never sees ",delegated=true".
-        for m in re.finditer(r"\{id=(\d+),gates=\{.*?\}(,delegated=true)?(?:,empower=\d+)?\},\s*--", body):
+        # One priority line per row. A spell's rank comes from its FIRST line in a context
+        # (the runtime merges the rest per build), so that line's delegation is the one that
+        # counts: the first per context, every context.
+        ctx, first = None, set()
+        for line in body.splitlines():
+            head = re.match(r"\s*(st|cleave|aoe) = \{", line)
+            if head:
+                ctx, first = head.group(1), set()
+                continue
+            m = re.match(r"\s*\{id=(\d+),", line)
+            if not m or m.group(1) in first:
+                continue
+            first.add(m.group(1))
             sid = int(m.group(1))
-            ok[sid] = ok.get(sid, True) and not m.group(2)   # every line, every context
+            ok[sid] = ok.get(sid, True) and ",delegated=true" not in line
         out[key] = [i for i, good in ok.items()
                     if good and i not in non_offensive and i not in never and i not in gap.get(key, set())]
     return out

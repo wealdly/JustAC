@@ -1,10 +1,24 @@
-# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
-# plain damage filler - core abilities and target-count conditions only, no hero-talent
-# branches. Anything the character does not know is dropped at runtime, and healing
-# spells never reach the damage queue.
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. Damage priority
+# for a Preservation Evoker weaving damage between heals, grounded at client build
+# 12.1.0.69875. Neither hero tree adds a castable damage button for this spec (Chrono
+# Flame upgrades Living Flame in place; Flameshaper's Preservation side is healing), so
+# there are no hero-tree branches. Healing spells never reach the damage queue.
 
-actions=fire_breath
-actions+=/disintegrate
+# Fire Breath on cooldown whenever its burn is not already rolling. Rank 1 keeps the
+# longest burn and the shortest hold; Leaping Flames still sends the next Living Flame to
+# a second target. On packs, rank 3 front-loads the damage and lets Leaping Flames hit
+# three extra targets.
+actions=fire_breath,empower_to=1,if=active_enemies<=2&dot.fire_breath.refreshable
+actions+=/fire_breath,empower_to=3,if=active_enemies>=3&dot.fire_breath.refreshable
+# Deep Breath is a two-minute damage cooldown (it also heals through Life-Giver's
+# Flame), but it moves you: only worth it on a pack.
 actions+=/deep_breath,if=active_enemies>=3
-actions+=/azure_strike,if=active_enemies>=2
+# Essence is the healing resource. Disintegrate only spends a free cast (Essence Burst)
+# or Essence that would otherwise be wasted at cap.
+actions+=/disintegrate,if=buff.essence_burst.stack>=1|essence.deficit<=1
+actions+=/azure_strike,if=active_enemies>=3
+# Living Flame is the filler: it can grant Essence Burst, and Chrono Flame makes it echo
+# recent damage.
 actions+=/living_flame
+# Instant filler for when you have to move.
+actions+=/azure_strike

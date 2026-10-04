@@ -449,6 +449,9 @@ GatePhrase = function(g)
             L["Priority Cond Stacks"])
     elseif g.t == "dot" then
         piece = L["Priority Cond Dot"]
+    elseif g.t == "prev" and g.id then
+        piece = string.format(g.neg and L["Priority Cond Not After"]
+            or L["Priority Cond After"], nameOf(g.id))
     end
     return piece
 end

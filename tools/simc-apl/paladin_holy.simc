@@ -1,10 +1,21 @@
-# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
-# plain damage filler - core abilities, execute and target-count conditions only, no
-# hero-talent branches. Anything the character does not know is dropped at runtime, and
-# healing spells never reach the damage queue.
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. A damage priority
+# for a Holy Paladin filling gaps between heals, grounded at client build 12.1.0.69875.
+# Shield of the Righteous is the only Holy Power damage spender (Word of Glory and Light of
+# Dawn are heals and never reach the damage queue); it is spent at 4+ so the next builder
+# never overcaps, and each cast also shortens Holy Shock. Hammer of Wrath only exists while
+# Avenging Wrath turns Judgment into it, and Crusader Strike only while Avenging Crusader
+# replaces itself with it, so both lines are simply skipped otherwise. Avenging Wrath,
+# Avenging Crusader and Holy Armaments are raid cooldowns or ally buffs and are left to the
+# player. Lightsmith cashes in Divine Guidance stacks with Consecration; Righteous Judgment
+# builds let Judgment place Consecration instead of hard-casting it in single target.
 
-actions=judgment
-actions+=/hammer_of_wrath,if=target.health.pct<20
+actions=shield_of_the_righteous,if=holy_power>=4
+actions+=/hammer_of_wrath
+actions+=/consecration,if=active_enemies>=3
 actions+=/divine_toll,if=active_enemies>=3
-actions+=/consecration,if=active_enemies>=2
+actions+=/holy_prism
 actions+=/crusader_strike
+actions+=/judgment
+actions+=/holy_shock
+actions+=/consecration,if=talent.divine_guidance&buff.divine_guidance.stack>=3
+actions+=/consecration,if=!talent.righteous_judgment

@@ -714,10 +714,10 @@ function JustAC:OnEnable()
         UNIT_MAXPOWER                = "OnPowerTypeChanged",
         UNIT_AURA                    = "OnUnitAura",
         UNIT_SPELLCAST_SUCCEEDED     = "OnSpellcastSucceeded",
-        UNIT_SPELLCAST_START         = "OnPlayerCastStart",
-        UNIT_SPELLCAST_STOP          = "OnPlayerCastStop",
-        UNIT_SPELLCAST_CHANNEL_START = "OnPlayerChannelStart",
-        UNIT_SPELLCAST_CHANNEL_STOP  = "OnPlayerChannelStop",
+        UNIT_SPELLCAST_START         = "OnPlayerCastChanged",
+        UNIT_SPELLCAST_STOP          = "OnPlayerCastChanged",
+        UNIT_SPELLCAST_CHANNEL_START = "OnPlayerChannelChanged",
+        UNIT_SPELLCAST_CHANNEL_STOP  = "OnPlayerChannelChanged",
         UNIT_PET                     = "OnPetChanged",
         UNIT_ENTERED_VEHICLE         = "OnVehicleChanged",
         UNIT_EXITED_VEHICLE          = "OnVehicleChanged",
@@ -2096,32 +2096,17 @@ local function MarkPrecombatGuardDirty()
     if not UnitAffectingCombat("player") then defensiveQueueDirty = true end
 end
 
--- Event-driven cast/channel spell ID caching - avoids polling UnitCastingInfo/UnitChannelInfo
--- every render frame. spellID from UNIT_SPELLCAST_* for "player" is NeverSecret.
-function JustAC:OnPlayerCastStart(event, unit, castGUID, spellID)
+-- Player cast/channel start and stop. The renderer reads the cast itself each pass
+-- (ResolvePlayerCastState); these only schedule the rebuilds that pick the change up.
+function JustAC:OnPlayerCastChanged(event, unit)
     if unit ~= "player" then return end
-    if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(spellID) end
     MarkPrecombatGuardDirty()
 end
 
-function JustAC:OnPlayerCastStop(event, unit)
+function JustAC:OnPlayerChannelChanged(event, unit)
     if unit ~= "player" then return end
-    if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(nil) end
-    MarkPrecombatGuardDirty()
-end
-
-function JustAC:OnPlayerChannelStart(event, unit, castGUID, spellID)
-    if unit ~= "player" then return end
-    if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(spellID) end
     -- OOC the loop only ticks when dirty: without this the channel grey-out/fill
-    -- doesn't paint (or clear, below) until some other event happens to fire.
-    self:MarkQueueDirty()
-    MarkPrecombatGuardDirty()
-end
-
-function JustAC:OnPlayerChannelStop(event, unit)
-    if unit ~= "player" then return end
-    if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(nil) end
+    -- doesn't paint (or clear) until some other event happens to fire.
     self:MarkQueueDirty()
     MarkPrecombatGuardDirty()
 end

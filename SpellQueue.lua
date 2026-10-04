@@ -1119,6 +1119,12 @@ local function GateVerdict(g, ctx)
         end
         return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(g.id) and true or false)
     end
+    if t == "prev" then
+        -- The last cast is plain (our own casts), so this reads the same in both modes.
+        -- `neg`: NOT right after it (Windwalker's no-repeat rule is this, about itself).
+        if not (g.id and BlizzardAPI.WasLastCast) then return ctx.strict and false or nil end
+        return BlizzardAPI.WasLastCast(g.id, g.gcd == true) ~= (g.neg == true)
+    end
     if t == "buff" then
         if not ctx.strict then return nil end
         local up = g.id and BlizzardAPI.IsBuffWindowActive

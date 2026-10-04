@@ -77,6 +77,7 @@ CURATED = {
         "swipe_cat": 106785, "thrash_cat": 106830, "moonfire_cat": 155625,
         "berserk": 106951, "brutal_slash": 202028, "adaptive_swarm": 391888,
         "incarnation": 102543, "bs_inc": 106951,
+        "incarnation_guardian_of_ursoc": None,  # see DRUID_3: shared `bs_inc` alias
     },
     # Cast ids not name-reachable in the spec universe (export-gapped trait node, form
     # variant, rework, or an old same-name spell shadows it). Ground-truthed against JustAC's
@@ -97,10 +98,16 @@ CURATED = {
         "collapsing_star": 1221150, "eradicate": 1225826, "hungering_slash": 1239123,
         "pierce_the_veil": 1245483, "predators_wake": 1259431, "reapers_toll": 1245470,
     },
-    "DRUID_1": {"full_moon": 274283, "half_moon": 274282, "stellar_flare": 202347, "warrior_of_elune": 202425},
+    # eclipse 1233346 (Solar Eclipse): taught by passive talent 1239669 via SpellLearnSpell,
+    # so no trait row reaches it; Lunar Eclipse 1233272 is its EffectAura=332 override
+    # (aura 1233353), shares charge category 2394 - CSV-grounded 12.1.0.69875, 2026-10-04.
+    "DRUID_1": {"eclipse": 1233346, "full_moon": 274283, "half_moon": 274282, "stellar_flare": 202347, "warrior_of_elune": 202425},
     # wild_guardian: the Guardian tree exposes only PASSIVE "Wild Guardian" nodes; the castable
     # button is the actionbar-override target (SpellEffect EffectAura=332) 1269658 - CSV-grounded 2026-09-08.
-    "DRUID_3": {"pulverize": 80313, "thrash_bear": 77758, "swipe_bear": 213771, "wild_guardian": 1269658},
+    # None blocks the class-wide fallback handing Guardian Feral's Incarnation (102543)
+    # through the shared `bs_inc` burst alias.
+    "DRUID_3": {"pulverize": 80313, "thrash_bear": 77758, "swipe_bear": 213771, "wild_guardian": 1269658,
+                "incarnation_avatar_of_ashamane": None},
     # Circle of the Wild (474530) gives Restoration a cat-form filler list; the FORMS guard
     # makes every _cat token curated-only and this key was missing.
     "DRUID_4": {"swipe_cat": 106785},
@@ -111,6 +118,16 @@ CURATED = {
     # gap as DEMONHUNTER_3): CSV name+castability grounded, passives excluded, each id
     # cross-confirmed against Data/SpellArchetypes.lua (independent generator) - 2026-08-16.
     "EVOKER_1": {"azure_sweep": 1265872, "unbound_flame": 1292321},
+    # Healer pins (local, CSV-grounded at 12.1.0.69875, 2026-10-04). Proc AURAS for stack gates
+    # are not in the resolver universe (their talent nodes are passive), so they are named here:
+    # essence_burst 369299 = Preservation's buff ("Echo, Emerald Blossom, or Disintegrate";
+    # Devastation's is 359618), divine_guidance 460822 = the Lightsmith Consecration aura.
+    # crusader_strike 1279187: Holy's Shock talent overrides 35395, so the only Crusader Strike
+    # Holy can press is Avenging Crusader's EffectAura=332 replacement. void_blast 450215: aura
+    # 450404's Smite override for Discipline (450983 is Shadow's Mind Blast one, PRIEST_3).
+    "EVOKER_2": {"essence_burst": 369299},
+    "PALADIN_1": {"divine_guidance": 460822, "crusader_strike": 1279187},
+    "PRIEST_1": {"void_blast": 450215},
     "MAGE_1": {"prismatic_bolt": 1295924},
     "MAGE_2": {"phoenix_flames": 257541},
     "MAGE_3": {"glacial_spike": 199786},
@@ -119,7 +136,9 @@ CURATED = {
     # surfaces there (non-damage aura twin). Same hero-tree ambiguity as SHAMAN_2
     # ascendance; revisit if the Shado-Pan build misbehaves in game.
     "MONK_1": {"empty_the_cellar": 1262765},
-    "MONK_2": {"invoke_chiji": 325197},
+    # teachings_of_the_monastery 202090 / jade_empowerment 467317: the stacking buff auras
+    # (Blizzard's own Mistweaver rules name these ids); the talent nodes are passive.
+    "MONK_2": {"invoke_chiji": 325197, "teachings_of_the_monastery": 202090, "jade_empowerment": 467317},
     # zenith 1249625 (Midnight WW cooldown, 2 charges @ 90s; single-entry node in
     # the parallel Monk tree the universe walk misses) - CSV-grounded 2026-08-02.
     "MONK_3": {"zenith": 1249625},
@@ -341,7 +360,19 @@ def classify_atom(atom, resolve):
         return {"t": "power", "res": m.group(1), "op": m.group(3),
                 "n": int(m.group(4)), "ispct": suffix == ".pct",
                 "deficit": suffix == ".deficit"}, False
-    return None, True  # time / prev_gcd / variable / compound -> delegate
+    # The LAST cast. The player's own casts are plain in combat (measured), so "right after
+    # X" (`prev_gcd.1.x`, or `prev.x` counting off-GCD casts too) is a real gate. Windwalker's
+    # `combo_strike` is the same question about the spell itself: its mastery wants no
+    # ability twice in a row. Older casts (`prev_gcd.2.x`) are not tracked: delegate.
+    m = re.fullmatch(r'prev_gcd\.1\.(\w+)|prev\.(\w+)', a)
+    if m:
+        sid = resolve(m.group(1) or m.group(2))
+        if not sid:
+            return None, True
+        return {"t": "prev", "id": sid, "gcd": m.group(1) is not None, "neg": neg}, False
+    if a == "combo_strike":
+        return {"t": "prev", "own": True, "gcd": True, "neg": not neg}, False
+    return None, True  # time / older prev_gcd / variable / compound -> delegate
 
 
 # Brackets used to end a condition's life. `classify_atom` delegates anything holding a
@@ -369,6 +400,8 @@ def group_member_ok(g):
         return True
     if t in ("buff", "cd"):
         return bool(g.get("id"))
+    if t == "prev":
+        return bool(g.get("id") or g.get("own"))
     if t in ("resource", "power"):
         return bool(g.get("res") and g.get("op") and g.get("n") is not None)
     if t in ("execute", "health"):
@@ -425,6 +458,61 @@ def classify_if(expr, resolve):
             gates.append(g)
         delegated = delegated or d
     return gates, delegated
+
+
+# --- build conditions ----------------------------------------------------------
+# `talent.X` and `hero_tree.X` do not change in combat: they say which BUILD a line is
+# for. They used to read as always true, so lines for talents the player did not take
+# still ranked, and a spec's two hero-tree branches merged into one list. Each priority
+# line now carries the build it needs (`b`), and the runtime keeps only the lines the
+# player's build satisfies before ranking (RotationImport). Only top-level AND atoms are
+# lifted: a build atom inside an alternative (`talent.x|buff.y.up`) stays as it was.
+BUILD = {"talent": None, "hero": None}     # set per spec in main()
+_BUILD_ATOM = re.compile(r'(!?)(talent|hero_tree)\.(\w+)(?:\.enabled)?$')
+
+
+def build_atom(atom, depth=0):
+    """One build condition {k, id, neg} for an atom, or None. A variable that is exactly
+    one build atom (`variable.is_x = hero_tree.x`) is seen through, once."""
+    atom = atom.strip()
+    m = _BUILD_ATOM.fullmatch(atom)
+    if m:
+        kind = "talent" if m.group(2) == "talent" else "hero"
+        resolve = BUILD.get(kind)
+        sid = resolve and resolve(m.group(3))
+        if not sid:
+            return None
+        # One id, or (a talent name several specs share) any of several.
+        key = ("id", sid[0]) if isinstance(sid, list) and len(sid) == 1 else               (("ids", tuple(sid)) if isinstance(sid, list) else ("id", sid))
+        return {"k": kind, key[0]: key[1], "neg": m.group(1) == "!"}
+    m = re.fullmatch(r'(!?)variable\.(\w+)', atom)
+    if m and depth == 0 and m.group(2) in VARMAP:
+        inner = build_atom(VARMAP[m.group(2)], depth + 1)
+        if inner and m.group(1) == "!":
+            inner = dict(inner, neg=not inner["neg"])
+        return inner
+    return None
+
+
+def build_of(cond):
+    """(build conditions, pure): the resolvable build atoms among cond's top-level AND
+    terms, and whether cond is NOTHING BUT one such atom (a whole branch for one build)."""
+    if not cond or has_top_level_or(cond):
+        return [], False
+    atoms = split_and(cond)
+    out = [b for b in (build_atom(a) for a in atoms) if b]
+    return out, (len(atoms) == 1 and len(out) == 1)
+
+
+def add_build(base, more):
+    """base AND more, deduped; None when they contradict (talent x and not talent x)."""
+    out = list(base)
+    for b in more:
+        if dict(b, neg=not b["neg"]) in out:
+            return None
+        if b not in out:
+            out.append(b)
+    return out
 
 
 # --- tier / context ----------------------------------------------------------
@@ -618,7 +706,18 @@ def drop_raid_events(lists):
 
 
 # --- flatten -----------------------------------------------------------------
-def make_entry(token, mods, resolve, unresolved, k):
+def bind_own(g, sid):
+    """A gate about the entry's OWN spell (`refreshable`, `combo_strike`) names it, at any
+    depth: an own gate nested in a group was left without a subject."""
+    if g.get("g"):
+        return dict(g, g=[bind_own(x, sid) for x in g["g"]])
+    if g.get("own"):
+        g = {k: v for k, v in g.items() if k != "own"}
+        g["id"] = sid
+    return g
+
+
+def make_entry(token, mods, resolve, unresolved, k, build=()):
     if token in SKIP or token.startswith("variable"):
         return None
     if count_fails(mods.get("if", ""), k):
@@ -635,11 +734,10 @@ def make_entry(token, mods, resolve, unresolved, k):
         delegated = True
     uniq = []
     for g in gates:
-        if g.get("own"):
-            g = {"t": "dot", "id": sid}
+        g = bind_own(g, sid)
         if g not in uniq:
             uniq.append(g)
-    e = {"id": sid, "token": token, "gates": uniq, "delegated": delegated}
+    e = {"id": sid, "token": token, "gates": uniq, "delegated": delegated, "b": list(build)}
     # Release tier for an EMPOWERED cast (`consumption,empower_to=1`). Deliberately NOT a
     # gate: it never decides WHETHER to press, only how long to hold before letting go, so
     # nothing in the runtime evaluator should ever test it. Carried as plain data for the
@@ -703,32 +801,64 @@ def flatten(lists, k, resolve, unresolved, varmap):
     reached it first."""
     occ, visited, seq = [], {}, [0]
 
-    def walk(name, defer):
-        if visited.get(name, 99) <= defer:
+    def walk(name, defer, build):
+        key = (name, tuple(sorted(str(sorted(b.items())) for b in build)))
+        if visited.get(key, 99) <= defer:
             return
-        visited[name] = defer
+        visited[key] = defer
         for token, mods in lists.get(name, []):
             cond = mods.get("if", "")
+            need, pure = build_of(cond)
+            line_build = add_build(build, need)
+            if line_build is None:
+                continue                       # this build can never reach the line
             if token in ("call_action_list", "run_action_list"):
                 target = mods.get("name")
                 if target and not count_fails(cond, k):
                     child = 1 if (defer or phase_gate(cond) or branch_defer(cond, varmap)) else 0
-                    walk(target, child)
+                    walk(target, child, line_build)
+                # run_action_list never returns: the build it is for never reaches the
+                # lines after it (`run_action_list,name=deathbringer,if=hero_tree.deathbringer`).
+                if token == "run_action_list" and pure:
+                    build = add_build(build, [dict(need[0], neg=not need[0]["neg"])])
+                    if build is None:
+                        return
             else:
-                e = make_entry(token, mods, resolve, unresolved, k)
+                e = make_entry(token, mods, resolve, unresolved, k, line_build)
                 if e:
                     d = 1 if (defer or phase_gate(cond)) else 0
                     occ.append((d, seq[0], e))
                     seq[0] += 1
 
-    walk("main", 0)
+    walk("main", 0, [])
     occ.sort(key=lambda x: (x[0], x[1]))   # defer-0 first, stable within a defer class
-    out, seen = [], {}
+    # A line identical to an earlier one for the same spell, needing at least that line's
+    # build, changes nothing: the earlier one applies whenever it does, so it is never
+    # first, and merging an identical line is a no-op. Dropped to keep the data small.
+    out, earlier = [], {}
     for _d, _s, e in occ:
+        content = entry_sig(dict(e, b=()))
+        need = {build_lua(x) for x in e["b"]}
+        if any(c == content and have <= need for c, have in earlier.get(e["id"], ())):
+            continue
+        earlier.setdefault(e["id"], []).append((content, need))
+        out.append(e)
+    return out
+
+
+def merge(occurrences, holds=lambda b: True):
+    """Every priority line the build satisfies -> one entry per spell, ranked by its FIRST
+    such line. The runtime runs this same merge per build (RotationImport.Resolve); keep
+    the two in step - tools/test_simc_build.py compares them on the shipped data."""
+    out, seen = [], {}
+    for e in occurrences:
+        if not holds(e["b"]):
+            continue
         kept = seen.get(e["id"])
         if kept is None:
-            seen[e["id"]] = e
-            out.append(e)
+            kept = dict(e, gates=list(e["gates"]))
+            seen[e["id"]] = kept
+            out.append(kept)
             continue
         # A stealth gate SINKS the entry at runtime, so first-wins is not good enough for it:
         # Assassination lists Ambush once under `stealthed.rogue` and again, lower down, with
@@ -809,16 +939,27 @@ def gate_lua(g):
     # `debuff.` stack). Without it a target debuff would be probed on the player.
     if g.get("tgt"):
         parts.append("tgt=true")
+    # `gcd` marks a last-cast gate that counts only casts on the global cooldown.
+    if g.get("gcd"):
+        parts.append("gcd=true")
     if g.get("neg"):
         parts.append("neg=true")
     return "{" + ",".join(parts) + "}"
+
+
+def build_lua(b):
+    # `k`, not `t`: a build condition is decided once per talent change, never per build of
+    # the queue, and must not be mistaken for a gate the queue evaluates in combat.
+    who = ("id=%d" % b["id"]) if "id" in b else ("ids={%s}" % ",".join(str(i) for i in b["ids"]))
+    return '{k="%s",%s%s}' % (b["k"], who, ",neg=true" if b["neg"] else "")
 
 
 def entry_lua(e):
     g = "{" + ",".join(gate_lua(x) for x in e["gates"]) + "}"
     d = ",delegated=true" if e["delegated"] else ""
     emp = ",empower=%d" % e["empower"] if e.get("empower") else ""
-    return "      {id=%d,gates=%s%s%s},  -- %s" % (e["id"], g, d, emp, e["token"])
+    b = ",b={%s}" % ",".join(build_lua(x) for x in e["b"]) if e.get("b") else ""
+    return "      {id=%d,gates=%s%s%s%s},  -- %s" % (e["id"], g, d, emp, b, e["token"])
 
 
 def entry_sig(e):
@@ -830,7 +971,7 @@ def entry_sig(e):
     # gate_lua never sees it, and without it a context list differing only by release tier
     # would compare equal to another and be dropped as a duplicate.
     return (e["id"], tuple(sorted(gate_lua(x) for x in e["gates"])), e["delegated"],
-            e.get("empower"))
+            e.get("empower"), tuple(build_lua(x) for x in e.get("b", ())))
 
 
 def list_sig(lst):
@@ -844,7 +985,8 @@ def list_sig(lst):
 # to cast ids and filtered to real cooldowns, become the per-spec burst-cue
 # trigger list (runtime priority: profile override -> this list -> SpellDB
 # curated fallback).
-SYNC_RE = re.compile(r"\+=/(?:potion|use_items?|invoke_external_buff)\b"
+# `=` as well as `+=/`: a sync line can OPEN its list (`actions.items=potion,...`).
+SYNC_RE = re.compile(r"^actions(?:\.\w+)?(?:\+=/|=)(?:potion|use_items?|invoke_external_buff)\b"
                      r"|variable,name=[a-z_0-9]*(?:trinket|sync)")
 ANCHOR_TOKEN_RE = re.compile(r"(?:buff|cooldown)\.([a-z_]+)\.(?:up|remains|react|ready)")
 # Raid externals/utility that gate items but are not the spec's own burst CD,
@@ -855,7 +997,7 @@ shadowmeld prowl stealth vanish""".split())
 # talent-choice tokens, buff granted by a differently-named cast).
 BUFF2CAST = {
     "ca_inc":          ["celestial_alignment", "incarnation_chosen_of_elune"],
-    "bs_inc":          ["berserk", "incarnation_avatar_of_ashamane"],
+    "bs_inc":          ["berserk", "incarnation_avatar_of_ashamane", "incarnation_guardian_of_ursoc"],
     "voidform":        ["void_eruption", "dark_ascension"],
     "ebon_might_self": ["ebon_might"],
 }
@@ -924,6 +1066,10 @@ HEADER = [
     "-- also needs something we cannot read - a dot's remaining time above all - so it",
     "-- falls back to priority order and Blizzard's live pick. Used to REFINE the AC fixed",
     "-- queue, not replace it.",
+    "--",
+    "-- Each row is one priority LINE, not one spell: `b` names the talents / hero tree the",
+    "-- line is for, and RotationImport merges the lines the player's build satisfies into",
+    "-- one ranked entry per spell. A `prev` gate is the last cast (`gcd`: on the GCD).",
     "",
     'local RotationImport = LibStub("JustAC-RotationImport", true)',
     "if not RotationImport or not RotationImport.RegisterGated then return end",
@@ -969,6 +1115,12 @@ def _selftest():
                                               {"t": "buff", "id": 202, "neg": False}]}], g
     g, d = classify_if("stealthed.rogue&(buff.x.up|buff.y.up)", r)
     assert not d and len(g) == 2 and g[1]["t"] == "any", g
+    # the last cast: SimC's two forms, older casts delegate, and combo_strike is about itself
+    assert classify_atom("prev_gcd.1.x", lambda t: 9)[0] == {"t": "prev", "id": 9, "gcd": True, "neg": False}
+    assert classify_atom("!prev.x", lambda t: 9)[0] == {"t": "prev", "id": 9, "gcd": False, "neg": True}
+    assert classify_atom("prev_gcd.2.x", lambda t: 9) == (None, True)
+    assert classify_atom("combo_strike", lambda t: 9)[0]["neg"] is True
+    assert bind_own({"t": "any", "g": [{"t": "prev", "own": True, "neg": True}]}, 7)["g"][0]["id"] == 7
     # a member needing no gate of its own is still an alternative: do not silently drop it
     assert classify_if("talent.foo|buff.x.up", r) == ([], True)
     # unknown token anywhere in the group -> the whole line delegates, as before
@@ -1200,6 +1352,7 @@ def main():
         STEALTH_VARS.clear()
         STEALTH_VARS.update(stealth_vars(varmap))
 
+        BUILD["talent"], BUILD["hero"] = bridge.build_resolver(cls, specname)
         tier_lists = {ctx: flatten(lists, k, resolve, unresolved, varmap) for ctx, k in TIERS}
         # dedup: keep st; keep aoe if != st; keep cleave only if its fallback would differ
         contexts = {}
@@ -1219,7 +1372,7 @@ def main():
             contexts["burst"] = anchors
 
         all_specs[speckey] = contexts
-        counts = {c: len(v) for c, v in contexts.items() if c != "burst"}
+        counts = {c: len(merge(v)) for c, v in contexts.items() if c != "burst"}
         # residue minus anything SKIP would have caught (dot-name refs etc. already excluded)
         report.append((name, speckey, counts, sorted(unresolved)))
 
@@ -1257,8 +1410,10 @@ def main():
     if only or "--print" in sys.argv:
         for speckey, contexts in all_specs.items():
             for ctx, lst in contexts.items():
+                if ctx == "burst":
+                    continue
                 print("\n=== %s / %s ===" % (speckey, ctx.upper()))
-                for e in lst:
+                for e in merge(lst):
                     gs = " ".join(g["t"] + (":%d" % g["id"] if g.get("id") else "")
                                   + ("!" if g.get("neg") else "") for g in e["gates"]) or "-"
                     print("  %-22s [%s]%s" % (e["token"], gs, "  DELEG" if e["delegated"] else ""))
