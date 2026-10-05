@@ -827,6 +827,11 @@ function SpellDB.IsInterruptTypeSpell(spellID)
     return StaticLookup(interruptTypeSpellIDs, spellID) == true
 end
 
+--- The curated interrupt/CC entry (kind, mech, reach, ...) for a spell, override-resolved.
+function SpellDB.GetInterruptAbility(spellID)
+    return StaticLookup(INTERRUPT_ABILITIES, spellID)
+end
+
 -- Per-CC mechanic (silence/fear/stun/…) now lives in INTERRUPT_ABILITIES[id].mech and
 -- travels on each resolved entry (entry.mech), so callers branch on entry.mech directly:
 --   mech == 9 (silence) only stops SPELL casts, not physical channels - in ccOnly mode the
