@@ -178,6 +178,7 @@ local INSPECT_TOPICS = {
     { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
+    { "identity",    "IdentityProbe",            "[clear]", "Hunt a plain mob identifier: snapshot every readable target surface, diff vs last run" },
     { "timeline",    "EncounterTimelineProbe",   nil,  "Can we see a big hit coming? Boss-mechanic timeline read" },
 
     -- Capability probes: run these when a feature stops working and you need to
@@ -1301,10 +1302,15 @@ function DebugCommands.InterruptDiagnostics(addon)
 
         local cdColor = intCD and "|cffff6600" or "|cff00ff00"
         local cdStr = intCD and "ON_CD" or "ready"
-        addon:Print(string.format("  %d. %s (%d) [%s]  %sIsIntOnCD=%s|r  localCD=%s  IsReady=%s  usable=%s  isOnGCD=%s",
+        local immStr = ""
+        if stype == "cc" and BlizzardAPI and BlizzardAPI.IsTargetCCImmune then
+            immStr = string.format("  mech=%s immune=%s", tostring(entry.mech),
+                tostring(BlizzardAPI.IsTargetCCImmune(entry.mech)))
+        end
+        addon:Print(string.format("  %d. %s (%d) [%s]  %sIsIntOnCD=%s|r  localCD=%s  IsReady=%s  usable=%s  isOnGCD=%s%s",
             i, name, sid, stype,
             cdColor, cdStr,
-            tostring(localCD), tostring(ready), tostring(usable), isOnGCDStr))
+            tostring(localCD), tostring(ready), tostring(usable), isOnGCDStr, immStr))
     end
 
     -- The two things this probe could not previously answer, and which decide everything:
@@ -1410,7 +1416,7 @@ function DebugCommands.InterruptDiagnostics(addon)
 
     addon:Print("")
     addon:Print("Target interrupt-worthy: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetInterruptWorthy and BlizzardAPI.IsTargetInterruptWorthy()))
-    addon:Print("Target CC-immune: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetCCImmune and BlizzardAPI.IsTargetCCImmune())
+    addon:Print("Target CC-immune (boss/minion; per-mechanic above): " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetCCImmune and BlizzardAPI.IsTargetCCImmune())
         .. "  (signal: " .. tostring(BlizzardAPI and BlizzardAPI.GetCCImmuneSignal and BlizzardAPI.GetCCImmuneSignal()) .. ")")
     -- Already crowd-controlled: this alone suppresses every CC suggestion, and on a
     -- practice mob you CC repeatedly it is the most likely reason a working substitution
@@ -5588,18 +5594,215 @@ function DebugCommands.CCImmunityDB(addon, arg)
         return
     end
     local count, targetNPC, sightings, threshold, byName = B.GetCCImmunityDBInfo()
-    addon:Print(string.format("|cff00ccff== ccdb ==|r %d mob type(s) confirmed CC-immune "
+    addon:Print(string.format("|cff00ccff== ccdb ==|r %d mob-type/mechanic pair(s) recorded "
         .. "(%d sighting(s) to confirm).", count, threshold))
     if targetNPC then
-        addon:Print(string.format("  current target npcID=%d sightings=%s%s",
-            targetNPC, tostring(sightings or 0),
+        addon:Print(string.format("  current target npcID=%d sightings (mech:count)=%s%s",
+            targetNPC, sightings or "none",
             byName and " |cff888888(recovered by name - lookups only, never recorded)|r" or ""))
     else
         addon:Print("  current target npcID unknown (GUID is secret in combat, and no name "
-            .. "match yet - target this mob out of combat once to learn it).")
+            .. "match yet - target this mob out of combat once to learn it). Inside dungeons "
+            .. "identity is secret even out of combat, so there only this target learns.")
     end
     addon:Print("  signal on this target: "
         .. tostring(B.GetCCImmuneSignal and B.GetCCImmuneSignal()))
+end
+
+--- /jac inspect identity [clear] - hunt a PLAIN mob identifier. Inside dungeons UnitName and
+--- UnitGUID read secret even before the pull (measured 2026-10-05), which leaves per-mob-type
+--- learning with no key. Rather than guess paths one at a time (frame paths move silently),
+--- this snapshots EVERY readable surface of the target and diffs it against the last run:
+---   api.*       unit APIs, on "target" and on the target's own nameplate token
+---   tooltip.*   C_TooltipInfo.GetUnit, walked field by field
+---   model.*     a scratch PlayerModel / portrait texture fed the target
+---   tframe.*    TargetFrame, every region and Lua field, recursively
+---   plate.*     the target's nameplate, same walk
+--- Usage: target mob type A, run; target a DIFFERENT type B, run; then another A, run. A
+--- path that reads plain, changes between types and repeats within a type is an
+--- identifier. Each run is kept (last 8) in JustACGlobal.identityProbe for offline diffing.
+local ID_UNIT_APIS = {
+    "UnitName", "UnitNameUnmodified", "UnitGUID", "UnitPVPName", "UnitCreatureType",
+    "UnitCreatureFamily", "UnitClassification", "UnitClassBase", "UnitRace", "UnitSex",
+    "UnitLevel", "UnitEffectiveLevel", "UnitHealthMax", "UnitPowerType", "UnitPowerMax",
+    "UnitFactionGroup", "UnitSelectionType", "UnitWidgetSet", "UnitIsBossMob",
+    "UnitIsQuestBoss", "UnitIsTapDenied", "UnitNameplateShowsWidgetsOnly",
+}
+-- Widget reads per object type. Every call goes through pcall: a forbidden or protected
+-- region throwing is an answer, not a failure of the probe.
+local ID_WIDGET_READS = {
+    FontString  = { "GetText" },
+    Texture     = { "GetTexture", "GetTextureFileID", "GetAtlas" },
+    StatusBar   = { "GetMinMaxValues" },
+    Model       = { "GetModelFileID" },
+    PlayerModel = { "GetModelFileID", "GetDisplayInfo" },
+}
+local ID_NODE_CAP = 600   -- ponytail: per tree; raise if a walk reports <capped>
+
+local function IdRecord(snap, path, ok, ...)
+    if not ok then snap[path] = "<err>"; return end
+    local n = select("#", ...)
+    for i = 1, n do
+        local v = select(i, ...)
+        if v ~= nil then
+            snap[n > 1 and (path .. "#" .. i) or path] = PlainText(v) or "<secret>"
+        end
+    end
+end
+
+local function IdUnitAPIs(snap, prefix, unit)
+    for _, fn in ipairs(ID_UNIT_APIS) do
+        local f = _G[fn]
+        if f then IdRecord(snap, prefix .. fn, pcall(f, unit)) end
+    end
+    local react = _G.UnitReaction
+    if react then IdRecord(snap, prefix .. "UnitReaction", pcall(react, "player", unit)) end
+end
+
+-- Plain-data walk (the tooltip table). Depth-capped; secrets recorded, never compared.
+local function IdWalkData(snap, prefix, t, depth)
+    if depth > 4 then return end
+    local ok = pcall(function()
+        for k, v in pairs(t) do
+            local key = prefix .. "." .. (PlainText(k) or "?")
+            local tv = type(v)
+            if tv == "table" then IdWalkData(snap, key, v, depth + 1)
+            elseif tv ~= "function" and tv ~= "userdata" then
+                snap[key] = PlainText(v) or "<secret>"
+            end
+        end
+    end)
+    if not ok then snap[prefix .. ".<walk>"] = "<err>" end
+end
+
+-- Frame walk: every region's typed reads plus every scalar Lua field, recursively through
+-- named children (parentKey fields) first, then unnamed GetChildren/GetRegions by index.
+-- READ-ONLY: writing a Lua field on a Blizzard frame taints it.
+local function IdWalkFrame(snap, prefix, root)
+    local seen, count = {}, 0
+    local function visit(obj, path, depth)
+        if count >= ID_NODE_CAP or depth > 10 or seen[obj] then return end
+        seen[obj] = true
+        count = count + 1
+        local okT, otype = pcall(obj.GetObjectType, obj)
+        otype = okT and PlainText(otype) or "?"
+        for _, m in ipairs(ID_WIDGET_READS[otype] or {}) do
+            if obj[m] then IdRecord(snap, path .. ":" .. m, pcall(obj[m], obj)) end
+        end
+        local named = {}
+        pcall(function()
+            for k, v in pairs(obj) do
+                if type(k) == "string" then
+                    local tv = type(v)
+                    if tv == "table" and type(v.GetObjectType) == "function" then
+                        named[#named + 1] = { v, path .. "." .. k }
+                    elseif tv ~= "table" and tv ~= "function" and tv ~= "userdata" then
+                        snap[path .. ".@" .. k] = PlainText(v) or "<secret>"
+                    end
+                end
+            end
+        end)
+        for _, c in ipairs(named) do visit(c[1], c[2], depth + 1) end
+        for _, getter in ipairs({ "GetChildren", "GetRegions" }) do
+            if obj[getter] then
+                local kids = { pcall(obj[getter], obj) }
+                if kids[1] then
+                    for i = 2, #kids do
+                        visit(kids[i], path .. "[" .. getter:sub(4, 4) .. (i - 1) .. "]", depth + 1)
+                    end
+                end
+            end
+        end
+    end
+    visit(root, prefix, 0)
+    if count >= ID_NODE_CAP then snap[prefix .. ".<capped>"] = tostring(ID_NODE_CAP) end
+    return count
+end
+
+local idScratchModel, idScratchTex
+function DebugCommands.IdentityProbe(addon, arg)
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    if arg == "clear" then
+        g.identityProbe = nil
+        addon:Print("|cff00ccff== identity ==|r runs cleared.")
+        return
+    end
+    if not UnitExists("target") then
+        addon:Print("|cff00ccff== identity ==|r no target.")
+        return
+    end
+    local snap = {}
+    IdUnitAPIs(snap, "api.target.", "target")
+    local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit("target", false)
+    local plateToken = plate and PlainText(plate.namePlateUnitToken)
+    if plateToken then IdUnitAPIs(snap, "api.nameplate.", plateToken) end
+    if C_TooltipInfo and C_TooltipInfo.GetUnit then
+        local ok, data = pcall(C_TooltipInfo.GetUnit, "target")
+        if ok and type(data) == "table" then IdWalkData(snap, "tooltip", data, 0)
+        else snap["tooltip"] = ok and type(data) or "<err>" end
+    end
+    local tf = _G.TargetFrame
+    local tfN = tf and IdWalkFrame(snap, "tframe", tf) or 0
+    local plN = plate and IdWalkFrame(snap, "plate", plate) or 0
+
+    -- The model loads asynchronously: feed it now, finish the snapshot half a second later.
+    if not idScratchModel then
+        idScratchModel = CreateFrame("PlayerModel", nil, UIParent)
+        idScratchModel:SetSize(32, 32)
+        idScratchModel:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", 0, 0)   -- offscreen, still shown
+        idScratchTex = idScratchModel:CreateTexture()
+    end
+    IdRecord(snap, "model.SetUnit", pcall(idScratchModel.SetUnit, idScratchModel, "target"))
+    IdRecord(snap, "model.SetPortraitTexture", pcall(_G.SetPortraitTexture, idScratchTex, "target"))
+    C_Timer.After(0.5, function()
+        IdRecord(snap, "model.GetModelFileID", pcall(idScratchModel.GetModelFileID, idScratchModel))
+        IdRecord(snap, "model.GetDisplayInfo", pcall(idScratchModel.GetDisplayInfo, idScratchModel))
+        IdRecord(snap, "model.portrait:GetTexture", pcall(idScratchTex.GetTexture, idScratchTex))
+        IdRecord(snap, "model.portrait:GetTextureFileID", pcall(idScratchTex.GetTextureFileID, idScratchTex))
+
+        local tally = {}
+        for path, v in pairs(snap) do
+            local src = path:match("^([%a]+)")
+            local t = tally[src] or { plain = 0, secret = 0, err = 0 }
+            tally[src] = t
+            if v == "<secret>" then t.secret = t.secret + 1
+            elseif v == "<err>" then t.err = t.err + 1
+            else t.plain = t.plain + 1 end
+        end
+        addon:Print(string.format("|cff00ccff== identity ==|r combat=%s  nodes: tframe=%d plate=%d%s",
+            tostring(InCombatLockdown()), tfN, plN, plate and "" or "  |cffff6600(no nameplate)|r"))
+        for _, src in ipairs({ "api", "tooltip", "model", "tframe", "plate" }) do
+            local t = tally[src]
+            if t then
+                addon:Print(string.format("  %-8s %4d plain  %4d secret  %3d err", src, t.plain, t.secret, t.err))
+            end
+        end
+
+        -- Diff vs the previous run: plain on both sides and different = candidate.
+        local runs = g.identityProbe or {}
+        g.identityProbe = runs
+        local prev = runs[#runs] and runs[#runs].snap
+        if prev then
+            local cands = {}
+            for path, v in pairs(snap) do
+                local pv = prev[path]
+                if pv and pv ~= v and v ~= "<secret>" and v ~= "<err>"
+                    and pv ~= "<secret>" and pv ~= "<err>" then
+                    cands[#cands + 1] = path .. " = " .. v .. "  (was " .. pv .. ")"
+                end
+            end
+            table.sort(cands)
+            addon:Print(string.format("  |cff2ecc71%d plain path(s) differ from the last run|r", #cands))
+            for i = 1, math.min(#cands, 40) do addon:Print("    " .. cands[i]) end
+            if #cands > 40 then addon:Print("    ... (" .. (#cands - 40) .. " more in SavedVariables)") end
+        else
+            addon:Print("  baseline captured - now target a DIFFERENT mob type and run again.")
+        end
+        runs[#runs + 1] = { combat = InCombatLockdown(), snap = snap }
+        while #runs > 8 do table.remove(runs, 1) end
+        addon:Print(string.format("|cff888888run %d kept; /reload flushes to disk; `identity clear` resets.|r", #runs))
+    end)
 end
 
 --- /jac inspect blank - why did the queue last go empty? Three branches can blank it and

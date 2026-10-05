@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+## [5.8.1] - 2026-10-05
+
+### Fixed
+- Stuns and other crowd control are no longer offered as interrupts on dungeon and raid bosses, which are immune to them. Big cooldowns are also no longer held back during a dungeon boss's last few percent.
+- When an enemy shrugs off one kind of crowd control, only that kind stops being offered. A stun-immune enemy is still offered your incapacitates and disorients.
+- A crowd control cast on your focus or mouseover target, a silence on a physical cast, or an area stun that didn't reach your target no longer marks your target as immune to crowd control.
+
 ## [5.8.0] - 2026-10-04
 
 ### Improved

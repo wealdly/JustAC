@@ -378,6 +378,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
         cachedIntResult.interruptibleKnown = interruptibleKnown and true or false
 
         if isCasting then
+            -- Blanket only (bosses, minions); per-mechanic immunity is checked per entry below.
             local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
             -- Is the target ALREADY crowd-controlled? In combat: unanswerable, and this
             -- reads false there. GetUnitAuraInstanceIDs carries RequiresUnitAuraAccess as
@@ -413,8 +414,10 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                         -- skip
                     elseif interruptMode == "kickOnly" and stype == "cc" then
                         -- skip
-                    elseif (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                        -- CC spells unusable on immune / already CC'd targets - skip.
+                    elseif (stype == "cc" and (targetCCImmune or BlizzardAPI.IsTargetCCImmune(entry.mech)))
+                        or targetAlreadyCC then
+                        -- CC spells unusable on immune / already CC'd targets - skip. Immunity
+                        -- is per mechanic: a stun-immune mob still gets offered an incapacitate.
                     elseif stype == "cc" and not BlizzardAPI.IsCCSpellTypeValid(sid) then
                         -- Type-restricted CC (e.g. Repentance) on an incompatible creature type - skip.
                     elseif stype == "cc" and not includeFears and entry.mech == 5 then
