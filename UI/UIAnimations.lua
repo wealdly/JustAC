@@ -833,10 +833,18 @@ local function SwingBarOnUpdate(bar)
     bar:SetValue(math.min(GetTime(), bar.landAt))
 end
 
-local function CreateSwingBar(icon)
+-- offHand: a second bar stacked on the main one (a running Attack while dual wielding).
+local function CreateSwingBar(icon, offHand)
     local bar = CreateFrame("StatusBar", nil, icon)
-    bar:SetPoint("BOTTOMLEFT",  icon, "BOTTOMLEFT",   1, 1)
-    bar:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -1, 1)
+    if offHand then
+        local main = icon.SwingBar or CreateSwingBar(icon)
+        bar:SetPoint("BOTTOMLEFT",  main, "TOPLEFT",  0, 1)
+        bar:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", 0, 1)
+    else
+        -- Inside the button face, at the cooldown swipe's inset (UIFrameFactory), not the rim.
+        bar:SetPoint("BOTTOMLEFT",  icon, "BOTTOMLEFT",   4, 4)
+        bar:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -4, 4)
+    end
     bar:SetFrameLevel(icon:GetFrameLevel() + 3)
     if icon.isOverlayIcon then bar:SetFrameStrata("BACKGROUND") end
 
@@ -850,14 +858,14 @@ local function CreateSwingBar(icon)
 
     bar:SetScript("OnUpdate", SwingBarOnUpdate)
     bar:Hide()
-    icon.SwingBar = bar
+    icon[offHand and "OffSwingBar" or "SwingBar"] = bar
     return bar
 end
 
 --- Show the bar for the swing that runs startTime .. landAt (re-armed only when it changes).
-local function ShowSwingBar(icon, startTime, landAt)
+local function ShowSwingBar(icon, startTime, landAt, offHand)
     if not (icon and startTime and landAt and landAt > startTime) then return end
-    local bar = icon.SwingBar or CreateSwingBar(icon)
+    local bar = icon[offHand and "OffSwingBar" or "SwingBar"] or CreateSwingBar(icon, offHand)
     if bar.landAt ~= landAt then
         local size = icon.cachedIconSize or icon:GetWidth() or 0
         if size > 0 then bar:SetHeight(math.max(4, size * 0.18)) end
@@ -868,10 +876,11 @@ local function ShowSwingBar(icon, startTime, landAt)
     bar:Show()
 end
 
-local function HideSwingBar(icon)
-    if not icon or not icon.SwingBar then return end
-    icon.SwingBar:Hide()
-    icon.SwingBar.landAt = nil
+local function HideSwingBar(icon, offHand)
+    local bar = icon and icon[offHand and "OffSwingBar" or "SwingBar"]
+    if not bar then return end
+    bar:Hide()
+    bar.landAt = nil
 end
 
 -- Queued mark: while a next-swing ability waits for its swing, pressing it again does

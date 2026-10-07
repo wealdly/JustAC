@@ -11,15 +11,15 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 if not (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) then return end
 
 local DEFENSIVE = {
-    WARRIOR = {12975, 871, 402927},
-    PALADIN = {642, 498, 1022, 633, 19750, 635},
-    HUNTER = {19263, 5384},
-    ROGUE = {5277, 1856},
-    PRIEST = {17, 13908, 139, 2061},
-    SHAMAN = {8004, 331},
-    MAGE = {11958, 11426, 1463},
-    WARLOCK = {6789, 6229, 689},
-    DRUID = {22812, 22842, 774, 8936, 5185},
+    WARRIOR = {12975, 871, 402927, 20594, 1299026},
+    PALADIN = {642, 498, 1022, 633, 19750, 635, 20594, 1299026},
+    HUNTER = {19263, 5384, 20594, 1299026},
+    ROGUE = {5277, 1856, 20594, 1299026},
+    PRIEST = {17, 13908, 139, 2061, 20594, 1299026},
+    SHAMAN = {8004, 331, 20594, 1299026},
+    MAGE = {11958, 11426, 1463, 20594, 1299026},
+    WARLOCK = {6789, 6229, 689, 20594, 1299026},
+    DRUID = {22812, 22842, 774, 8936, 5185, 20594, 1299026},
 }
 local PET_HEAL = {
     HUNTER = {136},
@@ -50,7 +50,7 @@ local BURST = {
     ROGUE = {13750, 13877, 14177},
     MAGE = {12042, 11129, 12043},
     HUNTER = {3045, 19574},
-    PRIEST = {10060},
+    PRIEST = {10060, 401977},
 }
 local TOPOFF = {
     PRIEST = {139, 2050},
@@ -495,6 +495,10 @@ local DOTS = {
     [11711] = 24,  -- Bane of Agony
     [11712] = 24,  -- Bane of Agony
     [11713] = 24,  -- Bane of Agony
+    [18265] = 30,  -- Siphon Life
+    [18879] = 30,  -- Siphon Life
+    [18880] = 30,  -- Siphon Life
+    [18881] = 30,  -- Siphon Life
     [25309] = 15,  -- Immolate
     [25311] = 18,  -- Corruption
     [440892] = 300,  -- Curse of the Elements

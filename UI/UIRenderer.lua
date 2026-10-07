@@ -826,16 +826,18 @@ end
 --- @param showStateTint boolean  "State Tint" setting (gray desat for unavailable)
 --- @param directSlot number|nil  Action bar slot for slot-based usability
 --- @return number visualState
+-- WoW Forever tints out of combat too, so the queue dims exactly when the action bar does (a rage
+-- class sits at 0 out of combat and its whole bar reads unaffordable). Retail keeps combat only.
+local TINT_OUT_OF_COMBAT = SpellDB and SpellDB.IsForever and SpellDB.IsForever() or false
+
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
                                   isChanneling, isCasting,
-                                  showStateTint, directSlot, currentTime)
+                                  showStateTint, inCombat, directSlot, currentTime)
     if isChanneledSpell or isCastedSpell then
         return VS_ACTIVE_CAST
     elseif isChanneling or isCasting then
         return VS_GREYED
-    else
-        -- In and out of combat alike, so the queue dims exactly when the action bar does
-        -- (a rage class sits at 0 out of combat and its whole bar reads unaffordable).
+    elseif inCombat or TINT_OUT_OF_COMBAT then
         local now = currentTime or GetTime()
         local shouldRefreshUsability = icon.cachedIsUsable == nil
             or icon.cachedNotEnoughResources == nil
@@ -931,6 +933,7 @@ local function ClearIconState(icon)
     -- next channeling occupant skip StartChannelFill.
     if icon._hasChannelFill and UIAnimations then UIAnimations.StopChannelFill(icon) end
     if icon.SwingBar and UIAnimations then UIAnimations.HideSwingBar(icon) end
+    if icon.OffSwingBar and UIAnimations then UIAnimations.HideSwingBar(icon, true) end
     if icon._queuedMarkShown and UIAnimations then UIAnimations.HideQueuedMark(icon) end
     if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
     if icon.chargeCooldown then icon.chargeCooldown:Clear(); icon.chargeCooldown:Hide() end
@@ -2726,18 +2729,25 @@ local function RenderQueueIcon(icon, i, ctx)
 
         -- A queued on-next-swing ability (Heroic Strike): nothing fires until the swing, so
         -- show it in progress - casting state, and a swing bar filling to the swing it waits for.
-        local queuedSwing, swingStart, swingEnd = false, nil, nil
+        local queuedSwing, swingStart, swingEnd, offStart, offEnd = false, nil, nil, nil, nil
+        local autoSwing = not isItemEntry and BlizzardAPI.RunningAutoSwing(spellID)
         if not isItemEntry and SpellDB and SpellDB.NEXT_SWING_SPELLS[spellID] and C_Spell_IsCurrentSpell then
             local queued = C_Spell_IsCurrentSpell(spellID)
             if queued and not BlizzardAPI.IsSecretValue(queued) then
                 isCastedSpell, queuedSwing = true, true
                 swingStart, swingEnd = BlizzardAPI.GetSwingWindow(0)
             end
+        elseif autoSwing then
+            -- Attack / Auto Shot / wand already running: the same "it will fire" display on its
+            -- own swing (a hunter sees when to stand still for the shot), the off hand too.
+            isCastedSpell, queuedSwing = true, true
+            swingStart, swingEnd = BlizzardAPI.GetSwingWindow(autoSwing)
+            if autoSwing == 0 then offStart, offEnd = BlizzardAPI.GetSwingWindow(1) end
         end
 
         local visualState = ResolveVisualState(icon, spellID,
             isChanneledSpell, isCastedSpell, ctx.isChanneling, ctx.isCasting,
-            ctx.showUsabilityTint, directSlot, currentTime)
+            ctx.showUsabilityTint, ctx.inCombat, directSlot, currentTime)
 
         ApplyVisualState(icon, visualState, baseDesaturation)
         -- Queued and waiting on its swing: pressing again does nothing. The icon dims and its
@@ -2785,6 +2795,11 @@ local function RenderQueueIcon(icon, i, ctx)
             UIAnimations.ShowSwingBar(icon, swingStart, swingEnd)
         elseif icon.SwingBar then
             UIAnimations.HideSwingBar(icon)
+        end
+        if offEnd then
+            UIAnimations.ShowSwingBar(icon, offStart, offEnd, true)
+        elseif icon.OffSwingBar then
+            UIAnimations.HideSwingBar(icon, true)
         end
 
         ApplyExecuteCue(icon, spellID)

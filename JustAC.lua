@@ -2057,8 +2057,11 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if PE and PE.NoteClassBuffApplied then PE.NoteClassBuffApplied(spellID) end
 
     -- Record maintained-DoT applications so the queue can sink them while the
-    -- debuff is live on the target (identity from our own NeverSecret cast).
-    if UnitAffectingCombat("player") and DotTracker and DotTracker.OnCastSucceeded then
+    -- debuff is live on the target (identity from our own NeverSecret cast). Forever records
+    -- out of combat too: a pull opens with the DoT before combat starts, and with no game pick
+    -- to re-surface it, that opener went untimed (leaving combat resets the tracker).
+    if (UnitAffectingCombat("player") or (BlizzardAPI and BlizzardAPI.IsForever()))
+        and DotTracker and DotTracker.OnCastSucceeded then
         DotTracker.OnCastSucceeded(spellID)
     end
 

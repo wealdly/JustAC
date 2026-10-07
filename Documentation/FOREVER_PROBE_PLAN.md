@@ -119,13 +119,13 @@ decision a Forever rotation makes, is there a signal that answers it in combat? 
 | Kill happened (Victory Rush) | `PARTY_KILL` (SecretWhenUnitIdentityRestricted) | `fw PARTY_KILL` | Victory Rush window (usability also covers it) |
 | Moving: cast-time spells, Slam | `GetUnitSpeed` (SecretWhenUnitStatsRestricted) | `fs player` speed= | Movement gate for cast times |
 | My buffs / DoTs up (Battle Shout, Rend, Corruption, Seal) | `UNIT_AURA` payload shape; own-cast observation (`UNIT_SPELLCAST_SUCCEEDED` player) | `fw UNIT_AURA`, `fw UNIT_SPELLCAST_SUCCEEDED` | Whether Forever's aura payload is as closed as 12.1; else buff windows by observation |
-| Enemy casting (kicks) | `UNIT_SPELLCAST_START` target (spell cast secret for target per round 1) | `fw UNIT_SPELLCAST_START` | Whether the EVENT still fires as a "target started casting" boolean |
+| Enemy casting (kicks) | **Measured (round 3, build 70245).** `UNIT_SPELLCAST_START` target fires as a plain event; cast GUID, spell, and every `UnitCastingInfo` field (name, start, end, notInterruptible) are secret, in combat and out. A finished cast: target `SUCCEEDED` then `STOP`, no `INTERRUPTED`. A stopped cast: `INTERRUPTED` then `STOP`; `INTERRUPTED`'s 4th arg is secret when someone interrupted it and nil otherwise (castBarID moves to the 5th) - presence is the "kick landed" signal, as on retail | `fw UNIT_SPELLCAST_START` notInterruptible=, `fw UNIT_SPELLCAST_INTERRUPTED` d=, `fw UNIT_SPELLCAST_STOP` | Interrupt cue works on the plain START event (production reads a secret notInterruptible as unknown and offers the kick); "can't be kicked" can only be shown, never branched on |
 | Target dying soon | `UNIT_HEALTH` target event cadence (value secret) | `fw UNIT_HEALTH` gap | Only if cadence tracks damage; otherwise execute via usability |
 | Failed press feedback: behind target, out of range, facing | `UI_ERROR_MESSAGE` (type + message) | `fw UI_ERROR_MESSAGE` | Backstab "must be behind" and facing errors as plain feedback |
 | Totems up (SHA) | `PLAYER_TOTEM_UPDATE`, `GetTotemInfo` (SecretWhenTotemSlotSecret) | `fw PLAYER_TOTEM_UPDATE`, I | Totem upkeep |
-| Pet state (HUN, WLK) | `UNIT_PET`, `UNIT_HAPPINESS`, `PET_ATTACK_START`, `GetPetHappiness` | `fw` | Feed pet / pet attacking cues |
+| Pet state (HUN, WLK) | **Measured (warlock imp, build 70245):** pet exists / dead / in combat / pet target is my target plain in and out of combat; raw `UnitHealth("pet")` SECRET even out of combat; `IsUnitHealthBelow("pet", pct)` plain in combat and tracks damage (below 50 / 35 seen). Pet mana the same way: raw `UnitPower("pet", 0)` SECRET, `UnitPowerType("pet")` plain, `IsUnitPowerBelow("pet", pct, 0)` plain in combat and tracks the imp's casting (below 50 / 25 seen). Dark Pact is not learnable on Forever. `PET_ATTACK_START` fires plain. `GetPetHappiness` absent; `UNIT_HAPPINESS` fires for every unit (noise). Open: the summon button's `IsCurrentSpell` with no pet out | `fs pet=`, section I pet lines | Pet heal (Sustain slot) works in combat: it gates on `IsUnitHealthBelow("pet")`. Pet rez / summon on exists / dead |
 | Soul shards, ammo (WLK, HUN, WAR) | `C_Item.GetItemCount`, `AmmoNeeded` (done: plain) | I | Shard and ammo reminders |
-| Loss of control | `LOSS_OF_CONTROL_ADDED` (retail: plain) | `fw` | CC-break suggestions |
+| Loss of control | `LOSS_OF_CONTROL_ADDED` / `_UPDATE` + `C_LossOfControl` data (retail: plain). **Not yet seen on Forever**: no round-2 session was CC'd | `fw LOSS_OF_CONTROL_*` count= [type= spell= dur=], `fw PLAYER_CONTROL_LOST` | CC-break cue: Forever's breaker table (Will of the Forsaken, Will to Survive, Escape Artist, Berserker Rage, Blessing of Freedom) is shipped but unmeasured |
 
 ### Swing bars: what they give us
 
@@ -161,6 +161,19 @@ How the swing data can be used:
 
 A rogue session (energy ticks, combo points, Riposte, stealth, poisons) and a hunter
 session (Auto Shot, dead zone, pet) cover the rows a warrior cannot.
+
+### Round 3: crowd control and kicks
+
+Same arm / off as round 2. On purpose:
+- get feared, stunned, rooted and slowed (a caster mob, a warrior mob's Hamstring, a
+  Murloc net); press a break if you have one (Will of the Forsaken, Escape Artist,
+  Berserker Rage);
+- kick (or Shield Bash / Pummel / Earth Shock) a target's cast, and let another finish;
+- target a mob whose cast cannot be interrupted, if one is known.
+
+Read: `fw LOSS_OF_CONTROL_*` (is the data there and plain, does `type=` name the CC),
+`fw UNIT_SPELLCAST_START` `notInterruptible=`, and `fw UNIT_SPELLCAST_INTERRUPTED` `d=`
+against `fw UNIT_SPELLCAST_STOP` for the same cast.
 
 ## Run order (one session)
 

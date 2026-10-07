@@ -26,8 +26,10 @@ ACQUIRE_GRANTED = "3"
 # Rapid Regeneration, the Skyborne travel racials) never reach a combat list.
 RACIAL_ROLES = {
     "offensive": ["berserking", "blood_fury", "elunes_light", "eureka"],
-    "defensive": ["stoneform", "shatter_curse", "will_of_the_forsaken", "will_to_survive",
-                  "escape_artist"],
+    # defensive: damage reduction, offered at low health. ccbreak: pressed while controlled
+    # (the CC-break cue, gen_cc_breakers), never a low-health answer.
+    "defensive": ["stoneform", "shatter_curse"],
+    "ccbreak": ["will_of_the_forsaken", "will_to_survive", "escape_artist"],
     "cc": ["war_stomp"],
 }
 

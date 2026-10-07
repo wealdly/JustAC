@@ -491,7 +491,7 @@ local function BuildLookup(specKey)
             for i = 1, #list do
                 local e = list[i]
                 if e and e.id and not m[e.id] then
-                    local rec = { rank = i, gates = e.gates, delegated = e.delegated }
+                    local rec = { rank = i, gates = e.gates, delegated = e.delegated, w = e.w }
                     m[e.id] = rec
                     local b = baseID(e.id)
                     if b ~= e.id and not m[b] then m[b] = rec end

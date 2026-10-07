@@ -34,7 +34,7 @@ def load(forever):
         # Rank chains as RotationImport would hold them (Holy Strike 679 -> 678 rank 2).
         lua.execute("""LibStub:NewLibrary("JustAC-RotationImport").RankBase =
             function(id) if id == 678 then return 679 end return id end""")
-    files = ["SpellDB.lua", "Data/ChanneledSpells.lua", "Data/ForeverDefaults.lua"]
+    files = ["SpellDB.lua", "Data/ChanneledSpells.lua", "Data/ForeverDefaults.lua", "Data/CCBreakers.lua"]
     if not forever:
         # Retail also loads the real RotationImport and the Forever lists (the TOC lists them
         # for both clients): nothing in them may register there.
@@ -78,6 +78,11 @@ def main():
           "Moonfire / Holy Fire hit up front; Rend does not")
     check(sdb.IsChanneled(314791) is True, "retail-only channel kept (merge, not replace)")
     check(sdb.StaticLookup(fe.eval("{[679] = 'x'}"), 678) == "x", "any rank finds the rank-1 key")
+    defs = list(sdb.ResolveDefaults(sdb.CLASS_DEFENSIVE_DEFAULTS).values())
+    check(defs[-2:] == [20594, 1299026], "defensive racials (Stoneform, Shatter Curse) close the list")
+    ccb = fe.eval('LibStub("JustAC-CCBreakers")')
+    check(ccb.GetBreakers(12)[1259718] == 0 and ccb.GetBreakers(5)[7744] == 0 and ccb.GetBreakers(7)[20589] == 0,
+          "Forever CC breaks: Will to Survive (stun), Will of the Forsaken (fear), Escape Artist (root)")
 
     rt = load(False)
     r = rt.eval('LibStub("JustAC-SpellDB")')
@@ -95,6 +100,8 @@ def main():
     check(r.IsTargetDot(133) is False and r.IsFrontalDot(8921) is False and next(iter(r.NEXT_SWING_SPELLS), None) is None,
           "retail: no Forever DoT / frontal / next-swing data")
     check(r.StaticLookup(rt.eval("{[772] = 'x'}"), 6546) is None, "retail: a Forever rank id finds nothing")
+    check(rt.eval('LibStub("JustAC-CCBreakers")').GetBreakers(12)[1259718] is None,
+          "retail: the retail CC-break table, not Forever's")
 
     for why in bad:
         print("  FAIL", why)
