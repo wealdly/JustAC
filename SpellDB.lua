@@ -4,6 +4,17 @@
 local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 20)
 if not SpellDB then return end
 
+--- The WoW Forever client (game type camelot). A property of the CLIENT, fixed at load:
+--- WOW_PROJECT_CAMELOT only exists on that client. Lives here because SpellDB loads first
+--- (the Data files consult it); BlizzardAPI.IsForever is this same function.
+local isForever
+function SpellDB.IsForever()
+    if isForever == nil then
+        isForever = (WOW_PROJECT_CAMELOT ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CAMELOT) and true or false
+    end
+    return isForever
+end
+
 --------------------------------------------------------------------------------
 -- DEFENSIVE SPELLS: Major cooldowns, shields, damage reduction, immunities
 -- These should NOT appear in DPS queue positions 2+
@@ -50,7 +61,9 @@ end
 --- some entries are talent-gated dual-purpose spells (e.g. Paralysis is also a CC).
 function SpellDB.RegisterSootheAbilities(t)
     if type(t) ~= "table" then return end
-    for id, meta in pairs(t) do SOOTHE_ABILITIES[id] = meta end
+    -- `false` REMOVES an entry: a later data file (WoW Forever) can retract a retail id that
+    -- is a different spell there (2908 is Soothe Animal, not an enrage dispel).
+    for id, meta in pairs(t) do SOOTHE_ABILITIES[id] = meta or nil end
 end
 
 --- Populate the range-reference list from Data/RangeReferences.lua.
@@ -195,12 +208,23 @@ local function resolveBase(spellID)
     return base
 end
 
+local RotationImport_   -- lazy: RotationImport loads after SpellDB
 local function StaticLookup(t, spellID)
     if not t or not spellID then return nil end
     local v = t[spellID]
-    if v ~= nil or not C_Spell_GetBaseSpell then return v end
-    local base = resolveBase(spellID)
-    if base and base ~= spellID then return t[base] end
+    if v ~= nil then return v end
+    if C_Spell_GetBaseSpell then
+        local base = resolveBase(spellID)
+        if base and base ~= spellID then
+            v = t[base]
+            if v ~= nil then return v end
+        end
+    end
+    -- Forever ranks: every rank of a chain matches the rank-1 id the data is keyed by
+    -- (a no-op on retail, which has no rank chains).
+    RotationImport_ = RotationImport_ or LibStub("JustAC-RotationImport", true)
+    local r1 = RotationImport_ and RotationImport_.RankBase(spellID)
+    if r1 and r1 ~= spellID then return t[r1] end
     return nil
 end
 SpellDB.StaticLookup = StaticLookup   -- shared with RedundancyFilter's own tables
@@ -302,7 +326,12 @@ end
 -- report cast time 0 like instants, so the move-cast marker excludes these -
 -- movement breaks a channel. StaticLookup resolves talent-override / base IDs.
 local channeledSpells
-function SpellDB.RegisterChanneledSpells(t) channeledSpells = t end
+-- Merges, so a second data file (WoW Forever) adds to the curated set instead of replacing it.
+function SpellDB.RegisterChanneledSpells(t)
+    if type(t) ~= "table" then return end
+    channeledSpells = channeledSpells or {}
+    for id, v in pairs(t) do channeledSpells[id] = v end
+end
 function SpellDB.IsChanneled(spellID)
     return channeledSpells ~= nil and StaticLookup(channeledSpells, spellID) == true
 end
@@ -509,19 +538,31 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
 -- Rogue poison cast IDs, derived from the maintained-buff groups above so the two
 -- can never drift. RedundancyFilter consumes this for cast-based poison detection
 -- and its NeverSecret whitelist merge.
+-- Derived from CLASS_MAINTAINED_BUFFS so they can never drift: the rogue poison set, and
+-- every maintained-buff member across all classes, flat (PrecombatEngine's applied-latch
+-- keys off it). auraIDs count as members too - a ranked buff (WoW Forever) is cast as any
+-- rank. Rebuilt IN PLACE (readers hold the tables) whenever the source changes:
+-- Data/ForeverDefaults.lua swaps in Forever's groups.
 SpellDB.ROGUE_POISON_CAST_IDS = {}
-for _, grp in ipairs(SpellDB.CLASS_MAINTAINED_BUFFS.ROGUE) do
-    for _, id in ipairs(grp.group) do SpellDB.ROGUE_POISON_CAST_IDS[id] = true end
-end
-
--- Every maintained-buff member across all classes, flat - derived like the poison set
--- above so it can never drift. PrecombatEngine's applied-latch keys off it.
 SpellDB.MAINTAINED_BUFF_MEMBERS = {}
-for _, classGroups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
-    for _, grp in ipairs(classGroups) do
-        for _, id in ipairs(grp.group) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+function SpellDB.IndexMaintainedBuffs()
+    wipe(SpellDB.ROGUE_POISON_CAST_IDS)
+    wipe(SpellDB.MAINTAINED_BUFF_MEMBERS)
+    for _, grp in ipairs(SpellDB.CLASS_MAINTAINED_BUFFS.ROGUE or {}) do
+        for _, id in ipairs(grp.group) do SpellDB.ROGUE_POISON_CAST_IDS[id] = true end
+    end
+    for _, classGroups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
+        for _, grp in ipairs(classGroups) do
+            for _, id in ipairs(grp.group) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+            -- Forever's aura ids are each rank's cast id, so a rank-3 cast must latch; on
+            -- retail aura ids are separate auras, never cast, and stay out as before.
+            if SpellDB.IsForever() then
+                for _, id in ipairs(grp.auraIDs or {}) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+            end
+        end
     end
 end
+SpellDB.IndexMaintainedBuffs()
 
 -- Weapon imbues (shaman): these apply a temp weapon ENCHANT, not a player aura, so they can't
 -- live in CLASS_MAINTAINED_BUFFS (that path detects via auras). PrecombatEngine suggests them
@@ -610,13 +651,57 @@ end
 -- Caster specs (intellect primary) want weapon oils; physical specs want stones/whetstones.
 -- The spec's primary stat is deterministic and non-secret; reading raw UnitStat instead
 -- returns a SECRET number under taint (e.g. options opened from addon code), and comparing
--- secrets throws. GetSpecializationInfo's 6th return is the primary stat (same enum as
+-- secrets throws. C_SpecializationInfo.GetSpecializationInfo's 6th return is the primary stat (same enum as
 -- UnitStat: 1=Str, 2=Agi, 4=Int).
 local function PlayerPrefersOil()
-    if not (GetSpecialization and GetSpecializationInfo) then return false end
-    local spec = GetSpecialization()
+    if not (C_SpecializationInfo.GetSpecialization and C_SpecializationInfo.GetSpecializationInfo) then return false end
+    local spec = C_SpecializationInfo.GetSpecialization()
     if not spec then return false end
-    return select(6, GetSpecializationInfo(spec)) == 4  -- 4 = Intellect -> caster -> oil
+    return select(6, C_SpecializationInfo.GetSpecializationInfo(spec)) == 4  -- 4 = Intellect -> caster -> oil
+end
+
+-- WoW Forever: the stats each class gets something from (Data/ForeverConsumables.lua tags
+-- each buff with one). Druids use them all, so they are left out (no filter).
+local FOREVER_CLASS_STATS = {}
+for class, stats in pairs({
+    WARRIOR = { "strength", "agility", "stamina", "attackpower", "armor" },
+    ROGUE   = { "agility", "strength", "stamina", "attackpower", "armor" },
+    HUNTER  = { "agility", "stamina", "intellect", "rangedattackpower", "attackpower", "armor" },
+    PALADIN = { "strength", "stamina", "intellect", "attackpower", "spellpower", "healing", "armor" },
+    SHAMAN  = { "strength", "agility", "stamina", "intellect", "attackpower", "spellpower", "healing", "armor" },
+    PRIEST  = { "intellect", "spirit", "stamina", "spellpower", "healing", "armor" },
+    MAGE    = { "intellect", "spirit", "stamina", "spellpower", "armor" },
+    WARLOCK = { "intellect", "spirit", "stamina", "spellpower", "armor" },
+}) do
+    local set = {}
+    for _, s in ipairs(stats) do set[s] = true end
+    FOREVER_CLASS_STATS[class] = set
+end
+
+-- Out-of-combat recovery items (WoW Forever: food, drink, bandages): kind -> list, the most
+-- restored per use first. Filled by Data/ForeverConsumables.lua; empty on retail.
+local RECOVERY = {}
+function SpellDB.RegisterRecoveryItems(t)
+    if type(t) ~= "table" then return end
+    for kind, list in pairs(t) do RECOVERY[kind] = list end
+end
+
+--- The best recovery item of `kind` ("food" / "drink" / "bandage") the player owns and can
+--- use now (usability covers the level requirement), or nil. Plain food before Well Fed
+--- food: that one is worth more as a pre-pull buff, so it is eaten for recovery only when
+--- nothing else is in the bags.
+function SpellDB.GetBestRecoveryItem(kind)
+    local list = RECOVERY[kind]
+    if not list then return nil end
+    local fallback
+    for i = 1, #list do
+        local e = list[i]
+        if (C_Item.GetItemCount(e.id) or 0) > 0 and C_Item.IsUsableItem(e.id) then
+            if not e.wellfed then return e.id end
+            fallback = fallback or e.id
+        end
+    end
+    return fallback
 end
 
 --- Best owned buff entry for a category, honoring a stat preference, or nil. statPref
@@ -646,6 +731,8 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
     if cat == "weaponEnchant" then
         prefKind = PlayerPrefersOil() and "caster" or "physical"
     end
+    local classStats = cat ~= "weaponEnchant" and SpellDB.IsForever()
+        and FOREVER_CLASS_STATS[select(2, UnitClass("player")) or ""] or nil
     local n = #b.items
     local best, bestScore = nil, -1
     for i = 1, n do
@@ -661,6 +748,12 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
             end
             if applies and e.wmask and weaponTypeBit then
                 applies = bit.band(e.wmask, weaponTypeBit) ~= 0
+            end
+            -- WoW Forever, Auto: only a stat the class uses (a warrior is never handed an
+            -- Elixir of Wisdom). Retail's Auto is newest-first, which on Forever's single era
+            -- of items would pick by item level alone.
+            if applies and classStats and e.stat and not (statPref and statPref ~= "optimal") then
+                applies = classStats[e.stat] == true
             end
             if applies then
                 local score = n - i  -- recency: earlier in the list = newer = higher
@@ -700,6 +793,7 @@ local KNOWN_PROBE_REFRESH = 5    -- seconds
 -- every probe). UNKNOWN stands in for a memoized nil verdict, which a table can't hold.
 local withinVerdicts = {}
 local lastWithinTime = -1
+local MELEE_YARDS = 5   -- the melee band the range references and the swing range both answer
 local WITHIN_UNKNOWN = {}
 function SpellDB.IsTargetWithin(yards)
     if not C_Spell_IsSpellInRange then return nil end
@@ -721,7 +815,11 @@ function SpellDB.IsTargetWithin(yards)
     if (now - knownRangeProbesTime) >= KNOWN_PROBE_REFRESH then
         knownRangeProbesTime = now
         local n = 0
-        for id, ref in pairs(RANGE_REFERENCES) do
+        RotationImport_ = RotationImport_ or LibStub("JustAC-RotationImport", true)
+        for refID, ref in pairs(RANGE_REFERENCES) do
+            -- Forever ranks: probe with the rank the player has (the data names rank 1).
+            local id = (RotationImport_ and RotationImport_.RankChain(refID)
+                and RotationImport_.HighestKnownRank(refID)) or refID
             -- Gate on KNOWN (form-independent), NOT castability: IsSpellAvailable would skip a
             -- form-gated probe (a Druid's Mangle while shifted, anything on GCD/low resources),
             -- which silently breaks detection. IsSpellInRange only needs the spell to be known.
@@ -751,6 +849,14 @@ function SpellDB.IsTargetWithin(yards)
 
     local verdict
     if within then verdict = true elseif beyond then verdict = false end
+    -- The game's own melee check settles the melee band outright (WoW Forever: the auto-attack
+    -- range event), including for a character with no short probe (a warrior below level 4).
+    local inSwing = api and api.IsTargetInSwingRange and api.IsTargetInSwingRange(0)
+    if inSwing == true and yards >= MELEE_YARDS then
+        verdict = true
+    elseif inSwing == false and yards <= MELEE_YARDS then
+        verdict = false
+    end
     withinVerdicts[yards] = (verdict == nil) and WITHIN_UNKNOWN or verdict
     return verdict
 end
@@ -761,6 +867,10 @@ end
 --- enough to say", which are the same nil from IsTargetWithin but want opposite handling.
 --- Short probes are melee attacks, so casters cannot prove the ~8yd radii at all.
 function SpellDB.CanProveWithin(yards)
+    local api = GetBlizzardAPI()
+    if yards >= MELEE_YARDS and api and api.IsTargetInSwingRange and api.IsTargetInSwingRange(0) ~= nil then
+        return true
+    end
     for i = 2, #knownRangeProbes, 2 do
         if knownRangeProbes[i] <= yards then return true end
     end
@@ -930,14 +1040,25 @@ ApplyArchOverrides()
 -- Shared spec→class fallback logic for all per-spec default tables.
 --------------------------------------------------------------------------------
 
---- Build the spec key ("CLASS_N") for the current player and spec.
+--- Build the spec key ("CLASS_N"; "CLASS_F" on WoW Forever) for the current player.
 --- Returns specKey, playerClass or nil, nil if unavailable.
+--- Forever has one spec per class, and its index must not alias retail's per-spec data
+--- (WARRIOR_1 is retail Arms), so it gets its own "_F" key: Forever entries live under
+--- it in every per-spec table, and retail never builds one. The Forever talent tree is
+--- chosen inside RotationImport, not here.
 --- Memoized on the spec index: class never changes in-session, and the concat
 --- allocated a fresh string per call - this runs per spell per queue build via
 --- RotationImport.GetEntry and per defensive list fetch.
 local specKeyCache, specKeyClass, specKeySpec
 function SpellDB.GetSpecKey()
-    local spec = GetSpecialization and GetSpecialization()
+    if SpellDB.IsForever() then
+        if specKeyClass then return specKeyCache, specKeyClass end
+        local _, playerClass = UnitClass("player")
+        if not playerClass then return nil, nil end
+        specKeyClass, specKeyCache = playerClass, playerClass .. "_F"
+        return specKeyCache, playerClass
+    end
+    local spec = C_SpecializationInfo.GetSpecialization and C_SpecializationInfo.GetSpecialization()
     if specKeyClass and spec == specKeySpec then
         return specKeyCache, specKeyClass
     end
@@ -959,16 +1080,18 @@ local RANGED_DPS_SPECS = {
     [262] = true,                             -- Shaman: Elemental
     [265] = true, [266] = true, [267] = true, -- Warlock: Affliction, Demonology, Destruction
     [1467] = true, [1473] = true,             -- Evoker: Devastation, Augmentation
+    -- WoW Forever's one spec per class (ChrSpecialization 1482-1491): the ranged classes.
+    [1482] = true, [1485] = true, [1487] = true, [1490] = true,  -- Mage, Hunter, Priest, Warlock
 }
 local rangedSpecCacheIdx, rangedSpecCacheVal
 --- True if the current spec is a ranged DPS or a healer (move-cast dot auto-on).
 --- Cached by spec index; recomputed only when the player changes spec.
 function SpellDB.IsRangedOrHealerSpec()
-    local spec = GetSpecialization and GetSpecialization()
+    local spec = C_SpecializationInfo.GetSpecialization and C_SpecializationInfo.GetSpecialization()
     if not spec then return false end
     if rangedSpecCacheIdx ~= spec then
         rangedSpecCacheIdx = spec
-        local specID, _, _, _, role = GetSpecializationInfo(spec)
+        local specID, _, _, _, role = C_SpecializationInfo.GetSpecializationInfo(spec)
         rangedSpecCacheVal = (role == "HEALER") or (RANGED_DPS_SPECS[specID] == true)
     end
     return rangedSpecCacheVal
@@ -1004,7 +1127,7 @@ end
 --
 -- Keying convention (matches gap-closers):
 --   "CLASS"        = class-level fallback (used when no spec-specific entry exists)
---   "CLASS_N"      = spec-specific override (N = GetSpecialization() index)
+--   "CLASS_N"      = spec-specific override (N = C_SpecializationInfo.GetSpecialization() index)
 -- Resolution order: spec key → class key.  Spec entries are only added where the
 -- defaults diverge meaningfully from the class fallback (primarily tank specs and
 -- specs with unique defensive tools).  All other specs use the class fallback.
@@ -1362,6 +1485,12 @@ end
 --- Looks up the base list ID (talent overrides resolve to the same tool); spec overrides win.
 --- Negative IDs are heal items (potion/healthstone): instant burst heals, tier 2 - they
 --- must float when low just like they park as emergencies when healthy (IsHoldWorthy).
+--- Add tiers from a later data file (WoW Forever's ids). Merges into DEFENSE_TIER.
+function SpellDB.RegisterDefenseTiers(t)
+    if type(t) ~= "table" then return end
+    for id, tier in pairs(t) do DEFENSE_TIER[id] = tier end
+end
+
 function SpellDB.GetDefenseTier(spellID)
     if not spellID then return 3 end
     if spellID < 0 then return 2 end
@@ -1684,7 +1813,7 @@ end
 
 -- Gap-closer spells for melee specs (shown when target is out of melee range).
 -- Spec-aware: keyed by "CLASS_SPECINDEX" so only melee specs get suggestions.
--- GetSpecialization() returns the spec index (1-4); compose key as CLASS .. "_" .. specIndex.
+-- C_SpecializationInfo.GetSpecialization() returns the spec index (1-4); compose key as CLASS .. "_" .. specIndex.
 -- Omitted entries = ranged/healer spec → no gap-closer suggestions.
 -- Priority-ordered: first usable spell is shown.
 SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
@@ -2007,6 +2136,32 @@ SpellDB.PET_SUMMON_EXCLUSIVE = {
 -- Unique aura spell IDs: buffs that can only have one active instance at a time.
 -- These are filtered when already active (outside pandemic window).
 -- Raid buff IDs are merged in below so this table is the authoritative union.
+-- Attack-speed buffs the player casts, judged on WoW Forever by the swings after the cast
+-- (BlizzardAPI CooldownTracking: PLAYER_SWING's duration is the plain in-combat attack
+-- speed). swing = which auto attack speeds up (0 main hand, 2 ranged); max = the longest the
+-- buff can last, the window inside which swing evidence is trusted. Rank-1 ids (any rank
+-- matches via StaticLookup). Inert on retail, which has no swing events.
+SpellDB.HASTE_BUFFS = {
+    [5171]  = { swing = 0, max = 40 },  -- Slice and Dice (length scales with combo points)
+    [13877] = { swing = 0, max = 20 },  -- Blade Flurry
+    [3045]  = { swing = 2, max = 20 },  -- Rapid Fire
+}
+
+-- On-next-swing abilities (Heroic Strike, Cleave, Raptor Strike, Maul): pressing one queues
+-- it onto the next auto attack instead of firing at once, so the queue shows it as in
+-- progress until the swing lands. Every rank, filled on WoW Forever (Data/ForeverDefaults);
+-- empty on retail, which has none.
+SpellDB.NEXT_SWING_SPELLS = {}
+
+-- DoTs whose cast also hits hard up front (a quarter or more of the total: Moonfire, Flame
+-- Shock, Rake, Immolate). The hit still lands on a target about to die, so the dying-target
+-- DoT block skips these. Every rank, filled on WoW Forever from the client data
+-- (tools/gen_forever_defaults.py); empty on retail.
+SpellDB.FRONTAL_DOTS = {}
+function SpellDB.IsFrontalDot(spellID)
+    return spellID ~= nil and StaticLookup(SpellDB.FRONTAL_DOTS, spellID) ~= nil
+end
+
 SpellDB.UNIQUE_AURA_SPELLS = {
     -- Druid Forms
     [768] = true,     -- Cat Form

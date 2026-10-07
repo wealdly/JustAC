@@ -845,9 +845,20 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         return previousValue or ""
     end
 
+    -- An unbound button has no hotkey to show, but its slot still answers usability, range
+    -- and cooldown (the rage grey-out read nothing for an unbound Battle Shout). Remembered
+    -- here and used only if the search finds no BOUND button, so it never pre-empts the
+    -- transform and override paths below.
+    local unbound
     local function CacheHotkey(slot, modifiers, cacheID, extraCacheID)
         local baseKey = GetOptimizedKeybind(slot)
-        if not baseKey then return nil end
+        if not baseKey then
+            if not unbound then
+                local t = BlizzardAPI.GetActionInfo(slot)
+                unbound = { slot = slot, direct = t == "spell" or t == "item", extra = extraCacheID }
+            end
+            return nil
+        end
         local finalHotkey = Label(baseKey, modifiers, FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers))
         spellHotkeyCache[cacheID] = finalHotkey
         spellSlotCache[cacheID] = slot
@@ -911,7 +922,14 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     end
 
     spellHotkeyCache[spellID] = ""
-    slotDirectCache[spellID] = false
+    if unbound then
+        spellSlotCache[spellID], slotDirectCache[spellID] = unbound.slot, unbound.direct
+        if unbound.extra then
+            spellSlotCache[unbound.extra], slotDirectCache[unbound.extra] = unbound.slot, unbound.direct
+        end
+    else
+        slotDirectCache[spellID] = false
+    end
     spellHotkeyCacheValid = true
     return previousValue or ""
 end

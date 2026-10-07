@@ -1,0 +1,14 @@
+{
+	"type": "TypeAPL",
+	"prepullActions": [
+		{"action":{"activateAura":{"auraId":{"spellId":24858}}},"doAtValue":{"const":{"val":"-10s"}}}
+	],
+	"priorityList": [
+		{"action":{"autocastOtherCooldowns":{}}},
+		{"action":{"condition":{"cmp":{"op":"OpLe","lhs":{"currentManaPercent":{}},"rhs":{"const":{"val":"30%"}}}},"castSpell":{"spellId":{"spellId":29166}}}},
+		{"action":{"multidot":{"spellId":{"spellId":9835},"maxDots":1,"maxOverlap":{"const":{"val":"0ms"}}}}},
+		{"action":{"multidot":{"spellId":{"spellId":24977},"maxDots":1,"maxOverlap":{"const":{"val":"0ms"}}}}},
+		{"action":{"condition":{"cmp":{"op":"OpGt","lhs":{"currentManaPercent":{}},"rhs":{"const":{"val":"20%"}}}},"castSpell":{"spellId":{"spellId":25298}}}},
+		{"action":{"castSpell":{"spellId":{"spellId":2912}}}}
+	]
+}

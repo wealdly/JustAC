@@ -47,7 +47,7 @@ function Profiles.AddSpecProfileOptions(addon)
 
     -- Helper to get spec name with icon (called dynamically when panel renders)
     local function GetSpecName(specIndex)
-        local _, specName, _, specIcon = GetSpecializationInfo(specIndex)
+        local _, specName, _, specIcon = C_SpecializationInfo.GetSpecializationInfo(specIndex)
         if specName then
             local iconString = specIcon and ("|T" .. specIcon .. ":16:16:0:0|t ") or ""
             return iconString .. specName
@@ -103,7 +103,7 @@ function Profiles.AddSpecProfileOptions(addon)
                     end
                     -- If enabling and current spec has a mapping, apply it
                     if val then
-                        local currentSpec = GetSpecialization()
+                        local currentSpec = C_SpecializationInfo.GetSpecialization()
                         if currentSpec and addon.db.char.specProfiles[currentSpec] then
                             addon:OnSpecChange()
                         end
@@ -140,7 +140,7 @@ function Profiles.AddSpecProfileOptions(addon)
                     addon.db.char.specProfiles[specIndex] = val
                 end
                 -- If this is the current spec, apply the change
-                local currentSpec = GetSpecialization()
+                local currentSpec = C_SpecializationInfo.GetSpecialization()
                 if currentSpec == specIndex then
                     addon:OnSpecChange()
                 end

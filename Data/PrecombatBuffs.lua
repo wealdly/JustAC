@@ -12,6 +12,8 @@
 -- HAND-CURATED marker and are preserved across regeneration only if you keep them there.
 local SpellDB = LibStub("JustAC-SpellDB", true)
 if not SpellDB or not SpellDB.RegisterPrecombatBuffs then return end
+-- Retail items, ids and durations: WoW Forever loads Data/ForeverConsumables.lua instead.
+if SpellDB.IsForever and SpellDB.IsForever() then return end
 
 SpellDB.RegisterPrecombatBuffs({
     flask = {

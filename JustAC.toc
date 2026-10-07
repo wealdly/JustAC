@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120100, 16001
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
@@ -58,7 +58,10 @@ Data\TargetDots.lua
 Data\ChanneledSpells.lua
 Data\SimcRotations.lua
 Data\AssistedCombatOrder.lua
+Data\ForeverRotations.lua
 Data\CCBreakers.lua
+Data\ForeverDefaults.lua
+Data\ForeverConsumables.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua

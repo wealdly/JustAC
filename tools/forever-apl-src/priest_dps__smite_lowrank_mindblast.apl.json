@@ -1,0 +1,64 @@
+{
+	"type": "TypeAPL",
+	"prepullActions": [
+		{ "action": { "castSpell": { "spellId": { "spellId": 15261, "rank": 8 } } }, "doAtValue": { "const": { "val": "-3s" } } }
+	],
+	"priorityList": [
+		{ "action": { "autocastOtherCooldowns": {} } },
+		{
+			"action": {
+				"condition": {
+					"cmp": {
+						"op": "OpLt",
+						"lhs": { "dotRemainingTime": { "spellId": { "spellId": 15261, "rank": 8 } } },
+						"rhs": { "const": { "val": "3s" } }
+					}
+				},
+				"castSpell": { "spellId": { "spellId": 15261, "rank": 8 } }
+			}
+		},
+		{
+			"action": {
+				"strictSequence": {
+					"actions": [
+						{ "castSpell": { "spellId": { "spellId": 14751 } } },
+						{ "castSpell": { "spellId": { "spellId": 10934, "rank": 8 } } }
+					]
+				}
+			}
+		},
+		{ "action": { "castSpell": { "spellId": { "spellId": 1240721, "rank": 3 } } } },
+		{
+			"action": {
+				"condition": { "isExecutePhase": { "threshold": "E20" } },
+				"castSpell": { "spellId": { "spellId": 1309636, "rank": 4 } }
+			}
+		},
+		{
+			"action": {
+				"condition": {
+					"and": {
+						"vals": [
+							{ "not": { "val": { "dotIsActive": { "spellId": { "spellId": 10894, "rank": 8 } } } } },
+							{ "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } }
+						]
+					}
+				},
+				"castSpell": { "spellId": { "spellId": 10894, "rank": 8 } }
+			}
+		},
+		{
+			"action": {
+				"condition": { "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } },
+				"castSpell": { "spellId": { "spellId": 10947 } }
+			}
+		},
+		{
+			"action": {
+				"condition": { "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "40%" } } } },
+				"castSpell": { "spellId": { "spellId": 10934, "rank": 8 } }
+			}
+		},
+		{ "action": { "castSpell": { "spellId": { "spellId": 591, "rank": 2 } } } }
+	]
+}

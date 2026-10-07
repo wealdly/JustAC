@@ -1,0 +1,12 @@
+{
+  "type": "TypeAPL",
+  "prepullActions": [
+    {"action":{"castSpell":{"spellId":{"spellId":13494}}},"doAtValue":{"const":{"val":"-0s"}}}
+  ],
+  "priorityList": [
+    {"action":{"autocastOtherCooldowns":{}}},
+    {"action":{"condition":{"and":{"vals":[{"spellIsKnown":{"spellId":{"spellId":1322605}}},{"cmp":{"op":"OpLe","lhs":{"currentEnergy":{}},"rhs":{"const":{"val":"60"}}}}]}},"castSpell":{"spellId":{"spellId":1322605}}}},
+    {"action":{"condition":{"cmp":{"op":"OpEq","lhs":{"currentComboPoints":{}},"rhs":{"const":{"val":"5"}}}},"castSpell":{"spellId":{"spellId":31018,"rank":4}}}},
+    {"action":{"castSpell":{"spellId":{"spellId":9830,"rank":5}}}}
+  ]
+}

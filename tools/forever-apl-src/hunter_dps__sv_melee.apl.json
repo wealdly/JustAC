@@ -1,0 +1,24 @@
+{
+	"type": "TypeAPL",
+	"priorityList": [
+		{ "action": { "condition": { "cmp": { "op": "OpGt", "lhs": { "unitDistance": {} }, "rhs": { "const": { "val": "5" } } } }, "move": { "rangeFromTarget": { "const": { "val": "0" } } } } },
+		{ "action": { "autocastOtherCooldowns": {} } },
+		{ "action": { "castSpell": { "spellId": { "spellId": 14271 } } } },
+		{ "action": { "castSpell": { "spellId": { "spellId": 1317257 } } } },
+		{
+			"action": {
+				"condition": {
+					"and": {
+						"vals": [
+							{ "cmp": { "op": "OpLt", "lhs": { "dotRemainingTime": { "spellId": { "spellId": 25295 } } }, "rhs": { "const": { "val": "1s" } } } },
+							{ "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } }
+						]
+					}
+				},
+				"castSpell": { "spellId": { "spellId": 25295 } }
+			}
+		},
+		{ "action": { "condition": { "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } }, "castSpell": { "spellId": { "spellId": 14305 } } } },
+		{ "action": { "castSpell": { "spellId": { "spellId": 14266, "tag": 3 } } } }
+	]
+}

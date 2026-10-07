@@ -94,6 +94,7 @@ end
 --- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
 function BlizzardAPI.InvalidateSlotUsabilityCache()
     wipe(slotUsabilityCache)
+    if BlizzardAPI.InvalidateBarSpells then BlizzardAPI.InvalidateBarSpells() end
 end
 
 --- Returns the action bar usability state for a spell, or nil if unavailable.

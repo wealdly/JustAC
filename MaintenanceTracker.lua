@@ -83,7 +83,9 @@ local pickCache = { t = nil }
 
 --- State bag for one entry, created on demand.
 local function S(entry)
-    local key = entry and entry.aura
+    -- stateKey: IsTrackedAuraActive's lookups keep their own state, so their rescan never
+    -- clears the cooldownIDs a real maintenance entry for the same aura has resolved.
+    local key = entry and (entry.stateKey or entry.aura)
     if not key then return nil end
     local s = states[key]
     if not s then
@@ -252,10 +254,15 @@ end
 --- Does this Cooldown Manager record belong to our entry? Match the WHOLE
 --- associated id set against BOTH our ids: 4 of the 5 specs have cast ~= aura, so
 --- matching on one id alone would silently miss them.
+-- WoW Forever ranks: the Cooldown Manager may name a different rank than the entry; both meet
+-- at rank 1 (RankBase is the id itself on retail).
+local RotationImport = LibStub("JustAC-RotationImport", true)
+local function R1(id) return RotationImport and RotationImport.RankBase(id) or id end
+
 local function Matches(entry, info)
     if type(info) ~= "table" then return false end
     local function hit(v)
-        return type(v) == "number" and (v == entry.cast or v == entry.aura)
+        return type(v) == "number" and (v == entry.cast or v == entry.aura or R1(v) == R1(entry.aura))
     end
     if hit(info.spellID) or hit(info.overrideSpellID)
        or hit(info.overrideTooltipSpellID) or hit(info.linkedSpellID) then return true end
@@ -375,7 +382,25 @@ end
 --- restrictions, false when the buff was down. BUFF viewers only: on Essential/
 --- Utility items isActive means "tracked/known" and reads true regardless of the aura.
 local BUFF_VIEWER_NAMES = { "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
-local function ViewerBuffActive(entry)
+
+-- Categories an AURA entry starts in. WoW Forever lets a spell's cooldown entry be moved into
+-- Tracked Buffs too (measured: Rend's Essential entry sitting there beside its aura entry),
+-- and that item's isActive need not mean "the aura is up" - so a lookup that must answer
+-- about the aura (auraOnly) trusts only entries whose own default is one of these.
+local auraCategories
+local function IsAuraCategory(cat)
+    if not auraCategories then
+        local C = Enum and Enum.CooldownViewerCategory or {}
+        auraCategories = {}
+        for _, k in ipairs({ "TrackedBuff", "TrackedBar", "HiddenPassive", "EquipSlotTracked",
+                             "SpecAgnosticTracked", "GroupBuff" }) do
+            if C[k] then auraCategories[C[k]] = true end
+        end
+    end
+    return auraCategories[cat] == true
+end
+
+local function ViewerBuffActive(entry, auraOnly)
     local wantIDs = ResolveCooldownIDs(entry)
     if not (wantIDs and next(wantIDs)) then return nil end
     local sawFalse = false
@@ -386,7 +411,8 @@ local function ViewerBuffActive(entry)
         if pool and pool.EnumerateActive then
             for item in pool:EnumerateActive() do
                 local okC, cid = pcall(item.GetCooldownID, item)
-                if okC and type(cid) == "number" and wantIDs[cid] then
+                if okC and type(cid) == "number" and wantIDs[cid]
+                   and (not auraOnly or IsAuraCategory(wantIDs[cid])) then
                     local active = item.isActive
                     if not IsSecret(active) then
                         if active == true then return true end
@@ -398,6 +424,30 @@ local function ViewerBuffActive(entry)
     end
     if sawFalse then return false end
     return nil
+end
+
+--- Plain up/down for ANY spell the player tracks in the Cooldown Manager's buff viewers (a
+--- buff on them, or their debuff on the current target), or nil when it is not tracked there
+--- or the viewer is hidden. The same route the slot's own buff uses (ViewerBuffActive), and
+--- on WoW Forever the only aura state readable in combat (measured build 70245: Battle Shout,
+--- Rend and Thunder Clap icons showing in combat while every aura API threw).
+local trackedEntries = {}
+local TRACKED_RESCAN = 5   -- seconds before an untracked spell is looked up again
+function MaintenanceTracker.IsTrackedAuraActive(spellID)
+    if not spellID then return nil end
+    local e = trackedEntries[spellID]
+    if not e then
+        e = { cast = spellID, aura = spellID, stateKey = "tracked:" .. spellID }
+        trackedEntries[spellID] = e
+    end
+    -- Not tracked when last resolved: look again now and then, so a spell added to the
+    -- Cooldown Manager mid-session is picked up.
+    local s = S(e)
+    if s.cooldownIDs and not next(s.cooldownIDs) and GetTime() - (e.resolvedAt or 0) > TRACKED_RESCAN then
+        s.cooldownIDs = nil
+    end
+    if s.cooldownIDs == nil then e.resolvedAt = GetTime() end
+    return ViewerBuffActive(e, true)
 end
 
 --------------------------------------------------------------------------------

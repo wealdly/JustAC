@@ -26,6 +26,15 @@ PRELUDE = """
 stealthed = false
 function IsStealthed() return stealthed end
 ctx = { strict = false }
+-- The swing leaf: Forever's swing tracker, stubbed. swingRem[type] = seconds to the next
+-- auto attack (nil = unknown: not swinging / retail).
+swingRem = {}
+-- The buff leaf: buffUp = the window reads up (our own cast inside its duration);
+-- hasPick = retail's game pick exists.
+buffUp, hasPick = false, false
+BlizzardAPI = { GetSwingRemaining = function(t) return swingRem[t] end,
+                IsBuffWindowActive = function() return buffUp end,
+                HasGamePick = function() return hasPick end }
 """
 
 
@@ -56,13 +65,21 @@ def extract(name, text):
 # The duration object itself is NOT restricted - only every handle to one is. Zero
 # confirmed instances in 38 samples. Do not re-litigate without an API change.
 UNEVALUATED = {"dot"}
+# Forever gate types whose evaluator is still to come: `tick` needs an energy-tick model the
+# probes have not yet shown is measurable. Until then it answers "no opinion" and never
+# blocks, the documented fail-open direction - listed so it is a decision, not drift.
+PENDING = {"tick"}
+DATA = ("SimcRotations.lua", "ForeverRotations.lua")
 
 
 def check_coverage():
-    data = (SRC.parent / "Data" / "SimcRotations.lua").read_text(encoding="utf-8")
-    emitted = set(re.findall(r't="([a-z]+)"', data))
+    emitted = set()
+    for name in DATA:
+        path = SRC.parent / "Data" / name
+        if path.exists():
+            emitted |= set(re.findall(r't="([a-z]+)"', path.read_text(encoding="utf-8")))
     handled = set(re.findall(r't == "([a-z]+)"', SRC.read_text(encoding="utf-8")))
-    missing = sorted(emitted - handled - UNEVALUATED)
+    missing = sorted(emitted - handled - UNEVALUATED - PENDING)
     if missing:
         print("  FAIL gate types in the data with no evaluator: %s" % ", ".join(missing))
     return 1 if missing else 0
@@ -104,8 +121,64 @@ def main():
     if got is not True:
         bad += 1
         print("  FAIL nested: got %s, want True  (%s)" % (got, nested))
+    # The swing leaf (Forever): main hand by default, `ranged` picks the ranged timer.
+    swing = [
+        ("{[0]=0.3}", '{t="swing",op="<",n=0.4}', True, "seal just before the main-hand swing"),
+        ("{[0]=0.9}", '{t="swing",op="<",n=0.4}', False, "too early for it"),
+        ("{[2]=1.5}", '{t="swing",op=">",n=1,ranged=true}', True, "Aimed Shot with time to spare"),
+        ("{[0]=1.5}", '{t="swing",op=">",n=1,ranged=true}', None, "ranged timer unknown"),
+        ("{}", '{t="swing",op="<",n=0.4}', None, "not swinging: no opinion"),
+    ]
+    for rem, gate, want, why in swing:
+        lua.execute("swingRem = %s" % rem)
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        if got != want:
+            bad += 1
+            print("  FAIL swing %s rem=%s got %s, want %s  (%s)" % (gate, rem, got, want, why))
+    # A "buff down" gate in the sinking (non-strict) reading: only a provably-up buff on a
+    # client with no game pick blocks (Battle Shout must sink while the shout is up).
+    buff = [
+        ("true", "false", False, "Forever, shout up: blocks"),
+        ("false", "false", None, "Forever, shout down: no opinion"),
+        ("true", "true", None, "retail: unchanged, no opinion"),
+    ]
+    for up, pick, want, why in buff:
+        lua.execute("buffUp, hasPick = %s, %s" % (up, pick))
+        got = run('return GateVerdict({t="buff",id=6673,dur=180,neg=true}, ctx)')
+        if got != want:
+            bad += 1
+            print("  FAIL buff up=%s pick=%s got %s, want %s  (%s)" % (up, pick, got, want, why))
+    # A DoT gate on a dying target (Forever): a confirmed low, non-boss target blocks.
+    lua.execute("""
+DOT_MIN_TARGET_PCT = 35
+function UnitExists() return true end
+BlizzardAPI.IsUnitHealthBelow = function(_, pct) return targetBelow[pct] end
+BlizzardAPI.IsTargetBoss = function() return isBoss end
+""")
+    dot = [
+        ("{[35]=true}", "false", "false", False, "Forever, target under 35%: no new DoT"),
+        ("{[35]=false}", "false", "false", None, "healthy target: no opinion"),
+        ("{}", "false", "false", None, "health unreadable: no opinion"),
+        ("{[35]=true}", "true", "false", None, "a boss low on health: keep DoTs going"),
+        ("{[35]=true}", "false", "true", None, "retail (game pick): unchanged"),
+    ]
+    # A DoT that also hits hard up front (Moonfire) is never blocked on a dying target.
+    lua.execute("SpellDB = { IsFrontalDot = function(id) return id == 8921 end }")
+    lua.execute("targetBelow, isBoss, hasPick = {[35]=true}, false, false")
+    got = run('return GateVerdict({t="dot",id=8921}, ctx)')
+    if got is not None:
+        bad += 1
+        print("  FAIL dot: Moonfire on a dying target got %s, want None (its hit still lands)" % got)
+    lua.execute("SpellDB = nil")
+    for below, boss, pick, want, why in dot:
+        lua.execute("targetBelow, isBoss, hasPick = %s, %s, %s" % (below, boss, pick))
+        got = run('return GateVerdict({t="dot",id=772}, ctx)')
+        if got != want:
+            bad += 1
+            print("  FAIL dot below=%s boss=%s pick=%s got %s, want %s  (%s)" % (below, boss, pick, got, want, why))
+    lua.execute("BlizzardAPI.IsUnitHealthBelow = nil")
     bad += check_coverage()
-    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2, bad))
+    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot), bad))
     return 1 if bad else 0
 
 

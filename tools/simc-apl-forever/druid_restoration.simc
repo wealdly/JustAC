@@ -1,0 +1,7 @@
+# JustAC hand pin, WoW Forever: Restoration Druid damage while there is nothing to heal. The
+# sim list source (tools/forever-apl-src) models no healer, and the guides only say "spare
+# time: regen or damage" (Documentation/forever-guides/druid-shaman.md), so a plain filler.
+# Supported conditions: target.health.pct<N, [!]dot.X.ticking, active_enemies>=N.
+
+actions=moonfire,if=!dot.moonfire.ticking
+actions+=/wrath

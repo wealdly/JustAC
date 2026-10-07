@@ -92,6 +92,7 @@ end
 
 function BlizzardAPI.ClearSpellCache()
     wipe(spellInfoCache)
+    if BlizzardAPI.InvalidateBarSpells then BlizzardAPI.InvalidateBarSpells() end
 end
 
 -- Passive filter for ids arriving from Blizzard's assist APIs. Their data can hand
@@ -213,16 +214,19 @@ local function WithAdditions(list)
 
     -- Same BUTTON, not same id: the SimC data and Blizzard's list can name one ability
     -- by different ids across an override chain.
+    -- Forever: same button across RANKS too (a bar keeps the rank it was dragged with).
+    local rankOf = RI.RankBase
     local have = {}
     for i = 1, #list do
         have[list[i]] = true
         have[BlizzardAPI.ResolveSpellID(list[i]) or list[i]] = true
+        if rankOf then have[rankOf(list[i])] = true end
     end
     local out
     for i = 1, #simc do
         local raw = simc[i]
         local id = BlizzardAPI.ResolveKnownSpellID(raw)
-        if id and not have[id] and not have[raw]
+        if id and not have[id] and not have[raw] and not (rankOf and have[rankOf(id)])
            and not (SpellDB and SpellDB.IsOffensiveSpell and not SpellDB.IsOffensiveSpell(id)) then
             if not out then
                 out = {}
@@ -231,6 +235,7 @@ local function WithAdditions(list)
             out[#out + 1] = id
             insertedIDs[id] = true
             have[id], have[raw] = true, true
+            if rankOf then have[rankOf(id)] = true end
         end
     end
     return out or list
@@ -249,31 +254,99 @@ end
 --- The rotation pool: the game's list plus the abilities theorycraft ordering can time
 --- (WithAdditions). gameOnly = the game's own list alone - what "the rotation changed"
 --- compares against, which must not depend on which ordering happened to be on.
+--- Forever has no Assisted Combat, so its pool is empty. The list the player has already
+--- curated is their action bars: every non-passive spell on them, in slot order. It seeds
+--- and baselines the priority list exactly like the game's pool does on retail.
+--- ponytail: bars also hold utility (stances, buffs, professions); the player's own list
+--- prunes them. Filter by spellbook skill line if the default pool proves too noisy.
+local barSpells   -- cached GetBarSpells result; nil = rescan (bar or spellbook changed)
+
+--- Every distinct spell on the action bars as { slot, id } in slot order, through the
+--- placeholder-filtering GetActionInfo. THE bar walk: the pool and the probes share it, so
+--- they sample the same spells. Cached until the bars or the spellbook change.
+function BlizzardAPI.GetBarSpells()
+    if barSpells then return barSpells end
+    local out, have = {}, {}
+    for slot = 1, 180 do
+        local kind, id = BlizzardAPI.GetActionInfo(slot)
+        if kind == "spell" and type(id) == "number" and id > 0 and not have[id] then
+            have[id] = true
+            out[#out + 1] = { slot = slot, id = id }
+        end
+    end
+    barSpells = out
+    return out
+end
+
+local barRankOf   -- rank-1 id -> the rank of that ability on the bars; nil = rebuild
+
+function BlizzardAPI.InvalidateBarSpells()
+    barSpells, barRankOf = nil, nil
+end
+
+--- Forever: which rank of a spell's chain the player presses - the one on their bars (a
+--- button keeps the rank it was dragged with, and the hotkey is there), else the highest
+--- they know. nil when the spell has no ranks, i.e. always on retail.
+local function PressedRank(spellID)
+    local RI = LibStub("JustAC-RotationImport", true)
+    local chain = RI and RI.RankChain and RI.RankChain(spellID)
+    if not chain then return nil end
+    if not barRankOf then
+        barRankOf = {}
+        for _, s in ipairs(BlizzardAPI.GetBarSpells()) do
+            local c = RI.RankChain(s.id)
+            if c and not barRankOf[c[1]] then barRankOf[c[1]] = s.id end
+        end
+    end
+    return barRankOf[chain[1]] or RI.HighestKnownRank(spellID)
+end
+
+local function ActionBarPool()
+    local RI = LibStub("JustAC-RotationImport", true)
+    local out = {}
+    for _, s in ipairs(BlizzardAPI.GetBarSpells()) do
+        -- Class abilities only: a bar also carries tracking, professions and racials.
+        if not IsPassiveID(s.id) and not (RI and not RI.IsClassAbility(s.id)) then
+            out[#out + 1] = s.id
+        end
+    end
+    return #out > 0 and out or nil
+end
+
+--- Forever's full pool: the bar spells (all a gameOnly caller gets - they stand in for the
+--- game's list) plus every ability of the imported Forever list the character knows, at
+--- the rank they would press (WithAdditions + RotationImport's rank chains).
+local function ForeverPool(gameOnly)
+    local bars = ActionBarPool()
+    if gameOnly then return bars end
+    local out = WithAdditions(bars or {})
+    return #out > 0 and out or nil
+end
+
 function BlizzardAPI.GetRotationSpells(gameOnly)
+    if BlizzardAPI.IsForever() then return ForeverPool(gameOnly) end
     if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then return nil end
 
     local success, result = pcall(C_AssistedCombat.GetRotationSpells)
-    if success and result and type(result) == "table" and #result > 0 then
-        local hasPassive = false
-        for i = 1, #result do
-            if type(result[i]) ~= "number" or result[i] <= 0 then
-                return nil
-            end
-            if IsPassiveID(result[i]) then hasPassive = true end
+    if not (success and type(result) == "table" and #result > 0) then return nil end
+    local hasPassive = false
+    for i = 1, #result do
+        if type(result[i]) ~= "number" or result[i] <= 0 then
+            return nil
         end
-        -- Same filter as the demand probe. Copy only on a hit: the common case
-        -- (no passives) returns Blizzard's table untouched.
-        if hasPassive then
-            local filtered = {}
-            for i = 1, #result do
-                if not IsPassiveID(result[i]) then filtered[#filtered + 1] = result[i] end
-            end
-            if #filtered == 0 then return nil end
-            return gameOnly and filtered or WithAdditions(filtered)
-        end
-        return gameOnly and result or WithAdditions(result)
+        if IsPassiveID(result[i]) then hasPassive = true end
     end
-    return nil
+    -- Same filter as the demand probe. Copy only on a hit: the common case
+    -- (no passives) returns Blizzard's table untouched.
+    if hasPassive then
+        local filtered = {}
+        for i = 1, #result do
+            if not IsPassiveID(result[i]) then filtered[#filtered + 1] = result[i] end
+        end
+        if #filtered == 0 then return nil end
+        return gameOnly and filtered or WithAdditions(filtered)
+    end
+    return gameOnly and result or WithAdditions(result)
 end
 
 function BlizzardAPI.IsAssistedCombatAvailable()
@@ -284,6 +357,21 @@ function BlizzardAPI.IsAssistedCombatAvailable()
         return isAvailable, failureReason
     end
     return false, "API call failed"
+end
+
+--- The WoW Forever client - SpellDB.IsForever, the one definition (SpellDB loads first, and
+--- the Data files need it). Every Forever-only path keys off this property of the CLIENT, so
+--- retail never takes one because Assisted Combat is briefly unavailable (low level,
+--- loading screens).
+function BlizzardAPI.IsForever()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    return SpellDB ~= nil and SpellDB.IsForever() or false
+end
+
+--- Is there a game pick to own slot 1? The ONE question behind the no-pick rules (lead
+--- mode, which pool entries may be inserted, the options greyed out). Forever has none.
+function BlizzardAPI.HasGamePick()
+    return not BlizzardAPI.IsForever()
 end
 
 function BlizzardAPI.HasAssistedCombatActionButtons()
@@ -495,12 +583,16 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
     -- a passive talent's id (the id is real; it is just not a button). Every consumer
     -- of this function wants "the id to DISPLAY/cast", so a passive override is always
     -- wrong - keep the castable input id instead.
+    local result = spellID
     if override and override ~= 0 and override ~= spellID and not IsPassiveID(override) then
-        overrideSpellCache[spellID] = override
-        return override
+        result = override
     end
-    overrideSpellCache[spellID] = spellID  -- Cache "no override" as well
-    return spellID
+    -- Forever ranks: any rank of a curated list resolves to the rank actually pressed. The
+    -- ONE place that choice is made, so every list (rotation, defensives, gap closers,
+    -- interrupts) shows the button's rank and finds its hotkey.
+    result = PressedRank(result) or result
+    overrideSpellCache[spellID] = result   -- "no override" is cached as well
+    return result
 end
 
 --- The talent/transform override for a spell, or spellID itself. One resolver: this used

@@ -119,6 +119,15 @@ local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
     }
 end
 
+--- Show an option on one client only (forever = true: WoW Forever; false: retail).
+local function ClientOnly(opt, forever)
+    opt.hidden = function()
+        local SDB = LibStub("JustAC-SpellDB", true)
+        return (SDB and SDB.IsForever() or false) ~= forever
+    end
+    return opt
+end
+
 --- The current spec's maintenance entry when it runs on a CLOCK (Shield of the Righteous,
 --- Ignore Pain, Ironfur), else nil. Bone Shield is eaten by damage and charge-gated buffs
 --- never pre-warn, so a warning time or a "needs refreshing" sound means nothing for those.
@@ -182,6 +191,8 @@ local function ReleaseManagedAlert(addon)
 end
 
 function Defensives.CreateTabArgs(addon)
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local forever = SDB and SDB.IsForever() or false
     local tab = {
         type = "group",
         name = L["Defensives"],
@@ -647,7 +658,7 @@ function Defensives.CreateTabArgs(addon)
                         hidden = function()
                             local PE = LibStub("JustAC-PrecombatEngine", true)
                             local entry = PE and PE.STEALTH_REMINDER[select(2, UnitClass("player"))]
-                            return not entry or (entry.spec and GetSpecialization() ~= entry.spec)
+                            return not entry or (entry.spec and C_SpecializationInfo.GetSpecialization() ~= entry.spec)
                         end,
                         disabled = function() return pbDisabled(addon) end,
                         get = function() return addon.db.profile.precombatBuffs.stealth ~= false end,
@@ -656,10 +667,20 @@ function Defensives.CreateTabArgs(addon)
                             pbApply(addon)
                         end,
                     },
-                    flask = pbStatSelect(addon, "flask", L["Flask"], 10, true),
-                    food = pbStatSelect(addon, "food", L["Food"], 11, true),
-                    augmentRune = pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false),
+                    -- WoW Forever: Off / Auto only - Auto there picks by the class's stats, and
+                    -- retail's secondary stats (haste, crit, ...) do not exist. Elixirs share
+                    -- the flask slot (Data/ForeverConsumables.lua).
+                    flask = forever and pbOnOffSelect(addon, "flask", L["Flask / Elixir"], 10, false)
+                        or pbStatSelect(addon, "flask", L["Flask"], 10, true),
+                    food = forever and pbOnOffSelect(addon, "food", L["Food"], 11, false)
+                        or pbStatSelect(addon, "food", L["Food"], 11, true),
+                    -- Retail only: WoW Forever has no augment runes.
+                    augmentRune = ClientOnly(pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false), false),
+                    -- WoW Forever only: scrolls stack with elixirs there, and recovery (food,
+                    -- drink, bandages between pulls) has no retail data behind it.
+                    scroll = ClientOnly(pbOnOffSelect(addon, "scroll", L["Scroll"], 12.5, false), true),
                     weaponEnchant = pbOnOffSelect(addon, "weaponEnchant", L["Weapon Enchant"], 13, false),
+                    recovery = ClientOnly(pbOnOffSelect(addon, "recovery", L["Recovery"], 14, false, L["Recovery desc"]), true),
                     xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
                 },
             },

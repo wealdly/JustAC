@@ -664,6 +664,7 @@ local lastFrameState = {
 local lastCooldownUpdate = 0
 local COOLDOWN_UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL
 local USABILITY_UPDATE_INTERVAL = UIFrameFactory.USABILITY_UPDATE_INTERVAL
+local QUEUED_DIM = 0.6   -- icon brightness while a next-swing ability waits for its swing
 
 -- ── Visual state constants (returned by ResolveVisualState, consumed by ApplyVisualState) ──
 local VS_GREYED        = 1  -- channeling/casting a different spell (full desat)
@@ -815,17 +816,18 @@ end
 --- @param isChanneling boolean
 --- @param isCasting boolean
 --- @param showStateTint boolean  "State Tint" setting (gray desat for unavailable)
---- @param inCombat boolean
 --- @param directSlot number|nil  Action bar slot for slot-based usability
 --- @return number visualState
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
                                   isChanneling, isCasting,
-                                  showStateTint, inCombat, directSlot, currentTime)
+                                  showStateTint, directSlot, currentTime)
     if isChanneledSpell or isCastedSpell then
         return VS_ACTIVE_CAST
     elseif isChanneling or isCasting then
         return VS_GREYED
-    elseif inCombat then
+    else
+        -- In and out of combat alike, so the queue dims exactly when the action bar does
+        -- (a rage class sits at 0 out of combat and its whole bar reads unaffordable).
         local now = currentTime or GetTime()
         local shouldRefreshUsability = icon.cachedIsUsable == nil
             or icon.cachedNotEnoughResources == nil
@@ -920,6 +922,8 @@ local function ClearIconState(icon)
     -- A fill left running over an emptied slot animated on, and its flag then made the
     -- next channeling occupant skip StartChannelFill.
     if icon._hasChannelFill and UIAnimations then UIAnimations.StopChannelFill(icon) end
+    if icon.SwingBar and UIAnimations then UIAnimations.HideSwingBar(icon) end
+    if icon._queuedMarkShown and UIAnimations then UIAnimations.HideQueuedMark(icon) end
     if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
     if icon.chargeCooldown then icon.chargeCooldown:Clear(); icon.chargeCooldown:Hide() end
     if icon.centerText then icon.centerText:Hide() end
@@ -2712,11 +2716,30 @@ local function RenderQueueIcon(icon, i, ctx)
                 spellID, ctx.isChanneling, ctx.channelSpellID, ctx.isCasting, ctx.castSpellID)
         end
 
+        -- A queued on-next-swing ability (Heroic Strike): nothing fires until the swing, so
+        -- show it in progress - casting state, and a swing bar filling to the swing it waits for.
+        local queuedSwing, swingStart, swingEnd = false, nil, nil
+        if not isItemEntry and SpellDB and SpellDB.NEXT_SWING_SPELLS[spellID] and C_Spell_IsCurrentSpell then
+            local queued = C_Spell_IsCurrentSpell(spellID)
+            if queued and not BlizzardAPI.IsSecretValue(queued) then
+                isCastedSpell, queuedSwing = true, true
+                swingStart, swingEnd = BlizzardAPI.GetSwingWindow(0)
+            end
+        end
+
         local visualState = ResolveVisualState(icon, spellID,
             isChanneledSpell, isCastedSpell, ctx.isChanneling, ctx.isCasting,
-            ctx.showUsabilityTint, ctx.inCombat, directSlot, currentTime)
+            ctx.showUsabilityTint, directSlot, currentTime)
 
         ApplyVisualState(icon, visualState, baseDesaturation)
+        -- Queued and waiting on its swing: pressing again does nothing. The icon dims and its
+        -- hotkey gives way to a tick; the swing bar and highlight carry the "it will fire".
+        if queuedSwing then
+            icon.iconTexture:SetVertexColor(QUEUED_DIM, QUEUED_DIM, QUEUED_DIM)
+            UIAnimations.ShowQueuedMark(icon)
+        elseif icon._queuedMarkShown then
+            UIAnimations.HideQueuedMark(icon)
+        end
 
         UpdateCastingHighlight(icon, ctx.showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
 
@@ -2749,6 +2772,11 @@ local function RenderQueueIcon(icon, i, ctx)
             end
         elseif icon._hasChannelFill then
             UIAnimations.StopChannelFill(icon)
+        end
+        if swingEnd then
+            UIAnimations.ShowSwingBar(icon, swingStart, swingEnd)
+        elseif icon.SwingBar then
+            UIAnimations.HideSwingBar(icon)
         end
 
         ApplyExecuteCue(icon, spellID)

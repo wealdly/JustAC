@@ -22,8 +22,9 @@
 --      and duration estimates come from static data.
 --
 -- Everything here is scoped to the CURRENT target: UNIT_AURA("target") and the
--- player's cast both implicitly refer to it, so no per-GUID bookkeeping is needed.
--- Tracking is cleared on target change and on leaving combat.
+-- player's cast both implicitly refer to it. Where the target's GUID reads plain in
+-- combat (WoW Forever) a target's record is parked on a swap and restored on a swap back;
+-- otherwise a swap starts fresh. Tracking is cleared on leaving combat.
 --
 -- Safety net: AC's position-1 pick re-surfaces any DoT that actually needs
 -- refreshing, so an over-long window or a missed bridge only ever delays an
@@ -48,8 +49,14 @@ local IsAuraFilteredOutByInstanceID = C_UnitAuras and C_UnitAuras.IsAuraFiltered
 -- (8921) that the cast event and the rotation list may disagree on. Keying the
 -- record AND the query under both the spell and its base makes them match either
 -- way. Resolution + cache live in SpellDB.GetBaseSpell (returns nil for no base).
+local RotationImport = LibStub("JustAC-RotationImport", true)
+local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state (loads later)
 local function baseOf(spellID)
-    return SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID) or nil
+    local base = SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID)
+    if base then return base end
+    -- Forever ranks: a cast at one rank and a query at another meet at rank 1.
+    local r1 = RotationImport and RotationImport.RankBase(spellID)
+    return r1 ~= spellID and r1 or nil
 end
 
 -- Unconfirmed fallback: how long after casting a DoT we assume it's still up when
@@ -63,18 +70,47 @@ local BRIDGE_WINDOW = 2.0
 -- Pandemic lead: stop suppressing this fraction of the estimated duration before
 -- expiry, so the DoT reappears in time to refresh inside its pandemic window.
 -- Matches WoW's 30% carry-over. Only applied when a duration estimate exists.
-local PANDEMIC_LEAD = 0.30
+-- WoW Forever has no carry-over (a recast restarts the DoT and loses the ticks left), so
+-- there the DoT comes back when it runs out.
+local FOREVER = (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) and true or false
+local PANDEMIC_LEAD = FOREVER and 0 or 0.30
 -- Harmful auras cast by the player - Blizzard evaluates this engine-side from the
 -- NeverSecret instance ID, so it stays readable in combat.
 local PLAYER_DEBUFF_FILTER = "HARMFUL|PLAYER"
 
--- Current target only. applied[spellID] = { expiry, pandemicPoint, hadInstance,
+-- The current target's record. applied[spellID] = { expiry, pandemicPoint, hadInstance,
 -- instances = { [instanceID] = true } }.
 local applied = {}
 -- instanceToDot[instanceID] = ids (the spell-ID list to clear on removal).
 local instanceToDot = {}
+-- Other targets' records, by GUID. Where the target's GUID reads plain in combat (WoW
+-- Forever, measured build 70245; secret for NPCs on retail) a swap parks the record and a
+-- swap back restores it, so a DoT keeps its timer on the mob it was cast on. Where the
+-- GUID is secret there is only the current target, and a swap starts fresh.
+local byTarget = {}       -- guid -> { applied = ..., instanceToDot = ... }
+local currentGUID
+
+local function PlainTargetGUID()
+    -- Forever only: on retail a player target's GUID is plain too, and parking those records
+    -- (PvP) would keep a DoT dispelled while away reading as up.
+    if not FOREVER then return nil end
+    local g = UnitGUID and UnitGUID("target")
+    if g == nil or (issecretvalue and issecretvalue(g)) then return nil end
+    return g
+end
 -- pendingCasts: array of { ids, time } awaiting an addedAura match.
 local pendingCasts = {}
+
+-- Did it land? UNIT_COMBAT on the target reports a dodge / parry / miss / immune as a plain
+-- string in combat (measured on Forever). One that arrives within HIT_WINDOW of a DoT cast,
+-- in either order, is taken to be that cast's result.
+-- ponytail: an auto attack dodged in the same instant also cancels the timer; the DoT then
+-- shows once more, the cheap direction.
+local MISSED = { DODGE = true, PARRY = true, MISS = true, RESIST = true, EVADE = true,
+                 DEFLECT = true, REFLECT = true, IMMUNE = true }
+local HIT_WINDOW = 0.4
+local lastCast        -- { ids, time } of the latest tracked DoT cast
+local lastMissAt, lastMissKind
 
 local function GetEntry(spellID)
     local e = applied[spellID]
@@ -125,6 +161,26 @@ function DotTracker.OnCastSucceeded(spellID)
 
     pendingCasts[#pendingCasts + 1] = { ids = ids, time = now }
     PrunePending(now)
+    lastCast = { ids = ids, time = now }
+    if lastMissAt and now - lastMissAt <= HIT_WINDOW then DotTracker.OnTargetCombat(lastMissKind) end
+end
+
+--- The cast did not land: drop its timer, or for IMMUNE hold it sunk for this target.
+local function Missed(ids, kind)
+    for _, id in ipairs(ids) do
+        if kind == "IMMUNE" then GetEntry(id).immune = true else applied[id] = nil end
+    end
+end
+
+--- UNIT_COMBAT for the target (the result string only).
+function DotTracker.OnTargetCombat(kind)
+    if (issecretvalue and issecretvalue(kind)) or not MISSED[kind] then return end
+    local now = GetTime()
+    lastMissAt, lastMissKind = now, kind
+    if lastCast and now - lastCast.time <= HIT_WINDOW then
+        Missed(lastCast.ids, kind)
+        lastCast, lastMissAt = nil, nil
+    end
 end
 
 --- Map a confirmed player-debuff instance on the target to the cast that made it.
@@ -231,14 +287,25 @@ end
 --- True when the current target already has this DoT live (so the queue should
 --- sink it). Confirmed instance > early-drop > post-cast window fallback.
 function DotTracker.IsDotActiveOnCurrentTarget(spellID)
+    if not spellID then return false end
     -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
     -- This query runs per rotation spell per build, so keeping it free when no DoT
     -- is active matters for non-DoT specs and between-target lulls.
-    if not spellID or not next(applied) then return false end
-    local e = applied[spellID]
-    if not e then
-        local base = baseOf(spellID)
-        e = base and applied[base]
+    local e = next(applied) and (applied[spellID] or applied[baseOf(spellID) or false]) or nil
+    if e and e.immune then return true end         -- this target cannot take it
+    -- WoW Forever: a DoT the player tracks in the Cooldown Manager is read off Blizzard's own
+    -- icon for the current target - it sees a dodge, a dispel and an early fall-off that cast
+    -- timing cannot. No refresh window there, so it is the whole answer. DoTs only: a tracked
+    -- NON-DoT with a debuff of its own (Thunder Clap's slow) is worth recasting while that
+    -- debuff is up, and reading it as "already ticking" sank it.
+    if PANDEMIC_LEAD == 0 and SpellDB and SpellDB.IsTargetDot and SpellDB.IsTargetDot(spellID) then
+        if maintenanceTracker == nil then
+            maintenanceTracker = LibStub("JustAC-MaintenanceTracker", true) or false
+        end
+        -- Not `x and x.f()`: with the module missing that is false, read as "not ticking".
+        local tracked
+        if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID) end
+        if tracked ~= nil then return tracked end
     end
     if not e then return false end
     local now = GetTime()
@@ -275,9 +342,47 @@ end
 --- Drop all tracking. Called on target change (state is current-target only) and
 --- on leaving combat.
 function DotTracker.Reset()
-    wipe(applied)
-    wipe(instanceToDot)
+    applied, instanceToDot = {}, {}
+    wipe(byTarget)
     wipe(pendingCasts)
+    lastCast, lastMissAt, currentGUID = nil, nil, PlainTargetGUID()
+end
+
+--- The target changed: park the old target's record under its GUID, restore the new one's.
+function DotTracker.OnTargetChanged()
+    if currentGUID and next(applied) then
+        byTarget[currentGUID] = { applied = applied, instanceToDot = instanceToDot }
+    end
+    wipe(pendingCasts)
+    lastCast, lastMissAt = nil, nil
+    currentGUID = PlainTargetGUID()
+    local saved = currentGUID and byTarget[currentGUID]
+    if saved then
+        applied, instanceToDot = saved.applied, saved.instanceToDot
+        byTarget[currentGUID] = nil
+    else
+        applied, instanceToDot = {}, {}
+    end
+end
+
+--- A kill (PARTY_KILL carries the victim's GUID plain): that mob's DoTs are gone.
+function DotTracker.OnKill(victimGUID)
+    if victimGUID == nil or (issecretvalue and issecretvalue(victimGUID)) then return end
+    byTarget[victimGUID] = nil
+    if victimGUID == currentGUID then applied, instanceToDot = {}, {} end
+end
+
+do
+    local f = CreateFrame("Frame")
+    -- Forever only: retail's UNIT_COMBAT carries no source, so a party member's parried swing
+    -- or our own missed white hit beside a DoT cast would wipe that DoT's timer.
+    if FOREVER then
+        f:RegisterUnitEvent("UNIT_COMBAT", "target")
+        f:SetScript("OnEvent", function(_, _, _, kind) DotTracker.OnTargetCombat(kind) end)
+    end
+    local k = CreateFrame("Frame")
+    k:RegisterEvent("PARTY_KILL")
+    k:SetScript("OnEvent", function(_, _, _, victimGUID) DotTracker.OnKill(victimGUID) end)
 end
 
 --- Diagnostic snapshot for the current target (/jac inspect dots). Non-secret.

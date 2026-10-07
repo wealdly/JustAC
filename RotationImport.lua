@@ -57,10 +57,162 @@ function RotationImport.RegisterGated(data)
     wipe(insertableCache)
 end
 
+--------------------------------------------------------------------------------
+-- WoW Forever (Data/ForeverRotations.lua). One spec id per class; the guides' trees
+-- (Arms / Fury / Protection...) are trait GROUPS inside it. So the class key carries
+-- every tree, and the one with the most talent points spent is INSTALLED as that key's
+-- rotation - after which every reader in this file works unchanged. Re-picked on every
+-- InvalidateLookup (SPELLS_CHANGED fires on talent changes) and, for druids, on form
+-- change (Feral covers cat and bear). Design: Documentation/FOREVER_ENGINE_DESIGN.md.
+--------------------------------------------------------------------------------
+local foreverTrees = {}   -- "WARRIOR_F" -> { default = "arms", arms = { st = ..., aoe = ... }, ... }
+local rankBase = {}       -- any rank's id -> rank 1 id
+local rankChain = {}      -- rank 1 id -> { rank1, rank2, ... } (learn order)
+local installed = {}      -- specKey -> tree key installed since the last invalidation
+local classAbilities = {} -- "WARRIOR_F" -> { [rank-1 id] = true } for every class ability
+local BEAR_FORMS = { [5] = true, [8] = true }   -- Bear, Dire Bear (GetShapeshiftFormID)
+
+function RotationImport.RegisterForever(classes, chains, abilities)
+    if type(classes) ~= "table" then return end
+    -- WoW Forever only. Without this, retail registered every Forever rank chain too, and the
+    -- 131 rank-1 ids retail shares (Rend, Moonfire, Polymorph...) resolved through Forever's
+    -- ranks everywhere a rank is consulted. Here, not in the data file: it survives regeneration.
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if not (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) then return end
+    for key, trees in pairs(classes) do foreverTrees[key] = trees end
+    for key, ids in pairs(abilities or {}) do
+        local set = {}
+        for i = 1, #ids do set[ids[i]] = true end
+        classAbilities[key] = set
+    end
+    for r1, chain in pairs(chains or {}) do
+        rankChain[r1] = chain
+        for i = 1, #chain do rankBase[chain[i]] = r1 end
+    end
+    RotationImport.InvalidateLookup()
+end
+
+--- Rank 1 of id's rank chain; id itself when it has no ranks.
+function RotationImport.RankBase(id)
+    return id and rankBase[id] or id
+end
+
+--- id's whole rank chain (rank 1 first), or nil when it has no ranks (all of retail).
+function RotationImport.RankChain(id)
+    local r1 = id and rankBase[id]
+    return r1 and rankChain[r1] or nil
+end
+
+--- The highest rank of id's chain the player knows, or nil when they know none. Forever
+--- keeps every learned rank and never upgrades a button, so "known" alone is not enough.
+function RotationImport.HighestKnownRank(id)
+    if not id or not IsPlayerSpell then return nil end
+    local chain = rankChain[rankBase[id] or id]
+    if not chain then return IsPlayerSpell(id) and id or nil end
+    for i = #chain, 1, -1 do
+        if IsPlayerSpell(chain[i]) then return chain[i] end
+    end
+    return nil
+end
+
+--- "Beast Mastery" -> "beast_mastery".
+local function TreeSlug(name)
+    if type(name) ~= "string" then return nil end
+    return (name:lower():gsub("[^%a]+", "_"):gsub("^_+", ""):gsub("_+$", ""))
+end
+
+--- Talent points spent per trait group, the same reads Forever's talent frame makes.
+--- Shared with `/jac inspect forever` so the probe measures exactly what the pick reads.
+--- @return table|nil displays, table spent (groupID -> points)
+function RotationImport.SpentByTree()
+    if not (C_ClassTalents and C_Traits and C_SpecializationInfo) then return nil end
+    local okCfg, configID = pcall(C_ClassTalents.GetActiveConfigID)
+    local spec = C_SpecializationInfo.GetSpecialization()
+    local specID = spec and C_SpecializationInfo.GetSpecializationInfo(spec)
+    local okTree, treeID = pcall(C_ClassTalents.GetTraitTreeForSpec, specID)
+    if not (okCfg and configID and okTree and treeID) then return nil end
+    local okD, displays = pcall(C_Traits.GetGroupDisplayInfoByTreeID, treeID)
+    if not okD or type(displays) ~= "table" then return nil end
+    local ids = {}
+    for i, d in ipairs(displays) do ids[i] = d.groupID end
+    local okC, infos = pcall(C_Traits.GetGroupCurrencyInfo, configID, ids)
+    local spent = {}
+    for _, gi in ipairs((okC and type(infos) == "table") and infos or {}) do
+        local c = gi.currencyInfos and gi.currencyInfos[1]
+        spent[gi.traitNodeGroupID] = c and (c.spentInTree or c.spent)
+    end
+    return displays, spent
+end
+
+local function InBearForm()
+    return GetShapeshiftFormID and BEAR_FORMS[GetShapeshiftFormID() or 0] or false
+end
+
+--- The tree to run: most points spent wins; none spent (or unreadable) is the class default.
+local function PickTree(trees)
+    local best, bestSpent = nil, 0
+    local displays, spent = RotationImport.SpentByTree()
+    for _, d in ipairs(displays or {}) do
+        local n = spent[d.groupID]
+        if type(n) == "number" and not (issecretvalue and issecretvalue(n)) and n > bestSpent then
+            local slug = TreeSlug(d.displayName)
+            local first = slug and slug:match("^[^_]+")   -- "feral_combat" -> "feral"
+            local key = (slug and trees[slug] and slug) or (first and trees[first] and first)
+            if key then best, bestSpent = key, n end
+        end
+    end
+    best = best or trees.default
+    if best == "feral" and trees.feral_bear and InBearForm() then best = "feral_bear" end
+    return best
+end
+
+--- THE rotation reader: the registered table for specKey, installing the Forever tree first.
+local function Rot(specKey)
+    local trees = specKey and foreverTrees[specKey]
+    if trees and not installed[specKey] then
+        local key = PickTree(trees)
+        rotations[specKey] = type(trees[key]) == "table" and trees[key] or nil
+        installed[specKey] = key or "none"   -- truthy: no re-pick per read until invalidated
+    end
+    return specKey and rotations[specKey]
+end
+
+local function CurrentSpecKey()
+    local SpellDB = cachedSpellDB or LibStub("JustAC-SpellDB", true)
+    cachedSpellDB = SpellDB
+    return SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+end
+
+--- Is id one of the player's class abilities (any rank), as opposed to a profession,
+--- tracking or racial spell that happens to sit on a bar (Find Minerals)? true when there
+--- is no data to say (retail).
+function RotationImport.IsClassAbility(id)
+    local set = classAbilities[CurrentSpecKey()]
+    if not set then return true end
+    return set[RotationImport.RankBase(id)] == true
+end
+
+--- The Forever tree currently installed for this character, or nil (diagnostics).
+function RotationImport.GetForeverTree()
+    local specKey = CurrentSpecKey()
+    Rot(specKey)
+    return specKey and installed[specKey] or nil
+end
+
+--- A shapeshift happened. Only the Feral tree's cat / bear choice depends on form, so only
+--- that flip re-picks. @return true when the installed list changed.
+function RotationImport.OnFormChanged()
+    local key = installed[CurrentSpecKey() or ""]
+    if key ~= "feral" and key ~= "feral_bear" then return false end
+    if (key == "feral_bear") == (InBearForm() and true or false) then return false end
+    RotationImport.InvalidateLookup()
+    return true
+end
+
 local function EntriesFor(context)
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    local entry = specKey and rotations[specKey]
+    local entry = Rot(specKey)
     if not entry then return nil end
     local list = entry[context or "st"] or entry.st
     return (type(list) == "table") and list or nil
@@ -101,11 +253,15 @@ end
 --- out the movement abilities SimC weaves for damage. Static per spec, so built once.
 function RotationImport.GetInsertable()
     local SpellDB = LibStub("JustAC-SpellDB", true)
-    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    local rot = specKey and rotations[specKey]
+    local specKey = CurrentSpecKey()
+    local rot = Rot(specKey)
     if not rot then return nil end
     local cached = insertableCache[specKey]
     if cached then return cached end
+    -- "Delegated" means "condition unreadable". Only a game pick can time such an entry, so
+    -- with no pick (Forever) it still belongs in the pool - the lead rule keeps it off slot 1.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local insertDelegated = not (BAPI and BAPI.HasGamePick and BAPI.HasGamePick())
     local ok, order = {}, {}
     for ctx, list in pairs(rot) do
         if ctx ~= "burst" and type(list) == "table" then
@@ -113,7 +269,7 @@ function RotationImport.GetInsertable()
                 local e = list[i]
                 if e and e.id then
                     if ok[e.id] == nil then order[#order + 1] = e.id end
-                    ok[e.id] = (ok[e.id] ~= false) and not e.delegated
+                    ok[e.id] = (ok[e.id] ~= false) and (insertDelegated or not e.delegated)
                 end
             end
         end
@@ -125,7 +281,11 @@ function RotationImport.GetInsertable()
     local out = {}
     for i = 1, #order do
         local id = order[i]
-        if ok[id] and not NEVER_INSERT[id] and not moves[id] then out[#out + 1] = id end
+        -- Forever lists name rank 1; offer the rank the player would actually press
+        -- (an id without ranks passes through unchanged).
+        if ok[id] and not NEVER_INSERT[id] and not moves[id] then
+            out[#out + 1] = RotationImport.HighestKnownRank(id) or id
+        end
     end
     insertableCache[specKey] = out
     return out
@@ -135,7 +295,7 @@ end
 function RotationImport.HasRotation()
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    return specKey ~= nil and rotations[specKey] ~= nil
+    return specKey ~= nil and Rot(specKey) ~= nil
 end
 
 --- SimC burst anchors for the current spec (ordered cast ids), or nil.
@@ -144,7 +304,7 @@ end
 function RotationImport.GetBurstTriggers()
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
-    local entry = specKey and rotations[specKey]
+    local entry = Rot(specKey)
     local b = entry and entry.burst
     return (type(b) == "table" and #b > 0) and b or nil
 end
@@ -158,6 +318,10 @@ end
 --------------------------------------------------------------------------------
 local BlizzardAPI
 local function baseID(id)
+    -- Forever: any rank of a chain is its rank 1, the id the data names - the ONE place
+    -- ranks are resolved for lookup (a button keeps the rank it was dragged with).
+    local r1 = rankBase[id]
+    if r1 then return r1 end
     if not BlizzardAPI then BlizzardAPI = LibStub("JustAC-BlizzardAPI", true) end
     return (BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(id)) or id
 end
@@ -185,7 +349,7 @@ function RotationImport.GetBlizzardRank(spellID)
 end
 
 local function BuildLookup(specKey)
-    local rot = rotations[specKey]
+    local rot = Rot(specKey)
     if not rot then return nil end
     local byCtx = {}
     for ctx, list in pairs(rot) do
@@ -214,6 +378,10 @@ end
 function RotationImport.InvalidateLookup()
     wipe(lookupCache)
     wipe(empowerCache)
+    -- Forever: talents (or a druid's form) may now pick another tree, and the insertable
+    -- ranks depend on which ranks are known.
+    wipe(installed)
+    wipe(insertableCache)
 end
 
 --------------------------------------------------------------------------------
@@ -232,7 +400,7 @@ end
 -- ambiguous this way (Devastation's Eternity Surge: tier 1 at single target, undecidable
 -- in AoE because SimC's thresholds there are talent-dependent), so the cost is one hint.
 local function BuildEmpower(specKey)
-    local rot = rotations[specKey]
+    local rot = Rot(specKey)
     if not rot then return nil end
     local m, seenAt = {}, {}
     for ctx, list in pairs(rot) do
