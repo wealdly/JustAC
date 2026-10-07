@@ -4,6 +4,8 @@ Blizzard's Assisted Combat tells you what to press. JustAC turns that into somet
 
 **Working on Midnight, and kept that way.** Midnight changed what an addon is allowed to see mid-fight, and a lot of rotation helpers quietly broke or stopped being updated. JustAC was rebuilt around the new rules rather than patched over them, and it's current on 12.1.0.
 
+**Now on WoW Forever too** *(early test build)*. Same download, same queue - see below.
+
 - **Perform instantly on anything.** A fresh alt, a rusty main, a spec you've never touched. The next button is right there, and so are the three after it.
 - **Keep your eyes on the fight.** Rotation, defensives, interrupts, CC and burst windows all show up in one place, in your line of sight, labeled with the keys you press.
 - **Stay alive.** Your defensives are ordered by how much trouble you're in, and the panic buttons - immunities, big heals, potions - wait at the back while you're healthy.
@@ -31,7 +33,7 @@ Blizzard shows one dim suggestion on your action bar. Simpler addons echo it wit
 - It **re-ranks your follow-ups to the pull.** An AOE pack lifts your AOE tools, a single target keeps them out of the way.
 - It **won't waste a suggestion.** Melee abilities step back out of range, Cat abilities while you're a Bear, stealth openers while unstealthed. Buffs you already have drop out.
 - It **learns what your CC won't work on.** Bosses and immune targets are ruled out from the start, and the moment a mob type shrugs off your crowd control, it stops being offered.
-- It's an **assist, not a bot.** Everything rides Blizzard's own recommendation. Nothing to script, nothing to get banned for.
+- It's an **assist, not a bot.** On retail everything rides Blizzard's own recommendation; on WoW Forever, a published simulation priority. Nothing to script, nothing to get banned for.
 
 ## Make it yours
 
@@ -42,6 +44,19 @@ Blizzard shows one dim suggestion on your action bar. Simpler addons echo it wit
 **Overrides** - Everything set on one spell or item in one place: hide it, pin it, hold it until it's fully charged, give it a custom hotkey label. You can even **take it off your action bars**, which is the one thing that makes the game's own assist stop suggesting it too - with **Put Back** to restore it to the same buttons.
 
 **Show in** - Keep the queue in dungeons and hide it in raids, or any mix of open world, delves, dungeons, raids and PvP. Separately for the main queue and the nameplate queue.
+
+## On WoW Forever *(early test build)*
+
+WoW Forever has no Assisted Combat, so JustAC brings its own: a priority for every class and talent tree, built from the Forever simulations and tuned for levelling, combined with the abilities on your bars. Same queue, same keybinds, nothing to set up.
+
+- **Ranks handled.** The queue shows the rank you have on your bars, with its key.
+- **Swing timers where they matter.** Heroic Strike, Cleave, Raptor Strike and Maul show a bar to the swing they wait for, and a tick so you know pressing again won't help. Attack, Auto Shot and wands show their timer while they run, so hunters can see when to stand still for the shot.
+- **Auto Shot at range, Attack in melee**, swapping as you move.
+- **DoTs timed from your own casts**, opener included: they step back while ticking, come back as they drop, and skip a target that's about to die.
+- **Resources, sensibly.** Life Tap, Evocation and Innervate come forward when you can't afford your spells, and nothing that costs health is offered below half.
+- **Between pulls** - food, drink or a bandage when you need them, plus the flasks, elixirs and scrolls you carry.
+
+It's an early build for the beta, so a few cues are still being checked in game. Feedback is very welcome.
 
 ## What's in the box
 
