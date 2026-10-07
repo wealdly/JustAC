@@ -120,6 +120,42 @@ class SimcBridge:
         self._uni_cache = {}
         self._prim_cache = {}
 
+    # --- build conditions --------------------------------------------------
+    def build_resolver(self, class_token, spec_name):
+        """(talent, hero) resolvers for SimC's build conditions in this spec's talent trees.
+        talent(token) -> the talent's own spell ids (what IsPlayerSpell answers for), sorted:
+        several when talents in different specs share the name (Ascendance), since only the
+        one this spec can learn will ever be known. hero(token) -> the hero subtree id (what
+        C_ClassTalents.GetActiveHeroTalentSpec returns), None unless unique. Unknown names
+        answer None: an unresolved condition keeps today's behaviour (always true)."""
+        spec = self.spec_id(class_token, spec_name)
+        trees = self._spec_trees.get(spec, set())
+        compact = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
+        talents, heroes = {}, {}
+        for tree in trees:
+            for node in self._tree_nodes.get(tree, []):
+                for ent in self._node_entries.get(node, []):
+                    d = self._tdef.get(self._entry.get(ent))
+                    sid = d and d.get("SpellID")
+                    if not sid or sid == "0":
+                        continue
+                    name = d.get("OverrideName_lang") or self.NM.get(sid, "")
+                    if name:
+                        talents.setdefault(compact(name), set()).add(int(sid))
+        for r in self._rows("TraitSubTree"):
+            if r["TraitTreeID"] in trees and "[DNT]" not in r["Name_lang"]:
+                heroes.setdefault(compact(r["Name_lang"]), set()).add(int(r["ID"]))
+
+        # Shaman specs load three trees (786, 1033, 1034), each with its own copy of every
+        # hero subtree, so one name has three ids; hand back all of them and let the runtime
+        # match any (it was None, which made `hero_tree.farseer` silently always true).
+        def hero(token):
+            ids = heroes.get(compact(token))
+            if not ids:
+                return None
+            return next(iter(ids)) if len(ids) == 1 else sorted(ids)
+        return (lambda tok: sorted(talents.get(compact(tok), ())) or None), hero
+
     # --- CSV loading ---------------------------------------------------------
     def _find(self, table):
         hits = sorted(glob.glob(os.path.join(self.dir, table + ".*.csv")))

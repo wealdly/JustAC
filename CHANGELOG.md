@@ -3,6 +3,30 @@
 
 ## [Unreleased]
 
+## [5.8.1] - 2026-10-05
+
+### Fixed
+- Stuns and other crowd control are no longer offered as interrupts on dungeon and raid bosses, which are immune to them. Big cooldowns are also no longer held back during a dungeon boss's last few percent.
+- When an enemy shrugs off one kind of crowd control, only that kind stops being offered. A stun-immune enemy is still offered your incapacitates and disorients.
+- A crowd control cast on your focus or mouseover target, a silence on a physical cast, or an area stun that didn't reach your target no longer marks your target as immune to crowd control.
+
+## [5.8.0] - 2026-10-04
+
+### Improved
+- The theorycraft priority now follows your build. Steps written for talents you did not take, or for the other hero tree, no longer shape your queue, so each hero tree gets its own order.
+- The queue now knows what you just cast. Steps that belong right after another ability wait for it, and Windwalker Monks are no longer told to repeat an ability back to back.
+- Refreshed the theorycraft priorities for Unholy Death Knight, Balance and Guardian Druid, Beast Mastery Hunter, Protection Paladin, Shadow Priest, Elemental Shaman, and Protection Warrior. The Balance priority now places Eclipse too.
+- Healers get a real damage priority. Discipline and Holy Priest, Holy Paladin, Preservation Evoker, Restoration Shaman, and Mistweaver Monk now follow your talents and hero tree, keep your damage-over-time effects up, use execute abilities at the right health, and spend Holy Power, Essence, and stacking buffs at sensible points.
+- Holy Shock, Holy Prism, and Halo now appear in a healer's damage suggestions, since they damage as well as heal.
+- The burst cue now also covers Execution Sentence for Retribution Paladins, and Dark Harvest and Summon Darkglare for Affliction Warlocks.
+
+### Fixed
+- Guardian Druids' burst cue watches their own Incarnation and Lunar Beam, instead of the Feral Incarnation.
+- A spell that changes form while you channel it keeps its keybind from a macro, instead of losing it to an unbound copy of the spell elsewhere on your bars.
+- Keybinds now show for abilities on the extra bars an action-bar addon adds, and on bars it binds through its own keys.
+- "Grey Out While Casting" now works when an addon replaces your cast bar, lifts just before a cast finishes instead of flickering as it starts, and keeps an empowered spell in full color like any other cast.
+- The nameplate overlay lines up with a replacement nameplate's health bar instead of where the default one would be.
+
 ## [5.7.2] - 2026-09-22
 
 ### Fixed

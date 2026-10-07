@@ -1155,6 +1155,12 @@ local function GateVerdict(g, ctx)
         local id = (RotationImport and RotationImport.HighestKnownRank(g.id)) or g.id
         return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(id) and true or false)
     end
+    if t == "prev" then
+        -- The last cast is plain (our own casts), so this reads the same in both modes.
+        -- `neg`: NOT right after it (Windwalker's no-repeat rule is this, about itself).
+        if not (g.id and BlizzardAPI.WasLastCast) then return ctx.strict and false or nil end
+        return BlizzardAPI.WasLastCast(g.id, g.gcd == true) ~= (g.neg == true)
+    end
     if t == "buff" then
         local up = g.id and BlizzardAPI.IsBuffWindowActive
             and BlizzardAPI.IsBuffWindowActive(g.id, g.dur)

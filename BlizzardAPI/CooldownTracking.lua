@@ -245,6 +245,11 @@ local formCache   -- resolved on first use: FormCache loads after this file
 local rotationImport   -- resolved on first use: rank chains (WoW Forever)
 local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state (loads later)
 
+-- The last cast, and the last one on the global cooldown, by base id (SimC's `prev.x` and
+-- `prev_gcd.1.x`). Own casts are plain in combat; kept across pulls, like the game's own
+-- "same ability twice" rule.
+local lastCast, lastGcdCast
+
 --- Record a successful player cast (every cast, in or out of combat).
 function BlizzardAPI.NoteOwnCast(spellID)
     if not spellID then return end
@@ -256,6 +261,18 @@ function BlizzardAPI.NoteOwnCast(spellID)
     if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
     local r1 = rotationImport and rotationImport.RankBase(spellID)
     if r1 and r1 ~= spellID then ownCastAt[r1] = now end
+    lastCast = base or r1 or spellID   -- rank 1 on Forever: prev.x matches any rank
+    if not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(spellID)) then
+        lastGcdCast = lastCast
+    end
+end
+
+--- Was spellID the last cast (gcdOnly: the last one on the global cooldown)? false before
+--- any cast. Compared by base id, so a talent's form of the spell counts as the spell.
+function BlizzardAPI.WasLastCast(spellID, gcdOnly)
+    local last = gcdOnly and lastGcdCast or lastCast
+    if not (last and spellID) then return false end
+    return last == spellID or last == (BlizzardAPI.ResolveBaseSpellID(spellID) or spellID)
 end
 
 --------------------------------------------------------------------------------
