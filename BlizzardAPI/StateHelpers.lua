@@ -18,6 +18,7 @@ local UnitClassification = UnitClassification ---@diagnostic disable-line: undef
 local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
 local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
+local UnitIsBossMob      = UnitIsBossMob      ---@diagnostic disable-line: undefined-global
 local pcall          = pcall
 local UnitHealth     = UnitHealth
 local UnitHealthMax  = UnitHealthMax
@@ -1173,7 +1174,15 @@ end
 -- failure is detected and the NPC ID is known, that mob TYPE is remembered for
 -- the rest of the instance - all future mobs with the same NPC ID are suppressed
 -- without needing to re-learn.
-local ccImmuneNPCIDs = {}           -- [npcID] = true; persists across pulls
+--
+-- PER MECHANIC. A creature's immunities are a per-mechanic mask on the server, and "immune
+-- to stuns, fine with incapacitates" is an ordinary mob. One bounced stun used to strip every
+-- CC from that mob type for the zone; now it strips only the stuns.
+local ccImmuneNPCIDs = {}           -- [ImmuneKey(npcID, mech)] = true; persists across pulls
+
+-- ponytail: numeric key npcID*100+mech (mechanic IDs are < 100) - flat, no per-frame strings.
+local function ImmuneKey(npcID, mech) return npcID * 100 + mech end
+
 local currentTargetNPCID = nil      -- NPC ID from GUID when readable (authoritative)
 local inferredTargetNPCID = nil     -- NPC ID recovered by NAME when the GUID is secret
 
@@ -1202,7 +1211,7 @@ end
 -- quietly ignored, and the cast rolls on) taught us nothing and CC kept being offered.
 -- Do not re-add a UnitIsCrowdControlled poll. The combat log, which would answer this
 -- directly via SPELL_MISS, is a hard-blocked data source in 12.0 (see DebugCommands).
-local ccFailureObserved = false     -- true = current target resisted/immune
+local ccImmuneMechs = {}            -- [mech] = source; what the current target shrugged off
 
 -- Assigned further down, once the target-cast state it reads exists; called from
 -- NotifyCCCastOnTarget, which only runs long after load.
@@ -1214,10 +1223,12 @@ local ArmCCInterruptCheck
 -- short window after a CC attempt, so an unrelated damage immunity (a shielded mob,
 -- a phase where the boss ignores damage) can't condemn a target that CC would land on.
 local CC_IMMUNE_SIGNAL_WINDOW = 1.5 -- seconds a CC attempt counts as "just tried"
-local ccAttemptTime = 0             -- GetTime() when the player SENT a CC
+local ccAttemptTime = 0             -- GetTime() when the player SENT a CC at the target
+local ccAttemptMech = nil           -- that CC's mechanic (INTERRUPT_ABILITIES mech)
+local ccAttemptPBAoE = false        -- that CC was self-centered: no proof it reached the target
 local ccImmuneSignal = nil          -- which signal marked the target immune (diagnostics)
 
--- Cross-session CC immunity, account-wide (JustACGlobal), keyed by NPC ID.
+-- Cross-session CC immunity, account-wide (JustACGlobal), keyed by ImmuneKey(npcID, mech).
 --
 -- Only ENGINE-ANNOUNCED immunities are written here. "cast-continued" is an inference - it
 -- proves the CC did not stop THAT cast, which is a weaker claim than "CC does not work on
@@ -1233,51 +1244,64 @@ local CC_CONFIRM_SIGHTINGS = 2
 local function CCImmuneDB()
     if not _G.JustACGlobal then _G.JustACGlobal = {} end
     local g = _G.JustACGlobal
-    local db = g.ccImmuneNPCs
-    if not db then db = {}; g.ccImmuneNPCs = db; g.ccImmuneNPCsN = 0 end
+    -- The pre-mechanic table (keyed by bare npcID, "immune to everything"). Its keys would
+    -- alias ImmuneKey values, so it is dropped rather than read.
+    g.ccImmuneNPCs, g.ccImmuneNPCsN = nil, nil
+    local db = g.ccImmuneMechs
+    if not db then db = {}; g.ccImmuneMechs = db; g.ccImmuneMechsN = 0 end
     return db, g
 end
 
-local function NoteConfirmedImmunity(npcID)
-    local db = BoundedGlobalCache("ccImmuneNPCs", CC_IMMUNE_DB_CAP, npcID)
-    db[npcID] = (db[npcID] or 0) + 1
+local function NoteConfirmedImmunity(key)
+    local db = BoundedGlobalCache("ccImmuneMechs", CC_IMMUNE_DB_CAP, key)
+    db[key] = (db[key] or 0) + 1
 end
 
-local function IsConfirmedImmuneNPC(npcID)
-    if not npcID then return false end
-    local db = CCImmuneDB()
-    return (db[npcID] or 0) >= CC_CONFIRM_SIGHTINGS
+local function IsConfirmedImmune(key)
+    local g = _G.JustACGlobal
+    local db = g and g.ccImmuneMechs
+    return db ~= nil and (db[key] or 0) >= CC_CONFIRM_SIGHTINGS
 end
 
 --- What the addon has learned, and a way to throw it away. A self-modifying blacklist that
 --- can be wrong needs both. /jac inspect ccdb.
+--- Sightings come back as "mech:count ..." for the current target, or nil.
 function BlizzardAPI.GetCCImmunityDBInfo()
     local db, g = CCImmuneDB()
     local target = currentTargetNPCID or inferredTargetNPCID
-    return (g.ccImmuneNPCsN or 0), target, target and db[target] or nil, CC_CONFIRM_SIGHTINGS,
+    local sightings
+    if target then
+        for mech = 0, 99 do
+            local n = db[ImmuneKey(target, mech)]
+            if n then sightings = (sightings and sightings .. " " or "") .. mech .. ":" .. n end
+        end
+    end
+    return (g.ccImmuneMechsN or 0), target, sightings, CC_CONFIRM_SIGHTINGS,
         (currentTargetNPCID == nil and inferredTargetNPCID ~= nil)
 end
 
 function BlizzardAPI.ClearCCImmunityDB()
     local _, g = CCImmuneDB()
-    g.ccImmuneNPCs = nil
-    g.ccImmuneNPCsN = nil
+    g.ccImmuneMechs = nil
+    g.ccImmuneMechsN = nil
 end
 
 -- Which sources are the engine's own word rather than our inference.
 local CC_ENGINE_ANNOUNCED = { ["unit-combat"] = true, ["ui-error"] = true }
 
---- Single sink for "this target shrugged off crowd control", whatever noticed it.
+--- Single sink for "this target shrugged off a crowd-control MECHANIC", whatever noticed it.
 --- Remembers the immunity per mob TYPE when the NPC ID is known (acquired out of combat,
 --- inferred from the readable name, or backfilled on combat exit - UnitGUID is secret in
 --- combat) so later pulls of the same mob skip re-learning entirely.
-local function MarkTargetCCImmune(source)
-    ccFailureObserved = true
-    ccImmuneSignal = source
+local function MarkTargetCCImmune(source, mech)
+    if not mech then return end
+    ccImmuneMechs[mech] = source
+    ccImmuneSignal = source .. "@mech" .. mech
     if currentTargetNPCID then
-        ccImmuneNPCIDs[currentTargetNPCID] = true            -- this zone, any evidence
+        local key = ImmuneKey(currentTargetNPCID, mech)
+        ccImmuneNPCIDs[key] = true                           -- this zone, any evidence
         if CC_ENGINE_ANNOUNCED[source] then
-            NoteConfirmedImmunity(currentTargetNPCID)         -- on disk, engine's word only
+            NoteConfirmedImmunity(key)                       -- on disk, engine's word only
         end
     end
 end
@@ -1288,7 +1312,7 @@ function BlizzardAPI.RefreshTargetCreatureType()
     inferredTargetNPCID = nil
     -- Also reset CC-failure learning on target switch - the new target might
     -- be CC-able even if the previous one wasn't.
-    ccFailureObserved = false
+    wipe(ccImmuneMechs)
     ccAttemptTime = 0
     ccImmuneSignal = nil
     local ct = UnitCreatureType and UnitCreatureType("target")
@@ -1369,19 +1393,26 @@ function BlizzardAPI.IsCCSpellTypeValid(spellID)
     return bit.band(mask, bit.lshift(1, tid - 1)) ~= 0
 end
 
---- Called when the player successfully casts a real CC (not a pure interrupt) on the current
---- target. Arms the one check we can still make: if the target was mid-cast, did that cast
---- stop? Deliberately does NOT clear ccFailureObserved - knowing this target is immune
---- survives further attempts.
+--- Called when the player successfully casts a real CC (not a pure interrupt). Arms the one
+--- check we can still make: if the target was mid-cast, did that cast stop? Only for a CC
+--- the SENT handler saw aimed at the target, and only where a continuing cast proves the
+--- mechanic failed:
+---   * silence - stops magic only, so a physical cast rolling on proves nothing;
+---   * self-centered - nothing says the target was inside the radius.
+--- Both still learn from the engine's own "Immune", which only fires on an actual hit.
+--- Deliberately does NOT clear ccImmuneMechs - knowing this target is immune survives
+--- further attempts.
 function BlizzardAPI.NotifyCCCastOnTarget()
-    if ArmCCInterruptCheck then ArmCCInterruptCheck() end
+    if ccAttemptTime == 0 or (GetTime() - ccAttemptTime) > CC_IMMUNE_SIGNAL_WINDOW then return end
+    if ccAttemptMech == 9 or ccAttemptPBAoE then return end
+    if ArmCCInterruptCheck then ArmCCInterruptCheck(ccAttemptMech) end
 end
 
 --- Called on PLAYER_REGEN_ENABLED to reset per-target CC-failure learning for
 --- the next combat session.  Instance-level ccImmuneNPCIDs is NOT cleared here
 --- - it persists across pulls until the player changes zone.
 function BlizzardAPI.ResetCCFailureLearning()
-    ccFailureObserved = false
+    wipe(ccImmuneMechs)
     ccAttemptTime = 0
     ccImmuneSignal = nil
 end
@@ -1399,7 +1430,7 @@ end
 --- targeting that mob when combat ends, we can now read GUID and persist the
 --- immunity for future pulls.
 function BlizzardAPI.BackfillCCImmunity()
-    if not ccFailureObserved then return end
+    if not next(ccImmuneMechs) then return end
     if currentTargetNPCID then
         -- NPC ID was known during combat - MarkTargetCCImmune already persisted it
         return
@@ -1410,13 +1441,14 @@ function BlizzardAPI.BackfillCCImmunity()
     if guid and not IsSecretValue(guid) then
         local npcID = ExtractNPCID(guid)
         if npcID then
-            ccImmuneNPCIDs[npcID] = true
-            -- Same evidence rule as the live path: a backfilled sighting still only reaches
-            -- disk if the ENGINE announced the immunity. This is the common case for a mob
-            -- tab-targeted mid-fight, whose ID could not be read while it mattered, so
-            -- skipping it here would keep the persistent table nearly empty in practice.
-            if CC_ENGINE_ANNOUNCED[ccImmuneSignal] then
-                NoteConfirmedImmunity(npcID)
+            for mech, source in pairs(ccImmuneMechs) do
+                local key = ImmuneKey(npcID, mech)
+                ccImmuneNPCIDs[key] = true
+                -- Same evidence rule as the live path: a backfilled sighting still only
+                -- reaches disk if the ENGINE announced the immunity. This is the common case
+                -- for a mob tab-targeted mid-fight, whose ID could not be read while it
+                -- mattered, so skipping it would keep the persistent table nearly empty.
+                if CC_ENGINE_ANNOUNCED[source] then NoteConfirmedImmunity(key) end
             end
         end
     end
@@ -1455,23 +1487,31 @@ function BlizzardAPI.SafeUnitIsUnit(unit1, unit2, default)
 end
 
 --- Is the current target an actual boss - a world boss, or a mob the encounter
---- engine put on a boss frame? UnitClassification is NeverSecret (no
---- SecretWhenUnitIdentityRestricted, re-checked against the 12.1 docs);
---- UnitIsUnit is not, so it goes through SafeUnitIsUnit and an unreadable
---- comparison counts as "not a boss".
+--- engine put on a boss frame? UnitClassification and UnitIsBossMob are
+--- NeverSecret (no SecretWhen* flags, re-checked against the 12.1 docs).
+--- UnitIsBossMob is what the stock target frame keys its boss border off, and
+--- it is the check that actually catches dungeon and raid bosses: most of them
+--- classify as plain "elite", and the boss1-5 UnitIsUnit fallback is secret on
+--- every addon-restricted map - i.e. every instance - so it reads "not a boss"
+--- exactly where bosses live. It stays as a fallback for builds without
+--- UnitIsBossMob; an unreadable comparison counts as "not a boss".
 --- Fail-open in both directions it is used: CC immunity loses a boss check, and
 --- the wasted-cooldown guard declines to suppress. Never the reverse - a mob
 --- wrongly called a boss would let CC through; a boss wrongly called trash would
 --- suppress cooldowns during a real execute phase, which is far worse.
 function BlizzardAPI.IsTargetBoss()
     if UnitClassification("target") == "worldboss" then return true end
+    if UnitIsBossMob and UnitIsBossMob("target") then return true end
     for i = 1, 5 do
         if BlizzardAPI.SafeUnitIsUnit("target", BOSS_UNITS[i], false) then return true end
     end
     return false
 end
 
-function BlizzardAPI.IsTargetCCImmune()
+--- Is the target immune to crowd control? Without `mech`: only the blanket answer (bosses,
+--- minions) - "can ANY CC work here". With `mech` (an INTERRUPT_ABILITIES mechanic): also
+--- what has been learned about that mechanic on this target or its mob type.
+function BlizzardAPI.IsTargetCCImmune(mech)
     -- 1) World bosses and boss-frame mobs are always CC-immune.
     if BlizzardAPI.IsTargetBoss() then return true end
 
@@ -1482,34 +1522,36 @@ function BlizzardAPI.IsTargetCCImmune()
 
     -- NOTE: UnitLevel == -1 (skull mobs) intentionally NOT checked here.
     -- Many skull-level mobs (open-world rares, M+ elites) are fully CC-able.
-    -- Actual bosses are already caught by worldboss + boss1-5 checks above.
+    -- Actual bosses are already caught by the boss checks above.
     --
     -- NOTE: Mechanical creature type intentionally NOT checked here.
     -- Mechanicals are immune to creature-type-restricted CCs (Sap, Polymorph,
     -- Hex), but universal stuns (Kidney Shot, Cheap Shot, HoJ, Leg Sweep)
     -- work on them. Our CC lists contain universal stuns.
+    if not mech then return false end
 
-    -- 3) Instance-level NPC ID cache: if we previously learned that this mob
-    --    TYPE is CC-immune (on a prior pull), suppress CC immediately.
+    -- 3) Per-target learning: something proved this mechanic does not work here. Set by the
+    --    engine's own "Immune" announcements and by the cast-continued check (see
+    --    ArmCCInterruptCheck) - no polling, the observation arrives on its own.
+    if ccImmuneMechs[mech] then return true end
+
+    -- 4) Instance-level NPC ID cache: if we previously learned that this mob
+    --    TYPE shrugs off this mechanic (on a prior pull), suppress it immediately.
     --     Looked up by GUID id when we have one, else by the name-recovered one, so a mob
     --     tab-targeted mid-fight still benefits from what earlier pulls taught us.
     local lookupNPCID = LookupTargetNPCID()
-    if lookupNPCID and ccImmuneNPCIDs[lookupNPCID] then
-        ccImmuneSignal = "npc-cache"
+    if not lookupNPCID then return false end
+    local key = ImmuneKey(lookupNPCID, mech)
+    if ccImmuneNPCIDs[key] then
+        ccImmuneSignal = "npc-cache@mech" .. mech
         return true
     end
-    -- 3b) And what previous SESSIONS learned, but only where the engine itself announced the
+    -- 4b) And what previous SESSIONS learned, but only where the engine itself announced the
     --     immunity, twice. Inference never reaches this table - see NoteConfirmedImmunity.
-    if IsConfirmedImmuneNPC(lookupNPCID) then
-        ccImmuneSignal = "npc-db"
+    if IsConfirmedImmune(key) then
+        ccImmuneSignal = "npc-db@mech" .. mech
         return true
     end
-
-    -- 4) Per-target CC-failure learning: something proved CC does not work here. Set by the
-    --    engine's own "Immune" announcements and by the cast-continued check (see
-    --    ArmCCInterruptCheck) - no polling, the observation arrives on its own.
-    if ccFailureObserved then return true end
-
     return false
 end
 
@@ -1742,12 +1784,12 @@ local targetCastSerial = 0
 -- ask. Silence teaches nothing, so this is the signal that makes learning happen at all in
 -- the ordinary case - the engine only announces "Immune" for outright rejections.
 local CC_INTERRUPT_CHECK_DELAY = 0.6   -- seconds: cast travel + aura application, then look
-ArmCCInterruptCheck = function()
+ArmCCInterruptCheck = function(mech)
     if not targetCastActive then return end
     local watched = targetCastSerial
     C_Timer.After(CC_INTERRUPT_CHECK_DELAY, function()
         if targetCastActive and targetCastSerial == watched then
-            MarkTargetCCImmune("cast-continued")
+            MarkTargetCCImmune("cast-continued", mech)
         end
     end)
 end
@@ -1798,16 +1840,44 @@ local function ProbeTargetCast()
     end
 end
 
---- True only for spells that apply an actual crowd-control mechanic.  Pure interrupts
---- are excluded: they impose a lockout rather than a CC, so their own immunity replies
---- would condemn targets that a real CC would land on just fine.
+--- The curated CC entry for a spell we suggest, or nil. Pure interrupts are excluded: they
+--- impose a lockout rather than a CC, so their own immunity replies would condemn targets
+--- that a real CC would land on just fine. CC we never suggest is excluded too: a bounced
+--- Sap says nothing about whether a stun lands, and learning is keyed by mechanic.
 local SpellDBRef = nil
-local function IsCCMechanicSpell(spellID)
-    if not spellID then return false end
+local function SuggestedCCEntry(spellID)
+    if not spellID then return nil end
     if not SpellDBRef then SpellDBRef = LibStub("JustAC-SpellDB", true) end
-    if not (SpellDBRef and SpellDBRef.IsCrowdControlSpell) then return false end
-    if not SpellDBRef.IsCrowdControlSpell(spellID) then return false end
-    return not (SpellDBRef.IsInterruptTypeSpell and SpellDBRef.IsInterruptTypeSpell(spellID))
+    local e = SpellDBRef and SpellDBRef.GetInterruptAbility and SpellDBRef.GetInterruptAbility(spellID)
+    return e and e.kind == "cc" and e.mech and e or nil
+end
+
+--- Could another unit have received this CC instead of the target? The SENT target name
+--- answers that exactly, but it is ConditionalSecret and reads secret in combat (seen
+--- 2026-10-05), so in combat we ask instead whether a focus/mouseover macro had anywhere
+--- else to send it: a hostile focus or mouseover that is not provably the target.
+--- "Provably the target", combat-safe: UnitIsUnit where it is readable (open world); else
+--- NAMEPLATE IDENTITY - both tokens resolve to one nameplate frame, and comparing two
+--- frame tables is plain Lua with nothing secret in it. No nameplate to compare is
+--- "not provable", which blocks learning: an unprovable attempt teaches nothing.
+--- ponytail: a hostile hover over a different mob blocks learning even when the cast
+--- really went to the target - the price of never learning from someone else's CC.
+local GetNamePlateForUnit = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+local function IsOtherHostile(unit)
+    if not (UnitExists(unit) and UnitCanAttack("player", unit)) then return false end
+    local same = BlizzardAPI.SafeUnitIsUnit(unit, "target", nil)
+    if same ~= nil then return not same end
+    local np = GetNamePlateForUnit and GetNamePlateForUnit(unit, false)
+    return not (np and np == GetNamePlateForUnit("target", false))
+end
+
+local function CCMayHaveGoneElsewhere(sentName)
+    -- Secret check FIRST: comparing a secret string (== "") throws under our taint.
+    if not IsSecretValue(sentName) and sentName and sentName ~= "" then
+        local tname = UnitName and UnitName("target")
+        if not IsSecretValue(tname) and tname and sentName ~= tname then return true end
+    end
+    return IsOtherHostile("mouseover") or IsOtherHostile("focus")
 end
 
 local function CCAttemptIsRecent()
@@ -1914,20 +1984,26 @@ local function InitTargetCastTracking()
         elseif event == "UNIT_SPELLCAST_SENT" then
             -- arg4 = spellID, plain for our own casts (the event is
             -- SecretWhenUnitSpellCastRestricted, which exempts the player).
-            if not IsSecretValue(arg4) and IsCCMechanicSpell(arg4) then
-                ccAttemptTime = GetTime()
+            -- arg2 = the cast's target name: a CC sent at a focus/mouseover must not teach
+            -- us anything about the target.
+            local e = not IsSecretValue(arg4) and SuggestedCCEntry(arg4)
+            -- A self-centered CC has no destination to get wrong.
+            if e and (e.reach == "pbaoe" or not CCMayHaveGoneElsewhere(arg2)) then
+                ccAttemptTime  = GetTime()
+                ccAttemptMech  = e.mech
+                ccAttemptPBAoE = e.reach == "pbaoe"
             end
         elseif event == "UNIT_COMBAT" then
             -- arg2 = the feedback string behind the floating "Immune" over the mob.
             if arg2 == "IMMUNE" and CCAttemptIsRecent() then
-                MarkTargetCCImmune("unit-combat")
+                MarkTargetCCImmune("unit-combat", ccAttemptMech)
             end
         elseif event == "UI_ERROR_MESSAGE" then
             -- arg2 = the error text. Gated on a recent CC attempt so an immunity raised
             -- against something else (a damage spell into a shield) doesn't cost the
             -- target its CC suggestions.
             if CCAttemptIsRecent() and IsImmuneErrorText(arg2) then
-                MarkTargetCCImmune("ui-error")
+                MarkTargetCCImmune("ui-error", ccAttemptMech)
             end
         end
     end)

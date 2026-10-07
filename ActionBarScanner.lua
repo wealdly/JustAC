@@ -213,7 +213,58 @@ local function GetCachedBindingKey(bindingKey)
     if not bindingCacheValid then
         RebuildBindingCache()
     end
-    return bindingKeyCache[bindingKey] or ""
+    local key = bindingKeyCache[bindingKey]
+    if key == nil then
+        -- A command outside the Blizzard families (an addon bar's own, see
+        -- AddLibraryButtonSlots): looked up on first use, wiped with the rest.
+        key = SelectBinding(GetBindingKey(bindingKey)) or ""
+        bindingKeyCache[bindingKey] = key
+    end
+    return key
+end
+
+-- Action-bar addons build their buttons on one shared LibStub library family: each fork
+-- registers under a major name starting with this, and every one exposes GetAllButtons,
+-- button:GetAction() -> ("action", slot) and button:GetBindingAction() -> the binding
+-- command the button answers to. Found structurally, so no addon is named here.
+local ACTION_BUTTON_LIB_PREFIX = "LibActionButton-1.0"
+
+--- Blizzard's own bar command families. These are mapped by GetCachedSlotMapping WITH the
+--- bar paging; a paging addon button read mid-shift can still report the last form's slot.
+local function IsBlizzardBarCommand(cmd)
+    return string_find(cmd, "^ACTIONBUTTON%d") or string_find(cmd, "^MULTIACTIONBAR%dBUTTON%d")
+end
+
+--- Slots an addon bar shows that the Blizzard mapping misses: a bar on a page no Blizzard bar
+--- shows (an addon's extra bars), or a slot the Blizzard map covers but whose Blizzard command
+--- carries no key because the addon bar is bound through its own command. The slot comes from
+--- the button itself, so the addon's paging never has to be mirrored here. Only keyed buttons
+--- count - a disabled bar's buttons still exist and must not claim slots.
+--- ponytail: a bar addon NOT built on this library still shows no key off the Blizzard bars;
+--- revisit on a report.
+local function AddLibraryButtonSlots(mapping)
+    if not (LibStub and LibStub.IterateLibraries) then return end
+    for major, lib in LibStub:IterateLibraries() do
+        if type(major) == "string" and string_find(major, ACTION_BUTTON_LIB_PREFIX, 1, true) == 1
+           and type(lib) == "table" and type(lib.GetAllButtons) == "function" then
+            local ok, buttons = pcall(lib.GetAllButtons, lib)
+            if ok and type(buttons) == "table" then
+                for button in pairs(buttons) do
+                    local okA, kind, slot = pcall(button.GetAction, button)
+                    local okB, cmd = pcall(button.GetBindingAction, button)
+                    if okA and okB and kind == "action" and type(slot) == "number"
+                       and slot >= 1 and slot <= MAX_ACTION_SLOTS
+                       and type(cmd) == "string" and not IsBlizzardBarCommand(cmd) then
+                        local current = mapping[slot]
+                        if (not current or GetCachedBindingKey(current) == "")
+                           and GetCachedBindingKey(cmd) ~= "" then
+                            mapping[slot] = cmd
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function CalculateActionSlot(buttonID, barType)
@@ -284,6 +335,8 @@ local function GetCachedSlotMapping()
             mapping[slot] = barData.pattern .. buttonID
         end
     end
+
+    AddLibraryButtonSlots(mapping)
     
     slotMappingCache = mapping
     slotMappingCacheKey = currentHash
@@ -317,7 +370,8 @@ local function ValidateAndBuildKeybindCache()
 end
 
 -- Cache invalidation hierarchy (every rung ends in WipeSpellCaches):
---   InvalidateKeybindCache()  → keybind cache + spell caches (RebuildKeybindCache, bindings).
+--   InvalidateKeybindCache()  → keybind cache + slot mapping + spell caches
+--                               (RebuildKeybindCache, bindings).
 --   InvalidateBindingCache()  → raw binding-key cache, then InvalidateKeybindCache
 --                               (UPDATE_BINDINGS / gamepad change).
 --   InvalidateStateCache()    → slot mapping + spell caches on bar/form changes
@@ -338,6 +392,9 @@ local function InvalidateKeybindCache()
     keybindCacheValid = false
     lastValidatedStateHash = 0
     wipe(keybindCache)
+    -- The slot map depends on bindings too (addon-bar slots join only when keyed), and the
+    -- first build can predate the addon creating its buttons.
+    slotMappingCacheKey = 0
     WipeSpellCaches()
 end
 

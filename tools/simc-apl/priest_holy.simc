@@ -1,11 +1,18 @@
-# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
-# plain damage filler - core abilities, DoT refresh and target-count conditions only, no
-# hero-talent branches. Anything the character does not know is dropped at runtime, and
-# healing spells never reach the damage queue.
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. Damage between
+# heals for Holy, grounded at 12.1.0.69875. Holy Fire is a talent that replaces Shadow
+# Word: Pain on the bar; Holy Word: Chastise grants two free, instant Holy Fires (Empyreal
+# Blaze) and Smite / Holy Nova shorten its cooldown. Apotheosis and the other Holy Words
+# are healing cooldowns and stay out of the damage queue. Archon's Halo damages as well as
+# heals, so it is used on cooldown; Oracle adds no damage button. Anything the character does not know is dropped at runtime.
 
-actions=holy_word_chastise
-actions+=/shadow_word_pain,if=refreshable
-actions+=/holy_fire
+# Holy Fire on cooldown first: its own cooldown then runs while Chastise's free casts land.
+actions=holy_fire
+actions+=/holy_word_chastise
+actions+=/halo,if=hero_tree.archon
+# Without the Holy Fire talent, keep Shadow Word: Pain up instead.
+actions+=/shadow_word_pain,if=!talent.holy_fire&refreshable
+# Lightburst turns Holy Nova into a hard-hitting 30 sec nuke worth pressing at any count.
+actions+=/holy_nova,if=talent.lightburst
 actions+=/shadow_word_death,if=target.health.pct<20
 actions+=/holy_nova,if=active_enemies>=3
 actions+=/smite

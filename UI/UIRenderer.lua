@@ -650,8 +650,6 @@ local isChanneling = false
 local channelSpellID = nil  -- Override spellID (for fill animation matching)
 local isCasting = false
 local castSpellID = nil  -- Override spellID (for cast-fill matching)
-local cachedChannelSpellID = nil  -- Set by UNIT_SPELLCAST_CHANNEL_START, cleared by _STOP
-local cachedCastSpellID    = nil  -- Set by UNIT_SPELLCAST_START, cleared by _STOP
 local CHANNEL_EARLY_UNGREY = 0.1  -- Stop greying out 100ms before channel/cast ends
 local hotkeysDirty = true
 local lastPanelLocked = nil
@@ -752,32 +750,42 @@ end
 --- Resolve player cast/channel state for grey-out logic.
 --- Returns: isChanneling, channelSpellID, isCasting, castSpellID
 --- @param defIcons table|nil  the surface's defensive icons, for the eating case below
-local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID, defIcons)
+local function ResolvePlayerCastState(profile, defIcons)
     local isChanneling = false
     local channelSpellID = nil
     local isCasting = false
     local castSpellID = nil
 
-    -- Grey out all icons while channeling (optional, gated by profile toggle).
-    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
-    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
-    -- Early ungrey: stop greying out 100ms before channel ends.
-    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
-        isChanneling = true
-        channelSpellID = cachedChannelID
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
-            isChanneling = false
+    -- Grey out all icons while casting or channeling (optional, gated by profile toggle),
+    -- releasing CHANNEL_EARLY_UNGREY before the end. Read from the player's own cast info,
+    -- which is plain in combat - NOT from PlayerCastingBarFrame: an addon that replaces the
+    -- player cast bar strips its events, freezing its casting/channeling fields for good,
+    -- and its .value counts UP for a cast, so "value < 0.1" released at a cast's START.
+    -- Empowers report through UnitChannelInfo but grey as a cast (as the cast bar treats
+    -- them), with the hold at the final stage counted in. The same read names the spell,
+    -- which stays in full color. A secret value (not seen for the player's own cast) keeps
+    -- the grey without the early release or the full-color spell.
+    if profile.greyOutWhileCasting ~= false then
+        local _, _, _, _, endMs, _, _, spellID, isEmpowered = UnitChannelInfo("player")
+        local asCast = isEmpowered
+        if not endMs then
+            _, _, _, _, endMs, _, _, _, spellID = UnitCastingInfo("player")
+            asCast = true
         end
-    end
-
-    -- Grey out during hardcasts (optional, gated by profile toggle).
-    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
-        isCasting = true
-        castSpellID = cachedCastID
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
-            isCasting = false
+        if endMs then
+            local greying = true
+            if not BlizzardAPI.IsSecretValue(endMs) then
+                if isEmpowered and GetUnitEmpowerHoldAtMaxTime then
+                    endMs = endMs + (GetUnitEmpowerHoldAtMaxTime("player") or 0)
+                end
+                greying = endMs / 1000 - GetTime() >= CHANNEL_EARLY_UNGREY
+            end
+            if BlizzardAPI.IsSecretValue(spellID) then spellID = nil end
+            if asCast then
+                isCasting, castSpellID = greying, spellID
+            else
+                isChanneling, channelSpellID = greying, spellID
+            end
         end
     end
 
@@ -3028,7 +3036,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Shared cast/channel state (used by both standard queue and nameplate overlay).
     isChanneling, channelSpellID, isCasting, castSpellID =
-        ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID, addon.defensiveIcons)
+        ResolvePlayerCastState(profile, addon.defensiveIcons)
 
     -- Cooldown throttle: shared by defensive and offensive icon updates below.
     local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -3292,17 +3300,7 @@ function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
 
-function UIRenderer.SetCastSpellID(spellID)
-    cachedCastSpellID = spellID
-end
-
-function UIRenderer.SetChannelSpellID(spellID)
-    cachedChannelSpellID = spellID
-end
-
-function UIRenderer.ResolvePlayerCastState(profile, defIcons)
-    return ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID, defIcons)
-end
+UIRenderer.ResolvePlayerCastState = ResolvePlayerCastState
 
 UIRenderer.MoveCastDotEnabled    = MoveCastDotEnabled
 UIRenderer.RenderQueueIcon       = RenderQueueIcon

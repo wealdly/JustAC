@@ -1,9 +1,17 @@
-# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
-# plain damage filler - core abilities, DoT refresh and target-count conditions only, no
-# hero-talent branches. Anything the character does not know is dropped at runtime, and
-# healing spells never reach the damage queue.
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. The damage a
+# Restoration Shaman does between heals, grounded at client build 12.1.0.69875.
+# Resto's damage kit is small: Flame Shock (the spec's own cast, 470411), Lava Burst (two
+# charges with Echo of the Elements; Lava Surge resets it, which the cooldown gate already
+# sees), Chain Lightning, Lightning Bolt, and Frost Shock on the move. No hero tree adds a
+# damage button for this spec, so there are no hero branches. Primordial Wave, Ascendance,
+# Unleash Life, Healing Rain / Surging Totem and the Swiftness cooldowns are heals or belong
+# to healing and are left out; buffs, imbues and shields are handled elsewhere.
 
-actions=flame_shock,if=refreshable
+# 3+ enemies clustered on the target: Chain Lightning leads (Blizzard puts it above Flame Shock).
+actions=chain_lightning,if=spell_targets.chain_lightning>=3
+# Keep Flame Shock up: Lava Burst always crits on a Flame Shocked target, and its ticks feed Lava Surge.
+actions+=/flame_shock,if=refreshable
+# Lava Burst on cooldown, and whenever Lava Surge resets it; spend charges, don't cap them.
 actions+=/lava_burst
-actions+=/chain_lightning,if=active_enemies>=2
 actions+=/lightning_bolt
+actions+=/frost_shock,moving=1
