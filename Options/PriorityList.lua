@@ -121,8 +121,9 @@ end
 function PriorityList.SortByPriority(ids, source)
     local RI = LibStub("JustAC-RotationImport", true)
     if not RI then return ids end
-    local key = {}
-    for _, id in ipairs(ids) do
+    local key, pos = {}, {}
+    for i, id in ipairs(ids) do
+        pos[id] = pos[id] or i
         local rec = RI.GetEntry and RI.GetEntry(id, "st")
         if source == "blizzard" then
             key[id] = (RI.GetBlizzardRank and RI.GetBlizzardRank(id)) or 999
@@ -133,7 +134,9 @@ function PriorityList.SortByPriority(ids, source)
     end
     table.sort(ids, function(a, b)
         if key[a] ~= key[b] then return (key[a] or 999) < (key[b] or 999) end
-        return a < b
+        -- Ties keep the incoming order. On Forever nothing is ranked, so every id ties and
+        -- the incoming order IS the player's action-bar order; sorting by id scrambled it.
+        return pos[a] < pos[b]
     end)
     return ids
 end
@@ -771,6 +774,11 @@ function methods:Refresh()
     -- before an Undo from the old one could paste its list over this one.
     NoteEdit(self.addon)
     local profile = self.addon:GetProfile()
+    -- Forever: no game pick, so the game's own order is not a source. Its tab greys out
+    -- and a remembered view of it falls back to the live source.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local noPick = BAPI and BAPI.HasGamePick and not BAPI.HasGamePick()
+    if noPick and PriorityList.view == "blizzard" then PriorityList.view = nil end
     local source, live = self:Source(), PriorityList.LiveSource(profile)
     local cq = CustomQueueFor(profile)
     local haveList = cq and cq.spells and #cq.spells > 0
@@ -788,7 +796,11 @@ function methods:Refresh()
             or tab.baseLabel)
         tab.liveDot:SetShown(key == live)   -- before SetSelected: it re-centres around the dot
         tab:SetSelected(key == source)
-        Tooltip(tab, key == live and L["Priority Tab Live"] or L["Priority Tab View"])
+        local unused = noPick and key == "blizzard"
+        tab:SetEnabled(not unused)
+        tab:SetAlpha(unused and 0.4 or 1)
+        Tooltip(tab, (unused and L["Not used in WoW Forever"])
+            or (key == live and L["Priority Tab Live"]) or L["Priority Tab View"])
     end
 
     -- Position 1. The row the whole panel exists to explain, in the three states the lead

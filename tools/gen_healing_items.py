@@ -109,6 +109,8 @@ HEADER = """\
 -- the owns-gate hides what you don't carry and weak pots never win the pick.
 local SpellDB = LibStub("JustAC-SpellDB", true)
 if not SpellDB or not SpellDB.RegisterHealingItems then return end
+-- Retail items, ids and durations: WoW Forever loads Data/ForeverConsumables.lua instead.
+if SpellDB.IsForever and SpellDB.IsForever() then return end
 
 SpellDB.RegisterHealingItems({"""
 

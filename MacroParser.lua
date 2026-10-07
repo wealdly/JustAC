@@ -77,8 +77,8 @@ local function SafeGetOverrideSpell(spellID)
 end
 
 local function SafeGetSpecialization()
-    if not GetSpecialization then return 0 end
-    local ok, result = pcall(GetSpecialization)
+    if not C_SpecializationInfo.GetSpecialization then return 0 end
+    local ok, result = pcall(C_SpecializationInfo.GetSpecialization)
     return ok and result or 0
 end
 
@@ -211,6 +211,25 @@ end
 -- parsing historically does not (behavior-identical either way, since neither
 -- kind of line can match a command pattern, but the drift is kept explicit).
 -- A non-nil callback return stops the walk and is returned.
+-- "/startattack [conditions]" starts the Attack spell (6603) under those conditions, so it
+-- reads as a cast of Attack, by its localized name.
+local attackName
+local function StartAttackCommand(lowerLine)
+    local rest = string_match(lowerLine, "^%s*/startattack(.*)$")
+    if not rest then return nil end
+    -- Cached only once the client has the name: an early fallback must not stick for the
+    -- session, or a non-English client never matches.
+    local name = attackName
+    if not name then
+        local ok, info = pcall(C_Spell.GetSpellInfo, 6603)
+        if ok and info and info.name then attackName = GetLowercase(info.name) end
+        name = attackName or "attack"
+    end
+    local conds = ""
+    for b in string_gmatch(rest, "%b[]") do conds = conds .. b end
+    return conds .. " " .. name
+end
+
 local function ForEachCommandLine(macroBody, skipInertLines, callback)
     local commandIndex = 0
 
@@ -226,6 +245,11 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
         if not skipped then
             local command = string_match(lowerLine, "/use%s+(.+)") or
                             string_match(lowerLine, "/cast%s+(.+)")
+            local isAttackLine = false
+            if not command then
+                command = StartAttackCommand(lowerLine)
+                isAttackLine = command ~= nil
+            end
             local castseqGroups  -- sequence-level condition groups for /castsequence
 
             if not command then
@@ -238,7 +262,10 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
             end
 
             if command then
-                commandIndex = commandIndex + 1
+                -- A /startattack line does not move the count: "/startattack" + "/cast X"
+                -- keeps X as the macro's first command, as it always scored.
+                local index = commandIndex + 1
+                if not isAttackLine then commandIndex = index end
                 local isCastseq = castseqGroups ~= nil
                 local entries = {}
                 local entryPattern = isCastseq and "[^,]+" or "[^;]+"
@@ -258,7 +285,7 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
                     })
                 end
 
-                local result = callback(commandIndex, isCastseq, entries)
+                local result = callback(index, isCastseq, entries)
                 if result ~= nil then return result end
             end
         end

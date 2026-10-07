@@ -1279,7 +1279,18 @@ function JustAC:GetHotkeyOverride(spellID)
     if not spellID or spellID == 0 then return nil end
     local profile = self:GetProfile()
     if not profile or not profile.hotkeyOverrides then return nil end
-    return profile.hotkeyOverrides[spellID]
+    local o = profile.hotkeyOverrides[spellID]
+    if o ~= nil then return o end
+    -- Forever ranks: the override was set on whichever rank the bar showed at the time.
+    local RI = LibStub("JustAC-RotationImport", true)
+    local chain = RI and RI.RankChain(spellID)
+    if chain then
+        for i = 1, #chain do
+            o = profile.hotkeyOverrides[chain[i]]
+            if o ~= nil then return o end
+        end
+    end
+    return nil
 end
 
 function JustAC:OpenHotkeyOverrideDialog(spellID)
@@ -1533,7 +1544,7 @@ function JustAC:OnSpecChange(event, unit)
     -- PLAYER_SPECIALIZATION_CHANGED also fires for group members mid-combat;
     -- only the player's spec affects our state. (Also called directly, no args.)
     if unit and unit ~= "player" then return end
-    local newSpec = GetSpecialization()
+    local newSpec = C_SpecializationInfo.GetSpecialization()
     if not newSpec then return end
 
     -- Re-run migrations now that the spec is KNOWN. The blacklist migrations key old data
@@ -1656,6 +1667,13 @@ function JustAC:OnShapeshiftFormChanged()
         ActionBarScanner.OnSpecialBarChanged()
     end
     self:InvalidateCaches({macros = true, hotkeys = true})
+    -- Forever: a form can pick another list (Feral: cat or bear). RotationImport decides;
+    -- re-query the pool only when it did, and rebuild setup only if the list changed.
+    local RotationImport = LibStub("JustAC-RotationImport", true)
+    if RotationImport and RotationImport.OnFormChanged and RotationImport.OnFormChanged()
+       and SpellQueue and SpellQueue.InvalidateRotationCache then
+        SpellQueue.InvalidateRotationCache(true)
+    end
     -- Include defensives: form gates usability (e.g. bear-only defensives),
     -- so re-evaluate immediately rather than waiting for the next health event.
     self:ForceUpdate(true)
@@ -1758,6 +1776,13 @@ function JustAC:OnActionBarChanged(event, slot)
     if inCombat then
         spellQueueDirty = true
     else
+        -- Forever: the rotation pool IS the action bars (no Assisted Combat), so a
+        -- rearranged bar is a changed pool. OOC only, already throttled above, and the
+        -- re-query rebuilds setup only when the list really changed (macro-icon churn).
+        if SpellQueue and SpellQueue.InvalidateRotationCache
+           and BlizzardAPI and BlizzardAPI.HasGamePick and not BlizzardAPI.HasGamePick() then
+            SpellQueue.InvalidateRotationCache(true)
+        end
         self:ForceUpdate()
     end
 end
@@ -1900,9 +1925,9 @@ function JustAC:OnTargetChanged()
         SpellQueue.InvalidateRotationCache(true)
     end
     if SpellQueue and SpellQueue.OnTargetChanged then SpellQueue.OnTargetChanged() end
-    -- DoT tracking is current-target only; the new target starts fresh.
-    if DotTracker and DotTracker.Reset then
-        DotTracker.Reset()
+    -- DoT tracking follows the target: a target seen before gets its record back.
+    if DotTracker and DotTracker.OnTargetChanged then
+        DotTracker.OnTargetChanged()
     end
     -- ForceUpdateAll marks both queues dirty; OnUpdate renders on next tick.
     self:ForceUpdateAll()

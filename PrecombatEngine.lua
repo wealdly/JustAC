@@ -257,8 +257,42 @@ function PrecombatEngine.GetMissingBuffItems(settings)
             out[#out + 1] = m.entry.id
         end
     end
+    if not (settings and settings.recovery == false) then PrecombatEngine.AddRecoveryItems(out) end
     cachedItems, cachedItemsAt = out, now
     return out
+end
+
+-- WoW Forever: recover between pulls. Out of combat with mana below RECOVERY_MANA_PCT, offer
+-- the best drink; with health below RECOVERY_HEALTH_PCT, the best food, or a bandage when no
+-- food is in the bags. Health and mana are secret there even out of combat; the engine-side
+-- "below N%" checks answer (measured build 70245). Nothing while already eating or drinking,
+-- mounted or dead. A no-op on retail, where no recovery items are registered.
+-- ponytail: fixed thresholds; make them options if players want them tuned.
+local RECOVERY_HEALTH_PCT, RECOVERY_MANA_PCT = 70, 50
+local RECENTLY_BANDAGED = 11196
+local NO_MANA = { WARRIOR = true, ROGUE = true }
+function PrecombatEngine.AddRecoveryItems(out)
+    if not (SpellDB and SpellDB.IsForever() and SpellDB.GetBestRecoveryItem and BlizzardAPI) then return end
+    local dead = UnitIsDeadOrGhost("player")
+    if InCombatLockdown() or (IsMounted and IsMounted())
+       or (issecretvalue and issecretvalue(dead)) or dead
+       or (SpellDB.GetActiveEatingAura and SpellDB.GetActiveEatingAura()) then
+        return
+    end
+    local function add(id) if id then out[#out + 1] = id end end
+    if not NO_MANA[select(2, UnitClass("player")) or ""] and BlizzardAPI.IsUnitPowerBelow
+       and BlizzardAPI.IsUnitPowerBelow("player", RECOVERY_MANA_PCT, Enum.PowerType.Mana) == true then
+        add(SpellDB.GetBestRecoveryItem("drink"))
+    end
+    if BlizzardAPI.IsUnitHealthBelow and BlizzardAPI.IsUnitHealthBelow("player", RECOVERY_HEALTH_PCT) == true then
+        local food = SpellDB.GetBestRecoveryItem("food")
+        if food then
+            add(food)
+        else
+            local ok, bandaged = pcall(C_UnitAuras.GetPlayerAuraBySpellID, RECENTLY_BANDAGED)
+            if not (ok and bandaged) then add(SpellDB.GetBestRecoveryItem("bandage")) end
+        end
+    end
 end
 
 --- Drop the cache so the next query recomputes immediately (call on options changes).
@@ -278,6 +312,11 @@ end
 -- within a group (see ACPickInGroup), that pick WINS - over the default, over the queue
 -- scan, and even over a different member that is already active and fresh.
 
+-- Forever ranks: groups name rank 1, while casts, the queue and the bar carry the rank
+-- pressed. Every match below goes through rank 1 (the id itself on retail).
+local RotationImport = LibStub("JustAC-RotationImport", true)
+local function R1(id) return RotationImport and RotationImport.RankBase(id) or id end
+
 -- The member of `group` the assisted-combat rotation itself runs, or nil. Matching it is
 -- mandatory, not cosmetic: the AC manager keeps recommending ITS member until that exact
 -- one is applied - a different member of the same group never satisfies it - so offering
@@ -292,6 +331,7 @@ end
 --      with no demand pending, the caller's fallbacks) decide.
 local function ACPickInGroup(nextCast, rotation, group)
     if nextCast then
+        nextCast = R1(nextCast)
         for j = 1, #group do
             if nextCast == group[j] and IsPlayerSpell(group[j]) then return group[j] end
         end
@@ -301,7 +341,7 @@ local function ACPickInGroup(nextCast, rotation, group)
     for j = 1, #group do
         if IsPlayerSpell(group[j]) then
             for i = 1, #rotation do
-                if rotation[i] == group[j] then
+                if R1(rotation[i]) == group[j] then
                     if found then return nil end   -- second member listed: ambiguous
                     found = group[j]
                     break
@@ -328,6 +368,7 @@ local function HighestQueuedInGroup(group)
     for i = 1, #queue do
         local q = queue[i]
         if not (issecretvalue and issecretvalue(q)) then
+            q = R1(q)
             for j = 1, #group do
                 if q == group[j] and IsPlayerSpell(group[j]) then return group[j] end
             end
@@ -450,7 +491,7 @@ end
 local CLASSBUFF_APPLY_GRACE = 3
 local classBuffAppliedAt = {}
 local function IsFreshlyApplied(spellID)
-    local t = classBuffAppliedAt[spellID]
+    local t = classBuffAppliedAt[R1(spellID)]
     return t ~= nil and (GetTime() - t) < CLASSBUFF_APPLY_GRACE
 end
 -- Exported for RedundancyFilter's sibling rule: a group with a freshly-applied member
@@ -464,7 +505,7 @@ function PrecombatEngine.NoteClassBuffApplied(spellID)
     local members = SpellDB and SpellDB.MAINTAINED_BUFF_MEMBERS
     local enchants = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS
     if (members and members[spellID]) or (enchants and enchants[spellID]) then
-        classBuffAppliedAt[spellID] = GetTime()
+        classBuffAppliedAt[R1(spellID)] = GetTime()
         PrecombatEngine.ClearCache()
     end
 end
@@ -478,6 +519,7 @@ local function CastingMaintainedBuff()
     if SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS and SpellDB.WEAPON_ENCHANT_SPELLS[castID] then
         return true
     end
+    castID = R1(castID)
     local class = select(2, UnitClass("player"))
     local groups = class and SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS
         and SpellDB.CLASS_MAINTAINED_BUFFS[class]
@@ -495,8 +537,20 @@ end
 -- only - every druid knows it, and on by default it would nag the other three specs.
 local STEALTH_REMINDER = {
     ROGUE = { spell = 1784 },            -- Stealth
-    DRUID = { spell = 5215, spec = 2 },  -- Prowl (Feral)
+    DRUID = { spell = 5215, spec = 2, tree = "feral" },  -- Prowl (Feral)
 }
+
+--- The entry's spec gate. WoW Forever has one spec per class, so Feral there is the
+--- installed talent tree (RotationImport picks it from points spent), not spec index 2.
+local function StealthSpecMatches(entry)
+    if not entry.spec then return true end
+    if SpellDB and SpellDB.IsForever and SpellDB.IsForever() then
+        local RI = LibStub("JustAC-RotationImport", true)
+        local tree = RI and RI.GetForeverTree and RI.GetForeverTree()
+        return tree == entry.tree or tree == (entry.tree and entry.tree .. "_bear")
+    end
+    return C_SpecializationInfo.GetSpecialization() == entry.spec
+end
 PrecombatEngine.STEALTH_REMINDER = STEALTH_REMINDER
 
 --- The player's stealth, when it is worth reminding about: known, not already stealthed, and
@@ -512,7 +566,7 @@ local function StealthReminderSpell()
         return nil
     end
     local entry = STEALTH_REMINDER[select(2, UnitClass("player"))]
-    if not entry or (entry.spec and GetSpecialization() ~= entry.spec) then return nil end
+    if not entry or not StealthSpecMatches(entry) then return nil end
     -- OverridesKnown: Subterfuge replaces Stealth (1784 -> 115191), and a replaced base
     -- spell can read as unknown to IsPlayerSpell. Casting the base id still casts the override.
     local known = IsPlayerSpell(entry.spell)
@@ -572,6 +626,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
             local head = type(queue) == "table" and queue[1] or nil
             if head and not (issecretvalue and issecretvalue(head)) then nextCast = head end
         end
+        if nextCast then nextCast = R1(nextCast) end
         local rotation = BlizzardAPI and BlizzardAPI.GetRotationSpells
             and BlizzardAPI.GetRotationSpells()
         -- AC surfaces its maintained-buff demands ONE at a time through the demand
@@ -889,7 +944,8 @@ function PrecombatEngine.IsOfferedNow(spellID, profile)
     if not icons then return false end
     for i = 1, #icons do
         local icon = icons[i]
-        if icon and icon.isPrecombatBuff and icon.spellID == spellID and icon:IsVisible() then
+        if icon and icon.isPrecombatBuff and icon.spellID
+           and R1(icon.spellID) == R1(spellID) and icon:IsVisible() then
             return true
         end
     end

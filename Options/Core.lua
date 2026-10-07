@@ -37,6 +37,54 @@ end
 
 Options.UpdateHotkeyOverrideOptions = Options.UpdateBlacklistOptions
 
+-------------------------------------------------------------------------------
+-- WoW Forever: settings with nothing to act on there - no game pick, one spec per class,
+-- no Forever gap-closer defaults. Greyed rather than hidden, the reason in the
+-- tooltip, so a player who knows them from retail is not left guessing. Applied after
+-- every rebuild (RefreshAllDynamic runs before every way into the panel), because a
+-- rebuilt sub-tree is a fresh table. Paths are option keys, the `args` levels implied.
+-------------------------------------------------------------------------------
+local FOREVER_UNUSED = {
+    "general.disableBlizzardHighlight",                                 -- the assisted-highlight CVar
+    "offensive.customQueue.spellListGroup.leadMode",                    -- always "your list" there
+    "offensive.customQueue.queueContentGroup.includeHiddenAbilities",   -- only fed the game's pick
+    "offensive.gapClosers.spellListGroup.gapRestore",                   -- no Forever defaults to restore
+    "profiles.specSwitching",                                           -- one spec per class
+    -- NOT showMaintenanceSlot: the same slot carries the crowd-control escape, which works.
+}
+-- Nodes already greyed. Weak keys: AceConfig rejects unknown fields on an option, so the
+-- mark cannot live on the node, and a rebuilt node is simply a new key.
+local foreverGreyed = setmetatable({}, { __mode = "k" })
+
+local function ApplyForeverUnused(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not (BAPI and BAPI.HasGamePick) or BAPI.HasGamePick() then return end
+    local note = "|cffff6600" .. L["Not used in WoW Forever"] .. "|r"
+    -- A path that stops resolving is an option that moved: recorded, not silently left
+    -- live. `/jac inspect forever` prints the list.
+    Options.foreverUnresolved = {}
+    for _, path in ipairs(FOREVER_UNUSED) do
+        local node = addon and addon.optionsTable
+        for key in path:gmatch("[^.]+") do
+            node = node and node.args and node.args[key]
+        end
+        if not node then table.insert(Options.foreverUnresolved, path) end
+        if node and not foreverGreyed[node] then
+            foreverGreyed[node] = true
+            node.disabled = true
+            local desc = node.desc
+            if type(desc) == "function" then
+                node.desc = function(...)
+                    local d = desc(...)
+                    return (d and d ~= "") and (d .. "\n\n" .. note) or note
+                end
+            else
+                node.desc = (desc and desc ~= "") and (desc .. "\n\n" .. note) or note
+            end
+        end
+    end
+end
+
 -- Refresh all dynamic options lists in one call (used by JustAC.lua and slash handler).
 function Options.RefreshAllDynamic(addon)
     for _, f in ipairs(FORWARDERS) do
@@ -45,6 +93,7 @@ function Options.RefreshAllDynamic(addon)
             mod[f.methodName](addon)
         end
     end
+    ApplyForeverUnused(addon)
     -- The lists redraw on this alone: a spec change swaps which list every one of them shows.
     local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -251,7 +300,7 @@ local function HandleSlashCommand(addon, input)
     elseif command == "enable" then
         -- Un-disable the current spec (clears the "DISABLED" spec-profile
         -- sentinel; healer specs get it by default at first run).
-        local spec = GetSpecialization()
+        local spec = C_SpecializationInfo.GetSpecialization()
         if not spec then
             addon:Print("No specialization active.")
         elseif addon.db.char.specProfiles and addon.db.char.specProfiles[spec] == "DISABLED" then

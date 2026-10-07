@@ -316,10 +316,10 @@ function SpellSearch.SpecHeader(label)
         local className, playerClass = UnitClass("player")
         local classColor = playerClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[playerClass]
         local colorCode = (classColor and classColor.colorStr) or "FFFFFFFF"
-        local specIndex = GetSpecialization and GetSpecialization()
+        local specIndex = C_SpecializationInfo.GetSpecialization and C_SpecializationInfo.GetSpecialization()
         local specName
         if specIndex then
-            local _, name = GetSpecializationInfo(specIndex)
+            local _, name = C_SpecializationInfo.GetSpecializationInfo(specIndex)
             specName = name
         end
         return "|c" .. colorCode .. (className or L["Unknown"]) .. "|r " .. label .. " (" .. (specName or "?") .. ")"

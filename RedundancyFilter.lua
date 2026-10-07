@@ -34,7 +34,11 @@ local ROGUE_POISON_CAST_IDS = SpellDB and SpellDB.ROGUE_POISON_CAST_IDS or {}
 -- [memberID] = that group's member-set, for every CLASS_MAINTAINED_BUFFS group across
 -- all classes (ids are globally unique, so one flat map). Weapon imbues deliberately
 -- NOT included: they go to different HANDS, so siblings are not mutually redundant.
+local AUTO_ATTACK_SPELL = 6603
 local MAINTAINED_GROUP_OF = {}
+-- Forever ranks: groups name rank 1; casts and the queue carry the rank pressed.
+local RotationImport = LibStub("JustAC-RotationImport", true)
+local function R1(id) return RotationImport and RotationImport.RankBase(id) or id end
 do
     local cmb = SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS
     if cmb then
@@ -55,7 +59,7 @@ local function MaintainedGroupOfCast()
     if not UnitCastingInfo then return nil end
     local castID = select(9, UnitCastingInfo("player"))
     if not castID or (issecretvalue and issecretvalue(castID)) then return nil end
-    return MAINTAINED_GROUP_OF[castID]
+    return MAINTAINED_GROUP_OF[R1(castID)]
 end
 local WEAPON_ENCHANT_SPELLS = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS or {}
 
@@ -1217,6 +1221,15 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
 
+    -- AUTO ATTACK ALREADY RUNNING: starting it again does nothing. IsCurrentSpell(Attack) is
+    -- plain in combat (measured on WoW Forever); checked for secrecy before it is branched on.
+    if spellID == AUTO_ATTACK_SPELL and C_Spell.IsCurrentSpell then
+        local on = C_Spell.IsCurrentSpell(AUTO_ATTACK_SPELL)
+        if not (issecretvalue and issecretvalue(on)) and on == true then
+            return true, "already auto-attacking"
+        end
+    end
+
     -- SIBLING OF AN IN-FLIGHT APPLICATION. While a maintained-group member (a poison,
     -- shield, paladin aura) is CASTING, AC re-demands the group through its own preferred
     -- member - the in-flight aura hasn't landed, so the group still reads missing - and
@@ -1226,7 +1239,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- cast itself. With a dual-slot talent (two lethals) this delays a LEGITIMATE next
     -- demand by those same few seconds - the cheap direction; it reappears at cast end.
     local castGroup = MaintainedGroupOfCast()
-    if castGroup and castGroup[spellID] then
+    if castGroup and castGroup[R1(spellID)] then
         return true, "same buff group as the application in flight"
     end
     -- Same rule for the settle window AFTER the cast: a group with a freshly-applied
@@ -1244,7 +1257,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if PE and PE.IsClassBuffFresh and PE.IsClassBuffFresh(spellID) then
         return true, "just applied - waiting for the buff to register"
     end
-    local grp = MAINTAINED_GROUP_OF[spellID]
+    local grp = MAINTAINED_GROUP_OF[R1(spellID)]
     if grp and PE and PE.IsClassBuffFresh then
         for id in pairs(grp) do
             if PE.IsClassBuffFresh(id) then

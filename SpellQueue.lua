@@ -50,7 +50,7 @@ SpellQueue._b = {}
 
 local function IsHealerSpecActive()
     if isHealerSpec == nil then
-        local spec = GetSpecialization()
+        local spec = C_SpecializationInfo.GetSpecialization()
         isHealerSpec = (spec and GetSpecializationRole(spec) == "HEALER") or false
     end
     return isHealerSpec
@@ -200,6 +200,7 @@ local proccedSpells = {}
 local normalSpells = {}
 local cooldownSpells = {}
 local sunkSet = {}   -- [displayID] = true for this build's cooldownSpells (burst cue veto)
+local wastedSet = {}   -- [displayID] = true for sunk spells a press would waste right now
 local addedSpellIDs = {}
 local recommendedSpells = {}
 -- Scratch set for gap-closer suppression marks (filtered by Always Show pins
@@ -260,6 +261,10 @@ local cachedRotationList = nil
 --- entry, or an ability the GAME itself has given evidence for while it waits.
 --- Pre-dropdown saves carried a boolean; it reads as the middle answer.
 function SpellQueue.LeadMode(profile)
+    -- Forever: there is no game pick to own slot 1, so a list always leads - and the
+    -- "mylist" rule keeps what we cannot time (unreadable conditions, unlisted bar
+    -- utility) behind everything we can.
+    if BlizzardAPI.HasGamePick and not BlizzardAPI.HasGamePick() then return "mylist" end
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     local cq = specKey and profile and profile.customQueue and profile.customQueue[specKey]
     if not cq then return "off" end
@@ -378,7 +383,16 @@ function SpellQueue.IsSpellBlacklisted(spellID, blacklist, isPrimary)
     if not blacklist then return false end
     if IsBlacklistedEntry(blacklist[spellID], isPrimary) then return true end
     local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
-    return displayID ~= spellID and IsBlacklistedEntry(blacklist[displayID], isPrimary)
+    if displayID ~= spellID and IsBlacklistedEntry(blacklist[displayID], isPrimary) then return true end
+    -- Forever ranks: the entry was stored at whichever rank the bar showed when it was set.
+    local RI = LibStub("JustAC-RotationImport", true)
+    local chain = RI and RI.RankChain(spellID)
+    if chain then
+        for i = 1, #chain do
+            if IsBlacklistedEntry(blacklist[chain[i]], isPrimary) then return true end
+        end
+    end
+    return false
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
@@ -702,6 +716,10 @@ local RANK_SINK = 9   -- uncastable (melee, target out of range): trails everyth
 -- evaluations; it is also where a lone trash mob is genuinely a few globals from
 -- dead. Bosses are excluded before this is ever asked.
 local DYING_TARGET_PCT = 20
+-- Below this a non-boss target is too close to death for a DoT to tick out (WoW Forever's
+-- shortest, Rend rank 1, runs 9s). Higher than DYING_TARGET_PCT: a DoT needs the target to
+-- outlive it, a cooldown only needs it alive.
+local DOT_MIN_TARGET_PCT = 35
 -- SimC-mode blend: a ranked entry sorts by ctx*CONTEXT_STRIDE + simc, so the ContextRank
 -- fit-bucket (0..RANK_SINK) always dominates and the SimC list index only orders within a
 -- bucket. STRIDE exceeds any SimC rank component; an ability the SimC list omits takes
@@ -1079,6 +1097,22 @@ local function GateVerdict(g, ctx)
         local stealthed = (IsStealthed and IsStealthed()) and true or false
         return (g.neg == true) ~= stealthed
     end
+    if t == "known" then
+        -- Forever lists: a talent / rank check (Improved Slam). IsPlayerSpell is static.
+        if not (g.id and IsPlayerSpell) then return nil end
+        return (g.neg == true) ~= (IsPlayerSpell(g.id) and true or false)
+    end
+    if t == "swing" then
+        -- Time to the next auto attack (Forever's PLAYER_SWING tracker): Rapid Fire just
+        -- before an Auto Shot, a seal just before the main-hand swing. Unknown (no swing
+        -- yet, not auto-attacking, retail) is no opinion.
+        local rem = g.n and BlizzardAPI.GetSwingRemaining and BlizzardAPI.GetSwingRemaining(g.ranged and 2 or 0)
+        if rem == nil then return nil end
+        local op, n = g.op, g.n
+        if op == "<" then return rem < n elseif op == "<=" then return rem <= n
+        elseif op == ">" then return rem > n elseif op == ">=" then return rem >= n end
+        return nil
+    end
     if t == "resource" then
         if ctx.skipResource then return nil end
         if not (ctx.resCount and g.res == ctx.resName and g.op and g.n) then return nil end
@@ -1117,12 +1151,19 @@ local function GateVerdict(g, ctx)
         if not (g.id and BlizzardAPI.IsSpellOnCooldown) then
             return ctx.strict and false or nil
         end
-        return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(g.id) and true or false)
+        -- Forever ranks: the gate names rank 1; ask the rank the player has.
+        local id = (RotationImport and RotationImport.HighestKnownRank(g.id)) or g.id
+        return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(id) and true or false)
     end
     if t == "buff" then
-        if not ctx.strict then return nil end
         local up = g.id and BlizzardAPI.IsBuffWindowActive
             and BlizzardAPI.IsBuffWindowActive(g.id, g.dur)
+        -- No game pick (Forever): a "not while X" whose X is provably up - our own cast inside
+        -- its duration - blocks in the sinking reading too, or Battle Shout led with the shout
+        -- already up. With a game pick the pick covers it, and a buff consumed early would
+        -- still read up from its cast.
+        if g.neg and up and not BlizzardAPI.HasGamePick() then return false end
+        if not ctx.strict then return nil end
         if g.neg then
             -- "not during X" is provable only for a window we could have opened
             -- ourselves (it has a duration) and did not. A secret aura has no route.
@@ -1130,6 +1171,17 @@ local function GateVerdict(g, ctx)
             return not up
         end
         return up and true or false
+    end
+    -- No game pick (Forever): never start a DoT on a target that will not live through it
+    -- ("only Rend a target that will live through most of the bleed" - forever-guides/). A
+    -- CONFIRMED below-threshold read on a non-boss target blocks; an unknown says nothing.
+    -- Not for a DoT that also hits hard up front (Moonfire, Flame Shock): that hit still lands.
+    if t == "dot" and not ctx.strict and BlizzardAPI.IsUnitHealthBelow
+       and not (SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(g.id))
+       and not BlizzardAPI.HasGamePick() and UnitExists("target")
+       and not (BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss())
+       and BlizzardAPI.IsUnitHealthBelow("target", DOT_MIN_TARGET_PCT) == true then
+        return false
     end
     if ctx.strict then return false end   -- dot / unknown: no evaluator, never confirmed
     return nil
@@ -1178,6 +1230,17 @@ local function SimcNegativeBuffBlocks(gates)
            and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id, g.dur) then
             return true
         end
+    end
+    return false
+end
+
+-- True if a DoT gate blocks right now (the target will not live through it): pressing the
+-- DoT is wasted, so it trails the other sunk spells like a DoT already ticking.
+local dotCtx = { strict = false }
+local function DotGateBlocks(gates)
+    if not gates then return false end
+    for i = 1, #gates do
+        if gates[i].t == "dot" and GateVerdict(gates[i], dotCtx) == false then return true end
     end
     return false
 end
@@ -1409,6 +1472,14 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                         sunkSet[displayID] = true
+                        -- No game pick only (Forever): the list leads there, so slot 1 is the
+                        -- first sunk entry when nothing is ready. Retail keeps its sunk order.
+                        if not BlizzardAPI.HasGamePick()
+                           and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
+                                or (not alwaysShow and DotTracker
+                                    and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
+                            wastedSet[displayID] = true
+                        end
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
@@ -1445,11 +1516,18 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- rank. Cooldown (not-ready) spells trail, unranked.
     spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
-    for i = 1, cooldownCount do
-        if spellCount >= maxIcons then break end
-        if cooldownSpells[i] ~= pickLeads then   -- a sunk pick was just seated at the front
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = cooldownSpells[i]
+    -- A press that would be wasted (its DoT already ticking, its buff already up) trails the
+    -- rest of the sunk spells, which are still worth pressing once rage or a soft condition
+    -- allows (Heroic Strike, not a second Rend or Battle Shout).
+    for pass = 1, 2 do
+        for i = 1, cooldownCount do
+            if spellCount >= maxIcons then break end
+            local id = cooldownSpells[i]
+            if (wastedSet[id] == true) == (pass == 2)
+               and id ~= pickLeads then   -- a sunk pick was just seated at the front
+                spellCount = spellCount + 1
+                recommendedSpells[spellCount] = id
+            end
         end
     end
     return spellCount
@@ -1943,6 +2021,9 @@ function SpellQueue._StageResolveSource(b)
                 if base then set[base] = v end
                 local known = BlizzardAPI.ResolveKnownSpellID and BlizzardAPI.ResolveKnownSpellID(id)
                 if known then set[known] = v end
+                -- Forever ranks: a pin set on one rank holds for the rank the bar shows now.
+                local chain = RotationImport and RotationImport.RankChain(id)
+                if chain then for _, r in ipairs(chain) do set[r] = v end end
             end
             for id, ss in pairs(pinStore) do
                 if ss and type(id) == "number" and id > 0 then
@@ -2246,6 +2327,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(burstCueSpells)
     wipe(cooldownSpells)
     wipe(sunkSet)
+    wipe(wastedSet)
     local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local hideItems = profile.hideItemAbilities
 

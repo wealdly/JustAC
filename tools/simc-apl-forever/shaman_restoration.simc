@@ -1,0 +1,8 @@
+# JustAC hand pin, WoW Forever: Restoration Shaman damage while there is nothing to heal. The
+# sim list source (tools/forever-apl-src) models no healer. Wowhead's Forever level-30 healer
+# overview: spare time goes to Fire Nova on packs or Lightning Bolt
+# (Documentation/forever-guides/druid-shaman.md, Shaman - Restoration).
+# Supported conditions: target.health.pct<N, [!]dot.X.ticking, active_enemies>=N.
+
+actions=fire_nova,if=active_enemies>=3
+actions+=/lightning_bolt

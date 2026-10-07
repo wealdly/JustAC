@@ -33,6 +33,7 @@ gh_tmp.json
 # Raw DB2 exports (regenerated per patch from wago.tools; only the generated
 # Lua output is committed, not these multi-MB source CSVs)
 Documentation/wow_spell_csv/
+Documentation/wow_spell_csv_forever/
 
 # Duplicate nested Ace3 lib folders (packaging artifact)
 Libs/AceAddon-3.0/AceAddon-3.0/

@@ -1,0 +1,11 @@
+# JustAC hand pin, WoW Forever: Holy Paladin damage while there is nothing to heal. The sim
+# list source (tools/forever-apl-src) models no healer. Order: Wowhead's Forever level-30
+# healer overview (Documentation/forever-guides/paladin-priest.md, Paladin - Holy).
+# Supported conditions: target.health.pct<N, [!]dot.X.ticking, active_enemies>=N.
+
+actions=judgement
+actions+=/holy_strike
+# Only usable against undead and demons; usability filters it elsewhere.
+actions+=/exorcism
+actions+=/holy_shock
+actions+=/consecration,if=active_enemies>=2

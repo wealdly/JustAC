@@ -240,7 +240,10 @@ end
 -- aura lookup returns nil for a buff that is up), so inside a fight the only thing that knows
 -- a buff window opened is the cast that opened it.
 local ownCastAt = {}
+local auraUntil = {}   -- [spellID] = the buff's expiry, read while its aura was plain
 local formCache   -- resolved on first use: FormCache loads after this file
+local rotationImport   -- resolved on first use: rank chains (WoW Forever)
+local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state (loads later)
 
 --- Record a successful player cast (every cast, in or out of combat).
 function BlizzardAPI.NoteOwnCast(spellID)
@@ -249,6 +252,129 @@ function BlizzardAPI.NoteOwnCast(spellID)
     ownCastAt[spellID] = now
     local base = BlizzardAPI.ResolveBaseSpellID(spellID)
     if base then ownCastAt[base] = now end
+    -- Forever ranks: a rank-3 cast opens the window the data names by rank 1.
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    local r1 = rotationImport and rotationImport.RankBase(spellID)
+    if r1 and r1 ~= spellID then ownCastAt[r1] = now end
+end
+
+--------------------------------------------------------------------------------
+-- Swing timer (WoW Forever). PLAYER_SWING carries swingDuration and swingType PLAIN in combat
+-- (measured: 1.9s on a 1.9s weapon, inter-swing gaps 1.82-2.00s), so the last swing per type
+-- plus its duration IS the swing timer. It is also the only plain in-combat attack speed -
+-- UnitAttackSpeed is secret there - which makes attack-speed buffs visible as a shorter
+-- swing against the out-of-combat base. Retail has no PLAYER_SWING: everything here stays
+-- nil there and every caller falls back to its old behaviour.
+--------------------------------------------------------------------------------
+local SWING_MH, SWING_OH, SWING_RANGED = 0, 1, 2   -- Enum.PlayerSwingType
+local swingLast, swingDur, swingBase = {}, {}, {}
+-- An attack-speed gain at or above this reads as "boosted": every buff modelled
+-- (SpellDB.HASTE_BUFFS) is 20% or more, gear-proc noise rarely reaches it.
+local HASTE_BOOSTED = 1.08
+
+--- Seconds until the next auto attack of swingType (0 main hand, 1 off hand, 2 ranged), or
+--- nil when unknown: no swing seen, or none for a whole extra round (not auto-attacking).
+function BlizzardAPI.GetSwingRemaining(swingType)
+    local last, dur = swingLast[swingType], swingDur[swingType]
+    if not (last and dur) then return nil end
+    local rem = last + dur - GetTime()
+    if rem < -dur then return nil end
+    return rem > 0 and rem or 0
+end
+
+--- The current swing of swingType as (startTime, landTime), or nil when unknown (see
+--- GetSwingRemaining). Drives the queue's fill on a queued next-swing ability.
+function BlizzardAPI.GetSwingWindow(swingType)
+    if not BlizzardAPI.GetSwingRemaining(swingType) then return nil end
+    local last = swingLast[swingType]
+    return last, last + swingDur[swingType]
+end
+
+-- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, hasTarget), plain in combat and
+-- fired on every target change and range crossing (measured build 70245: a target acquired
+-- from a distance read false/true, walking into melee true/true, a dead target true/false).
+local swingInRange = {}
+
+--- Is the current target within auto-attack reach of swingType (0 main hand, 2 ranged)?
+--- The game's own range check: true / false, or nil with no target or no event seen (retail).
+function BlizzardAPI.IsTargetInSwingRange(swingType)
+    return swingInRange[swingType]
+end
+
+--- Current attack speed relative to the out-of-combat base for swingType: 1.0 normal, 1.3 =
+--- 30% faster. nil without a recent swing or a known base.
+function BlizzardAPI.GetSwingHaste(swingType)
+    local last, dur, base = swingLast[swingType], swingDur[swingType], swingBase[swingType]
+    if not (last and dur and base and dur > 0) then return nil end
+    if GetTime() - last > 2 * dur then return nil end
+    return base / dur
+end
+
+-- The base speeds: read only while they are plain (out of combat). ponytail: a haste buff
+-- already up when this reads inflates the base; refreshed on every equip / speed change OOC.
+local function RefreshSwingBase()
+    if InCombatLockdown() then return end
+    local okA, mh, oh = pcall(UnitAttackSpeed, "player")
+    if okA then
+        if type(mh) == "number" and not IsSecretValue(mh) and mh > 0 then swingBase[SWING_MH] = mh end
+        if type(oh) == "number" and not IsSecretValue(oh) and oh > 0 then swingBase[SWING_OH] = oh end
+    end
+    local okR, ranged = pcall(UnitRangedDamage, "player")
+    if okR and type(ranged) == "number" and not IsSecretValue(ranged) and ranged > 0 then
+        swingBase[SWING_RANGED] = ranged
+    end
+end
+
+do
+    local f = CreateFrame("Frame")
+    -- pcall: PLAYER_SWING only exists on Forever.
+    if pcall(f.RegisterEvent, f, "PLAYER_SWING") then
+        f:RegisterEvent("PLAYER_ENTERING_WORLD")
+        f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+        f:RegisterEvent("PLAYER_REGEN_ENABLED")
+        f:RegisterUnitEvent("UNIT_ATTACK_SPEED", "player")
+        pcall(f.RegisterEvent, f, "PLAYER_SWING_RANGE_UPDATE")
+        f:SetScript("OnEvent", function(_, event, duration, swingType, hasTarget)
+            if event == "PLAYER_SWING" then
+                if type(swingType) == "number" and type(duration) == "number"
+                   and not IsSecretValue(duration) and duration > 0 then
+                    swingLast[swingType], swingDur[swingType] = GetTime(), duration
+                end
+            elseif event == "PLAYER_SWING_RANGE_UPDATE" then
+                -- Payload (swingType, inRange, hasTarget); the first argument slot is named
+                -- for PLAYER_SWING above.
+                local st, inRange = duration, swingType
+                if type(st) == "number" and type(inRange) == "boolean" and type(hasTarget) == "boolean" then
+                    if hasTarget then swingInRange[st] = inRange else swingInRange[st] = nil end
+                end
+            else
+                -- The range event fires only for swing types with a range check enabled. Once
+                -- per world entry: every call resets the check (and fires a "no target" update).
+                if event == "PLAYER_ENTERING_WORLD" and C_SwingTimer and C_SwingTimer.EnableRangeCheck then
+                    pcall(C_SwingTimer.EnableRangeCheck, SWING_MH, true)
+                    pcall(C_SwingTimer.EnableRangeCheck, SWING_RANGED, true)
+                end
+                RefreshSwingBase()
+            end
+        end)
+    end
+end
+
+--- An attack-speed buff from SpellDB.HASTE_BUFFS, judged by the swings after its cast.
+--- @return boolean|nil true/false once a swing since the cast has been seen; nil otherwise
+local function HasteBuffEvidence(spellID)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local h = SpellDB and SpellDB.HASTE_BUFFS and SpellDB.StaticLookup(SpellDB.HASTE_BUFFS, spellID)
+    local castAt = h and ownCastAt[spellID]
+    if not castAt or GetTime() - castAt > h.max then return nil end
+    -- A swing that STARTED before the cast still ran at the old speed: only a later one counts.
+    local last = swingLast[h.swing]
+    if not last or last <= castAt then return nil end
+    local haste = BlizzardAPI.GetSwingHaste(h.swing)
+    if haste == nil then return nil end
+    -- ponytail: two modelled buffs on one swing type cannot be told apart - while either is
+    -- up, both read as up. Per-buff ratios would need the exact talent-scaled percentages.
+    return haste >= HASTE_BOOSTED
 end
 
 --- True while our own self-buff (spellID) is active on the player. Three sources, best
@@ -263,6 +389,22 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
     if formCache == nil then formCache = LibStub("JustAC-FormCache", true) or false end
     local formID = formCache and formCache.GetFormIDBySpellID(spellID)
     if formID then return formCache.GetActiveForm() == formID end
+    -- WoW Forever: a buff the player tracks in the Cooldown Manager is read off Blizzard's own
+    -- icon - exact, and the only aura state readable in combat there. Untracked: on to the rest.
+    local forever = BlizzardAPI.IsForever and BlizzardAPI.IsForever()
+    if forever then
+        if maintenanceTracker == nil then
+            maintenanceTracker = LibStub("JustAC-MaintenanceTracker", true) or false
+        end
+        -- Not `x and x.f()`: with the module missing that is false, read as "buff down".
+        local tracked
+        if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID) end
+        if tracked ~= nil then return tracked end
+    end
+    -- An attack-speed buff is proven by the swings themselves (Forever): its length can
+    -- depend on combo points, and an early cancel or dispel shows as the speed going away.
+    local evidence = HasteBuffEvidence(spellID)
+    if evidence ~= nil then return evidence end
     local castAt = durSecs and ownCastAt[spellID]
     local castLive = castAt and (GetTime() - castAt) < durSecs or false
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
@@ -272,9 +414,32 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
     -- two answers: GetAuraDuration is access-denied to a tainted caller while auras are
     -- secret (12.1.0), and a buff with no expiry (Prowl, Shadowmeld) has an empty duration
     -- that read as down while it was up.
-    local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
-    if aura and aura.auraInstanceID then return true end
-    return castLive
+    -- Forever ranks: the aura carries the rank that was cast, so every rank is asked.
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    local chain = rotationImport and rotationImport.RankChain(spellID)
+    for i = 1, chain and #chain or 1 do
+        -- Protected: on Forever (build 70245) the aura LIST calls throw in combat; this lookup
+        -- has not, but a throw here would blank the whole queue build.
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, chain and chain[i] or spellID)
+        if ok and aura and aura.auraInstanceID then
+            -- Remember the expiry while it reads plain (out of combat): in combat the aura
+            -- is unreadable, and a /reload forgets the cast that would otherwise time it.
+            local exp = aura.expirationTime
+            if type(exp) == "number" and not IsSecretValue(exp) and exp > 0 and forever then
+                auraUntil[spellID] = exp
+            end
+            return true
+        end
+    end
+    -- Retail: unchanged - the cast window is the whole fallback there. (A remembered expiry
+    -- would also hold a buff consumed early in combat "up" until its old expiry.)
+    if not forever then return castLive end
+    if not BlizzardAPI.AreAurasSecret() then
+        auraUntil[spellID] = nil   -- readable and absent: really gone
+        return castLive
+    end
+    local untilAt = auraUntil[spellID]
+    return castLive or (untilAt ~= nil and GetTime() < untilAt)
 end
 
 --- Diagnostic: which of the given self-buff ids are active right now.

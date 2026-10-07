@@ -62,7 +62,7 @@ local function queueContentGroup(addon)
                 width = "normal",
                 -- Healer specs only; the melee-weave question doesn't exist elsewhere.
                 hidden = function()
-                    local spec = GetSpecialization()
+                    local spec = C_SpecializationInfo.GetSpecialization()
                     return not (spec and GetSpecializationRole(spec) == "HEALER")
                 end,
                 get = function()

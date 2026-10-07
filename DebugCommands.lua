@@ -182,6 +182,9 @@ local INSPECT_TOPICS = {
 
     -- Capability probes: run these when a feature stops working and you need to
     -- know whether the CLIENT changed or the addon did.
+    { "cdmlayout",   "CdmLayoutProbe",           "[add <spellID>|add all]", "Forever: can JustAC add the rotation's critical buffs to the Cooldown Manager? (decode/round-trip/active layout; add writes them, then /reload)" },
+    { "foreverauras", "ForeverAuraProbe",        nil,  "Forever: every aura route on player/target/pet, plus auras remembered from out of combat" },
+    { "forever",     "ForeverProbe",             "[arm|off|toggle]", "Forever: snapshot of every signal; arm/off/toggle = one switch for a whole probe session (recorder + errors + audit)" },
     { "validate",    "ValidateAssumptions",      "[arm]", "START HERE if something stopped working: every secrecy/API assumption plus a self-test of each technique the addon rides on; arm = diff on combat enter/exit" },
     { "errors",      "ErrorCapture",             "[off|clear|show]", "Capture taint/secret errors (run after a fight)" },
     { "secrecy",     "SecrecyProbe",             nil,  "Measure which combat values read plain vs secret (in AND out of combat)" },
@@ -4032,7 +4035,7 @@ local function PrintValidateEnv(addon)
     addon:Print("  state: combat=" .. tostring(UnitAffectingCombat("player"))
         .. " resting=" .. vs(IsResting)
         .. " group=" .. (IsInRaid() and "raid" or IsInGroup() and "party" or "solo")
-        .. " spec=" .. vs(function() return select(2, GetSpecializationInfo(GetSpecialization())) end)
+        .. " spec=" .. vs(function() return select(2, C_SpecializationInfo.GetSpecializationInfo(C_SpecializationInfo.GetSpecialization())) end)
         .. " form=" .. vs(GetShapeshiftFormID)
         .. " level=" .. vs(function() return UnitLevel("player") end))
     addon:Print("  pvp: warMode=" .. vs(C_PvP.IsWarModeActive)
@@ -5451,7 +5454,7 @@ function DebugCommands.HealProbe(addon, arg)
     local caaApi = _G.C_CombatAudioAlert
 
     addon:Print("== heal-mode probe ==  run OOC, then IN combat while the party takes damage")
-    local role = GetSpecialization() and GetSpecializationRole(GetSpecialization())
+    local role = C_SpecializationInfo.GetSpecialization() and GetSpecializationRole(C_SpecializationInfo.GetSpecialization())
     addon:Print(string.format("  combat=%s grouped=%s members=%s role=%s",
         tostring(InCombatLockdown()), tostring(IsInGroup()),
         tostring(GetNumGroupMembers()), tostring(role)))
@@ -7511,8 +7514,936 @@ function DebugCommands.EnrageLog(addon, arg)
     addon:Print("|cff888888Pull the mob that always enrages, then '/jac inspect enragelog off' and /reload.|r")
 end
 
+--------------------------------------------------------------------------------
+-- /jac inspect forever [arm|off] - the Forever client: which retail assumptions
+-- still hold, and what it hands us that retail does not. Plan + what each answer
+-- unlocks: Documentation/FOREVER_PROBE_PLAN.md. Run bare once OUT of combat and
+-- once IN combat (or arm the audit battery, which includes it). 'arm' starts the
+-- COMBAT RECORDER below (read it off disk after /reload).
+--------------------------------------------------------------------------------
+
+--- The bar spells the queue's pool is built from ({ slot, id } in slot order), so the
+--- Forever probes sample exactly what production samples.
+local function BarSpells()
+    local B = LibStub("JustAC-BlizzardAPI", true)
+    return (B and B.GetBarSpells and B.GetBarSpells()) or {}
+end
+
+-- Recorder cells: ProbeRead's own text (value / <secret> / nil / the error), capped, so the
+-- recorder's lines read the same as every other probe's.
+local function Cv(v)
+    return (select(2, ProbeRead(function() return v end, 28)))
+end
+
+--- Classified call: first return, or the error when the call throws (denied / protected).
+local function Cf(fn, ...)
+    if type(fn) ~= "function" then return "noAPI" end
+    local args, n = { ... }, select("#", ...)
+    return (select(2, ProbeRead(function() return fn(unpack(args, 1, n)) end, 28)))
+end
+
+-- The recorder. Every candidate CONTEXT signal a Forever rotation could need, measured
+-- as it happens rather than as one snapshot: event payloads (is it plain in combat?
+-- when does it fire?) plus a change-only sampler of the per-button and player/target
+-- reads. Plan + what each line answers: Documentation/FOREVER_PROBE_PLAN.md round 2.
+-- Caps reset on every combat enter/exit, so OOC and combat are both sampled; anything
+-- over a cap is COUNTED and reported at the phase change, never silently dropped.
+local WATCH_EVENTS = {
+    "PLAYER_SWING", "PLAYER_SWING_RANGE_UPDATE", "COMBAT_TEXT_UPDATE", "UI_ERROR_MESSAGE",
+    "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE",
+    "SPELL_UPDATE_USABLE", "ACTIONBAR_UPDATE_USABLE", "PLAYER_TARGET_CHANGED",
+    "UPDATE_SHAPESHIFT_FORM", "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL",
+    "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT", "PARTY_KILL", "PLAYER_TOTEM_UPDATE",
+    "LOSS_OF_CONTROL_ADDED", "PET_ATTACK_START", "UNIT_PET", "UNIT_HAPPINESS",
+    "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
+}
+local WATCH_UNIT_EVENTS = {
+    UNIT_COMBAT = { "player", "target" },          -- dodge/parry/block/crit/damage taken
+    UNIT_POWER_UPDATE = { "player" },               -- tick timing (energy, 5-second rule)
+    UNIT_POWER_FREQUENT = { "player" },
+    UNIT_THREAT_SITUATION_UPDATE = { "player" },
+    UNIT_AURA = { "player", "target" },
+    UNIT_SPELLCAST_SENT = { "player" },
+    UNIT_SPELLCAST_START = { "player", "target" },
+    UNIT_SPELLCAST_SUCCEEDED = { "player", "target" },
+    UNIT_SPELLCAST_FAILED = { "player" },
+    UNIT_SPELLCAST_INTERRUPTED = { "player", "target" },
+    UNIT_SPELLCAST_CHANNEL_START = { "player", "target" },
+    UNIT_HEALTH = { "target" },                     -- timing only: a damage-rate source?
+    UNIT_FLAGS = { "player", "target" },
+    -- Attack speed is secret in combat, but does the EVENT still mark a haste buff
+    -- starting / ending (Slice and Dice, Flurry, Blade Flurry)? Compare with fw PLAYER_SWING
+    -- swingDuration, which is the plain in-combat attack speed.
+    UNIT_ATTACK_SPEED = { "player" },
+}
+local WATCH_CAP = { UNIT_COMBAT = 80, UNIT_POWER_FREQUENT = 30, UNIT_POWER_UPDATE = 30,
+    UNIT_SPELLCAST_SUCCEEDED = 30, UNIT_HEALTH = 12, SPELL_UPDATE_USABLE = 8,
+    ACTIONBAR_UPDATE_USABLE = 8, UNIT_AURA = 20 }
+local WATCH_CAP_DEFAULT = 15
+local SAMPLE_CAP = 250          -- sampler change lines per phase
+local SAMPLE_PERIOD = 0.2
+local SAMPLE_SLOTS = 24         -- distinct bar spells sampled
+
+-- CheckInteractDistance is protected in combat: the call is blocked (not an error pcall can
+-- catch), so skip it there instead of tripping ADDON_ACTION_BLOCKED.
+local function NearCheck(unit)
+    if InCombatLockdown() then return "n/a in combat" end
+    return Cf(CheckInteractDistance, unit, 3)
+end
+
+local function TargetIdentity()
+    return string.format("type=%s class=%s lvl=%s player=%s canAttack=%s tapDenied=%s melee=%s",
+        Cf(UnitCreatureType, "target"), Cf(UnitClassification, "target"), Cf(UnitLevel, "target"),
+        Cf(UnitIsPlayer, "target"), Cf(UnitCanAttack, "player", "target"),
+        Cf(UnitIsTapDenied, "target"), NearCheck("target"))
+end
+
+--- Payload text for one event: the generic classified args, plus the follow-up read
+--- each event exists to make possible.
+local function WatchPayload(event, a, b, c, d, e)
+    local args = string.format("a=%s b=%s c=%s d=%s e=%s", Cv(a), Cv(b), Cv(c), Cv(d), Cv(e))
+    if event == "PLAYER_TARGET_CHANGED" then
+        return TargetIdentity()
+    elseif event == "COMBAT_TEXT_UPDATE" then
+        return args .. " info=" .. Cf(C_CombatText.GetCurrentEventInfo)
+    elseif event == "UPDATE_SHAPESHIFT_FORM" then
+        return "form=" .. Cf(GetShapeshiftForm) .. " stealthed=" .. Cf(IsStealthed)
+    elseif event == "PLAYER_TOTEM_UPDATE" then
+        local okT, have, name, start, dur = pcall(GetTotemInfo, a)
+        return args .. (okT and (" have=" .. Cv(have) .. " name=" .. Cv(name) .. " start=" .. Cv(start)
+            .. " dur=" .. Cv(dur)) or " GetTotemInfo=err")
+    elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
+        return args .. " situation=" .. Cf(UnitThreatSituation, "player", "target")
+    elseif event == "UNIT_HAPPINESS" or event == "UNIT_PET" then
+        return args .. " happiness=" .. Cf(C_PetInfo.GetPetHappiness)
+    elseif event == "UNIT_AURA" then
+        -- 12.1 retail: the payload LISTS are secret; is Forever the same?
+        local info = b
+        if type(info) ~= "table" then return args end
+        local function Len(t)
+            if t == nil then return "nil" end
+            local okL, n = pcall(function() return #t end)
+            return okL and Cv(n) or "SECRET"
+        end
+        return string.format("unit=%s full=%s added=%s updated=%s removed=%s", Cv(a),
+            Cv(info.isFullUpdate), Len(info.addedAuras), Len(info.updatedAuraInstanceIDs),
+            Len(info.removedAuraInstanceIDs))
+    end
+    return args
+end
+
+local function ForeverWatch(on)
+    local w = DebugCommands._foreverWatch
+    if w then
+        w.frame:UnregisterAllEvents(); w.frame:SetScript("OnEvent", nil)
+        if w.ticker then w.ticker:Cancel() end
+        DebugCommands._foreverWatch = nil
+    end
+    if not on then return end
+    w = { frame = CreateFrame("Frame"), seen = {}, over = {}, last = {}, state = {},
+          samples = 0, phaseStart = GetTime() }
+    DebugCommands._foreverWatch = w
+    local f = w.frame
+    for _, ev in ipairs(WATCH_EVENTS) do
+        if not pcall(f.RegisterEvent, f, ev) then ProbeLogEmit("fw: register " .. ev .. " FAILED") end
+    end
+    for ev, units in pairs(WATCH_UNIT_EVENTS) do
+        if not pcall(f.RegisterUnitEvent, f, ev, units[1], units[2]) then
+            ProbeLogEmit("fw: register " .. ev .. " FAILED")
+        end
+    end
+    -- Range updates only fire for swing types with a check enabled; production enables both at
+    -- login (BlizzardAPI/CooldownTracking.lua). Re-enabling here would reset the check and fire a
+    -- spurious "no target" update.
+
+    -- Bar spells to sample: slot -> { id, name }, fixed at arm time (re-arm after
+    -- rearranging bars).
+    w.slots = {}
+    for _, s in ipairs(BarSpells()) do
+        if #w.slots >= SAMPLE_SLOTS then break end
+        w.slots[#w.slots + 1] = { slot = s.slot, id = s.id, name = C_Spell.GetSpellName(s.id) or "?" }
+    end
+    ProbeLogEmit(string.format("fw: ARMED, %d bar spells sampled every %.1fs", #w.slots, SAMPLE_PERIOD))
+
+    local function Phase(label)
+        local parts = {}
+        for ev, n in pairs(w.over) do parts[#parts + 1] = ev .. "=" .. n end
+        if #parts > 0 then ProbeLogEmit("fw: over cap last phase: " .. table.concat(parts, " ")) end
+        wipe(w.seen); wipe(w.over); w.samples = 0; w.phaseStart = GetTime()
+        ProbeLogEmit("fw: ---- " .. label .. " ---- target: " .. TargetIdentity())
+    end
+
+    f:SetScript("OnEvent", function(_, event, a, b, c, d, e)
+        if event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
+            Phase(event)
+            return
+        end
+        local n = (w.seen[event] or 0) + 1
+        w.seen[event] = n
+        if n > (WATCH_CAP[event] or WATCH_CAP_DEFAULT) then
+            w.over[event] = (w.over[event] or 0) + 1
+            return
+        end
+        -- Interval since the previous event of the same kind (and unit / swing type):
+        -- the timing half of the question, e.g. energy ticks or swing cadence.
+        local now = GetTime()
+        local key = event .. tostring(PlainText(a) or "?")
+        local gap = w.last[key] and string.format("%.2f", now - w.last[key]) or "-"
+        w.last[key] = now
+        ProbeLogEmit(string.format("fw %s t=%.2f c=%s gap=%s | %s", event, now - w.phaseStart,
+            UnitAffectingCombat("player") and "Y" or "n", gap, WatchPayload(event, a, b, c, d, e)))
+    end)
+
+    -- Change-only sampler: one line per read whose classified value changed.
+    local function Note(key, value)
+        if w.state[key] == value then return end
+        local was = w.state[key]
+        w.state[key] = value
+        if w.samples >= SAMPLE_CAP then w.over.sampler = (w.over.sampler or 0) + 1; return end
+        w.samples = w.samples + 1
+        ProbeLogEmit(string.format("fs t=%.2f c=%s %s=%s (was %s)", GetTime() - w.phaseStart,
+            UnitAffectingCombat("player") and "Y" or "n", key, value, tostring(was)))
+    end
+    w.ticker = C_Timer.NewTicker(SAMPLE_PERIOD, function()
+        for _, s in ipairs(w.slots) do
+            -- Never branch on these: either could be a secret boolean. Classify, then print.
+            local okU, usable, noMana = pcall(C_ActionBar.IsUsableAction, s.slot)
+            local use = okU and (Cv(usable) .. "/noPower=" .. Cv(noMana)) or "err"
+            local okCd, cd = pcall(C_Spell.GetSpellCooldown, s.id)
+            if not okCd then cd = nil end
+            Note(string.format("[%d %s]", s.slot, s.name), string.format("use=%s range=%s queued=%s gcd=%s",
+                use, Cf(C_ActionBar.IsActionInRange, s.slot), Cf(C_Spell.IsCurrentSpell, s.id),
+                cd and Cv(cd.isOnGCD) or "nil"))
+        end
+        Note("player", string.format("form=%s stealth=%s speed=%s cp=%s threat=%s attack=%s",
+            Cf(GetShapeshiftForm), Cf(IsStealthed), Cf(GetUnitSpeed, "player"),
+            Cf(GetComboPoints, "player", "target"), Cf(UnitThreatSituation, "player", "target"),
+            Cf(C_Spell.IsCurrentSpell, 6603)))
+        -- Enemy context: how many plates, how many in combat, how many within 10 yd.
+        local plates, inCombat, near, bad = 0, 0, 0, 0
+        for _, np in ipairs(C_NamePlate.GetNamePlates() or {}) do
+            local u = np.namePlateUnitToken
+            if u then
+                plates = plates + 1
+                local okC, ic = pcall(UnitAffectingCombat, u)
+                local okD, nr = true, false
+                if not InCombatLockdown() then okD, nr = pcall(CheckInteractDistance, u, 3) end
+                if not okC or not okD or PlainText(ic) == nil or PlainText(nr) == nil then
+                    bad = bad + 1
+                else
+                    if ic then inCombat = inCombat + 1 end
+                    if nr then near = near + 1 end
+                end
+            end
+        end
+        Note("plates", string.format("n=%d inCombat=%d within10yd=%d unreadable=%d", plates, inCombat, near, bad))
+        -- The token route production counts with (BlizzardAPI.GetEngagedEnemyCount): which of
+        -- its reads answer on Forever? Plates that exist, have a readable threat entry with us,
+        -- and carry a plain GUID (the multi-dot question).
+        local tokens, threat, guids = 0, 0, 0
+        for i = 1, 40 do
+            local u = "nameplate" .. i
+            local okE, ex = pcall(UnitExists, u)
+            if okE and PlainText(ex) and ex then
+                tokens = tokens + 1
+                local okT, ts = pcall(UnitThreatSituation, "player", u)
+                if okT and ts ~= nil and PlainText(ts) then threat = threat + 1 end
+                local okG, g = pcall(UnitGUID, u)
+                if okG and g ~= nil and PlainText(g) then guids = guids + 1 end
+            end
+        end
+        Note("platetokens", string.format("exist=%d threat=%d plainGUID=%d engagedCount=%s cvar nameplateShowEnemies=%s",
+            tokens, threat, guids, Cf((LibStub("JustAC-BlizzardAPI", true) or {}).GetEngagedEnemyCount),
+            Cf(GetCVar, "nameplateShowEnemies")))
+        -- Blizzard's own swing bars (Forever, Blizzard_SwingTimer): plain Lua fields set by
+        -- untainted code. Are they populated, and does their range half ever engage?
+        for _, bar in ipairs({ "SwingTimerMainHandFrame", "SwingTimerOffHandFrame", "SwingTimerRangedFrame" }) do
+            local f = _G[bar]
+            if f then
+                Note(bar, string.format("shown=%s dur=%s endIn=%s rangeCheck=%s outOfRange=%s",
+                    Cf(f.IsShown, f), Cv(f.swingDuration),
+                    Cf(function() return f.swingEndTime and math.floor((f.swingEndTime - GetTime()) * 10 + 0.5) / 10 end),
+                    Cv(f.isRangeCheckEnabled), Cv(f.isOutOfRange)))
+            end
+        end
+    end)
+end
+
+--- spellID -> true for every spellbook entry the client calls a lower rank of a
+--- known spell. Forever keeps vanilla ranks; retail has none, so this is new.
+local function LowRankSpellIDs()
+    local low, total, nLow = {}, 0, 0
+    local bank = Enum.SpellBookSpellBank.Player
+    for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local info = C_SpellBook.GetSpellBookSkillLineInfo(line)
+        for i = 1, (info and info.numSpellBookItems or 0) do
+            local idx = info.itemIndexOffset + i
+            local item = C_SpellBook.GetSpellBookItemInfo(idx, bank)
+            if item and item.spellID then
+                total = total + 1
+                local ok, isLow = pcall(C_SpellBook.IsSpellBookItemLowRank, idx, bank)
+                if ok and isLow == true then low[item.spellID] = true; nLow = nLow + 1 end
+            end
+        end
+    end
+    return low, total, nLow
+end
+
+function DebugCommands.ForeverProbe(addon, arg)
+    arg = arg and arg:lower() or nil
+    -- One macro for both ends of a session: arm when off, off when armed.
+    if arg == "toggle" then arg = DebugCommands._probeSession and "off" or "arm" end
+    if arg == "arm" or arg == "off" then
+        -- ONE switch for a whole probe session: the context recorder, error capture, and the
+        -- audit snapshots (this probe runs at every combat edge as part of them). The other
+        -- two flip when called bare, so each is only touched when its state differs.
+        local on = arg == "arm"
+        ForeverWatch(on)
+        if on and not DebugCommands._errorCapture then
+            DebugCommands.ErrorCapture(addon)
+        elseif not on and DebugCommands._errorCapture then
+            DebugCommands.ErrorCapture(addon, "off")
+        end
+        if on and not DebugCommands._probeSession then
+            DebugCommands.ProbeSession(addon)
+        elseif not on and DebugCommands._probeSession then
+            DebugCommands.ProbeSession(addon, "off")
+        end
+        addon:Print(on
+            and "forever session: |cff00ff00ON|r - play and fight normally, then '/jac inspect forever off'"
+            or "forever session: |cffff6600OFF|r - now |cff00ff00/reload|r to save it")
+        return
+    end
+    local R = ProbeReport(addon)
+    addon:Print("===== Forever probe (combat=" .. tostring(UnitAffectingCombat("player")) .. ") =====")
+
+    addon:Print("A. client + Assisted Combat:")
+    local ver, build, _, toc = GetBuildInfo()
+    addon:Print(string.format("  build=%s.%s toc=%s project=%s", tostring(ver), tostring(build),
+        tostring(toc), tostring(WOW_PROJECT_ID)))
+    R("GameRules.ForeverExperiencePreset", function() return C_GameRules.GetForeverExperiencePreset() end)
+    R("GameRules.IsHardcoreActive", function() return C_GameRules.IsHardcoreActive() end)
+    -- nil spec skips OnSpecChange's per-spec init; a HEALER role gets the first-run
+    -- spec profile set to disabled. Both would need a Forever path.
+    R("C_SpecializationInfo.GetSpecialization (raw)", function() return C_SpecializationInfo.GetSpecialization() end)
+    R("spec id", function() return (C_SpecializationInfo.GetSpecializationInfo(C_SpecializationInfo.GetSpecialization() or 1)) end)
+    R("spec role", function() return GetSpecializationRole(C_SpecializationInfo.GetSpecialization() or 1) end)
+    R("SpellDB spec key", function() return LibStub("JustAC-SpellDB").GetSpecKey() end)
+    R("AC.IsAvailable", function() return C_AssistedCombat.IsAvailable() end)
+    R("AC.IsAvailable reason", function() return select(2, C_AssistedCombat.IsAvailable()) end)
+    R("AC.GetNextCastSpell(false)", function() return C_AssistedCombat.GetNextCastSpell(false) end)
+    -- Load rules: [AllowLoadGameType mainline] appears to INCLUDE camelot (Blizzard adds
+    -- explicit camelot excludes). These settle it: the manager and the resource display are
+    -- mainline-tagged; the class-resource bars are explicitly excluded from camelot.
+    R("AssistedCombatManager loaded", function() return _G.AssistedCombatManager ~= nil end)
+    R("PersonalResourceDisplayFrame exists", function() return _G.PersonalResourceDisplayFrame ~= nil end)
+    R("  .classFrame", function() local f = _G.PersonalResourceDisplayFrame; return f and f.classFrame ~= nil end)
+    R("class combo-point bar frame exists", function()
+        return (_G.RogueComboPointBarFrame or _G.DruidComboPointBarFrame) ~= nil end)
+    -- The specialization globals were nil here: compat shims are CVar-gated.
+    R("CVar loadDeprecationFallbacks", function() return _G.GetCVar("loadDeprecationFallbacks") end)
+    R("GetSpecializationRole is native", function() return type(GetSpecializationRole) == "function" end)
+    -- The options grey-out (Options/Core FOREVER_UNUSED): any listed option it could not find.
+    local Opt = LibStub("JustAC-Options", true)
+    local unresolved = Opt and Opt.foreverUnresolved
+    addon:Print("  options greyed out: " .. ((unresolved == nil and "not run yet")
+        or (#unresolved == 0 and "|cff2ecc71every listed option found|r")
+        or ("|cffff6600NOT FOUND: " .. table.concat(unresolved, ", ") .. "|r")))
+
+    -- B decides the whole port: if these are all false in combat, Forever is not
+    -- secret-restricted and a full local rotation engine is possible.
+    addon:Print("B. secrecy regime:")
+    R("HasSecretRestrictions", function() return C_Secrets.HasSecretRestrictions() end)
+    R("ShouldAurasBeSecret", function() return C_Secrets.ShouldAurasBeSecret() end)
+    R("ShouldCooldownsBeSecret", function() return C_Secrets.ShouldCooldownsBeSecret() end)
+    for _, u in ipairs({ "player", "target" }) do
+        R("ShouldUnitHealthMaxBeSecret(" .. u .. ")", function() return C_Secrets.ShouldUnitHealthMaxBeSecret(u) end)
+        R("ShouldUnitPowerBeSecret(" .. u .. ")", function() return C_Secrets.ShouldUnitPowerBeSecret(u) end)
+        R("ShouldUnitSpellCastBeSecret(" .. u .. ", Attack)", function() return C_Secrets.ShouldUnitSpellCastBeSecret(u, 6603) end)
+    end
+    R("UnitHealth(target)", function() return UnitHealth("target") end)
+    R("UnitPower(player)", function() return UnitPower("player") end)
+    R("GetComboPoints(player,target)", function() return GetComboPoints("player", "target") end)
+    -- 61304 (the retail GCD dummy) is not in Forever's spell data, yet CooldownTracking's GCD
+    -- lookahead and BlizzardAPI.GetGCDInfo read it. D's onGCD column is the replacement source.
+    R("GCD dummy 61304 duration (production reads this)", function()
+        local c = C_Spell.GetSpellCooldown(61304); return c and c.duration end)
+
+    addon:Print("C. swing timer (new on Forever):")
+    -- The range check is made only for swing types with it enabled; production enables both at
+    -- login. NOT re-enabled here: each EnableRangeCheck call resets it and fires a spurious
+    -- "no target" PLAYER_SWING_RANGE_UPDATE (measured: one at every +4s/+10s snapshot).
+    R("IsTargetWithinSwingRange(MainHand)", function() return C_SwingTimer.IsTargetWithinSwingRange(0) end)
+    R("IsTargetWithinSwingRange(Ranged)", function() return C_SwingTimer.IsTargetWithinSwingRange(2) end)
+    R("UnitAttackSpeed(player)", function() return UnitAttackSpeed("player") end)
+    R("UnitRangedDamage(player) speed", function() return UnitRangedDamage("player") end)
+    R("IsCurrentSpell(Attack 6603)", function() return C_Spell.IsCurrentSpell(6603) end)
+    R("IsAutoRepeatSpell(Auto Shot 75)", function() return C_Spell.IsAutoRepeatSpell(75) end)
+    -- What production derives from those events (CooldownTracking's swing tracker).
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    R("tracker: next main-hand swing in", function() return BAPI.GetSwingRemaining(0) end)
+    R("tracker: next ranged swing in", function() return BAPI.GetSwingRemaining(2) end)
+    R("tracker: main-hand haste ratio", function() return BAPI.GetSwingHaste(0) end)
+    R("tracker: Slice and Dice window (swing-inferred)", function() return BAPI.IsBuffWindowActive(5171, 6) end)
+    addon:Print("  |cff888888payloads: '/jac inspect forever arm', swing, then read the probe log|r")
+
+    -- D: one row per bar spell. cur = queued on-next-swing / toggled; use = reactive
+    -- abilities (Overpower, Revenge, Execute) lighting up; cd = the readiness read;
+    -- onGCD = can a bar spell stand in for the missing GCD dummy; key/keyTop = does hotkey
+    -- lookup find the button for this rank AND for the top rank a by-name lookup returns.
+    addon:Print("D. action-bar spells (rank / hotkey / toggle / usable / cooldown):")
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    local function Key(sid)
+        local ok, k = pcall(ABS.GetSpellHotkey, sid)
+        return ok and k and k ~= "" and k or "-"
+    end
+    local okRanks, low, total, nLow = pcall(LowRankSpellIDs)
+    if not okRanks then addon:Print("  spellbook walk FAILED: " .. tostring(low)); low = {} end
+    addon:Print(string.format("  spellbook: %s spells, %s flagged low-rank", tostring(total), tostring(nLow)))
+    for row, s in ipairs(BarSpells()) do
+        if row > 20 then break end
+        local slot, id = s.slot, s.id
+        local name = C_Spell.GetSpellName(id) or "?"
+        local byName = C_Spell.GetSpellInfo(name)
+        local topID = byName and byName.spellID
+        addon:Print(string.format("  [%d] %s (%s) %s%s byName=%s key=%s keyTop=%s | use=%s cur=%s act=%s cdStart=%s onGCD=%s",
+            slot, name, id, SafeSecret(C_Spell.GetSpellSubtext(id) or ""),
+            low[id] and " |cffff6600LOW-RANK|r" or "",
+            tostring(topID), ABS and Key(id) or "?",
+            (ABS and topID and topID ~= id) and Key(topID) or "=",
+            ProbeCell(function() return C_ActionBar.IsUsableAction(slot) end),
+            ProbeCell(function() return C_Spell.IsCurrentSpell(id) end),
+            ProbeCell(function() return C_Spell.IsActiveSpell(id) end),
+            ProbeCell(function() local c = C_Spell.GetSpellCooldown(id); return c and c.startTime end, 8),
+            ProbeCell(function() local c = C_Spell.GetSpellCooldown(id); return c and c.isOnGCD end)))
+    end
+
+    addon:Print("E. consumables / pet / class state (new or classic-only):")
+    R("C_Item.GetWeaponEnchantInfo(MH) hasEnchant", function()
+        local t = C_Item.GetWeaponEnchantInfo(0); return t and t[1] and t[1].hasEnchant end)
+    R("C_Item.GetWeaponEnchantInfo(MH) timeLeft", function()
+        local t = C_Item.GetWeaponEnchantInfo(0); return t and t[1] and t[1].timeLeft end)
+    R("legacy GetWeaponEnchantInfo()", function() return GetWeaponEnchantInfo() end)
+    R("PaperDoll.AmmoNeeded", function() return C_PaperDollInfo.AmmoNeeded() end)
+    R("UnitUsesAmmo(player)", function() return UnitUsesAmmo("player") end)
+    R("PetInfo.GetPetHappiness", function() return C_PetInfo.GetPetHappiness() end)
+    R("PetInfo.GetPetLoyalty", function() return C_PetInfo.GetPetLoyalty() end)
+    R("UnitHasEffectivelyTankAura(player)", function() return UnitHasEffectivelyTankAura("player") end)
+    R("UnitDefenseSkill(player)", function() return UnitDefenseSkill("player") end)
+    R("GetManaRegen casting (5s rule)", function() return select(2, GetManaRegen()) end)
+    R("Spell.GetTargetSpellID", function() return C_Spell.GetTargetSpellID() end)
+
+    -- F: a refresh-carryover read on the player's own DoT would be a plain pandemic
+    -- signal - the thing retail closed. Both routes to an instance id (GetAuraDataByIndex,
+    -- GetUnitAuraInstanceIDs) are RequiresUnitAuraAccess, so in combat this only answers
+    -- if Forever does NOT deny tainted aura access (B decides); "call denied" = H9 closed.
+    addon:Print("F. aura extras (new: refresh carry-over, caster GUID):")
+    for _, probe in ipairs({ { "player", "HELPFUL" }, { "target", "HARMFUL|PLAYER" } }) do
+        local unit, filter = probe[1], probe[2]
+        local ok, d = pcall(C_UnitAuras.GetAuraDataByIndex, unit, 1, filter)
+        local iid = ok and d and d.auraInstanceID
+        if iid then
+            R(unit .. " " .. filter .. " RefreshCarryOver", function()
+                return C_UnitAuras.GetRefreshCarryOverDuration(unit, iid) end)
+            R(unit .. " " .. filter .. " CasterGUID", function() return C_UnitAuras.GetAuraCasterGUID(unit, iid) end)
+        else
+            addon:Print("  " .. unit .. " " .. filter .. ": no aura readable (" .. (ok and "none" or "call denied") .. ")")
+        end
+    end
+
+    addon:Print("G. Cooldown Manager (MaintenanceTracker bridge):")
+    R("CooldownViewer.IsCooldownViewerAvailable", function() return C_CooldownViewer.IsCooldownViewerAvailable() end)
+    for cat, label in pairs({ [0] = "Essential", [1] = "Utility", [2] = "TrackedBuff", [3] = "TrackedBar" }) do
+        R("CategorySet " .. label .. " #", function()
+            local t = C_CooldownViewer.GetCooldownViewerCategorySet(cat); return t and #t end)
+    end
+
+    -- I: one-shot context reads a rotation would gate on. The recorder ('arm') samples the
+    -- moving ones over a fight; these are the slow-changing ones.
+    addon:Print("I. context (target identity, range, gear, items, totems):")
+    R("target creature type", function() return UnitCreatureType("target") end)
+    R("target classification", function() return UnitClassification("target") end)
+    R("target level", function() return UnitLevel("target") end)
+    -- The engine-side "below N%" health read the execute and dying-target (no DoT) rules use;
+    -- the raw health is secret on Forever even out of combat.
+    for _, pct in ipairs({ 20, 35, 50 }) do
+        R("target health below " .. pct .. "% (IsUnitHealthBelow)", function()
+            local B = LibStub("JustAC-BlizzardAPI", true)
+            return B and B.IsUnitHealthBelow and B.IsUnitHealthBelow("target", pct)
+        end)
+    end
+    R("target within 10 yd (CheckInteractDistance 3)", function()
+        if InCombatLockdown() then return "n/a in combat" end
+        return CheckInteractDistance("target", 3)
+    end)
+    R("IsSpellInRange(first bar spell, target)", function()
+        for _, s in ipairs(BarSpells()) do
+            if s.id ~= 6603 then return C_Spell.IsSpellInRange(s.id, "target") end
+        end
+    end)
+    R("threat situation vs target", function() return UnitThreatSituation("player", "target") end)
+    R("shield equipped", function() return C_Item.IsEquippedItemType("Shields") end)
+    R("player speed", function() return GetUnitSpeed("player") end)
+    R("shapeshift form / stance", function() return GetShapeshiftForm() end)
+    R("stealthed", function() return IsStealthed() end)
+    R("soul shard count (6265)", function() return C_Item.GetItemCount(6265) end)
+    R("totem slot 1 name", function() return select(2, GetTotemInfo(1)) end)
+    R("pet exists", function() return UnitExists("pet") end)
+
+    -- H: guides split each class into trees (Arms/Fury/Protection) but Forever has ONE spec
+    -- id per class; the trees are trait GROUPS of one tree. Points spent per group is how a
+    -- priority list would be chosen - the same read Camelot's talent frame headers use.
+    addon:Print("H. talent trees (which list to run):")
+    R("installed Forever list (RotationImport)", function()
+        return LibStub("JustAC-RotationImport").GetForeverTree() end)
+    -- The pick's own read, so the probe reports exactly what production sees.
+    local okS, displays, spentBy = pcall(LibStub("JustAC-RotationImport").SpentByTree)
+    if not (okS and type(displays) == "table" and #displays > 0) then
+        addon:Print("  |cffff6600no trait groups readable|r (" .. tostring(okS and "none" or displays) .. ")")
+        return
+    end
+    for _, d in ipairs(displays) do
+        addon:Print(string.format("  group %s %-14s order=%s skillLine=%s spent=%s", tostring(d.groupID),
+            SafeSecret(d.displayName), tostring(d.orderIndex), tostring(d.skillLineID),
+            SafeSecret(spentBy[d.groupID])))
+    end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect foreverauras - WoW Forever aura sweep. Every route to an aura, on every unit that
+-- matters, classified (plain / <secret> / nil / the error) - nothing assumed from retail,
+-- where these behave differently (Forever build 70245: the aura LIST calls throw in combat).
+-- Runs in the audit battery, so a session gets it out of combat and at +4s / +10s into
+-- each fight. Auras read plainly while that was possible (out of combat) are REMEMBERED -
+-- spell id, name, instance id - and every later run asks each route about those same
+-- auras: "the buff is known to be up; which routes still see it?" is the question.
+--------------------------------------------------------------------------------
+do   -- scoped: this file's main chunk is near Lua's 200-local limit
+local auraSeen = {}   -- unit -> { { id = spellId, name = name, iid = auraInstanceID }, ... }
+local AURA_FIELDS = { "spellId", "name", "applications", "duration", "expirationTime",
+    "sourceUnit", "isFromPlayerOrPlayerPet", "auraInstanceID", "dispelName" }
+
+-- One line per aura table: every field classified on its own (a table can be plain while
+-- some of its fields are secret).
+local function AuraFields(t)
+    if type(t) ~= "table" then return (select(2, ProbeRead(function() return t end, 28))) end
+    local out = {}
+    for _, f in ipairs(AURA_FIELDS) do
+        out[#out + 1] = f .. "=" .. select(2, ProbeRead(function() return t[f] end, 18))
+    end
+    return table.concat(out, " ")
+end
+
+-- Remember a plain aura so later (combat) runs can ask about it by id, name and instance.
+local function Remember(unit, t)
+    local ok, id, name, iid = pcall(function() return t.spellId, t.name, t.auraInstanceID end)
+    if not (ok and PlainText(id) and PlainText(name) and PlainText(iid)) then return end
+    local list = auraSeen[unit] or {}
+    auraSeen[unit] = list
+    for _, e in ipairs(list) do
+        if e.iid == iid then return end
+    end
+    if #list < 8 then list[#list + 1] = { id = id, name = name, iid = iid } end
+end
+
+function DebugCommands.ForeverAuraProbe(addon)
+    local U = C_UnitAuras or {}
+    local function line(label, fn)
+        addon:Print(string.format("  %s = %s", label, select(2, ProbeRead(fn, 60))))
+    end
+    local function tableLine(label, fn)
+        local ok, t = pcall(fn)
+        if not ok then
+            addon:Print("  " .. label .. " = THREW " .. tostring(t):gsub("^.-:%d+: ", ""):sub(1, 50))
+            return nil
+        end
+        addon:Print("  " .. label .. " = " .. AuraFields(t))
+        return t
+    end
+    addon:Print(string.format("===== Forever aura sweep (combat=%s) =====",
+        tostring(UnitAffectingCombat("player"))))
+    line("C_Secrets.ShouldAurasBeSecret", function() return C_Secrets.ShouldAurasBeSecret() end)
+
+    local units = { { "player", "HELPFUL" }, { "player", "HARMFUL" }, { "target", "HARMFUL" },
+                    { "target", "HARMFUL|PLAYER" }, { "target", "HELPFUL" }, { "pet", "HELPFUL" } }
+    for _, p in ipairs(units) do
+        local unit, filter = p[1], p[2]
+        if UnitExists(unit) then
+            addon:Print(string.format("%s %s:", unit, filter))
+            -- Classic-era calls (may exist on Forever only).
+            line("UnitAura(1) name/spellId", function()
+                local n, _, _, _, _, _, _, _, _, sid = UnitAura(unit, 1, filter)
+                return n and (tostring(n) .. "/" .. tostring(sid))
+            end)
+            if filter == "HELPFUL" then
+                line("UnitBuff(1)", function() return (UnitBuff(unit, 1)) end)
+            else
+                line("UnitDebuff(1)", function() return (UnitDebuff(unit, 1)) end)
+            end
+            -- By index / slot.
+            tableLine("GetAuraDataByIndex(1)", function() return U.GetAuraDataByIndex(unit, 1, filter) end)
+            -- Remember every aura readable now (out of combat), so a combat run tests the
+            -- buffs that matter (Battle Shout), not whichever sorts first (a tracking aura).
+            pcall(function()
+                for _, a in ipairs(U.GetUnitAuras(unit, filter) or {}) do Remember(unit, a) end
+            end)
+            if filter == "HELPFUL" then
+                tableLine("GetBuffDataByIndex(1)", function() return U.GetBuffDataByIndex(unit, 1) end)
+            else
+                tableLine("GetDebuffDataByIndex(1)", function() return U.GetDebuffDataByIndex(unit, 1) end)
+            end
+            line("GetAuraSlots: first slot", function() return (select(2, U.GetAuraSlots(unit, filter))) end)
+            tableLine("GetAuraDataBySlot(first)", function()
+                local slot = select(2, U.GetAuraSlots(unit, filter))
+                return slot and U.GetAuraDataBySlot(unit, slot)
+            end)
+            -- Lists.
+            line("GetUnitAuras #", function() local l = U.GetUnitAuras(unit, filter); return l and #l end)
+            line("GetUnitAuraInstanceIDs #", function()
+                local l = U.GetUnitAuraInstanceIDs(unit, filter); return l and #l
+            end)
+        end
+    end
+
+    -- The remembered auras, route by route.
+    for unit, list in pairs(auraSeen) do
+        for _, e in ipairs(list) do
+            addon:Print(string.format("remembered %s aura %s (%d) instance %s:", unit, tostring(e.name), e.id, tostring(e.iid)))
+            if unit == "player" then
+                tableLine("GetPlayerAuraBySpellID", function() return U.GetPlayerAuraBySpellID(e.id) end)
+            end
+            tableLine("GetUnitAuraBySpellID", function() return U.GetUnitAuraBySpellID(unit, e.id) end)
+            tableLine("GetAuraDataBySpellName", function() return U.GetAuraDataBySpellName(unit, e.name, "HELPFUL") end)
+            tableLine("GetAuraDataByAuraInstanceID", function() return U.GetAuraDataByAuraInstanceID(unit, e.iid) end)
+            line("IsAuraFilteredOutByInstanceID(HELPFUL)", function()
+                return U.IsAuraFilteredOutByInstanceID(unit, e.iid, "HELPFUL")
+            end)
+            line("GetAuraDuration:HasSecretValues", function()
+                local d = U.GetAuraDuration(unit, e.iid); return d and d:HasSecretValues()
+            end)
+            line("GetAuraDuration:IsZero", function()
+                local d = U.GetAuraDuration(unit, e.iid); return d and d:IsZero()
+            end)
+            line("GetAuraApplicationDisplayCount", function() return U.GetAuraApplicationDisplayCount(unit, e.iid) end)
+        end
+    end
+    if not next(auraSeen) then
+        addon:Print("  (nothing remembered yet: run once out of combat with a buff up)")
+    end
+
+    -- Blizzard's own frames: what they display may be readable when the API is not.
+    addon:Print("Blizzard frames:")
+    line("BuffFrame shown aura buttons", function()
+        local n = 0
+        for _, b in ipairs(BuffFrame and BuffFrame.auraFrames or {}) do
+            if b:IsShown() then n = n + 1 end
+        end
+        return n
+    end)
+    tableLine("BuffFrame first button", function()
+        local b = BuffFrame and BuffFrame.auraFrames and BuffFrame.auraFrames[1]
+        return b and { spellId = b.spellID, name = b.Icon and b.Icon:GetTexture(),
+                       applications = b.Count and b.Count:GetText(),
+                       duration = b.Duration and b.Duration:GetText(), auraInstanceID = b.auraInstanceID }
+    end)
+    line("TargetFrame active aura frames", function()
+        local pools = TargetFrame and TargetFrame.auraPools
+        if not pools then return "no auraPools" end
+        local n = 0
+        for _ in pools:EnumerateActive() do n = n + 1 end
+        return n
+    end)
+    tableLine("TargetFrame first aura frame", function()
+        local pools = TargetFrame and TargetFrame.auraPools
+        if not pools then return nil end
+        for f in pools:EnumerateActive() do
+            return { auraInstanceID = f.auraInstanceID, name = f.Icon and f.Icon:GetTexture(),
+                     applications = f.Count and f.Count:GetText(), spellId = f.spellID }
+        end
+    end)
+    -- Per buff button: what the frame itself exposes (the shown COUNT read plain in combat).
+    for i, b in ipairs(BuffFrame and BuffFrame.auraFrames or {}) do
+        if i > 6 then break end
+        line(string.format("BuffFrame button %d shown / index / duration text", i), function()
+            return tostring(b:IsShown()) .. " / " .. select(2, ProbeRead(function() return b.buttonInfo and b.buttonInfo.index end, 8))
+                .. " / " .. select(2, ProbeRead(function() return b.Duration and b.Duration:GetText() end, 12))
+        end)
+    end
+    -- Blizzard's untainted aura container (retail 12.1.0's route to displaying auras in combat).
+    line("AuraContainer present", function()
+        return tostring(C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer"))
+            .. " mixin=" .. tostring(AuraContainerMixin ~= nil)
+    end)
+    -- Cooldown Manager tracked buffs: an icon showing IS the buff being up. Items come from the
+    -- viewer's own list (they need not be direct children); none means no buff is tracked -
+    -- add Battle Shout under Cooldown Manager > Tracked Buffs.
+    for _, viewerName in ipairs({ "BuffIconCooldownViewer", "BuffBarCooldownViewer" }) do
+        local viewer = _G[viewerName]
+        local items = viewer and viewer.GetItemFrames and select(2, pcall(viewer.GetItemFrames, viewer))
+        if type(items) ~= "table" then items = viewer and viewer.GetChildren and { viewer:GetChildren() } or {} end
+        line(viewerName .. " items", function() return #items end)
+        if viewer then
+            for _, child in ipairs(items) do
+                local cid = child.cooldownID
+                if cid then
+                    local ok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cid)
+                    local sid = ok and info and info.spellID
+                    line(string.format("%s %s shown / auraInstanceID", viewerName, tostring(sid)), function()
+                        return tostring(child:IsShown()) .. " / "
+                            .. select(2, ProbeRead(function() return child.auraInstanceID end, 12))
+                    end)
+                end
+            end
+        end
+    end
+end
+end   -- do
+
+--------------------------------------------------------------------------------
+-- /jac inspect cdmlayout [add <spellID>|add all] - can JustAC add the rotation's critical
+-- buffs and debuffs to the Cooldown Manager's Tracked Buffs itself? The only write route that
+-- does not run our code inside Blizzard's (which would taint it, and a tainted Cooldown Manager
+-- cannot read the secret auras its icons exist to show) is C_CooldownViewer.SetLayoutData: a
+-- plain C call storing the saved-layout string, which Blizzard then loads in its own code on
+-- the next /reload. This probe answers whether that is safe to build on:
+--   1. does the saved string decode, and re-encode to the same data (round trip)?
+--   2. which layout is active for this spec - a stored one, or the unstored default?
+--   3. which critical spells can the Cooldown Manager track, and are they tracked now?
+--   4. with "add": write them into Tracked Buffs of the active layout (out of combat), then
+--      /reload and check the icon still reads in combat (the no-taint proof).
+-- Format (Blizzard_CooldownViewer/CooldownViewerSettingsDataStoreSerialization.lua):
+--   "<encoding version>|" .. base64(deflate(CBOR(data))); data[2] = spec tag -> active layout
+--   id, data[3] = spec tag -> layout id -> { [1] = order, [2] = category -> cooldown ids },
+--   data[4] = layout id -> name. The default layout is never stored.
+--------------------------------------------------------------------------------
+do   -- scoped: this file's main chunk is near Lua's 200-local limit
+local FIELD_ACTIVE, FIELD_LAYOUTS, FIELD_NAMES = 2, 3, 4
+local LAYOUT_CATEGORY_OVERRIDES = 2
+
+local function DecodeLayoutData(s)
+    local E = C_EncodingUtil
+    if type(s) ~= "string" or #s == 0 then return nil, "empty (nothing saved yet)" end
+    local d = s:find("|", 1, true)
+    if not d then return nil, "no version prefix" end
+    local ver = tonumber(s:sub(1, d - 1))
+    if ver ~= 1 then return nil, "unknown encoding version " .. tostring(ver) end
+    local ok, t = pcall(function()
+        local raw = E.DecodeBase64(s:sub(d + 1))
+        local inflated = raw and E.DecompressString(raw, Enum.CompressionMethod.Deflate)
+        return inflated and E.DeserializeCBOR(inflated)
+    end)
+    if not ok then return nil, "decode threw: " .. tostring(t) end
+    if type(t) ~= "table" then return nil, "did not decode to a table" end
+    return t
+end
+
+local function EncodeLayoutData(t)
+    local E = C_EncodingUtil
+    return "1|" .. E.EncodeBase64(E.CompressString(E.SerializeCBOR(t), Enum.CompressionMethod.Deflate))
+end
+
+local function DeepEqual(a, b)
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return a == b end
+    for k, v in pairs(a) do if not DeepEqual(v, b[k]) then return false end end
+    for k in pairs(b) do if a[k] == nil then return false end end
+    return true
+end
+
+local function R1(id)
+    local RI = LibStub("JustAC-RotationImport", true)
+    return RI and RI.RankBase(id) or id
+end
+
+-- The buffs and debuffs the installed rotation list depends on: every buff and DoT condition
+-- (own-buff upkeep like Battle Shout, buff windows, DoTs like Rend), plus the attack-speed
+-- buffs judged from swings. Rank 1 ids.
+local function CriticalSpells()
+    local RI = LibStub("JustAC-RotationImport", true)
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local set = {}
+    local function walk(gates)
+        for _, g in ipairs(gates or {}) do
+            if (g.t == "buff" or g.t == "dot") and g.id then set[R1(g.id)] = true end
+            if g.g then walk(g.g) end
+        end
+    end
+    for _, id in pairs(RI and RI.GetInsertable and RI.GetInsertable() or {}) do
+        for _, tier in ipairs({ "st", "cleave", "aoe" }) do
+            local rec = RI.GetEntry(id, tier)
+            if rec then walk(rec.gates) end
+        end
+    end
+    for id in pairs(SDB and SDB.HASTE_BUFFS or {}) do set[id] = true end
+    return set
+end
+
+-- Every Cooldown Manager entry for a spell (any rank): cooldownID -> its default category.
+local function CooldownIDsFor(spellID)
+    local CV, out = C_CooldownViewer, {}
+    local r1 = R1(spellID)
+    for _, cat in pairs(Enum.CooldownViewerCategory or {}) do
+        local ok, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
+        for _, cid in ipairs(ok and ids or {}) do
+            local okI, info = pcall(CV.GetCooldownViewerCooldownInfo, cid)
+            if okI and type(info) == "table" then
+                local hit = info.spellID and R1(info.spellID) == r1
+                    or info.overrideSpellID and R1(info.overrideSpellID) == r1
+                for _, l in ipairs(info.linkedSpellIDs or {}) do hit = hit or R1(l) == r1 end
+                if hit then out[cid] = info.category or cat end   -- the entry's own default
+            end
+        end
+    end
+    return out
+end
+
+local function CategoryName(cat)
+    for name, v in pairs(Enum.CooldownViewerCategory or {}) do
+        if v == cat then return name end
+    end
+    return tostring(cat)
+end
+
+-- The active layout table for this spec (nil = the unstored default), plus its id and name.
+local function ActiveLayout(data)
+    local tag = CooldownViewerUtil and CooldownViewerUtil.GetCurrentClassAndSpecTag
+        and CooldownViewerUtil.GetCurrentClassAndSpecTag()
+    local id = tag and data[FIELD_ACTIVE] and data[FIELD_ACTIVE][tag]
+    local layout = id and data[FIELD_LAYOUTS] and data[FIELD_LAYOUTS][tag] and data[FIELD_LAYOUTS][tag][id]
+    return layout, id, id and data[FIELD_NAMES] and data[FIELD_NAMES][id], tag
+end
+
+-- The category a cooldown ID sits in under this layout: its override there, else its default.
+local function EffectiveCategory(layout, cid, default)
+    local overrides = layout and layout[LAYOUT_CATEGORY_OVERRIDES]
+    for cat, ids in pairs(overrides or {}) do
+        for _, v in ipairs(ids) do if v == cid then return cat end end
+    end
+    return default
+end
+
+local function MoveToTrackedBuffs(layout, cid)
+    local overrides = layout[LAYOUT_CATEGORY_OVERRIDES] or {}
+    layout[LAYOUT_CATEGORY_OVERRIDES] = overrides
+    for _, ids in pairs(overrides) do
+        for i = #ids, 1, -1 do if ids[i] == cid then table.remove(ids, i) end end
+    end
+    local tracked = Enum.CooldownViewerCategory.TrackedBuff
+    overrides[tracked] = overrides[tracked] or {}
+    table.insert(overrides[tracked], cid)
+end
+
+function DebugCommands.CdmLayoutProbe(addon, arg)
+    addon:Print("===== Cooldown Manager layout probe =====")
+    local CV, E = C_CooldownViewer, C_EncodingUtil
+    if not (CV and CV.GetLayoutData and CV.SetLayoutData and E and E.DeserializeCBOR) then
+        addon:Print("  missing API: GetLayoutData/SetLayoutData/C_EncodingUtil - cannot proceed")
+        return
+    end
+    if not (Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.TrackedBuff) then
+        addon:Print("  no Enum.CooldownViewerCategory.TrackedBuff on this client - cannot proceed")
+        return
+    end
+    local cats = {}
+    for name, v in pairs(Enum.CooldownViewerCategory or {}) do cats[#cats + 1] = name .. "=" .. v end
+    table.sort(cats)
+    addon:Print("  categories: " .. table.concat(cats, " "))
+
+    -- 1. Decode and round trip.
+    local s = CV.GetLayoutData()
+    addon:Print(string.format("  saved string: %d chars, prefix %q", #(s or ""), (s or ""):sub(1, 2)))
+    local data, why = DecodeLayoutData(s)
+    if not data then
+        addon:Print("  decode: |cffff6600FAILED|r - " .. tostring(why))
+        if why and why:find("empty") then
+            addon:Print("  (you are on the default layout with nothing saved - see 2)")
+        end
+    else
+        local ok, re = pcall(EncodeLayoutData, data)
+        local same = ok and re == s
+        local back = ok and DecodeLayoutData(re)
+        addon:Print(string.format("  round trip: bytes identical=%s, data identical=%s",
+            tostring(same), tostring(back and DeepEqual(data, back) or false)))
+        addon:Print(string.format("  save format version %s", tostring(data[1])))
+    end
+
+    -- 2. Active layout for this spec.
+    local layout, layoutID, layoutName, tag = ActiveLayout(data or {})
+    addon:Print(string.format("  spec tag %s: active layout %s", tostring(tag),
+        layout and string.format("%s (%q)", tostring(layoutID), tostring(layoutName))
+        or "|cffffff00the default (not stored)|r - adding needs a saved layout"))
+    -- The layout's own category assignments, raw: what the player has moved where.
+    for cat, ids in pairs(layout and layout[LAYOUT_CATEGORY_OVERRIDES] or {}) do
+        local list = {}
+        for _, v in ipairs(ids) do list[#list + 1] = tostring(v) end
+        addon:Print(string.format("    moved into %s: %s", CategoryName(cat), table.concat(list, ", ")))
+    end
+
+    -- 3. Critical spells the player knows: can each be tracked, and is it? Only AURA entries are
+    -- ever candidates - Blizzard lets an entry move into Tracked Buffs only from an aura default
+    -- (CooldownViewerSettings.lua, legalOriginalSourceCategoryToTargetCategory); a spell's
+    -- cooldown entry (Essential / Utility) is never touched.
+    local C = Enum.CooldownViewerCategory
+    local AURA_DEFAULTS = { [C.TrackedBuff] = true, [C.TrackedBar] = true, [C.HiddenPassive] = true }
+    if C.EquipSlotTracked then AURA_DEFAULTS[C.EquipSlotTracked] = true end
+    if C.SpecAgnosticTracked then AURA_DEFAULTS[C.SpecAgnosticTracked] = true end
+    local tracked = { [C.TrackedBuff] = true, [C.TrackedBar] = true }
+    local RI = LibStub("JustAC-RotationImport", true)
+    local want = {}
+    for id in pairs(CriticalSpells()) do
+        local known = (RI and RI.HighestKnownRank(id)) or (IsPlayerSpell and IsPlayerSpell(id))
+        if known then
+            local info = C_Spell.GetSpellInfo(id)
+            local parts, isTracked, candidate = {}, false, nil
+            for cid, default in pairs(CooldownIDsFor(id)) do
+                local eff = EffectiveCategory(layout, cid, default)
+                local aura = AURA_DEFAULTS[default] == true
+                parts[#parts + 1] = string.format("%d:%s%s%s [default %s]", cid, CategoryName(eff),
+                    aura and "(aura)" or "(spell)", tracked[eff] and "*" or "", CategoryName(default))
+                if aura and tracked[eff] then isTracked = true end
+                if aura and not tracked[eff] then candidate = candidate or cid end
+            end
+            if not isTracked and candidate then want[#want + 1] = { id = id, cid = candidate } end
+            addon:Print(string.format("  %s (%d): %s%s", info and info.name or "?", id,
+                #parts > 0 and table.concat(parts, " ") or "|cff888888not offered by the Cooldown Manager|r",
+                isTracked and "" or (candidate and "  |cffffff00<- can add|r" or "")))
+        end
+    end
+    addon:Print("  (* = tracked; (aura) entries are the only ones ever moved)")
+
+    -- 4. Opt-in write.
+    arg = arg and arg:lower() or nil
+    local addWhat = arg and arg:match("^add%s+(.+)$")
+    if not addWhat then return end
+    if InCombatLockdown() then addon:Print("  add: not in combat"); return end
+    if not (data and layout) then
+        addon:Print("  add: needs a decodable, saved, active layout (create one in the Cooldown Manager first)")
+        return
+    end
+    local n = 0
+    for _, w in ipairs(want) do
+        if addWhat == "all" or tonumber(addWhat) == w.id then
+            MoveToTrackedBuffs(layout, w.cid)
+            n = n + 1
+        end
+    end
+    if n == 0 then addon:Print("  add: nothing to add for " .. addWhat); return end
+    local out = EncodeLayoutData(data)
+    local back = DecodeLayoutData(out)
+    if not (back and DeepEqual(back, data)) then
+        addon:Print("  add: |cffff6600re-encode did not verify - nothing written|r")
+        return
+    end
+    CV.SetLayoutData(out)
+    addon:Print(string.format("  add: |cff00ff00wrote %d entr%s into Tracked Buffs|r of %q - now /reload,", n,
+        n == 1 and "y" or "ies", tostring(layoutName)))
+    addon:Print("  then check the icons appear and still read in combat (/jac inspect foreverauras)")
+end
+end   -- do
+
 local PROBE_BATTERY = { "DurationProbe", "AuraInstanceIdsProbe", "CooldownFieldsProbe",
-                        "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe" }
+                        "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe",
+                        "ForeverProbe", "ForeverAuraProbe" }
 
 local function RunProbeBattery(addon, tag, includeStatic)
     ProbeLogEmit(string.format("===== %s @ %.1f combat=%s hp-context: dead=%s =====",

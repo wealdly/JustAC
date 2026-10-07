@@ -821,6 +821,88 @@ local function HideInterruptCastBar(icon)
     icon._castBarArmed = false
 end
 
+--------------------------------------------------------------------------------
+-- Swing bar (queued next-swing abilities: Heroic Strike, Cleave, Raptor Strike, Maul)
+--------------------------------------------------------------------------------
+-- Pressing one queues it onto the next auto attack, so nothing happens at the press. A
+-- swing-timer bar along the icon's bottom edge fills toward the swing it waits for and is
+-- full the moment it fires. The swing times are plain (PLAYER_SWING), so the bar is driven
+-- by plain values - no duration object needed.
+
+local function SwingBarOnUpdate(bar)
+    bar:SetValue(math.min(GetTime(), bar.landAt))
+end
+
+local function CreateSwingBar(icon)
+    local bar = CreateFrame("StatusBar", nil, icon)
+    bar:SetPoint("BOTTOMLEFT",  icon, "BOTTOMLEFT",   1, 1)
+    bar:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -1, 1)
+    bar:SetFrameLevel(icon:GetFrameLevel() + 3)
+    if icon.isOverlayIcon then bar:SetFrameStrata("BACKGROUND") end
+
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    local fill = bar:GetStatusBarTexture()
+    if fill then fill:SetVertexColor(1.0, 0.55, 0.1, 1) end  -- orange: an attack, not a kick
+
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(bar)
+    bg:SetColorTexture(0, 0, 0, 0.6)
+
+    bar:SetScript("OnUpdate", SwingBarOnUpdate)
+    bar:Hide()
+    icon.SwingBar = bar
+    return bar
+end
+
+--- Show the bar for the swing that runs startTime .. landAt (re-armed only when it changes).
+local function ShowSwingBar(icon, startTime, landAt)
+    if not (icon and startTime and landAt and landAt > startTime) then return end
+    local bar = icon.SwingBar or CreateSwingBar(icon)
+    if bar.landAt ~= landAt then
+        local size = icon.cachedIconSize or icon:GetWidth() or 0
+        if size > 0 then bar:SetHeight(math.max(4, size * 0.18)) end
+        bar.landAt = landAt
+        bar:SetMinMaxValues(startTime, landAt)
+        bar:SetValue(math.min(GetTime(), landAt))
+    end
+    bar:Show()
+end
+
+local function HideSwingBar(icon)
+    if not icon or not icon.SwingBar then return end
+    icon.SwingBar:Hide()
+    icon.SwingBar.landAt = nil
+end
+
+-- Queued mark: while a next-swing ability waits for its swing, pressing it again does
+-- nothing, so its hotkey label (the "press me" cue) gives way to a ready-check tick.
+local QUEUED_MARK = "Interface/RaidFrame/ReadyCheck-Ready"
+
+local function ShowQueuedMark(icon)
+    if not icon or not icon.hotkeyText or icon._queuedMarkShown then return end
+    local mark = icon.QueuedMark
+    if not mark then
+        mark = (icon.hotkeyFrame or icon):CreateTexture(nil, "OVERLAY", nil, 6)
+        mark:SetTexture(QUEUED_MARK)
+        icon.QueuedMark = mark
+    end
+    local size = math.max(10, (icon.cachedIconSize or icon:GetWidth() or 0) * 0.4)
+    mark:SetSize(size, size)
+    local anchor = icon.hotkeyAnchor or "TOPRIGHT"
+    mark:ClearAllPoints()
+    mark:SetPoint(anchor, icon, anchor, icon.hotkeyAnchorX or 0, icon.hotkeyAnchorY or 0)
+    mark:Show()
+    icon.hotkeyText:Hide()
+    icon._queuedMarkShown = true
+end
+
+local function HideQueuedMark(icon)
+    if not icon or not icon._queuedMarkShown then return end
+    icon.QueuedMark:Hide()
+    icon.hotkeyText:Show()
+    icon._queuedMarkShown = false
+end
+
 -- Stop every glow an icon can carry and clear the flags. Callers that tear an icon
 -- down (pool release, detach, hide-all) want all of them regardless of which pool the
 -- icon came from, and each arm is already a no-op when its flag is false - so one
@@ -882,4 +964,8 @@ UIAnimations.ResumeAllGlows = ResumeAllGlows
 UIAnimations.StartChannelFill = StartChannelFill
 UIAnimations.StopChannelFill = StopChannelFill
 UIAnimations.ShowInterruptCastBar = ShowInterruptCastBar
+UIAnimations.ShowSwingBar = ShowSwingBar
+UIAnimations.HideSwingBar = HideSwingBar
+UIAnimations.ShowQueuedMark = ShowQueuedMark
+UIAnimations.HideQueuedMark = HideQueuedMark
 UIAnimations.HideInterruptCastBar = HideInterruptCastBar
