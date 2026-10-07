@@ -28,4 +28,6 @@ jobs:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: -g retail -n "{package-name} {project-version}"
+          # No -g: the game versions come from the TOC's Interface line, so one upload is
+          # filed for every client it lists (retail 12.x and WoW Forever 1.60.x).
+          args: -n "{package-name} {project-version}"

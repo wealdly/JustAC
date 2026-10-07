@@ -177,8 +177,41 @@ BlizzardAPI.IsTargetBoss = function() return isBoss end
             bad += 1
             print("  FAIL dot below=%s boss=%s pick=%s got %s, want %s  (%s)" % (below, boss, pick, got, want, why))
     lua.execute("BlizzardAPI.IsUnitHealthBelow = nil")
+    # Life Tap's "starved" leaf (Forever): among the build's known mana spells none usable and
+    # one short of mana. NoteManaStarved is the real function, the game's answers are stubbed.
+    src = SRC.read_text(encoding="utf-8")
+    lua.execute("""
+manaCostCache = {}
+cost = {}         -- spellID -> mana cost
+usableOf = {}     -- spellID -> { usable, notEnough }
+known = {}
+function IsPlayerSpell(id) return known[id] == true end
+C_Spell = { GetSpellPowerCost = function(id) return cost[id] and { { type = 0, cost = cost[id] } } or {} end }
+BlizzardAPI.IsSecretValue = function() return false end
+BlizzardAPI.IsSpellUsable = function(id) local u = usableOf[id] or {true, false}; return u[1], u[2] end
+""" + extract("CostsMana", src) + "\n" + extract("NoteManaStarved", src))
+    starved = [
+        # pick, known/cost/usable setup, expected verdict
+        ("false", "known={[686]=true,[348]=true,[1454]=true}; cost={[686]=25,[348]=25}; "
+                  "usableOf={[686]={false,true},[348]={false,true}}", True,
+         "Shadow Bolt and Immolate short of mana: starved (Life Tap's own cost is health)"),
+        ("false", "known={[686]=true,[348]=true}; cost={[686]=25,[348]=25}; "
+                  "usableOf={[686]={false,true},[348]={true,false}}", False, "one mana spell affordable"),
+        ("false", "known={[686]=true}; cost={[686]=25}; usableOf={[686]={false,false}}", None,
+         "unusable for another reason (moving, no target): no opinion"),
+        ("false", "known={}; cost={}; usableOf={}", None, "nothing that costs mana: no opinion"),
+        ("true", "known={[686]=true}; cost={[686]=25}; usableOf={[686]={false,true}}", None,
+         "retail (game pick): never asked"),
+    ]
+    for pick, setup, want, why in starved:
+        lua.execute("hasPick = %s; manaCostCache = {}; %s" % (pick, setup))
+        lua.execute("NoteManaStarved({686, 348, 1454})")
+        got = run('return GateVerdict({t="starved"}, ctx)')
+        if got != want:
+            bad += 1
+            print("  FAIL starved got %s, want %s  (%s)" % (got, want, why))
     bad += check_coverage()
-    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot), bad))
+    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved), bad))
     return 1 if bad else 0
 
 

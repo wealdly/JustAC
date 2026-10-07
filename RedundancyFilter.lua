@@ -35,6 +35,7 @@ local ROGUE_POISON_CAST_IDS = SpellDB and SpellDB.ROGUE_POISON_CAST_IDS or {}
 -- all classes (ids are globally unique, so one flat map). Weapon imbues deliberately
 -- NOT included: they go to different HANDS, so siblings are not mutually redundant.
 local AUTO_ATTACK_SPELL = 6603
+local AUTO_SHOT_SPELL = 75
 local MAINTAINED_GROUP_OF = {}
 -- Forever ranks: groups name rank 1; casts and the queue carry the rank pressed.
 local RotationImport = LibStub("JustAC-RotationImport", true)
@@ -1221,13 +1222,16 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
 
-    -- AUTO ATTACK ALREADY RUNNING: starting it again does nothing. IsCurrentSpell(Attack) is
-    -- plain in combat (measured on WoW Forever); checked for secrecy before it is branched on.
-    if spellID == AUTO_ATTACK_SPELL and C_Spell.IsCurrentSpell then
-        local on = C_Spell.IsCurrentSpell(AUTO_ATTACK_SPELL)
-        if not (issecretvalue and issecretvalue(on)) and on == true then
-            return true, "already auto-attacking"
+    -- AUTO ATTACKS (Forever). A running one is never redundant: the queue sinks it and shows its
+    -- swing timer (SpellQueue, RunningAutoSwing). Melee swing range (nil on retail, so nothing
+    -- here applies there) picks between the two: out of reach Attack would just walk in, in
+    -- reach Auto Shot is inside its minimum range.
+    if spellID == AUTO_ATTACK_SPELL then
+        if BlizzardAPI.IsTargetInSwingRange(0) == false and IsPlayerSpell(AUTO_SHOT_SPELL) then
+            return true, "out of melee range: Auto Shot instead"
         end
+    elseif spellID == AUTO_SHOT_SPELL and BlizzardAPI.IsTargetInSwingRange(0) == true then
+        return true, "in melee range: Attack instead"
     end
 
     -- SIBLING OF AN IN-FLIGHT APPLICATION. While a maintained-group member (a poison,

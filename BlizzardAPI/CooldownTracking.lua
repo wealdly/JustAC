@@ -307,6 +307,21 @@ function BlizzardAPI.GetSwingWindow(swingType)
     return last, last + swingDur[swingType]
 end
 
+--- Forever: the swing a running auto-attack is on - 0 for Attack (main hand), 2 for an
+--- auto-repeat (Auto Shot, wand Shoot) - or nil when spellID is not one that is running.
+--- Only a plain true counts. nil on retail: no swing timer there to show.
+function BlizzardAPI.RunningAutoSwing(spellID)
+    if not BlizzardAPI.IsForever() then return nil end
+    local on, swingType
+    if spellID == 6603 then
+        on, swingType = C_Spell.IsCurrentSpell(6603), 0
+    else
+        on, swingType = C_Spell.IsAutoRepeatSpell(spellID), 2
+    end
+    if IsSecretValue(on) or on ~= true then return nil end
+    return swingType
+end
+
 -- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, hasTarget), plain in combat and
 -- fired on every target change and range crossing (measured build 70245: a target acquired
 -- from a distance read false/true, walking into melee true/true, a dead target true/false).
@@ -351,12 +366,20 @@ do
         f:RegisterEvent("PLAYER_REGEN_ENABLED")
         f:RegisterUnitEvent("UNIT_ATTACK_SPEED", "player")
         pcall(f.RegisterEvent, f, "PLAYER_SWING_RANGE_UPDATE")
+        pcall(f.RegisterEvent, f, "PLAYER_LEAVE_COMBAT")     -- Attack switched off
+        pcall(f.RegisterEvent, f, "STOP_AUTOREPEAT_SPELL")   -- Auto Shot / wand switched off
         f:SetScript("OnEvent", function(_, event, duration, swingType, hasTarget)
             if event == "PLAYER_SWING" then
                 if type(swingType) == "number" and type(duration) == "number"
                    and not IsSecretValue(duration) and duration > 0 then
                     swingLast[swingType], swingDur[swingType] = GetTime(), duration
                 end
+            elseif event == "PLAYER_LEAVE_COMBAT" then
+                -- Stopped: the last swing no longer times anything, so no bar shows a stale
+                -- sweep when it is switched back on; the next real swing restarts it.
+                swingLast[SWING_MH], swingLast[SWING_OH] = nil, nil
+            elseif event == "STOP_AUTOREPEAT_SPELL" then
+                swingLast[SWING_RANGED] = nil
             elseif event == "PLAYER_SWING_RANGE_UPDATE" then
                 -- Payload (swingType, inRange, hasTarget); the first argument slot is named
                 -- for PLAYER_SWING above.

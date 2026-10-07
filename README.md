@@ -82,10 +82,29 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 - **Overrides** tab - hide a spell (or Shift+Right-click it in the queue), change its queue settings, or **take it off your action bars** so the game's assist stops suggesting it too. **Put Back** restores it to the same buttons; macros are never touched.
 - Light on your CPU: event-driven, with other players' events filtered out before they reach the addon.
 
+## WoW Forever (preliminary)
+
+JustAC also runs on WoW Forever, from the same download. This is an early build for the Forever beta, and some suggestions are still being checked in game.
+
+WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus the abilities on your action bars.
+
+What works differently on Forever:
+
+- **Spell ranks** - the queue shows the rank you have on your bars, with its keybind, and finds any rank in your lists.
+- **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
+- **Auto Shot and Attack** trade places as you move in and out of melee range.
+- **Damage over time** is timed from your own casts, including your opener: it steps back while it ticks, comes back as it runs out, and isn't suggested on a target about to die. Tracking it in the Cooldown Manager makes this exact.
+- **Resource presses** - Life Tap, Evocation and Innervate come forward when you can't afford your spells; Life Tap, Bloodrage and Hellfire only while your health is above half.
+- **Area abilities** lead when two or more enemies are fighting you.
+- **Between pulls** - food, drink or a bandage when you need them, and the flasks, elixirs and scrolls you carry (Defensive Queue → Pre-Combat Buffs).
+- Options that only apply to Assisted Combat are greyed out.
+
+Still being checked in game: the crowd-control escape and interrupt cues, and lists past the beta's level cap.
+
 ## Installation
 
 1. Download from [CurseForge](https://www.curseforge.com/wow/addons/just-assisted-combat) or extract to `Interface\AddOns\JustAC`
-2. Enable "Assisted Combat" in WoW's Game Menu → Edit Mode → Combat section
+2. Retail: enable "Assisted Combat" in WoW's Game Menu → Edit Mode → Combat section (WoW Forever has none - nothing to enable)
 3. `/jac` to access options
 
 ## Configuration
@@ -134,6 +153,10 @@ AceGUI dropdown widgets for selecting LibSharedMedia-registered media in AceConf
 **[Masque](https://github.com/SFX-WoW/Masque)**  
 *Created by StormFX*  
 Button skinning library that allows JustAC icons to match your UI's button theme. Beautiful, flexible, and well-documented.
+
+### WoW Forever priority lists
+
+The WoW Forever priorities derive from the rotation files of the [WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the wowsims project, used under its MIT license (the notice travels with the data).
 
 ### Blizzard Entertainment
 

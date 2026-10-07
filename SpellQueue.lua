@@ -1074,6 +1074,44 @@ SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simc
 --- either way, because the engine answers it outright.
 local gateCtx = {}   -- reused: this runs per entry per build and must not allocate
 
+-- Forever: are the list's mana spells all unaffordable right now? Set once per build (before the
+-- entries are judged) by NoteManaStarved; nil = no answer (retail, or nothing that costs mana).
+local buildStarved
+local manaCostCache = {}   -- spellID -> true / false (plain reads only)
+
+--- Does this spell cost mana? GetSpellPowerCost is static per rank; cached when plain.
+local function CostsMana(spellID)
+    local v = manaCostCache[spellID]
+    if v ~= nil then return v end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+    if not ok or type(costs) ~= "table" or BlizzardAPI.IsSecretValue(costs) then return false end
+    v = false
+    for _, c in ipairs(costs) do
+        if c.type == 0 and not BlizzardAPI.IsSecretValue(c.cost) and (c.cost or 0) > 0 then v = true end
+    end
+    manaCostCache[spellID] = v
+    return v
+end
+
+--- "Too low on mana to cast the rotation": among the known spells of this build that cost mana,
+--- none is usable and at least one is short of power (IsSpellUsable's insufficientPower, plain on
+--- Forever in combat). What Life Tap waits for: the 10%-of-mana line in the sims misses a level-6
+--- warlock whose Shadow Bolt costs a fifth of the bar.
+local function NoteManaStarved(rotationList)
+    buildStarved = nil
+    if BlizzardAPI.HasGamePick() then return end
+    local short = false
+    for i = 1, #rotationList do
+        local id = rotationList[i]
+        if IsPlayerSpell(id) and CostsMana(id) then
+            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, true)
+            if usable == true then buildStarved = false; return end
+            if notEnough == true then short = true end
+        end
+    end
+    if short then buildStarved = true end
+end
+
 local function GateVerdict(g, ctx)
     local t = g.t
     if t == "any" or t == "all" then
@@ -1101,6 +1139,14 @@ local function GateVerdict(g, ctx)
         -- Forever lists: a talent / rank check (Improved Slam). IsPlayerSpell is static.
         if not (g.id and IsPlayerSpell) then return nil end
         return (g.neg == true) ~= (IsPlayerSpell(g.id) and true or false)
+    end
+    if t == "starved" then return buildStarved end
+    if t == "near" then
+        -- Target within g.n yards (point-blank AoE: Arcane Explosion, Hellfire, Blast Wave).
+        -- SpellDB.IsTargetWithin: true / false, nil when no range probe settles it.
+        local within = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(g.n)
+        if within == nil then return nil end
+        return within
     end
     if t == "swing" then
         -- Time to the next auto attack (Forever's PLAYER_SWING tracker): Rapid Fire just
@@ -1290,6 +1336,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local ctxExecute, ctxOutOfMelee, ctxDying = b.ctxExecute, b.ctxOutOfMelee, b.ctxDying
     local contextOrder, sinkCooldowns = b.contextOrder, b.sinkCooldowns
     local simcCtx, pickWindows = b.simcCtx, b.pickWindows
+    NoteManaStarved(rotationList)
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
@@ -1467,6 +1514,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         proccedRank[proccedCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if not leadBarred then anyTimeable = true end
                     elseif sinkCooldowns and (not ready or starved or held or locLocked
+                           or BlizzardAPI.RunningAutoSwing(displayID)   -- running: shown with its timer
                            or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet))
                            or castBarred
                            or IsConfirmedOutOfRange(displayID)
@@ -1480,8 +1528,17 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         sunkSet[displayID] = true
                         -- No game pick only (Forever): the list leads there, so slot 1 is the
                         -- first sunk entry when nothing is ready. Retail keeps its sunk order.
+                        -- Out of range is wasted too: Auto Shot inside its minimum range must not
+                        -- head the sunk spells over ones that are merely on cooldown. So is a
+                        -- running Attack (pressing it switches it off); a running Auto Shot is
+                        -- not, its timer leads the sunk spells so a hunter knows when to stand still.
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
+                                or IsConfirmedOutOfRange(displayID)
+                                or BlizzardAPI.RunningAutoSwing(displayID) == 0
+                                -- Offered only when its conditions hold (Life Tap): otherwise it
+                                -- trails, never parked in slot 2 as a "soon".
+                                or (simcRec and simcRec.w)
                                 or (not alwaysShow and DotTracker
                                     and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
                             wastedSet[displayID] = true
@@ -1524,7 +1581,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
     -- A press that would be wasted (its DoT already ticking, its buff already up) trails the
     -- rest of the sunk spells, which are still worth pressing once rage or a soft condition
-    -- allows (Heroic Strike, not a second Rend or Battle Shout).
+    -- allows (Heroic Strike, not a second Rend or Battle Shout, nor a shot out of range).
     for pass = 1, 2 do
         for i = 1, cooldownCount do
             if spellCount >= maxIcons then break end

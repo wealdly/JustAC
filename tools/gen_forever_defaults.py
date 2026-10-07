@@ -58,7 +58,7 @@ BURST = {
     "rogue":   ["adrenaline_rush", "blade_flurry", "cold_blood"],
     "mage":    ["arcane_power", "combustion", "presence_of_mind"],
     "hunter":  ["rapid_fire", "bestial_wrath"],
-    "priest":  ["power_infusion"],
+    "priest":  ["power_infusion", "shadowfiend"],
 }
 # Cheap between-pull heals (read by class).
 TOPOFF = {"priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
@@ -191,7 +191,12 @@ def main():
     for var, src in [("DEFENSIVE", DEFENSIVE), ("PET_HEAL", PET_HEAL), ("PET_REZ", PET_REZ),
                      ("GROUP_HELP", GROUP_HELP), ("GROUP_HEAL", GROUP_HEAL), ("EMERGENCY", EMERGENCY),
                      ("GAP_CLOSER", GAP_CLOSER), ("BURST", BURST), ("TOPOFF", TOPOFF)]:
-        lines += class_block(var, {c: ids(res, c, n) for c, n in src.items()})
+        table = {c: ids(res, c, n) for c, n in src.items()}
+        if var == "DEFENSIVE":
+            # Defensive racials close every class's list; the engine shows only the ones this
+            # character knows (its race's).
+            table = {c: v + cfa.racial_ids("defensive") for c, v in table.items()}
+        lines += class_block(var, table)
 
     secs = {r["ID"]: int(r["Duration"] or 0) / 1000 for r in cfa.rows("SpellDuration")}
 
@@ -261,7 +266,7 @@ def main():
                     (healing if n in HEALS else defensive).add(sid)
     cc = {res.r1(c, n) for (c, n), m in INTERRUPTS.items() if m["kind"] == "cc"} - {None}
     # Racials by role (cfa.RACIAL_ROLES): defensive and CC ones route like the class's own.
-    defensive |= set(cfa.racial_ids("defensive"))
+    defensive |= set(cfa.racial_ids("defensive")) | set(cfa.racial_ids("ccbreak"))
     cc |= set(cfa.racial_ids("cc"))
     lines.append("local CATEGORIES = { defensive = " + lua({f"[{i}]": True for i in sorted(defensive)})
                  .replace('"', "") + ", healing = " + lua({f"[{i}]": True for i in sorted(healing)})

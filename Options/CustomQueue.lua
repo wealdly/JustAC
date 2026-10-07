@@ -125,7 +125,7 @@ local function SnapshotRotation(addon, specKey)
     -- The game hands its pool over in spell-id order, which reads as nonsense in a list the
     -- user is about to reorder (Eviscerate at step 8, poisons at 2-4) and IS the order with
     -- Context Ordering off. Seed it as a priority instead: theorycraft rank, then the game's
-    -- own step order, then id. Unranked entries (utility) fall to the bottom.
+    -- own step order; ties keep the pool's order. Unranked entries (utility) fall to the bottom.
     if PL and PL.SortByPriority then PL.SortByPriority(cq.spells, "simc") end
 
     return true

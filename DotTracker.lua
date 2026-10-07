@@ -127,7 +127,7 @@ end
 
 --- Record a tracked-DoT cast on the current target. Arms the suppression window
 --- (guaranteed sink) and queues the cast for the aura-instance bridge.
---- Called from UNIT_SPELLCAST_SUCCEEDED (player), in combat only.
+--- Called from UNIT_SPELLCAST_SUCCEEDED (player): in combat, and on Forever out of combat too (the pull).
 function DotTracker.OnCastSucceeded(spellID)
     if not spellID or not SpellDB or not SpellDB.IsTargetDot or not SpellDB.IsTargetDot(spellID) then
         return

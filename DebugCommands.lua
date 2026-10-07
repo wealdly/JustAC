@@ -7759,7 +7759,8 @@ local WATCH_EVENTS = {
     "SPELL_UPDATE_USABLE", "ACTIONBAR_UPDATE_USABLE", "PLAYER_TARGET_CHANGED",
     "UPDATE_SHAPESHIFT_FORM", "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL",
     "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT", "PARTY_KILL", "PLAYER_TOTEM_UPDATE",
-    "LOSS_OF_CONTROL_ADDED", "PET_ATTACK_START", "UNIT_PET", "UNIT_HAPPINESS",
+    "LOSS_OF_CONTROL_ADDED", "LOSS_OF_CONTROL_UPDATE", "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED",
+    "PET_ATTACK_START", "UNIT_PET", "UNIT_HAPPINESS",
     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
 }
 local WATCH_UNIT_EVENTS = {
@@ -7772,8 +7773,12 @@ local WATCH_UNIT_EVENTS = {
     UNIT_SPELLCAST_START = { "player", "target" },
     UNIT_SPELLCAST_SUCCEEDED = { "player", "target" },
     UNIT_SPELLCAST_FAILED = { "player" },
+    -- Kicks: INTERRUPTED's 4th arg (d) is the interrupter on retail, nil on a plain stop;
+    -- STOP / CHANNEL_STOP fire for every ending, so the pair tells a kick from a finish.
     UNIT_SPELLCAST_INTERRUPTED = { "player", "target" },
+    UNIT_SPELLCAST_STOP = { "target" },
     UNIT_SPELLCAST_CHANNEL_START = { "player", "target" },
+    UNIT_SPELLCAST_CHANNEL_STOP = { "target" },
     UNIT_HEALTH = { "target" },                     -- timing only: a damage-rate source?
     UNIT_FLAGS = { "player", "target" },
     -- Attack speed is secret in combat, but does the EVENT still mark a haste buff
@@ -7790,9 +7795,10 @@ local SAMPLE_PERIOD = 0.2
 local SAMPLE_SLOTS = 24         -- distinct bar spells sampled
 
 -- CheckInteractDistance is protected in combat: the call is blocked (not an error pcall can
--- catch), so skip it there instead of tripping ADDON_ACTION_BLOCKED.
+-- catch), so skip it there instead of tripping ADDON_ACTION_BLOCKED. Lockdown alone is not
+-- enough: Forever blocked it 4 times while the player was flagged in combat (combat start).
 local function NearCheck(unit)
-    if InCombatLockdown() then return "n/a in combat" end
+    if InCombatLockdown() or UnitAffectingCombat("player") then return "n/a in combat" end
     return Cf(CheckInteractDistance, unit, 3)
 end
 
@@ -7821,6 +7827,34 @@ local function WatchPayload(event, a, b, c, d, e)
         return args .. " situation=" .. Cf(UnitThreatSituation, "player", "target")
     elseif event == "UNIT_HAPPINESS" or event == "UNIT_PET" then
         return args .. " happiness=" .. Cf(C_PetInfo.GetPetHappiness)
+    elseif event == "LOSS_OF_CONTROL_ADDED" or event == "LOSS_OF_CONTROL_UPDATE" then
+        -- The CC-break cue reads these (MaintenanceTracker.GetCCBreak): locType names the
+        -- mechanic, the duration feeds the swipe. Are they plain on Forever, and present?
+        local LOC = C_LossOfControl
+        if not (LOC and LOC.GetActiveLossOfControlDataCount) then return args .. " C_LossOfControl=noAPI" end
+        local okC, n = pcall(LOC.GetActiveLossOfControlDataCount)
+        local out = args .. " count=" .. (okC and Cv(n) or "err")
+        if okC and type(n) == "number" and not issecretvalue(n) then
+            for i = 1, math.min(n, 3) do
+                local okD, dd = pcall(LOC.GetActiveLossOfControlData, i)
+                if okD and type(dd) == "table" then
+                    out = out .. string.format(" [%d type=%s spell=%s text=%s school=%s dur=%s]", i,
+                        Cv(dd.locType), Cv(dd.spellID), Cv(dd.displayText), Cv(dd.lockoutSchool),
+                        Cf(LOC.GetActiveLossOfControlDuration, "player", i))
+                else
+                    out = out .. string.format(" [%d %s]", i, okD and "nil" or "err")
+                end
+            end
+        end
+        return out
+    elseif (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START") and a == "target" then
+        -- The interrupt cue: is the cast readable, and is "can't be interrupted" (8th return of
+        -- both) plain? The spell itself came through secret in round 2.
+        local info = event == "UNIT_SPELLCAST_START" and UnitCastingInfo or UnitChannelInfo
+        local okI, name, _, _, startMS, endMS, _, _, notInt = pcall(info, "target")
+        if not okI then return args .. " info=err" end
+        return string.format("%s name=%s start=%s end=%s notInterruptible=%s", args, Cv(name),
+            Cv(startMS), Cv(endMS), Cv(notInt))
     elseif event == "UNIT_AURA" then
         -- 12.1 retail: the payload LISTS are secret; is Forever the same?
         local info = b
@@ -7920,6 +7954,28 @@ local function ForeverWatch(on)
                 use, Cf(C_ActionBar.IsActionInRange, s.slot), Cf(C_Spell.IsCurrentSpell, s.id),
                 cd and Cv(cd.isOnGCD) or "nil"))
         end
+        -- What the queue SHOWS (first 3) and whether each can be paid for right now: bar
+        -- sampling misses spells pressed through macros, the queue does not.
+        local SQ = LibStub("JustAC-SpellQueue", true)
+        local q = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue() or {}
+        local shown = {}
+        for i = 1, math.min(#q, 3) do
+            local okU, usable, noMana = pcall(C_Spell.IsSpellUsable, q[i])
+            shown[i] = string.format("%s(%s)", C_Spell.GetSpellName(q[i]) or q[i],
+                okU and (Cv(usable) .. "/noPower=" .. Cv(noMana)) or "err")
+        end
+        Note("queue", #shown > 0 and table.concat(shown, " ") or "empty")
+        -- Pet: exists / dead / combat / health band (is the band plain for the pet in combat?)
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        local function PetBelow(pct)
+            return Cf(function() return B and B.IsUnitHealthBelow and B.IsUnitHealthBelow("pet", pct) end)
+        end
+        local function PetManaBelow(pct)
+            return Cf(function() return B and B.IsUnitPowerBelow and B.IsUnitPowerBelow("pet", pct, 0) end)
+        end
+        Note("pet", string.format("exists=%s dead=%s combat=%s below50=%s below35=%s mana<50=%s mana<25=%s",
+            Cf(UnitExists, "pet"), Cf(UnitIsDead, "pet"), Cf(UnitAffectingCombat, "pet"),
+            PetBelow(50), PetBelow(35), PetManaBelow(50), PetManaBelow(25)))
         Note("player", string.format("form=%s stealth=%s speed=%s cp=%s threat=%s attack=%s",
             Cf(GetShapeshiftForm), Cf(IsStealthed), Cf(GetUnitSpeed, "player"),
             Cf(GetComboPoints, "player", "target"), Cf(UnitThreatSituation, "player", "target"),
@@ -7932,7 +7988,9 @@ local function ForeverWatch(on)
                 plates = plates + 1
                 local okC, ic = pcall(UnitAffectingCombat, u)
                 local okD, nr = true, false
-                if not InCombatLockdown() then okD, nr = pcall(CheckInteractDistance, u, 3) end
+                if not (InCombatLockdown() or UnitAffectingCombat("player")) then
+                    okD, nr = pcall(CheckInteractDistance, u, 3)
+                end
                 if not okC or not okD or PlainText(ic) == nil or PlainText(nr) == nil then
                     bad = bad + 1
                 else
@@ -8194,6 +8252,29 @@ function DebugCommands.ForeverProbe(addon, arg)
     R("soul shard count (6265)", function() return C_Item.GetItemCount(6265) end)
     R("totem slot 1 name", function() return select(2, GetTotemInfo(1)) end)
     R("pet exists", function() return UnitExists("pet") end)
+    -- Pet decisions (summon, revive, Health Funnel / Mend Pet): production reads UnitHealth,
+    -- secret in combat, so pet heals are out-of-combat only. Does the health band read for the
+    -- pet the way it does for the target? And dead / in combat / the summon button's state.
+    R("pet dead", function() return UnitIsDead("pet") end)
+    R("pet in combat", function() return UnitAffectingCombat("pet") end)
+    R("pet health (raw)", function() return UnitHealth("pet") end)
+    for _, pct in ipairs({ 35, 50, 70 }) do
+        R("pet health below " .. pct .. "% (IsUnitHealthBelow)", function()
+            local B = LibStub("JustAC-BlizzardAPI", true)
+            return B and B.IsUnitHealthBelow and B.IsUnitHealthBelow("pet", pct)
+        end)
+    end
+    R("pet target is my target", function() return UnitIsUnit("pettarget", "target") end)
+    -- Pet mana (Dark Pact takes it; an imp / voidwalker spends it): raw, and the power band
+    -- (IsUnitPowerBelow - the twin of the health band that does read for the pet).
+    R("pet power type", function() return UnitPowerType("pet") end)
+    R("pet mana (raw)", function() return UnitPower("pet", 0) end)
+    for _, pct in ipairs({ 25, 50 }) do
+        R("pet mana below " .. pct .. "% (IsUnitPowerBelow)", function()
+            local B = LibStub("JustAC-BlizzardAPI", true)
+            return B and B.IsUnitPowerBelow and B.IsUnitPowerBelow("pet", pct, 0)
+        end)
+    end
 
     -- H: guides split each class into trees (Arms/Fury/Protection) but Forever has ONE spec
     -- id per class; the trees are trait GROUPS of one tree. Points spent per group is how a
