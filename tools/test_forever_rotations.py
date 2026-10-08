@@ -83,4 +83,10 @@ for sid, need in [(1454, ('t="starved"', 'pct=50', "w=true")),      # Life Tap
                   (1949, ('t="near"', 'pct=50', "w=true")),          # Hellfire
                   (2687, ('t="health"', "w=true"))]:                 # Bloodrage
     assert all(n in line(sid) for n in need), (sid, line(sid))
+# Hunters open with Serpent Sting (its own conditions kept), cast with Auto Shot right behind it.
+hunter = data[data.index('["HUNTER_F"] = {'):data.index('["MAGE_F"] = {')]
+for tree in ("beast_mastery", "marksmanship", "survival"):
+    block = hunter[hunter.index(tree + " = {"):]
+    ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)[:2]]
+    assert ids == [1978, 75], (tree, ids)
 print("ok")

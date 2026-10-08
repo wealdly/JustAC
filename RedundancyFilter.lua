@@ -1223,15 +1223,28 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     end
 
     -- AUTO ATTACKS (Forever). A running one is never redundant: the queue sinks it and shows its
-    -- swing timer (SpellQueue, RunningAutoSwing). Melee swing range (nil on retail, so nothing
-    -- here applies there) picks between the two: out of reach Attack would just walk in, in
-    -- reach Auto Shot is inside its minimum range.
-    if spellID == AUTO_ATTACK_SPELL then
-        if BlizzardAPI.IsTargetInSwingRange(0) == false and IsPlayerSpell(AUTO_SHOT_SPELL) then
-            return true, "out of melee range: Auto Shot instead"
+    -- swing timer (SpellQueue, RunningAutoSwing). The game's own range checks (nil on retail, so
+    -- nothing here applies there) pick between the two. Auto Shot fires from 8 to 35 yards - the
+    -- RANGED check (swing type 2) - so between melee reach and 8 yards neither melee nor Auto Shot
+    -- works and melee is the one a step away (the game stops Auto Shot there, measured).
+    --   Attack yields while Auto Shot can fire;
+    --   Auto Shot yields while too close for it: out of its range and in melee or within 10 yd
+    --   (out of range far away it stays - the pull - and the queue greys it).
+    -- No ranged reading yet: melee reach alone, the old rule.
+    if spellID == AUTO_ATTACK_SPELL or spellID == AUTO_SHOT_SPELL then
+        local ranged, melee = BlizzardAPI.IsTargetInSwingRange(2), BlizzardAPI.IsTargetInSwingRange(0)
+        if spellID == AUTO_ATTACK_SPELL then
+            local canShoot = ranged == true or (ranged == nil and melee == false)
+            if canShoot and IsPlayerSpell(AUTO_SHOT_SPELL) then
+                return true, "Auto Shot can fire: Attack would only walk in"
+            end
+        else
+            local tooClose = melee == true
+                or (ranged == false and SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(10) == true)
+            if tooClose then
+                return true, "inside Auto Shot's minimum range: Attack instead"
+            end
         end
-    elseif spellID == AUTO_SHOT_SPELL and BlizzardAPI.IsTargetInSwingRange(0) == true then
-        return true, "in melee range: Attack instead"
     end
 
     -- SIBLING OF AN IN-FLIGHT APPLICATION. While a maintained-group member (a poison,

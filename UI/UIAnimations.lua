@@ -833,6 +833,9 @@ local function SwingBarOnUpdate(bar)
     bar:SetValue(math.min(GetTime(), bar.landAt))
 end
 
+local SWING_FILL = { 1.0, 0.55, 0.1 }    -- orange: loading
+local SWING_READY = { 0.2, 1.0, 0.3 }    -- green: the shot is due - stand still and it fires
+
 -- offHand: a second bar stacked on the main one (a running Attack while dual wielding).
 local function CreateSwingBar(icon, offHand)
     local bar = CreateFrame("StatusBar", nil, icon)
@@ -850,7 +853,7 @@ local function CreateSwingBar(icon, offHand)
 
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     local fill = bar:GetStatusBarTexture()
-    if fill then fill:SetVertexColor(1.0, 0.55, 0.1, 1) end  -- orange: an attack, not a kick
+    if fill then fill:SetVertexColor(SWING_FILL[1], SWING_FILL[2], SWING_FILL[3], 1) end
 
     local bg = bar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(bar)
@@ -863,15 +866,24 @@ local function CreateSwingBar(icon, offHand)
 end
 
 --- Show the bar for the swing that runs startTime .. landAt (re-armed only when it changes).
-local function ShowSwingBar(icon, startTime, landAt, offHand)
+--- ready: an auto-repeat shot is due and fires the moment you stand still.
+local function ShowSwingBar(icon, startTime, landAt, offHand, ready)
     if not (icon and startTime and landAt and landAt > startTime) then return end
     local bar = icon[offHand and "OffSwingBar" or "SwingBar"] or CreateSwingBar(icon, offHand)
     if bar.landAt ~= landAt then
         local size = icon.cachedIconSize or icon:GetWidth() or 0
-        if size > 0 then bar:SetHeight(math.max(4, size * 0.18)) end
+        -- A thin strip along the bottom: readable, clear of the hotkey and the cue dot.
+        if size > 0 then bar:SetHeight(math.max(3, size * 0.06)) end
         bar.landAt = landAt
         bar:SetMinMaxValues(startTime, landAt)
         bar:SetValue(math.min(GetTime(), landAt))
+    end
+    ready = ready and true or false
+    if bar.ready ~= ready then
+        bar.ready = ready
+        local c = ready and SWING_READY or SWING_FILL
+        local fill = bar:GetStatusBarTexture()
+        if fill then fill:SetVertexColor(c[1], c[2], c[3], 1) end
     end
     bar:Show()
 end

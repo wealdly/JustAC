@@ -20,7 +20,9 @@ setmetatable(B, { __index = function() return function() return nil end end })
 forever = false
 B.IsForever = function() return forever end
 inRange, attacking, shooting, knowsAutoShot = nil, false, false, true
-B.IsTargetInSwingRange = function() return inRange end
+rangedIn, within10 = nil, nil   -- the ranged check (8-35 yd) and the 10-yard probe
+B.IsTargetInSwingRange = function(t) if t == 2 then return rangedIn end return inRange end
+LibStub:NewLibrary("JustAC-SpellDB").IsTargetWithin = function() return within10 end
 C_Spell = {
     IsCurrentSpell = function() return attacking end,
     IsAutoRepeatSpell = function() return shooting end,
@@ -58,6 +60,17 @@ def main():
     g.forever, g.inRange = True, False   # out of melee: Auto Shot range
     g.shooting = True
     assert not red(75), "a running Auto Shot stays (sunk, with its timer)"
+    g.shooting, g.attacking = False, False
+    # The dead zone: out of melee reach but inside Auto Shot's 8 yards (the ranged check is out).
+    g.inRange, g.rangedIn, g.within10 = False, False, True
+    assert red(75), "dead zone: Auto Shot cannot fire"
+    assert not red(6603), "dead zone: Attack is the one a step away"
+    # Auto Shot range (8-35 yd): Attack yields.
+    g.rangedIn, g.within10 = True, False
+    assert red(6603) and not red(75), "8-35 yd: Auto Shot, not Attack"
+    # Far beyond 35 yd: Auto Shot stays (the pull, greyed out of range).
+    g.rangedIn, g.within10 = False, False
+    assert not red(75), "out of range far away: Auto Shot stays as the pull"
     print("ok")
 
 

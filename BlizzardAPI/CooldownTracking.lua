@@ -357,6 +357,24 @@ local function RefreshSwingBase()
     end
 end
 
+-- The first shot after Auto Shot (or a wand) is switched on: the previous shot's cooldown keeps
+-- running while it is off, so the shot comes when that runs out, or FIRST_SHOT_AIM after a press
+-- made standing still, whichever is later. Measured on Forever (build 70245, START_AUTOREPEAT_SPELL
+-- to the first ranged PLAYER_SWING, 10 presses): 0.08-0.16s - quicker than the aim after a stop
+-- (0.27-0.50s). Seeding that window lets the swing bar show it from the press instead of
+-- from the first shot; the shot's own PLAYER_SWING then replaces it.
+local FIRST_SHOT_AIM = 0.15
+local rangedShotAt   -- the last real ranged shot (kept through Auto Shot being switched off)
+
+local function SeedRangedWindow()
+    local dur = swingDur[SWING_RANGED] or swingBase[SWING_RANGED]
+    if not dur then return end
+    local now = GetTime()
+    local landAt = now + FIRST_SHOT_AIM
+    if rangedShotAt and rangedShotAt + dur > landAt then landAt = rangedShotAt + dur end
+    swingLast[SWING_RANGED], swingDur[SWING_RANGED] = landAt - dur, dur
+end
+
 do
     local f = CreateFrame("Frame")
     -- pcall: PLAYER_SWING only exists on Forever.
@@ -368,12 +386,16 @@ do
         pcall(f.RegisterEvent, f, "PLAYER_SWING_RANGE_UPDATE")
         pcall(f.RegisterEvent, f, "PLAYER_LEAVE_COMBAT")     -- Attack switched off
         pcall(f.RegisterEvent, f, "STOP_AUTOREPEAT_SPELL")   -- Auto Shot / wand switched off
+        pcall(f.RegisterEvent, f, "START_AUTOREPEAT_SPELL")  -- ... and on: seed the first shot
         f:SetScript("OnEvent", function(_, event, duration, swingType, hasTarget)
             if event == "PLAYER_SWING" then
                 if type(swingType) == "number" and type(duration) == "number"
                    and not IsSecretValue(duration) and duration > 0 then
                     swingLast[swingType], swingDur[swingType] = GetTime(), duration
+                    if swingType == SWING_RANGED then rangedShotAt = swingLast[swingType] end
                 end
+            elseif event == "START_AUTOREPEAT_SPELL" then
+                SeedRangedWindow()
             elseif event == "PLAYER_LEAVE_COMBAT" then
                 -- Stopped: the last swing no longer times anything, so no bar shows a stale
                 -- sweep when it is switched back on; the next real swing restarts it.
