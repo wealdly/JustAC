@@ -144,7 +144,7 @@ How the swing data can be used:
 | Countdown on queued on-next-swing icons (a cooldown swipe from last swing to next, plain numbers) | same + `IsCurrentSpell` | both plain; display work |
 | Live attack speed in combat (`UnitAttackSpeed` is secret there) | `swingDuration` per swing | plain, measured |
 | Haste-buff inference without aura reads: Slice and Dice, Flurry, Blade Flurry show as a shorter `swingDuration`; buff start / end as a `UNIT_ATTACK_SPEED` event | ratio vs the out-of-combat base speed; event timing | **probe**: recorder `fw UNIT_ATTACK_SPEED` vs `fw PLAYER_SWING` dur |
-| Wand / Auto Shot timing (ranged swing type) for casters wanding and hunters | ranged `PLAYER_SWING` | plain; hunter abilities no longer clip Auto Shot on Forever |
+| Wand / Auto Shot timing (ranged swing type) for casters wanding and hunters | ranged `PLAYER_SWING` | plain; hunter abilities no longer clip Auto Shot on Forever. **Measured:** standing still, shots land within 0.06s of last swing + `swingDuration`; a shot that comes due while moving fires 0.27-0.50s after `PLAYER_STOPPED_MOVING` (the aim). The swing bar turns green when the timer runs out (ready: standing still it fires then), with no lead. Switched on standing still with no cooldown left, the first shot comes 0.08-0.16s after `START_AUTOREPEAT_SPELL` (CooldownTracking FIRST_SHOT_AIM). Wands unmeasured |
 | In melee range of the target | Blizzard bars' `isOutOfRange` / `PLAYER_SWING_RANGE_UPDATE` | our own check read nil; **probe** whether the bars' check engages with the CVar on (`fs SwingTimer*Frame` lines) |
 
 ### Round 2 session

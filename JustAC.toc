@@ -76,6 +76,7 @@ ActionBarScanner.lua
 RedundancyFilter.lua
 DotTracker.lua
 MaintenanceTracker.lua
+CdmAdvisor.lua
 SpellQueue.lua
 
 # UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UISootheCue/UIMaintenanceAura → UIRenderer → UINameplateOverlay)

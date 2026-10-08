@@ -1217,6 +1217,10 @@ local issecretvalue = issecretvalue
 local C_SpellActivationOverlay_IsSpellOverlayed =
     C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local moveCastClassCache = {}
+-- Auto-repeat shots report cast time 0 but only fire while standing still. The API answers for
+-- known spells; the IDs back it up (Auto Shot, wand Shoot, Throw, bow/gun Shoot).
+local IsAutoRepeatSpell = (C_Spell and C_Spell.IsAutoRepeatSpell) or IsAutoRepeatSpell
+local AUTO_REPEAT_IDS = { [75] = true, [5019] = true, [2764] = true, [3018] = true }
 local function MoveCastClass(spellID, spellInfo)
     if not spellID then return nil end
     local cached = moveCastClassCache[spellID]
@@ -1225,6 +1229,13 @@ local function MoveCastClass(spellID, spellInfo)
     if SDB and SDB.IsChanneled and SDB.IsChanneled(spellID) then
         moveCastClassCache[spellID] = "channel"
         return "channel"
+    end
+    local autoOk, autoRepeat = false, false
+    if IsAutoRepeatSpell then autoOk, autoRepeat = pcall(IsAutoRepeatSpell, spellID) end
+    if issecretvalue and issecretvalue(autoRepeat) then autoOk = false end
+    if AUTO_REPEAT_IDS[spellID] or (autoOk and autoRepeat == true) then
+        moveCastClassCache[spellID] = "autorepeat"
+        return "autorepeat"
     end
     local ct = spellInfo and spellInfo.castTime
     if ct == nil then return nil end               -- no info yet; retry next render
@@ -1251,7 +1262,9 @@ local function IsMoveCastableNow(spellID, spellInfo)
     local class = MoveCastClass(spellID, spellInfo)
     if class == "instant" then return true end
     if class == "hardcast" then return IsSpellProcActive(spellID) end
-    return false  -- "channel" / nil
+    -- "channel" / "autorepeat" / nil. Auto-repeat shots (Auto Shot, wands) start on the move but
+    -- fire only standing still - no marker; their swing bar turns green when it is time to stop.
+    return false
 end
 
 --- Move-cast marker setting: the explicit profile toggle, or the per-spec auto default
@@ -2730,6 +2743,7 @@ local function RenderQueueIcon(icon, i, ctx)
         -- A queued on-next-swing ability (Heroic Strike): nothing fires until the swing, so
         -- show it in progress - casting state, and a swing bar filling to the swing it waits for.
         local queuedSwing, swingStart, swingEnd, offStart, offEnd = false, nil, nil, nil, nil
+        local shotReady = false
         local autoSwing = not isItemEntry and BlizzardAPI.RunningAutoSwing(spellID)
         if not isItemEntry and SpellDB and SpellDB.NEXT_SWING_SPELLS[spellID] and C_Spell_IsCurrentSpell then
             local queued = C_Spell_IsCurrentSpell(spellID)
@@ -2743,6 +2757,11 @@ local function RenderQueueIcon(icon, i, ctx)
             isCastedSpell, queuedSwing = true, true
             swingStart, swingEnd = BlizzardAPI.GetSwingWindow(autoSwing)
             if autoSwing == 0 then offStart, offEnd = BlizzardAPI.GetSwingWindow(1) end
+            -- An auto-repeat shot whose timer has run out is ready: standing still it fires that
+            -- instant (measured: within 0.06s), so the bar turns green as it completes. Stopping
+            -- only then still costs an aim (0.27-0.50s after the stop, measured) - green is
+            -- "ready", not a forecast.
+            shotReady = autoSwing == 2 and swingEnd ~= nil and currentTime >= swingEnd
         end
 
         local visualState = ResolveVisualState(icon, spellID,
@@ -2792,7 +2811,7 @@ local function RenderQueueIcon(icon, i, ctx)
             UIAnimations.StopChannelFill(icon)
         end
         if swingEnd then
-            UIAnimations.ShowSwingBar(icon, swingStart, swingEnd)
+            UIAnimations.ShowSwingBar(icon, swingStart, swingEnd, false, shotReady)
         elseif icon.SwingBar then
             UIAnimations.HideSwingBar(icon)
         end

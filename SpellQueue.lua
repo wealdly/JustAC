@@ -1199,7 +1199,14 @@ local function GateVerdict(g, ctx)
         end
         -- Forever ranks: the gate names rank 1; ask the rank the player has.
         local id = (RotationImport and RotationImport.HighestKnownRank(g.id)) or g.id
-        return (g.neg == true) == (BlizzardAPI.IsSpellOnCooldown(id) and true or false)
+        local onCd = BlizzardAPI.IsSpellOnCooldown(id) and true or false
+        -- Forever: a spell not learned yet is as unavailable as one on cooldown. "Serpent Sting
+        -- while Aimed Shot is on cooldown" must hold for a hunter who has no Aimed Shot - read
+        -- as "ready", it kept the opener off the queue entirely while levelling.
+        if not onCd and not BlizzardAPI.HasGamePick() and IsPlayerSpell and not IsPlayerSpell(id) then
+            onCd = true
+        end
+        return (g.neg == true) == onCd
     end
     if t == "prev" then
         -- The last cast is plain (our own casts), so this reads the same in both modes.

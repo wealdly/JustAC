@@ -19,6 +19,27 @@ local function ApplyCdmVisibility(a)
     if MT and MT.ApplyViewerVisibility then MT.ApplyViewerVisibility(a.db.profile) end
 end
 
+--- WoW Forever: what the Cooldown Manager advisor would add, what the player hid, what it added.
+local function CdmTrackStatus()
+    local CA = LibStub("JustAC-CdmAdvisor", true)
+    if not CA then return "" end
+    local state, can, hidden, added = CA.Status()
+    if state ~= "ok" and state ~= "nolayout" then return CA.StateText(state) end
+    local names, lines = {}, {}
+    for _, c in ipairs(can) do names[#names + 1] = c.name end
+    lines[1] = #names > 0 and L["CDM can add"]:format(table.concat(names, ", ")) or L["CDM all tracked"]
+    if #hidden > 0 then
+        local h = {}
+        for _, c in ipairs(hidden) do h[#h + 1] = c.name end
+        lines[#lines + 1] = L["CDM player hid"]:format(table.concat(h, ", "))
+    end
+    if added > 0 then lines[#lines + 1] = L["CDM added count"]:format(added) end
+    if state == "nolayout" and #names > 0 then lines[#lines + 1] = CA.StateText(state) end
+    return table.concat(lines, "\n")
+end
+
+local function NotForever() return not (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) end
+
 local function clearScannerCaches()
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
     if ActionBarScanner and ActionBarScanner.ClearAllCaches then
@@ -247,6 +268,77 @@ function General.CreateTabArgs(addon)
                         onSet = ApplyCdmVisibility,
                         hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
                     }),
+                    -- WoW Forever: add the rotation's buffs and DoTs to the player's Cooldown
+                    -- Manager, as a guest in their layout (CdmAdvisor has the rules). Raw entries:
+                    -- their callbacks close over `addon` (see the note above hideCdmHeader).
+                    cdmTrackTitle = {
+                        type = "description", order = 19.57, fontSize = "medium",
+                        name = function() return "\n|cffffd100" .. L["Track Rotation Auras"] .. "|r" end,
+                        hidden = NotForever,
+                    },
+                    cdmTrackDesc = {
+                        type = "description", order = 19.571, fontSize = "small",
+                        name = L["Track Rotation Auras desc"],
+                        hidden = NotForever,
+                    },
+                    cdmTrackStatus = {
+                        type = "description", order = 19.572,
+                        name = CdmTrackStatus,
+                        hidden = NotForever,
+                    },
+                    cdmTrackAdd = {
+                        type = "execute", order = 19.573, width = "normal",
+                        name = L["CDM track"],
+                        func = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            local n, why = CA.Add()
+                            if n > 0 then CA.OfferReload(L["CDM reload text"]:format(n))
+                            elseif why then addon:Print(why) end
+                            W.NotifyChange()
+                        end,
+                        disabled = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            local state, can = CA and CA.Status()
+                            return (state ~= "ok" and state ~= "nolayout") or #can == 0
+                        end,
+                        hidden = NotForever,
+                    },
+                    cdmTrackRemove = {
+                        type = "execute", order = 19.574, width = "normal",
+                        name = L["CDM remove"], desc = L["CDM remove desc"],
+                        func = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            local n, why = CA.RemoveAdded()
+                            if n > 0 then CA.OfferReload(L["CDM removed"]:format(n))
+                            elseif why then addon:Print(why) end
+                            W.NotifyChange()
+                        end,
+                        disabled = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            local state, _, _, added = CA and CA.Status()
+                            return state ~= "ok" or (added or 0) == 0
+                        end,
+                        hidden = NotForever,
+                    },
+                    cdmTrackAsk = {
+                        type = "toggle", order = 19.575, width = "full",
+                        name = L["CDM ask"], desc = L["CDM ask desc"],
+                        get = function()
+                            local c = addon.db.char.cdm
+                            return not (c and c.neverAsk)
+                        end,
+                        set = function(_, val)
+                            addon.db.char.cdm = addon.db.char.cdm or {}
+                            if val then
+                                addon.db.char.cdm.neverAsk = nil
+                                local CA = LibStub("JustAC-CdmAdvisor", true)
+                                if CA then CA.MaybePrompt() end
+                            else
+                                addon.db.char.cdm.neverAsk = true
+                            end
+                        end,
+                        hidden = NotForever,
+                    },
         },
     }
 

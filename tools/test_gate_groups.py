@@ -210,8 +210,25 @@ BlizzardAPI.IsSpellUsable = function(id) local u = usableOf[id] or {true, false}
         if got != want:
             bad += 1
             print("  FAIL starved got %s, want %s  (%s)" % (got, want, why))
+    # The cd leaf on Forever: a spell not learned yet reads as unavailable (on cooldown), so
+    # "Serpent Sting while Aimed Shot is on cooldown" holds for a hunter without Aimed Shot.
+    lua.execute("onCd = {}; BlizzardAPI.IsSpellOnCooldown = function(id) return onCd[id] == true end")
+    cd = [
+        # pick, known, on cd, gate, expected
+        ("false", "{}", "{}", '{t="cd",id=19434,neg=true}', True, "Forever, Aimed Shot not learned: counts as on cooldown"),
+        ("false", "{[19434]=true}", "{}", '{t="cd",id=19434,neg=true}', False, "learned and ready: not on cooldown"),
+        ("false", "{[19434]=true}", "{[19434]=true}", '{t="cd",id=19434,neg=true}', True, "learned and on cooldown"),
+        ("false", "{}", "{}", '{t="cd",id=19434}', False, "not learned: never 'ready'"),
+        ("true", "{}", "{}", '{t="cd",id=19434,neg=true}', False, "retail (game pick): unchanged"),
+    ]
+    for pick, known, oncd, gate, want, why in cd:
+        lua.execute("hasPick = %s; known = %s; onCd = %s" % (pick, known, oncd))
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        if got != want:
+            bad += 1
+            print("  FAIL cd %s got %s, want %s  (%s)" % (gate, got, want, why))
     bad += check_coverage()
-    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved), bad))
+    print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved) + len(cd), bad))
     return 1 if bad else 0
 
 

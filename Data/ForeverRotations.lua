@@ -91,6 +91,7 @@ RotationImport.RegisterForever({
     default = "beast_mastery",
     beast_mastery = {  -- hunter_dps__bm
       st = {
+        {id=1978,gates={{t="dot",id=1978},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=75,gates={}},  -- Auto Shot
         {id=1130,gates={{t="dot",id=1130}}},  -- Hunter's Mark
         {id=2973,gates={}},  -- Raptor Strike
@@ -98,12 +99,12 @@ RotationImport.RegisterForever({
         {id=3045,gates={{t="swing",op="<",n=0.1,ranged=true},{t="cd",id=19434}}},  -- Rapid Fire
         {id=19434,gates={{t="swing",op=">",n=1,ranged=true}}},  -- Aimed Shot
         {id=2643,gates={{t="swing",op=">",n=0.5,ranged=true}}},  -- Multi-Shot
-        {id=1978,gates={{t="dot",id=1978},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=1293241,gates={{t="swing",op=">",n=1,ranged=true}}},  -- Summon Hawk
       },
     },
     marksmanship = {  -- hunter_dps__mm
       st = {
+        {id=1978,gates={{t="dot",id=1978},{t="cd",id=19434,neg=true},{t="cd",id=2643,neg=true},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=75,gates={}},  -- Auto Shot
         {id=1130,gates={{t="dot",id=1130}}},  -- Hunter's Mark
         {id=2973,gates={}},  -- Raptor Strike
@@ -111,13 +112,13 @@ RotationImport.RegisterForever({
         {id=3045,gates={{t="swing",op="<",n=0.1,ranged=true},{t="cd",id=19434}}},  -- Rapid Fire
         {id=19434,gates={{t="swing",op=">",n=1,ranged=true}}},  -- Aimed Shot
         {id=2643,gates={{t="swing",op=">",n=0.5,ranged=true}}},  -- Multi-Shot
-        {id=1978,gates={{t="dot",id=1978},{t="cd",id=19434,neg=true},{t="cd",id=2643,neg=true},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=1310687,gates={{t="swing",op=">",n=1,ranged=true},{t="cd",id=19434,neg=true},{t="cd",id=2643,neg=true}}},  -- Sniper Shot
         {id=3044,gates={{t="swing",op=">",n=0.5,ranged=true},{t="power",res="mana",op=">=",n=30,ispct=true},{t="cd",id=19434,neg=true}}},  -- Arcane Shot
       },
     },
     survival = {  -- hunter_dps__sv
       st = {
+        {id=1978,gates={{t="dot",id=1978},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=75,gates={}},  -- Auto Shot
         {id=1130,gates={{t="dot",id=1130}}},  -- Hunter's Mark
         {id=2973,gates={}},  -- Raptor Strike
@@ -125,7 +126,6 @@ RotationImport.RegisterForever({
         {id=3045,gates={{t="swing",op="<",n=0.1,ranged=true},{t="cd",id=19434}}},  -- Rapid Fire
         {id=19434,gates={{t="swing",op=">",n=1,ranged=true}}},  -- Aimed Shot
         {id=2643,gates={{t="swing",op=">",n=0.5,ranged=true}}},  -- Multi-Shot
-        {id=1978,gates={{t="dot",id=1978},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Serpent Sting
         {id=3044,gates={{t="swing",op=">",n=0.5,ranged=true},{t="power",res="mana",op=">=",n=30,ispct=true}}},  -- Arcane Shot
       },
     },

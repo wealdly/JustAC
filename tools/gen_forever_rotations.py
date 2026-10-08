@@ -77,10 +77,14 @@ AOE_LEAD_TIERS = ["cleave", "aoe"]
 # = all). at: "front" (after the own-buff leads; listed order kept), "end", or "after:<name>".
 # gates: "dot" = keep-it-up on the target (sinks while it runs, never on a dying target),
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
+# move: the ability is already on the sim list - take that entry, with its own conditions, to
+# the front instead of adding a second one.
 EXTRA = {
     "warrior": [dict(spell="demoralizing_shout", tiers=["cleave", "aoe"], at="front", gates=["dot"])],
-    # Auto Shot leads: off the GCD and the hunter's main damage; once running it sinks with its timer.
-    "hunter": [dict(spell="auto_shot", at="front"),
+    # Serpent Sting opens: its DoT lands at once, and it is cast WITH Auto Shot, which is off the
+    # GCD and follows it as the hunter's main damage; once running Auto Shot sinks with its timer.
+    "hunter": [dict(spell="serpent_sting", at="front", move=True),
+               dict(spell="auto_shot", at="front"),
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front")],
@@ -139,7 +143,14 @@ def add_extras(cls, tree, entries, chains, unresolved):
         if x.get("trees") and tree not in x["trees"]:
             continue
         sid = r1_of(x["spell"])
-        if not sid or any(e["id"] == sid for e in entries):
+        if not sid:
+            continue
+        mine = next((e for e in entries if e["id"] == sid), None)
+        if mine and x.get("move") and x.get("at") == "front":
+            entries.remove(mine)
+            fronts.append(mine)
+            continue
+        if mine:
             continue
         gates = []
         for g in x.get("gates", []):

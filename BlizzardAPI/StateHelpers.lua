@@ -367,8 +367,23 @@ local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 ---     belt-and-braces each copy carried anyway, now paid for once.
 --- Callers keep their own fail direction - that part differs deliberately per site
 --- (a wasted press is cheap for a kick, expensive for a placed cooldown).
+local nextSwingSpells   -- SpellDB.NEXT_SWING_SPELLS, resolved on first use (false = none)
+
 function BlizzardAPI.SpellInRange(spellID, unit)
-    if not C_Spell_IsSpellInRange or not spellID then return nil end
+    if not spellID then return nil end
+    -- A next-swing ability (Heroic Strike, Cleave, Raptor Strike, Maul) lands on the next melee
+    -- swing, and on WoW Forever its spell range always reads "in range" (measured) - so a
+    -- Raptor Strike led the queue at bow range. Its range IS the melee swing range. The table
+    -- is empty on retail.
+    if nextSwingSpells == nil then
+        local sdb = LibStub("JustAC-SpellDB", true)
+        nextSwingSpells = sdb and sdb.NEXT_SWING_SPELLS or false
+    end
+    if nextSwingSpells and nextSwingSpells[spellID] and (unit == nil or unit == "target") then
+        local swing = BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
+        if swing ~= nil then return swing end
+    end
+    if not C_Spell_IsSpellInRange then return nil end
     local r = C_Spell_IsSpellInRange(spellID, unit or "target")
     if r == nil or (IsSecretValue and IsSecretValue(r)) then return nil end
     return r

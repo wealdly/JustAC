@@ -163,7 +163,7 @@ read_globals = {
   "STANDARD_TEXT_FONT",
   "SetCVar",
   "Settings",
-  "StaticPopup_Show", "YES", "NO",
+  "StaticPopup_Show", "StaticPopup_Visible", "ReloadUI", "RELOADUI", "CooldownViewerSettings", "YES", "NO",
   "TargetFrame",
   "UIParent",
   "UnitAffectingCombat",

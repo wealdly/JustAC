@@ -134,6 +134,20 @@ def main():
     g.aurasSecret = True
     check(B.IsBuffWindowActive(6673, 180) is False, "dropped memory stays dropped in combat")
 
+    # Auto Shot switched on: the bar is seeded before the first shot. Its cooldown kept running
+    # while off, so the first shot is due when that ends, or 0.15s in (measured), whichever is later.
+    at(400); lua.execute('Fire("PLAYER_SWING", 2.0, 2)')       # a real shot
+    at(400.5); lua.execute('Fire("STOP_AUTOREPEAT_SPELL")')
+    check(B.GetSwingWindow(2) is None, "switched off: no ranged window")
+    at(401); lua.execute('Fire("START_AUTOREPEAT_SPELL")')
+    check(B.GetSwingWindow(2) == (400, 402.0), "back on within the cooldown: due when it ends")
+    at(410); lua.execute('Fire("STOP_AUTOREPEAT_SPELL")')
+    at(411); lua.execute('Fire("START_AUTOREPEAT_SPELL")')
+    w = B.GetSwingWindow(2)
+    check(w and abs(w[0] - 409.15) < 1e-6 and abs(w[1] - 411.15) < 1e-6, "on after a long pause: due 0.15s later")
+    at(411.3); lua.execute('Fire("PLAYER_SWING", 2.0, 2)')     # the real first shot replaces it
+    check(B.GetSwingWindow(2) == (411.3, 413.3), "the shot itself takes over")
+
     for why in bad:
         print("  FAIL", why)
     print("forever swing: %d failure(s)" % len(bad))

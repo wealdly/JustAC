@@ -7760,6 +7760,9 @@ local WATCH_EVENTS = {
     "UPDATE_SHAPESHIFT_FORM", "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL",
     "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT", "PARTY_KILL", "PLAYER_TOTEM_UPDATE",
     "LOSS_OF_CONTROL_ADDED", "LOSS_OF_CONTROL_UPDATE", "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED",
+    -- Exact stop / start times (the edge probe samples once a second): the gap from a stop to
+    -- the next ranged PLAYER_SWING is Auto Shot's aim time (measured 0.27-0.50s).
+    "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING",
     "PET_ATTACK_START", "UNIT_PET", "UNIT_HAPPINESS",
     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
 }
@@ -7788,7 +7791,8 @@ local WATCH_UNIT_EVENTS = {
 }
 local WATCH_CAP = { UNIT_COMBAT = 80, UNIT_POWER_FREQUENT = 30, UNIT_POWER_UPDATE = 30,
     UNIT_SPELLCAST_SUCCEEDED = 30, UNIT_HEALTH = 12, SPELL_UPDATE_USABLE = 8,
-    ACTIONBAR_UPDATE_USABLE = 8, UNIT_AURA = 20 }
+    ACTIONBAR_UPDATE_USABLE = 8, UNIT_AURA = 20,
+    PLAYER_SWING = 40, PLAYER_STARTED_MOVING = 40, PLAYER_STOPPED_MOVING = 40 }
 local WATCH_CAP_DEFAULT = 15
 local SAMPLE_CAP = 250          -- sampler change lines per phase
 local SAMPLE_PERIOD = 0.2
@@ -8486,246 +8490,54 @@ end
 end   -- do
 
 --------------------------------------------------------------------------------
--- /jac inspect cdmlayout [add <spellID>|add all] - can JustAC add the rotation's critical
--- buffs and debuffs to the Cooldown Manager's Tracked Buffs itself? The only write route that
--- does not run our code inside Blizzard's (which would taint it, and a tainted Cooldown Manager
--- cannot read the secret auras its icons exist to show) is C_CooldownViewer.SetLayoutData: a
--- plain C call storing the saved-layout string, which Blizzard then loads in its own code on
--- the next /reload. This probe answers whether that is safe to build on:
---   1. does the saved string decode, and re-encode to the same data (round trip)?
---   2. which layout is active for this spec - a stored one, or the unstored default?
---   3. which critical spells can the Cooldown Manager track, and are they tracked now?
---   4. with "add": write them into Tracked Buffs of the active layout (out of combat), then
---      /reload and check the icon still reads in combat (the no-taint proof).
--- Format (Blizzard_CooldownViewer/CooldownViewerSettingsDataStoreSerialization.lua):
---   "<encoding version>|" .. base64(deflate(CBOR(data))); data[2] = spec tag -> active layout
---   id, data[3] = spec tag -> layout id -> { [1] = order, [2] = category -> cooldown ids },
---   data[4] = layout id -> name. The default layout is never stored.
+-- /jac inspect cdmlayout [add <spellID>|add all] - the Cooldown Manager advisor's view (the
+-- rules and the saved-layout format live in CdmAdvisor.lua): does the saved layout decode and
+-- round-trip, which layout is active, where additions would go, and per critical spell whether
+-- it can be added or the player hid it. "add" makes the same guarded write as the options
+-- button, then /reload and check the icons read in combat (/jac inspect foreverauras).
 --------------------------------------------------------------------------------
-do   -- scoped: this file's main chunk is near Lua's 200-local limit
-local FIELD_ACTIVE, FIELD_LAYOUTS, FIELD_NAMES = 2, 3, 4
-local LAYOUT_CATEGORY_OVERRIDES = 2
-
-local function DecodeLayoutData(s)
-    local E = C_EncodingUtil
-    if type(s) ~= "string" or #s == 0 then return nil, "empty (nothing saved yet)" end
-    local d = s:find("|", 1, true)
-    if not d then return nil, "no version prefix" end
-    local ver = tonumber(s:sub(1, d - 1))
-    if ver ~= 1 then return nil, "unknown encoding version " .. tostring(ver) end
-    local ok, t = pcall(function()
-        local raw = E.DecodeBase64(s:sub(d + 1))
-        local inflated = raw and E.DecompressString(raw, Enum.CompressionMethod.Deflate)
-        return inflated and E.DeserializeCBOR(inflated)
-    end)
-    if not ok then return nil, "decode threw: " .. tostring(t) end
-    if type(t) ~= "table" then return nil, "did not decode to a table" end
-    return t
-end
-
-local function EncodeLayoutData(t)
-    local E = C_EncodingUtil
-    return "1|" .. E.EncodeBase64(E.CompressString(E.SerializeCBOR(t), Enum.CompressionMethod.Deflate))
-end
-
-local function DeepEqual(a, b)
-    if type(a) ~= type(b) then return false end
-    if type(a) ~= "table" then return a == b end
-    for k, v in pairs(a) do if not DeepEqual(v, b[k]) then return false end end
-    for k in pairs(b) do if a[k] == nil then return false end end
-    return true
-end
-
-local function R1(id)
-    local RI = LibStub("JustAC-RotationImport", true)
-    return RI and RI.RankBase(id) or id
-end
-
--- The buffs and debuffs the installed rotation list depends on: every buff and DoT condition
--- (own-buff upkeep like Battle Shout, buff windows, DoTs like Rend), plus the attack-speed
--- buffs judged from swings. Rank 1 ids.
-local function CriticalSpells()
-    local RI = LibStub("JustAC-RotationImport", true)
-    local SDB = LibStub("JustAC-SpellDB", true)
-    local set = {}
-    local function walk(gates)
-        for _, g in ipairs(gates or {}) do
-            if (g.t == "buff" or g.t == "dot") and g.id then set[R1(g.id)] = true end
-            if g.g then walk(g.g) end
-        end
-    end
-    for _, id in pairs(RI and RI.GetInsertable and RI.GetInsertable() or {}) do
-        for _, tier in ipairs({ "st", "cleave", "aoe" }) do
-            local rec = RI.GetEntry(id, tier)
-            if rec then walk(rec.gates) end
-        end
-    end
-    for id in pairs(SDB and SDB.HASTE_BUFFS or {}) do set[id] = true end
-    return set
-end
-
--- Every Cooldown Manager entry for a spell (any rank): cooldownID -> its default category.
-local function CooldownIDsFor(spellID)
-    local CV, out = C_CooldownViewer, {}
-    local r1 = R1(spellID)
-    for _, cat in pairs(Enum.CooldownViewerCategory or {}) do
-        local ok, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
-        for _, cid in ipairs(ok and ids or {}) do
-            local okI, info = pcall(CV.GetCooldownViewerCooldownInfo, cid)
-            if okI and type(info) == "table" then
-                local hit = info.spellID and R1(info.spellID) == r1
-                    or info.overrideSpellID and R1(info.overrideSpellID) == r1
-                for _, l in ipairs(info.linkedSpellIDs or {}) do hit = hit or R1(l) == r1 end
-                if hit then out[cid] = info.category or cat end   -- the entry's own default
-            end
-        end
-    end
-    return out
-end
-
-local function CategoryName(cat)
-    for name, v in pairs(Enum.CooldownViewerCategory or {}) do
-        if v == cat then return name end
-    end
-    return tostring(cat)
-end
-
--- The active layout table for this spec (nil = the unstored default), plus its id and name.
-local function ActiveLayout(data)
-    local tag = CooldownViewerUtil and CooldownViewerUtil.GetCurrentClassAndSpecTag
-        and CooldownViewerUtil.GetCurrentClassAndSpecTag()
-    local id = tag and data[FIELD_ACTIVE] and data[FIELD_ACTIVE][tag]
-    local layout = id and data[FIELD_LAYOUTS] and data[FIELD_LAYOUTS][tag] and data[FIELD_LAYOUTS][tag][id]
-    return layout, id, id and data[FIELD_NAMES] and data[FIELD_NAMES][id], tag
-end
-
--- The category a cooldown ID sits in under this layout: its override there, else its default.
-local function EffectiveCategory(layout, cid, default)
-    local overrides = layout and layout[LAYOUT_CATEGORY_OVERRIDES]
-    for cat, ids in pairs(overrides or {}) do
-        for _, v in ipairs(ids) do if v == cid then return cat end end
-    end
-    return default
-end
-
-local function MoveToTrackedBuffs(layout, cid)
-    local overrides = layout[LAYOUT_CATEGORY_OVERRIDES] or {}
-    layout[LAYOUT_CATEGORY_OVERRIDES] = overrides
-    for _, ids in pairs(overrides) do
-        for i = #ids, 1, -1 do if ids[i] == cid then table.remove(ids, i) end end
-    end
-    local tracked = Enum.CooldownViewerCategory.TrackedBuff
-    overrides[tracked] = overrides[tracked] or {}
-    table.insert(overrides[tracked], cid)
-end
-
 function DebugCommands.CdmLayoutProbe(addon, arg)
     addon:Print("===== Cooldown Manager layout probe =====")
-    local CV, E = C_CooldownViewer, C_EncodingUtil
-    if not (CV and CV.GetLayoutData and CV.SetLayoutData and E and E.DeserializeCBOR) then
-        addon:Print("  missing API: GetLayoutData/SetLayoutData/C_EncodingUtil - cannot proceed")
+    local CA, CV = LibStub("JustAC-CdmAdvisor", true), C_CooldownViewer
+    if not (CA and CV and CV.GetLayoutData and C_EncodingUtil) then
+        addon:Print("  advisor or Cooldown Manager API missing - cannot proceed")
         return
     end
-    if not (Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.TrackedBuff) then
-        addon:Print("  no Enum.CooldownViewerCategory.TrackedBuff on this client - cannot proceed")
-        return
-    end
-    local cats = {}
-    for name, v in pairs(Enum.CooldownViewerCategory or {}) do cats[#cats + 1] = name .. "=" .. v end
-    table.sort(cats)
-    addon:Print("  categories: " .. table.concat(cats, " "))
-
-    -- 1. Decode and round trip.
     local s = CV.GetLayoutData()
-    addon:Print(string.format("  saved string: %d chars, prefix %q", #(s or ""), (s or ""):sub(1, 2)))
-    local data, why = DecodeLayoutData(s)
-    if not data then
-        addon:Print("  decode: |cffff6600FAILED|r - " .. tostring(why))
-        if why and why:find("empty") then
-            addon:Print("  (you are on the default layout with nothing saved - see 2)")
-        end
+    addon:Print(string.format("  saved string: %d chars", #(s or "")))
+    local data, why = CA.Decode(s)
+    if data then
+        local ok, re = pcall(CA.Encode, data)
+        addon:Print("  round trip byte-identical: " .. tostring(ok and re == s))
     else
-        local ok, re = pcall(EncodeLayoutData, data)
-        local same = ok and re == s
-        local back = ok and DecodeLayoutData(re)
-        addon:Print(string.format("  round trip: bytes identical=%s, data identical=%s",
-            tostring(same), tostring(back and DeepEqual(data, back) or false)))
-        addon:Print(string.format("  save format version %s", tostring(data[1])))
+        addon:Print("  decode: |cffff6600FAILED|r - " .. tostring(why))
     end
-
-    -- 2. Active layout for this spec.
-    local layout, layoutID, layoutName, tag = ActiveLayout(data or {})
+    local layout, id, name, tag = CA.ActiveLayout(data or {})
     addon:Print(string.format("  spec tag %s: active layout %s", tostring(tag),
-        layout and string.format("%s (%q)", tostring(layoutID), tostring(layoutName))
-        or "|cffffff00the default (not stored)|r - adding needs a saved layout"))
-    -- The layout's own category assignments, raw: what the player has moved where.
-    for cat, ids in pairs(layout and layout[LAYOUT_CATEGORY_OVERRIDES] or {}) do
-        local list = {}
-        for _, v in ipairs(ids) do list[#list + 1] = tostring(v) end
-        addon:Print(string.format("    moved into %s: %s", CategoryName(cat), table.concat(list, ", ")))
-    end
-
-    -- 3. Critical spells the player knows: can each be tracked, and is it? Only AURA entries are
-    -- ever candidates - Blizzard lets an entry move into Tracked Buffs only from an aura default
-    -- (CooldownViewerSettings.lua, legalOriginalSourceCategoryToTargetCategory); a spell's
-    -- cooldown entry (Essential / Utility) is never touched.
-    local C = Enum.CooldownViewerCategory
-    local AURA_DEFAULTS = { [C.TrackedBuff] = true, [C.TrackedBar] = true, [C.HiddenPassive] = true }
-    if C.EquipSlotTracked then AURA_DEFAULTS[C.EquipSlotTracked] = true end
-    if C.SpecAgnosticTracked then AURA_DEFAULTS[C.SpecAgnosticTracked] = true end
-    local tracked = { [C.TrackedBuff] = true, [C.TrackedBar] = true }
-    local RI = LibStub("JustAC-RotationImport", true)
-    local want = {}
-    for id in pairs(CriticalSpells()) do
-        local known = (RI and RI.HighestKnownRank(id)) or (IsPlayerSpell and IsPlayerSpell(id))
-        if known then
-            local info = C_Spell.GetSpellInfo(id)
-            local parts, isTracked, candidate = {}, false, nil
-            for cid, default in pairs(CooldownIDsFor(id)) do
-                local eff = EffectiveCategory(layout, cid, default)
-                local aura = AURA_DEFAULTS[default] == true
-                parts[#parts + 1] = string.format("%d:%s%s%s [default %s]", cid, CategoryName(eff),
-                    aura and "(aura)" or "(spell)", tracked[eff] and "*" or "", CategoryName(default))
-                if aura and tracked[eff] then isTracked = true end
-                if aura and not tracked[eff] then candidate = candidate or cid end
-            end
-            if not isTracked and candidate then want[#want + 1] = { id = id, cid = candidate } end
-            addon:Print(string.format("  %s (%d): %s%s", info and info.name or "?", id,
-                #parts > 0 and table.concat(parts, " ") or "|cff888888not offered by the Cooldown Manager|r",
-                isTracked and "" or (candidate and "  |cffffff00<- can add|r" or "")))
+        layout and string.format("%s (%q)", tostring(id), tostring(name)) or "the default (not stored)"))
+    if layout then
+        local target = CA.TargetCategory(layout)
+        for k, v in pairs(Enum.CooldownViewerCategory or {}) do
+            if v == target then addon:Print("  additions go to " .. k) end
         end
     end
-    addon:Print("  (* = tracked; (aura) entries are the only ones ever moved)")
+    local state, can, hidden, added = CA.Status()
+    addon:Print(string.format("  state %s: %d addable, %d you hid, %d added by JustAC", state, #can, #hidden, added))
+    for _, c in ipairs(can) do addon:Print(string.format("    can add %s (%d) - cooldown entry %d", c.name, c.id, c.cid)) end
+    for _, c in ipairs(hidden) do addon:Print(string.format("    you hid %s (%d)", c.name, c.id)) end
 
-    -- 4. Opt-in write.
     arg = arg and arg:lower() or nil
     local addWhat = arg and arg:match("^add%s+(.+)$")
     if not addWhat then return end
-    if InCombatLockdown() then addon:Print("  add: not in combat"); return end
-    if not (data and layout) then
-        addon:Print("  add: needs a decodable, saved, active layout (create one in the Cooldown Manager first)")
-        return
+    local only
+    if addWhat ~= "all" and tonumber(addWhat) then only = { [tonumber(addWhat)] = true } end
+    local n, err = CA.Add(only)
+    if n > 0 then
+        addon:Print(string.format("  add: |cff00ff00wrote %d|r - now /reload", n))
+    else
+        addon:Print("  add: " .. tostring(err))
     end
-    local n = 0
-    for _, w in ipairs(want) do
-        if addWhat == "all" or tonumber(addWhat) == w.id then
-            MoveToTrackedBuffs(layout, w.cid)
-            n = n + 1
-        end
-    end
-    if n == 0 then addon:Print("  add: nothing to add for " .. addWhat); return end
-    local out = EncodeLayoutData(data)
-    local back = DecodeLayoutData(out)
-    if not (back and DeepEqual(back, data)) then
-        addon:Print("  add: |cffff6600re-encode did not verify - nothing written|r")
-        return
-    end
-    CV.SetLayoutData(out)
-    addon:Print(string.format("  add: |cff00ff00wrote %d entr%s into Tracked Buffs|r of %q - now /reload,", n,
-        n == 1 and "y" or "ies", tostring(layoutName)))
-    addon:Print("  then check the icons appear and still read in combat (/jac inspect foreverauras)")
 end
-end   -- do
 
 local PROBE_BATTERY = { "DurationProbe", "AuraInstanceIdsProbe", "CooldownFieldsProbe",
                         "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe",
