@@ -65,7 +65,7 @@ function RotationImport.RegisterGated(data)
 end
 
 --------------------------------------------------------------------------------
--- WoW Forever (Data/ForeverRotations.lua). One spec id per class; the guides' trees
+-- WoW Forever (Data/Forever/Rotations.lua). One spec id per class; the guides' trees
 -- (Arms / Fury / Protection...) are trait GROUPS inside it. So the class key carries
 -- every tree, and the one with the most talent points spent is INSTALLED as that key's
 -- rotation - after which every reader in this file works unchanged. Re-picked on every
@@ -623,4 +623,3 @@ function RotationImport.GetEntry(spellID, context)
     if not m then return nil end
     return m[spellID] or m[baseID(spellID)]
 end
-

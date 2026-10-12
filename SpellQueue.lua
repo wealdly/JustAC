@@ -25,6 +25,7 @@ local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 local ipairs = ipairs
+local AUTO_ATTACK_SPELL = 6603
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
@@ -460,8 +461,15 @@ local function PassesRotationFilters(spellID, profile, sourceID)
     -- it alone dropped the entry for exactly as long as the better form was up. The normal
     -- slot-1 path never noticed because the game's pick is inserted unfiltered; with My List
     -- Leads, or anywhere in the tail, the transformed ability simply vanished.
+    local foreverAutomatic = BlizzardAPI.IsForever() and not SpellQueue._rotationIsCustom
+    local role = foreverAutomatic and SpellDB and SpellDB.GetForeverAbilityRole
+        and SpellDB.GetForeverAbilityRole(spellID)
+    local totemSlot = foreverAutomatic and SpellDB and SpellDB.GetForeverTotemSlot
+        and SpellDB.GetForeverTotemSlot(spellID)
     local result = (BlizzardAPI.IsSpellAvailable(spellID)
             or (sourceID and sourceID ~= spellID and BlizzardAPI.IsSpellAvailable(sourceID)) or false)
+       and not (role and role ~= "mixed")
+       and not (totemSlot and BlizzardAPI.IsTotemSlotOccupied(totemSlot) ~= false)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
        -- Upkeep never belongs in the TAIL: poisons, imbues and long raid buffs are offered
        -- before the pull by the pre-combat reminder, and in positions 2+ they are just
@@ -1141,6 +1149,18 @@ local function GateVerdict(g, ctx)
         return (g.neg == true) ~= (IsPlayerSpell(g.id) and true or false)
     end
     if t == "starved" then return buildStarved end
+    if t == "unconfirmed" then return false end
+    if t == "targets" then
+        local count = BlizzardAPI.GetEngagedEnemyCount and BlizzardAPI.GetEngagedEnemyCount()
+        if not count or count <= 0 then return false end
+        return ResourceGateHolds(g, count)
+    end
+    if t == "totem" then
+        if not (g.slot and BlizzardAPI.IsTotemSlotOccupied) then return false end
+        local occupied = BlizzardAPI.IsTotemSlotOccupied(g.slot)
+        if occupied == nil then return false end
+        return occupied ~= (g.neg == true)
+    end
     if t == "near" then
         -- Target within g.n yards (point-blank AoE: Arcane Explosion, Hellfire, Blast Wave).
         -- SpellDB.IsTargetWithin: true / false, nil when no range probe settles it.
@@ -1332,7 +1352,18 @@ local function itemRank()
     return 1
 end
 
+local function IsForeverPullSpell(spellID, b)
+    if b.inCombat ~= false or b.contextOrder ~= "simc" or SpellQueue._rotationIsCustom
+       or not BlizzardAPI.IsForever() then return false end
+    if not (SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey() == "SHAMAN_F"
+       and RotationImport and RotationImport.RankBase(spellID) == 403) then return false end
+    if not UnitExists("target") then return true end
+    return UnitCanAttack("player", "target")
+        and BlizzardAPI.AbilityInRange(spellID, "target") == true
+end
+
 local function CategorizeAndAssembleRotation(rotationList, b)
+    b.pullOpenerID = nil
     -- Unpack the build context once; the body below is unchanged from the
     -- 18-positional-argument era.
     local profile, blacklist = b.profile, b.blacklist
@@ -1504,6 +1535,20 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- static rank over the Shadow Dance the game was asking for.
                     local windowUp = simcRec and (SimcBuffWindowActive(simcRec.gates)
                         or GateInPickWindows(simcRec.gates, pickWindows)) or false
+                    local pullSpell = ready == true and usable == true and not notEnough
+                        and not held and not locLocked and IsForeverPullSpell(displayID, b)
+                    local gates = simcRec and simcRec.gates
+                    -- A hardcast pull does not need the combat rotation's instant-bolt stacks.
+                    -- Only waive that exact condition, never another imported requirement.
+                    if pullSpell and gates and #gates == 1 then
+                        local g = gates[1]
+                        if g.t == "stack" and g.id == 408505 and g.op == ">=" and g.n == 5
+                           and not g.tgt then
+                            gates = nil
+                        end
+                    end
+                    local gateBlocked = simcRec and SimcGateBlocks(gates, resCount, resName, resMax, dialSet)
+                    pullSpell = pullSpell and not gateBlocked
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
                              or (HasPositiveBuffGate(simcRec.gates) and not windowUp))
@@ -1514,7 +1559,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             or (not leadBarred and powerCapped and IsSpenderSpell(displayID))
                             or (windowUp and not leadBarred
                                 and not SimcNegativeBuffBlocks(simcRec.gates)
-                                and not SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet)))
+                                and not gateBlocked))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
@@ -1522,7 +1567,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         if not leadBarred then anyTimeable = true end
                     elseif sinkCooldowns and (not ready or starved or held or locLocked
                            or BlizzardAPI.RunningAutoSwing(displayID)   -- running: shown with its timer
-                           or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet))
+                           or gateBlocked
                            or castBarred
                            or IsConfirmedOutOfRange(displayID)
                            or (not alwaysShow and DotTracker
@@ -1554,6 +1599,10 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
                         normalRank[normalCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
+                        if pullSpell then
+                            normalRank[normalCount] = -1
+                            b.pullOpenerID = displayID
+                        end
                         if not leadBarred then anyTimeable = true end
                     end
                 else
@@ -1797,6 +1846,7 @@ function SpellQueue._StageTail(b)
     -- pick) is inserted elsewhere and is never filtered.
     local rotationList = SpellQueue.FilterHealerTail(cachedRotationList, profile)
     b.spellCount = CategorizeAndAssembleRotation(rotationList, b)
+    lastCtx.pullOpenerID = b.pullOpenerID
 end
 
 --- Stage G - burst-ready cue: emphasize a burst trigger only when a burst
@@ -2282,11 +2332,17 @@ function SpellQueue._StagePrimary(b)
         -- Slot 1 belongs to the list (or the gap-closer injection); the AC pick
         -- was consumed above as adviser and is deliberately not inserted.
     elseif primarySpellID and primarySpellID > 0 then
+        -- Forever can pick Attack while the target is beyond melee reach. Suppress only
+        -- on a confirmed out-of-range read so the next rotation suggestion can lead instead.
+        local outOfRangeAttack = BlizzardAPI.IsForever()
+            and primarySpellID == AUTO_ATTACK_SPELL
+            and BlizzardAPI.SpellInRange(AUTO_ATTACK_SPELL, "target") == false
         -- Caster filler treats a melee/form pick like a blacklisted one: the
         -- highlight lookahead below supplies AC's next-best suggestion.
         local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)
         local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
         if displaySpellID
+           and not outOfRangeAttack
            and not casterSuppressed
            and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist, true) then
             b.spellCount = b.spellCount + 1
@@ -2641,4 +2697,3 @@ function SpellQueue.ResetBuildStats()
     spellQueueBuildCount = 0
     spellQueueResetTime = GetTime()
 end
-

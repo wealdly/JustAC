@@ -58,10 +58,10 @@ Data\TargetDots.lua
 Data\ChanneledSpells.lua
 Data\SimcRotations.lua
 Data\AssistedCombatOrder.lua
-Data\ForeverRotations.lua
+Data\Forever\Rotations.lua
 Data\CCBreakers.lua
-Data\ForeverDefaults.lua
-Data\ForeverConsumables.lua
+Data\Forever\Defaults.lua
+Data\Forever\Consumables.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua

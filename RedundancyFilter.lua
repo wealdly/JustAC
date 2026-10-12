@@ -1177,15 +1177,15 @@ end
 -- Check if main-hand weapon has enchant with sufficient time remaining
 -- Returns true if main-hand has active enchant, false otherwise
 local function HasActiveWeaponEnchant()
-    if not GetWeaponEnchantInfo then return false end
-    
-    local hasMainHand, mainHandExpiration = GetWeaponEnchantInfo()
+    local hasMainHand, mainHandExpiration = BlizzardAPI.GetWeaponEnhancementInfo(0, true)
+    if hasMainHand == nil then return true end
     
     -- Main-hand enchant required. "Expiring soon" is the checklist's own refresh window
     -- (milliseconds remaining vs seconds): one number, so the queue stops hiding the
     -- recast at the same moment the checklist starts offering it.
     if not hasMainHand then return false end
-    if mainHandExpiration and (mainHandExpiration / 1000) < RefreshWindow() then return false end
+    if mainHandExpiration and not BlizzardAPI.IsSecretValue(mainHandExpiration)
+       and (mainHandExpiration / 1000) <= RefreshWindow() then return false end
     
     return true
 end
@@ -1233,6 +1233,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- No ranged reading yet: melee reach alone, the old rule.
     if spellID == AUTO_ATTACK_SPELL or spellID == AUTO_SHOT_SPELL then
         local ranged, melee = BlizzardAPI.IsTargetInSwingRange(2), BlizzardAPI.IsTargetInSwingRange(0)
+        if BlizzardAPI.IsForever() then melee = BlizzardAPI.SpellInRange(AUTO_ATTACK_SPELL, "target") end
         if spellID == AUTO_ATTACK_SPELL then
             local canShoot = ranged == true or (ranged == nil and melee == false)
             if canShoot and IsPlayerSpell(AUTO_SHOT_SPELL) then

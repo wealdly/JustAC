@@ -363,6 +363,7 @@ L["Hide Utility"] = "Nascondi i Recuperi di Utilità"
 L["Hide Tracked Buffs"] = "Nascondi i Buff Monitorati"
 L["Hide Tracked Bars"] = "Nascondi le Barre Monitorate"
 L["Cooldown Manager combat warning"] = "Il Gestore dei Recuperi non può essere modificato in combattimento - riprova a fine scontro."
+L["Cooldown Manager enable failed"] = "Il gioco non ha modificato l'impostazione del Gestore dei Recuperi (%s). Modificala nelle opzioni del gioco e riprova."
 
 L["Health Top-off Threshold"] = "Rabbocca sotto"
 L["Health Top-off Threshold desc"] = "Quanto sotto la salute massima compare il promemoria di cura tra un pull e l'altro. L'avviso di emergenza a salute critica è separato ed è sempre attivo."

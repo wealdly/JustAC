@@ -69,7 +69,7 @@ UNEVALUATED = {"dot"}
 # probes have not yet shown is measurable. Until then it answers "no opinion" and never
 # blocks, the documented fail-open direction - listed so it is a decision, not drift.
 PENDING = {"tick"}
-DATA = ("SimcRotations.lua", "ForeverRotations.lua")
+DATA = (Path("SimcRotations.lua"), Path("Forever") / "Rotations.lua")
 
 
 def check_coverage():
@@ -88,8 +88,30 @@ def check_coverage():
 def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
+    lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
     run = lua.eval("function(src) return assert(load(src))() end")
+    lua.execute("""
+        enemies, occupied = 0, nil
+        BlizzardAPI.GetEngagedEnemyCount = function() return enemies end
+        BlizzardAPI.IsTotemSlotOccupied = function() return occupied end
+    """)
+    signal_cases = 0
+    for count in (0, 1, 2, 3, 4, 5):
+        lua.globals().enemies = count
+        assert run('return GateVerdict({t="targets",op=">=",n=4}, ctx)') == (count >= 4)
+        assert run('return GateVerdict({t="any",g={{t="targets",op=">=",n=3},{t="unconfirmed"}}}, ctx)') == (count >= 3)
+        signal_cases += 2
+    for occupied, expected in ((None, False), (True, False), (False, True)):
+        lua.globals().occupied = occupied
+        assert run('return GateVerdict({t="totem",slot=2,neg=true}, ctx)') == expected
+        signal_cases += 1
+    for strict in (True, False):
+        lua.globals().ctx.strict = strict
+        assert run('return GateVerdict({t="unconfirmed"}, ctx)') is False
+        signal_cases += 1
+    lua.globals().ctx.strict = False
+    print(f"Forever signal gates: {signal_cases} cases passed")
 
     ON = '{t="stealth"}'            # holds only while stealthed
     OFF = '{t="stealth",neg=true}'  # holds only while NOT stealthed

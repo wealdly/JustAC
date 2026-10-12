@@ -83,6 +83,26 @@ def main():
     check(B.IsTargetInSwingRange(0) is True, "walked into melee")
     lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, true, false)')
     check(B.IsTargetInSwingRange(0) is None, "target gone -> unknown, not 'in range'")
+    lua.execute("""
+        liveRange = false
+        C_SwingTimer = { IsTargetWithinSwingRange = function() return liveRange end }
+    """)
+    check(B.IsTargetInSwingRange(0) is False, "live OOC range without a range event")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, true); liveRange = true')
+    check(B.IsTargetInSwingRange(0) is True, "live range overrides a stale event")
+    lua.execute("liveRange = false")
+    check(B.IsTargetInSwingRange(0) is False, "walking back out updates without an event")
+    lua.execute("liveRange = nil")
+    check(B.IsTargetInSwingRange(0) is False, "nil direct API preserves a valid out-of-range event")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, true, true)')
+    check(B.IsTargetInSwingRange(0) is True, "event updates OOC range when direct API stays nil")
+    lua.execute('Fire("PLAYER_TARGET_CHANGED")')
+    check(B.IsTargetInSwingRange(0) is None, "target switch clears the previous target's range")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, true)')
+    check(B.IsTargetInSwingRange(0) is False, "new target's event restores range evidence")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, false)')
+    check(B.IsTargetInSwingRange(0) is None, "checksRange=false is not out-of-range evidence")
+    lua.execute("C_SwingTimer = nil")
     lua.execute('Fire("PLAYER_ENTERING_WORLD")')          # base speeds read out of combat
     g.inCombat = True
     at(100); lua.execute('Fire("PLAYER_SWING", 2.0, 0)')

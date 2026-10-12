@@ -363,6 +363,7 @@ L["Hide Utility"] = "Ocultar reutilizaciones de utilidad"
 L["Hide Tracked Buffs"] = "Ocultar beneficios seguidos"
 L["Hide Tracked Bars"] = "Ocultar barras seguidas"
 L["Cooldown Manager combat warning"] = "El Gestor de reutilización no se puede cambiar en combate: inténtalo de nuevo tras el combate."
+L["Cooldown Manager enable failed"] = "El juego no cambió el ajuste del Gestor de reutilización (%s). Cámbialo en las opciones del juego y vuelve a intentarlo."
 
 L["Health Top-off Threshold"] = "Rellenar por debajo de"
 L["Health Top-off Threshold desc"] = "Cuánto por debajo de la salud máxima aparece el recordatorio de curación entre combates. El aviso de emergencia con salud crítica es aparte y siempre está activo."

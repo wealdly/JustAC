@@ -28,7 +28,7 @@ assert Conv({}).conv(cmp("OpLt", {"remainingTime": {}}, "6s")) == FALSE
 t = Conv({})
 aoe_only = cmp("OpGe", targets, "3")
 assert [t.tier(aoe_only, k) for k in (1, 2, 3)] == [False, False, True]
-assert t.conv(aoe_only) == TRUE
+assert t.conv(aoe_only) == {"t": "targets", "op": ">=", "n": 3.0}
 # negation flips thresholds and buffs, De Morgan for groups
 n = Conv({})
 assert n.conv({"not": {"val": {"and": {"vals": [cmp("OpLt", {"currentEnergy": {}}, "50"),
@@ -51,14 +51,15 @@ k = Conv({603: [("603", "")]}, self_id=980)  # Bane of Agony unless Bane of Doom
 assert k.conv({"not": {"val": dot(603)}}) == {"t": "known", "id": 603, "neg": True} and not k.delegated
 assert Conv({}, self_id=7386).conv({"not": {"val": dot(11198)}}) == TRUE  # another class's debuff: solo
 assert Conv({}).conv(cmp("OpLe", {"unitDistance": {}}, "10")) == {"t": "near", "n": 10.0}
-assert Conv({}, self_id=8075).conv(cmp("OpLe", {"totemRemainingTime": {"totemType": "Earth"}}, "0s"))["neg"] is True
-pace = Conv({})   # mana paced against fight length: unknowable, so no pacing
+assert Conv({}, self_id=8075).conv(cmp("OpLe", {"totemRemainingTime": {"totemType": "Earth"}}, "0s")) == \
+    {"t": "totem", "slot": 2, "neg": True}
+pace = Conv({})
 assert pace.conv({"cmp": {"op": "OpGe", "lhs": {"currentMana": {}}, "rhs": {"math": {
-    "op": "OpMul", "lhs": {"remainingTime": {}}, "rhs": {"const": {"val": "35"}}}}}}) == TRUE and not pace.delegated
-# The shipped bar pool (Data/ForeverRotations.lua, last table): combat abilities in, utility out.
+    "op": "OpMul", "lhs": {"remainingTime": {}}, "rhs": {"const": {"val": "35"}}}}}}) == {"t": "unconfirmed"}
+# The shipped bar pool (Data/Forever/Rotations.lua, last table): combat abilities in, utility out.
 import re  # noqa: E402
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-data = open(os.path.join(root, "Data", "ForeverRotations.lua"), encoding="utf-8").read()
+data = open(os.path.join(root, "Data", "Forever", "Rotations.lua"), encoding="utf-8").read()
 pool = {k: {int(i) for i in v.split(",")} for k, v in re.findall(r'\["(\w+_F)"\] = \{([\d,]+)\}', data)}
 IN = {"HUNTER_F": [75, 6603, 1510, 13795],        # Auto Shot, Attack, Volley, Immolation Trap
       "WARRIOR_F": [12292, 2457],                 # Sweeping Strikes, Battle Stance
@@ -89,4 +90,44 @@ for tree in ("beast_mastery", "marksmanship", "survival"):
     block = hunter[hunter.index(tree + " = {"):]
     ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)[:2]]
     assert ids == [1978, 75], (tree, ids)
+# Refreshed upstream conditions: three-tier conversion and known steady-state policy.
+from lupa import LuaRuntime  # type: ignore[import-not-found]  # noqa: E402
+
+runtime = LuaRuntime(unpack_returned_tuples=True)
+runtime.execute("""
+    function LibStub()
+        return {RegisterForever = function(data, chains) classes = data end}
+    end
+""")
+runtime.execute(data)
+classes = runtime.globals().classes
+ids_of = lambda entries: [entry["id"] for entry in entries.values()]
+frost = classes.MAGE_F.frost
+assert 120 not in ids_of(frost.cleave), "Cone of Cold is no longer a two-target lead"
+assert any(e["id"] == 120 and any(g["t"] == "near" and g["n"] == 10 for g in e["gates"].values())
+           for e in frost.aoe.values()), "Frost point-blank AoE keeps its distance condition"
+prot = classes.WARRIOR_F.protection
+assert 78 in ids_of(prot.st) and 845 not in ids_of(prot.st), "Heroic Strike on one target"
+assert 845 in ids_of(prot.aoe) and 78 not in ids_of(prot.aoe), "Cleave on multiple targets"
+for tree in ("marksmanship", "survival"):
+    hunter_tree = classes.HUNTER_F[tree]
+    assert 1510 not in ids_of(hunter_tree.st) and 1510 in ids_of(hunter_tree.aoe), tree
+assert 1510 not in ids_of(classes.HUNTER_F.beast_mastery.st)
+assert 1510 in ids_of(classes.HUNTER_F.beast_mastery.aoe)
+assert 10 in ids_of(frost.aoe)
+for tree, sid in ((classes.HUNTER_F.beast_mastery, 1510), (frost, 10)):
+    entry = next(e for e in tree.aoe.values() if e["id"] == sid)
+    assert any(g["t"] == "targets" and g["n"] == 4 for g in entry["gates"].values())
+assert 407632 not in ids_of(classes.PALADIN_F.protection.st)
+assert 407632 in ids_of(classes.PALADIN_F.protection.aoe), "Hammer remains AoE-only"
+enh = classes.SHAMAN_F.enhancement.st
+assert ids_of(enh).index(408341) < ids_of(enh).index(403), "Fire Nova precedes combat Lightning Bolt"
+assert any(e["id"] == 403 and e["gates"][1]["t"] == "stack" and e["gates"][1]["n"] == 5
+           for e in enh.values()), "Combat Maelstrom requirement remains intact"
+fire_nova = next(e for e in enh.values() if e["id"] == 408341)
+assert fire_nova["gates"][1]["t"] == "any"
+assert fire_nova["gates"][1]["g"][1]["t"] == "targets"
+assert fire_nova["gates"][1]["g"][2]["t"] == "unconfirmed"
+elemental_bolt = next(e for e in classes.SHAMAN_F.elemental.st.values() if e["id"] == 403)
+assert len(elemental_bolt["gates"]) == 0, "Unconfirmed pacing must not mask the unconditional bolt filler"
 print("ok")

@@ -6,8 +6,10 @@
 	"priorityList": [
 		{"action":{"autocastOtherCooldowns":{}}},
 		{"action":{"condition":{"cmp":{"op":"OpLe","lhs":{"currentManaPercent":{}},"rhs":{"const":{"val":"30%"}}}},"castSpell":{"spellId":{"spellId":29166}}}},
+		{"action":{"castSpell":{"spellId":{"spellId":17402}},"condition":{"cmp":{"op":"OpGe","lhs":{"numberTargets":{}},"rhs":{"const":{"val":"4"}}}}}},
 		{"action":{"multidot":{"spellId":{"spellId":9835},"maxDots":1,"maxOverlap":{"const":{"val":"0ms"}}}}},
 		{"action":{"multidot":{"spellId":{"spellId":24977},"maxDots":1,"maxOverlap":{"const":{"val":"0ms"}}}}},
+		{"action":{"castSpell":{"spellId":{"spellId":17402}},"condition":{"cmp":{"op":"OpGe","lhs":{"numberTargets":{}},"rhs":{"const":{"val":"3"}}}}}},
 		{"action":{"castSpell":{"spellId":{"spellId":25298}}}}
 	]
 }

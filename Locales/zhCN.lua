@@ -363,6 +363,7 @@ L["Hide Utility"] = "隐藏辅助冷却"
 L["Hide Tracked Buffs"] = "隐藏追踪增益"
 L["Hide Tracked Bars"] = "隐藏追踪条"
 L["Cooldown Manager combat warning"] = "战斗中无法更改冷却管理器——请在战斗结束后再试。"
+L["Cooldown Manager enable failed"] = "游戏未更改冷却管理器设置（%s）。请在游戏选项中更改设置，然后重试。"
 
 L["Health Top-off Threshold"] = "生命值低于此值时补血"
 L["Health Top-off Threshold desc"] = "战斗间隙的补血提醒在生命值低于多少时出现。危急生命值时的紧急提示是独立的，始终开启。"

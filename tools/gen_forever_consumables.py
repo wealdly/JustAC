@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # tools/gen_forever_consumables.py
 #
-# WoW Forever consumables -> Data/ForeverConsumables.lua, from the Forever client data
+# WoW Forever consumables -> Data/Forever/Consumables.lua, from the Forever client data
 # (Documentation/wow_spell_csv_forever). Retail's consumable lists (Data/PrecombatBuffs.lua,
 # Data/HealingItems.lua) are retail items, ids and durations; on Forever they are skipped and
 # this file is loaded instead. Same discovery rules as the retail generators - by item class
@@ -30,7 +30,7 @@ sys.path.insert(0, HERE)
 import gen_precombat_buffs as gpb  # noqa: E402
 
 gpb.CSV_DIR = os.path.join(ROOT, "Documentation", "wow_spell_csv_forever")
-OUT = os.path.join(ROOT, "Data", "ForeverConsumables.lua")
+OUT = os.path.join(ROOT, "Data", "Forever", "Consumables.lua")
 
 # Classic item class 0 subclasses.
 POTION, ELIXIR, FLASK, SCROLL, FOOD, BANDAGE, OTHER = "1", "2", "3", "4", "5", "7", "8"
@@ -152,6 +152,7 @@ def main():
     for ilvl, iid, name in sorted(potions, key=lambda x: (-x[0], x[2])):
         L.append(f"    {iid},  -- {name}")
     L.append("})")
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(L) + "\n")
     counts = {c: len(v) for c, v in buffs.items()}
