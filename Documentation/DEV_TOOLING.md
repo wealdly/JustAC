@@ -52,6 +52,20 @@ python -m pip install luaparser
 `check.ps1` uses it automatically when `luacheck.exe` is absent; or run directly:
 `python tools/luasyntax.py <file.lua> ...`
 
+## Local packaging
+
+Run `.\build.ps1` manually when ready to package. It reads inputs relative to
+the script directory and includes the source paths listed in `JustAC.toc`,
+including `Data\Forever`, plus the embedded `Libs` folder.
+
+Each build uses unique staging paths. Missing inputs and packaging errors stop
+the build; the existing versioned ZIP is replaced only after the new archive
+has closed successfully. Temporary files are cleaned up on success or failure.
+
+Run `.\tools\test_build.ps1` to check packaging with small temporary fixtures.
+This checks nested ZIP paths, replacement, failure preservation and cleanup,
+without building the addon distribution.
+
 ## Data-generation tools (`tools/*.py`, `tools/*.sh`)
 
 The curated spell data under `Data/` is generated from wago.tools CSV exports by
