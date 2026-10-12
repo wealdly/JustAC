@@ -12,7 +12,6 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 local InCombatLockdown = InCombatLockdown
-local GetWeaponEnchantInfo = GetWeaponEnchantInfo
 local C_UnitAuras = C_UnitAuras
 local ipairs = ipairs
 local GetTime = GetTime
@@ -84,20 +83,20 @@ end
 -- Main-hand temp enchant (weapon oil / shaman imbue) present AND not about to run out.
 -- Its expiry comes back as milliseconds REMAINING, not a timestamp - the one place in this
 -- file where the window is not compared against expirationTime.
-local function MainHandEnchantHolds()
-    if not GetWeaponEnchantInfo then return false end
-    local has, expiryMs = GetWeaponEnchantInfo()
+local function MainHandEnchantHolds(imbue)
+    local has, expiryMs = BlizzardAPI.GetWeaponEnhancementInfo(0, imbue)
+    if has == nil then return true end
     if not has then return false end
     if issecretvalue and issecretvalue(expiryMs) then return true end
     if type(expiryMs) ~= "number" then return true end
     return (expiryMs / 1000) > RefreshWindow()
 end
 
--- Off-hand twin of MainHandEnchantHolds - select() past the main-hand triplet+id.
+-- Off-hand twin of MainHandEnchantHolds.
 -- Only consulted when an off-hand imbue is actually offerable (see OffHandImbue).
 local function OffHandEnchantHolds()
-    if not GetWeaponEnchantInfo then return false end
-    local _, _, _, _, has, expiryMs = GetWeaponEnchantInfo()
+    local has, expiryMs = BlizzardAPI.GetWeaponEnhancementInfo(1, true)
+    if has == nil then return true end
     if not has then return false end
     if issecretvalue and issecretvalue(expiryMs) then return true end
     if type(expiryMs) ~= "number" then return true end
@@ -773,7 +772,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
     -- enchant is inside the refresh window - the same read IsCategorySatisfied uses for oils.
     if not InCombatLockdown() then
         local imbue = KnownWeaponImbue()
-        if imbue and not MainHandEnchantHolds() and not IsFreshlyApplied(imbue) then
+        if imbue and not MainHandEnchantHolds(true) and not IsFreshlyApplied(imbue) then
             out[#out + 1] = imbue
         end
         -- Off-hand imbue (dual-imbue specs, i.e. Enhancement). Never collides with the

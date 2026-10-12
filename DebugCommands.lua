@@ -859,6 +859,10 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     local maxIcons = (SpellQueue.GetEffectiveMaxIcons and SpellQueue.GetEffectiveMaxIcons(profile))
         or profile.maxIcons or 4
     local queue = SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue()
+    local queueContext = SpellQueue.DebugContextState and SpellQueue.DebugContextState()
+    if queueContext and queueContext.pullOpenerID == displayID then
+        note("Forever pull opener: Lightning Bolt is preferred before combat; its combat-only Maelstrom requirement is waived")
+    end
     local found
     if type(queue) == "table" then
         for i = 1, #queue do
@@ -2371,6 +2375,10 @@ function DebugCommands.RangeProbe(addon)
     end
 
     -- 1. The melee/near verdicts the gap closer consumes.
+    addon:Print(string.format("  Attack production: swing=%s spell=%s ability=%s sink=%s combat=%s",
+        fmt(BlizzardAPI.IsTargetInSwingRange(0)), fmt(BlizzardAPI.SpellInRange(6603, "target")),
+        fmt(BlizzardAPI.AbilityInRange(6603, "target")),
+        tostring(addon.db.profile.orderSinkCooldowns ~= false), tostring(UnitAffectingCombat("player"))))
     if SpellDB and SpellDB.IsTargetWithin then
         local parts = {}
         for _, y in ipairs({ 5, 8, 10, 25, 40 }) do
@@ -8149,6 +8157,8 @@ function DebugCommands.ForeverProbe(addon, arg)
     -- What production derives from those events (CooldownTracking's swing tracker).
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
     R("tracker: next main-hand swing in", function() return BAPI.GetSwingRemaining(0) end)
+    R("tracker: main-hand range (direct or event)", function() return BAPI.IsTargetInSwingRange(0) end)
+    R("Attack production range", function() return BAPI.AbilityInRange(6603, "target") end)
     R("tracker: next ranged swing in", function() return BAPI.GetSwingRemaining(2) end)
     R("tracker: main-hand haste ratio", function() return BAPI.GetSwingHaste(0) end)
     R("tracker: Slice and Dice window (swing-inferred)", function() return BAPI.IsBuffWindowActive(5171, 6) end)
@@ -8186,11 +8196,19 @@ function DebugCommands.ForeverProbe(addon, arg)
     end
 
     addon:Print("E. consumables / pet / class state (new or classic-only):")
-    R("C_Item.GetWeaponEnchantInfo(MH) hasEnchant", function()
+    R("C_Item.GetWeaponEnchantInfo(MH) first entry hasEnchant", function()
         local t = C_Item.GetWeaponEnchantInfo(0); return t and t[1] and t[1].hasEnchant end)
-    R("C_Item.GetWeaponEnchantInfo(MH) timeLeft", function()
+    R("C_Item.GetWeaponEnchantInfo(MH) first entry timeLeft", function()
         local t = C_Item.GetWeaponEnchantInfo(0); return t and t[1] and t[1].timeLeft end)
+    R("tracked MH imbue present (all entries)", function() return BAPI.GetWeaponEnhancementInfo(0, true) end)
+    R("tracked MH imbue remaining ms", function() return select(2, BAPI.GetWeaponEnhancementInfo(0, true)) end)
+    R("tracked MH temporary enchant present", function() return BAPI.GetWeaponEnhancementInfo(0, false) end)
     R("legacy GetWeaponEnchantInfo()", function() return GetWeaponEnchantInfo() end)
+    R("Cooldown Manager client enabled", function() return C_CVar.GetCVarBool("cooldownViewerEnabled") end)
+    R("Cooldown Manager CVar secure", function()
+        local info = C_CVar.GetCVarInfo("cooldownViewerEnabled"); return info and info.isSecure end)
+    R("Cooldown Manager CVar read-only", function()
+        local info = C_CVar.GetCVarInfo("cooldownViewerEnabled"); return info and info.isReadOnly end)
     R("PaperDoll.AmmoNeeded", function() return C_PaperDollInfo.AmmoNeeded() end)
     R("UnitUsesAmmo(player)", function() return UnitUsesAmmo("player") end)
     R("PetInfo.GetPetHappiness", function() return C_PetInfo.GetPetHappiness() end)
@@ -8255,6 +8273,16 @@ function DebugCommands.ForeverProbe(addon, arg)
     R("stealthed", function() return IsStealthed() end)
     R("soul shard count (6265)", function() return C_Item.GetItemCount(6265) end)
     R("totem slot 1 name", function() return select(2, GetTotemInfo(1)) end)
+    for slot = 1, GetNumTotemSlots() do
+        R("totem slot " .. slot .. " occupied", function() return GetTotemInfo(slot) end)
+        R("totem slot " .. slot .. " spellID", function() return select(7, GetTotemInfo(slot)) end)
+        R("totem slot " .. slot .. " duration active", function()
+            return BAPI.IsDurationObjectActive(GetTotemDuration(slot))
+        end)
+        R("totem slot " .. slot .. " duration object present", function()
+            return GetTotemDuration(slot) ~= nil
+        end)
+    end
     R("pet exists", function() return UnitExists("pet") end)
     -- Pet decisions (summon, revive, Health Funnel / Mend Pet): production reads UnitHealth,
     -- secret in combat, so pet heals are out-of-combat only. Does the health band read for the
@@ -9963,6 +9991,10 @@ function DebugCommands.SimcGateProbe(addon, arg)
     addon:Print(string.format("  countable resource: %s cur=%s max=%s",
         tostring(resName), tostring(resCount), tostring(resMax)))
 
+    local queueContext = SQ.DebugContextState and SQ.DebugContextState()
+    if queueContext and queueContext.pullOpenerID then
+        addon:Print("  OOC pull override: Lightning Bolt preferred; below are the imported combat gates, not its waived Maelstrom pull gate")
+    end
     local list = RI.GetRotationGated(ctx) or {}
     local shown, blocked = 0, 0
     for i = 1, #list do
@@ -9982,7 +10014,17 @@ function DebugCommands.SimcGateProbe(addon, arg)
                     if #sub == 0 then return nil end
                     return "(" .. table.concat(sub, g.t == "any" and " or " or " and ") .. ")"
                 end
-                if g.t == "power" then
+                if g.t == "targets" then
+                    return string.format("engaged enemies%s%s [observed=%s]", tostring(g.op),
+                        tostring(g.n), tostring(BAPI.GetEngagedEnemyCount and BAPI.GetEngagedEnemyCount()))
+                elseif g.t == "totem" then
+                    local occupied
+                    if BAPI.IsTotemSlotOccupied then occupied = BAPI.IsTotemSlotOccupied(g.slot) end
+                    return string.format("totem slot %s wants %s [occupied=%s]",
+                        tostring(g.slot), g.neg and "empty" or "occupied", tostring(occupied))
+                elseif g.t == "unconfirmed" then
+                    return "fight-length mana pacing: unconfirmed (branch does not authorize a cast)"
+                elseif g.t == "power" then
                     -- Ask the RUNTIME for the threshold rather than recomputing it -
                     -- a probe that mirrors the logic drifts from it.
                     -- Guard THEN call: `local a, b = X and X.fn()` truncates to a single

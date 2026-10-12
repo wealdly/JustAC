@@ -412,9 +412,32 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     if not def.classSpells[targetKey] then def.classSpells[targetKey] = {} end
     local cs = def.classSpells[targetKey]
 
+    -- Only unchanged old defaults migrate. Order changes, additions and removals
+    -- are customization, including an empty list.
+    local previous = SpellDB and SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS
+        and SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS[playerClass]
+    if previous and not cs.foreverProtectionDefaultsUpdated then
+        cs.foreverProtectionDefaultsUpdated = true
+        local stored = cs.defensiveSpells
+        if stored then
+            local index, unchanged = 1, true
+            for _, id in ipairs(stored) do
+                if id ~= SpellDB.EMERGENCY_POTION then
+                    if id ~= previous[index] then unchanged = false; break end
+                    index = index + 1
+                end
+            end
+            if unchanged and index == #previous + 1 then
+                local defaults = SpellDB.ResolveDefaults(SpellDB.CLASS_DEFENSIVE_DEFAULTS, specKey, playerClass)
+                CopySpellList(cs, "defensiveSpells", defaults)
+            end
+        end
+    end
+
     -- Populate empty spell lists from SpellDB defaults (spec→class fallback)
     for _, cfg in ipairs(SPELL_LIST_CONFIG) do
-        if not cs[cfg.listKey] or (#cs[cfg.listKey] == 0 and not cfg.keepEmpty) then
+        if not cs[cfg.listKey] or (#cs[cfg.listKey] == 0 and not cfg.keepEmpty
+            and not (previous and cfg.listKey == "defensiveSpells")) then
             local defaults = SpellDB and SpellDB[cfg.defaultsKey]
                 and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
@@ -1164,6 +1187,36 @@ end
 
 -- Display order: instant procs first, then the unified defensive list in user priority
 -- order. overrides (optional): displayMode, maxIcons - the nameplate overlay's own values.
+local personalDefensiveList, maintainedProtectionList = {}, {}
+local function SplitMaintainedProtection(spells)
+    wipe(personalDefensiveList)
+    wipe(maintainedProtectionList)
+    for _, id in ipairs(spells or {}) do
+        local list = personalDefensiveList
+        if id > 0 and SpellDB and SpellDB.IsMaintainedProtection(id) then
+            list = maintainedProtectionList
+        end
+        list[#list + 1] = id
+    end
+    return personalDefensiveList, maintainedProtectionList
+end
+
+local function AppendMaintainedProtection(addon, results, spells, maxIcons, alreadyAdded)
+    local profile = addon:GetProfile()
+    local now = GetTime()
+    local locked = BlizzardAPI.IsPlayerAbilityLockout and BlizzardAPI.IsPlayerAbilityLockout()
+    if locked then return end
+    for _, id in ipairs(spells) do
+        if #results >= maxIcons then break end
+        local m = EvalDefensiveSpell(id, profile, locked, now)
+        if m.usableGate and not m.unusable and not alreadyAdded[id] and not alreadyAdded[m.spellID] then
+            local e = PushEntry(results, m.spellID, false, m.isProcced)
+            e.storedID = id
+            alreadyAdded[id], alreadyAdded[m.spellID] = true, true
+        end
+    end
+end
+
 function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
@@ -1294,6 +1347,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- tile's sentinel into the chosen/best owned item before the usability passes.
     local defensiveSpells = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
     defensiveSpells = ResolveEmergencyDefensives(defensiveSpells, profile)
+    local maintainedProtection
+    defensiveSpells, maintainedProtection = SplitMaintainedProtection(defensiveSpells)
 
     -- Procced spells from configured list (any health level)
     AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, true)
@@ -1334,6 +1389,9 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
 
     -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
     local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
+    if not isLow then
+        AppendMaintainedProtection(addon, results, maintainedProtection, maxIcons, alreadyAdded)
+    end
     if showAllAvailable or isLow then
         -- Order the unified list by health state: below the healthy band (80%) survival floats up; above it,
         -- emergency panic buttons sink to the end. Procs were already placed on top by the
@@ -1365,6 +1423,9 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         if groupHelp and isLow and not partyHurting then
             AppendUsableSpells(addon, results, groupHelp, maxIcons, alreadyAdded)
         end
+    end
+    if isLow then
+        AppendMaintainedProtection(addon, results, maintainedProtection, maxIcons, alreadyAdded)
     end
 
     return results, alreadyAdded
@@ -1446,4 +1507,3 @@ function DefensiveEngine.ResetBuildStats()
     defensiveBuildCount = 0
     defensiveResetTime = GetTime()
 end
-

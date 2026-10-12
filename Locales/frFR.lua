@@ -363,6 +363,7 @@ L["Hide Utility"] = "Masquer les recharges utilitaires"
 L["Hide Tracked Buffs"] = "Masquer les buffs suivis"
 L["Hide Tracked Bars"] = "Masquer les barres suivies"
 L["Cooldown Manager combat warning"] = "Le Gestionnaire de temps de recharge ne peut pas être modifié en combat - réessayez après le combat."
+L["Cooldown Manager enable failed"] = "Le jeu n'a pas modifié le réglage du Gestionnaire de temps de recharge (%s). Modifiez-le dans les options du jeu, puis réessayez."
 
 L["Health Top-off Threshold"] = "Recharger en dessous de"
 L["Health Top-off Threshold desc"] = "À quel point sous la santé maximale le rappel de soin entre les pulls apparaît. Le rappel d'urgence à santé critique est séparé et toujours actif."

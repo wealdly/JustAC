@@ -227,6 +227,31 @@ function BlizzardAPI.IsDurationObjectActive(durObj)
     return DurationObjectActive(durObj)
 end
 
+local totemSlotMemo, totemSlotErrors = {}, {}
+--- A successful nil duration means empty (measured on Forever).
+--- A failed API read returns nil: unknown, never evidence that a slot is empty.
+function BlizzardAPI.IsTotemSlotOccupied(slot)
+    local now = GetTime()
+    local memo = totemSlotMemo[slot]
+    if memo and memo.t == now then return memo.occupied end
+    if not memo then memo = {}; totemSlotMemo[slot] = memo end
+    memo.t, memo.occupied = now, nil
+    local ok, occupied = pcall(function()
+        local duration = GetTotemDuration(slot)
+        return DurationObjectActive(duration)
+    end)
+    if not ok then
+        if totemSlotErrors[slot] ~= occupied then
+            totemSlotErrors[slot] = occupied
+            geterrorhandler()(occupied)
+        end
+        return nil
+    end
+    totemSlotErrors[slot] = nil
+    memo.occupied = occupied
+    return occupied
+end
+
 --- True while spellID is on a REAL cooldown (GCD excluded), read as engine truth.
 function BlizzardAPI.IsSpellOnCooldown(spellID)
     if not (spellID and C_Spell and C_Spell.GetSpellCooldownDuration) then return false end
@@ -322,7 +347,7 @@ function BlizzardAPI.RunningAutoSwing(spellID)
     return swingType
 end
 
--- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, hasTarget), plain in combat and
+-- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, checksRange), plain in combat and
 -- fired on every target change and range crossing (measured build 70245: a target acquired
 -- from a distance read false/true, walking into melee true/true, a dead target true/false).
 local swingInRange = {}
@@ -330,6 +355,15 @@ local swingInRange = {}
 --- Is the current target within auto-attack reach of swingType (0 main hand, 2 ranged)?
 --- The game's own range check: true / false, or nil with no target or no event seen (retail).
 function BlizzardAPI.IsTargetInSwingRange(swingType)
+    local swingTimer = _G.C_SwingTimer
+    if BlizzardAPI.IsForever() and swingTimer and swingTimer.IsTargetWithinSwingRange then
+        local ok, inRange = pcall(swingTimer.IsTargetWithinSwingRange, swingType)
+        if not ok then
+            geterrorhandler()(inRange)
+        elseif not IsSecretValue(inRange) and type(inRange) == "boolean" then
+            return inRange
+        end
+    end
     return swingInRange[swingType]
 end
 
@@ -382,12 +416,13 @@ do
         f:RegisterEvent("PLAYER_ENTERING_WORLD")
         f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
         f:RegisterEvent("PLAYER_REGEN_ENABLED")
+        f:RegisterEvent("PLAYER_TARGET_CHANGED")
         f:RegisterUnitEvent("UNIT_ATTACK_SPEED", "player")
         pcall(f.RegisterEvent, f, "PLAYER_SWING_RANGE_UPDATE")
         pcall(f.RegisterEvent, f, "PLAYER_LEAVE_COMBAT")     -- Attack switched off
         pcall(f.RegisterEvent, f, "STOP_AUTOREPEAT_SPELL")   -- Auto Shot / wand switched off
         pcall(f.RegisterEvent, f, "START_AUTOREPEAT_SPELL")  -- ... and on: seed the first shot
-        f:SetScript("OnEvent", function(_, event, duration, swingType, hasTarget)
+        f:SetScript("OnEvent", function(_, event, duration, swingType, checksRange)
             if event == "PLAYER_SWING" then
                 if type(swingType) == "number" and type(duration) == "number"
                    and not IsSecretValue(duration) and duration > 0 then
@@ -403,12 +438,14 @@ do
             elseif event == "STOP_AUTOREPEAT_SPELL" then
                 swingLast[SWING_RANGED] = nil
             elseif event == "PLAYER_SWING_RANGE_UPDATE" then
-                -- Payload (swingType, inRange, hasTarget); the first argument slot is named
+                -- Payload (swingType, inRange, checksRange); the first argument slot is named
                 -- for PLAYER_SWING above.
                 local st, inRange = duration, swingType
-                if type(st) == "number" and type(inRange) == "boolean" and type(hasTarget) == "boolean" then
-                    if hasTarget then swingInRange[st] = inRange else swingInRange[st] = nil end
+                if type(st) == "number" and type(inRange) == "boolean" and type(checksRange) == "boolean" then
+                    if checksRange then swingInRange[st] = inRange else swingInRange[st] = nil end
                 end
+            elseif event == "PLAYER_TARGET_CHANGED" then
+                wipe(swingInRange)
             else
                 -- The range event fires only for swing types with a range check enabled. Once
                 -- per world entry: every call resets the check (and fires a "no target" update).

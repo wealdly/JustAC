@@ -363,6 +363,7 @@ L["Hide Utility"] = "Hilfs-Abklingzeiten ausblenden"
 L["Hide Tracked Buffs"] = "Verfolgte Buffs ausblenden"
 L["Hide Tracked Bars"] = "Verfolgte Leisten ausblenden"
 L["Cooldown Manager combat warning"] = "Der Abklingzeit-Manager kann im Kampf nicht geändert werden - versuche es nach dem Kampf erneut."
+L["Cooldown Manager enable failed"] = "Das Spiel hat die Einstellung des Abklingzeit-Managers nicht geändert (%s). Ändere sie in den Spieloptionen und versuche es erneut."
 
 L["Health Top-off Threshold"] = "Auffüllen unter"
 L["Health Top-off Threshold desc"] = "Wie weit unter voller Gesundheit die Erinnerung zwischen den Pulls erscheint. Der Notfall-Hinweis bei kritischer Gesundheit ist davon getrennt und immer aktiv."

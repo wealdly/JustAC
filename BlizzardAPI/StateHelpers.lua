@@ -34,6 +34,39 @@ local BOSS_UNITS = { "boss1", "boss2", "boss3", "boss4", "boss5" }
 local GetNumShapeshiftForms = GetNumShapeshiftForms
 local GetShapeshiftFormInfo = GetShapeshiftFormInfo
 
+--- Weapon enhancement state: Forever separates imbues from temporary enchants.
+--- Returns presence and milliseconds remaining; nil presence means the read failed.
+--- @return boolean|nil active
+--- @return number|nil remaining
+function BlizzardAPI.GetWeaponEnhancementInfo(weaponSlot, imbue)
+    if BlizzardAPI.IsForever() then
+        local ok, enchants = pcall(C_Item.GetWeaponEnchantInfo, weaponSlot)
+        if not ok then
+            geterrorhandler()(enchants)
+            return nil
+        end
+        local wanted = Enum.ItemEnchantType.Temporary
+        if imbue then wanted = Enum.ItemEnchantType.Imbue end
+        local remaining, active = nil, false
+        for _, enchant in pairs(enchants) do
+            if enchant.hasEnchant and enchant.enchantType == wanted then
+                active = true
+                local timeLeft = enchant.timeLeft
+                if IsSecretValue(timeLeft) or type(timeLeft) ~= "number" then return true end
+                if not remaining or timeLeft > remaining then remaining = timeLeft end
+            end
+        end
+        return active, remaining
+    end
+    local ok, mh, mhTime, _, _, oh, ohTime = pcall(GetWeaponEnchantInfo)
+    if not ok then
+        geterrorhandler()(mh)
+        return nil
+    end
+    if weaponSlot == 1 then return oh, ohTime end
+    return mh, mhTime
+end
+
 --------------------------------------------------------------------------------
 -- Engaged-enemy count (secret-safe, AC-independent AoE signal)
 --------------------------------------------------------------------------------
@@ -207,6 +240,12 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
         return false, false, false
     end
 
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local totemSlot = SpellDB and SpellDB.GetForeverTotemSlot and SpellDB.GetForeverTotemSlot(spellID)
+    if totemSlot and BlizzardAPI.IsTotemSlotOccupied(totemSlot) ~= false then
+        return false, true, false
+    end
+
     -- A user may add a display-override id whose castable base differs (e.g.
     -- Recuperate 1231411 surfaces as Frenzied Regeneration 22842 for druids). The
     -- override id may not be independently "known", so resolve to the base and
@@ -369,19 +408,24 @@ local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 --- (a wasted press is cheap for a kick, expensive for a placed cooldown).
 local nextSwingSpells   -- SpellDB.NEXT_SWING_SPELLS, resolved on first use (false = none)
 
-function BlizzardAPI.SpellInRange(spellID, unit)
-    if not spellID then return nil end
-    -- A next-swing ability (Heroic Strike, Cleave, Raptor Strike, Maul) lands on the next melee
-    -- swing, and on WoW Forever its spell range always reads "in range" (measured) - so a
-    -- Raptor Strike led the queue at bow range. Its range IS the melee swing range. The table
-    -- is empty on retail.
+function BlizzardAPI.IsMeleeSwingSpell(spellID)
+    if not BlizzardAPI.IsForever() then return false end
+    if spellID == 6603 then return true end
     if nextSwingSpells == nil then
         local sdb = LibStub("JustAC-SpellDB", true)
         nextSwingSpells = sdb and sdb.NEXT_SWING_SPELLS or false
     end
-    if nextSwingSpells and nextSwingSpells[spellID] and (unit == nil or unit == "target") then
-        local swing = BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
-        if swing ~= nil then return swing end
+    return (nextSwingSpells and nextSwingSpells[spellID]) and true or false
+end
+
+function BlizzardAPI.SpellInRange(spellID, unit)
+    if not spellID then return nil end
+    -- Attack and next-swing abilities can read "in range" at any distance on Forever.
+    -- Use current melee evidence instead; unknown must not fall back to that raw true.
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then
+        local sdb = LibStub("JustAC-SpellDB", true)
+        if sdb and sdb.IsTargetWithin then return sdb.IsTargetWithin(5) end
+        return BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
     end
     if not C_Spell_IsSpellInRange then return nil end
     local r = C_Spell_IsSpellInRange(spellID, unit or "target")
@@ -400,6 +444,7 @@ end
 function BlizzardAPI.AbilityInRange(spellID, unit)
     local r = BlizzardAPI.SpellInRange(spellID, unit)
     if r ~= false then return r end
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then return false end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
     if slot and C_ActionBar and C_ActionBar.IsActionInRange then

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # tools/gen_forever_rotations.py
 #
-# WoW Forever priority lists for every class and talent tree -> Data/ForeverRotations.lua.
+# WoW Forever priority lists for every class and talent tree -> Data/Forever/Rotations.lua.
 #
 # Source 1: the wowsims-format rotation files vendored in tools/forever-apl-src/ (from
 # github.com/ElliotWood/Forever, MIT; commit in UPSTREAM_COMMIT). Forever spell ids, level
@@ -23,7 +23,7 @@ import json, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "tools", "forever-apl-src")
 PINS = os.path.join(ROOT, "tools", "simc-apl-forever")
-OUT = os.path.join(ROOT, "Data", "ForeverRotations.lua")
+OUT = os.path.join(ROOT, "Data", "Forever", "Rotations.lua")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import check_forever_apl as cfa  # noqa: E402  (shared learnability + rank chains)
 import gen_simc_rotations as gsr  # noqa: E402  (the SimC condition parser, for hand pins)
@@ -279,9 +279,9 @@ class Conv:
         if g == UNK:
             return UNK
         t = g["t"]
-        if t in ("buff", "cd", "known", "stealth"):
+        if t in ("buff", "cd", "known", "stealth", "totem"):
             return dict(g, neg=not g.get("neg", False))
-        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick") and g.get("op") in NOT_OP:
+        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick", "targets") and g.get("op") in NOT_OP:
             return dict(g, op=NOT_OP[g["op"]])
         if t in ("any", "all"):
             members = [self.negate(m) for m in g["g"]]
@@ -388,9 +388,9 @@ class Conv:
         if name in ("auraRemainingTime", "dotRemainingTime"):
             return self.remaining(op, name, side, val)
         if n is None and "remainingTime" in json.dumps(val):
-            # Mana paced against fight length (Lightning Bolt: mana >= time left * 35): the
-            # fight length is unknowable, so no pacing - as remainingTime vs a constant above.
-            return TRUE
+            # No fight-duration signal: keep this branch unconfirmed, rather than
+            # erasing it and turning a conditional mana spender into a filler.
+            return {"t": "unconfirmed"}
         if name == "math":
             # Resource pooling arithmetic (Ferocious Bite: energy + regen vs its cost + Shred's):
             # the button's own cost decides whether it can be pressed.
@@ -402,11 +402,10 @@ class Conv:
             # Point-blank AoE (Arcane Explosion, Hellfire, Blast Wave) only with the target close.
             return {"t": "near", "n": n}
         if name == "totemRemainingTime" and op in ("<", "<=") and n <= 1:
-            # "This element's totem is down": my own totem, timed from its cast like a buff.
-            # ponytail: a totem killed early or replaced by another of its element reads up.
-            return self.buff(self.self_id, True) if self.self_id else UNK
+            slot = {"Fire": 1, "Earth": 2, "Water": 3, "Air": 4}.get(side.get("totemType"))
+            return {"t": "totem", "slot": slot, "neg": True} if slot else UNK
         if name == "numberTargets":
-            return TRUE                     # decided by the tier split
+            return {"t": "targets", "op": op, "n": n}
         if name == "remainingTime":
             # Fight length is unknowable; assume the fight goes on (steady state).
             # ponytail: end-of-fight dumps never fire; a real time-to-die needs secret health.
@@ -514,7 +513,9 @@ def convert_sim(stem, by_id, dropped):
                 c.lose(cond)
             if extra == "dot":
                 gates.append({"t": "dot", "id": rid})
-            tiers = [name for name, k in TIERS if c.tier(cond, k) is not False]
+            tiers = [name for name, k in TIERS
+                     if (any(c.tier(cond, count) is not False for count in range(3, 41))
+                         if name == "aoe" else c.tier(cond, k) is not False)]
             e = {"id": rid, "gates": gates, "delegated": c.delegated, "tiers": tiers}
             if e not in entries:             # a sim list repeats a line per talent variant
                 entries.append(e)
@@ -559,6 +560,12 @@ def tier_lists(entries):
     for e in entries:
         for t in e["tiers"]:
             lists[t].append(e)
+    for t, lines in lists.items():
+        fallbackIDs = {e["id"] for e in lines if not e["gates"]}
+        # Lookup keeps the first occurrence. An unobservable pacing-only line
+        # must not mask a later unconditional filler for the same ability.
+        lists[t] = [e for e in lines if not
+                    (e["id"] in fallbackIDs and e["gates"] == [{"t": "unconfirmed"}])]
     out = {"st": lists["st"]}
     if lists["aoe"] != lists["st"]:
         out["aoe"] = lists["aoe"]
@@ -657,8 +664,9 @@ def main():
         for chain in chains.values():
             if len(chain) > 1:
                 chains_out[rank1(chain)] = [int(i) for i, _ in chain]
-        # The class's combat abilities (rank 1): what a bar spell must be to join the pool, so
-        # tracking, travel, profession or utility spells on the bars never reach the queue.
+        # Broad bar eligibility (rank 1), not final offensive admission. The curated
+        # ABILITY_ROLES in Forever defaults route protection/utility out at runtime,
+        # retaining eligibility for custom entries and Always Show overrides.
         # Abilities that deal damage or are combat buffs (deals_damage, combat_buff), the
         # curated burst cooldowns and damage racials (cfa.RACIAL_ROLES); list entries join below.
         # Racials join by that role only: Escape Artist passes as a short self buff, but it is
@@ -744,6 +752,7 @@ def main():
     if "--print" in sys.argv:
         print(text)
     else:
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
         with open(OUT, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         print("wrote", OUT)

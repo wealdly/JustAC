@@ -623,6 +623,7 @@ L["Later"] = "Later"
 L["Not now"] = "Not now"
 L["Don't ask again"] = "Don't ask again"
 L["Cooldown Manager combat warning"] = "Cooldown Manager can't be changed in combat - try again after the fight."
+L["Cooldown Manager enable failed"] = "The game did not change the Cooldown Manager setting (%s). Change it in Options > Gameplay Enhancements, then try again."
 
 L["Health Top-off Threshold"] = "Top Off Below"
 L["Health Top-off Threshold desc"] = "How far below full health the between-pulls heal reminder appears. Your emergency heal cue at critical health is separate and always on."

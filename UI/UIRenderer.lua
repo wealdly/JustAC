@@ -689,7 +689,9 @@ local VS_WAITING = 8
 --- @return boolean isOutOfRange
 local function CheckSpellRange(icon, spellID, directSlot)
     local inRange
-    if directSlot and C_ActionBar_IsActionInRange then
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) then
+        inRange = BlizzardAPI.SpellInRange(spellID)
+    elseif directSlot and C_ActionBar_IsActionInRange then
         inRange = C_ActionBar_IsActionInRange(directSlot, "target")
         if inRange ~= nil and BlizzardAPI.IsSecretValue(inRange) then inRange = nil end
     elseif BlizzardAPI.SpellInRange then

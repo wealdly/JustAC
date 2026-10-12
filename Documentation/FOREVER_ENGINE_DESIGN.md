@@ -51,7 +51,127 @@ the parser/classifier and the gate EVALUATORS are kept; only the pick-relative p
 Not available: aura state by any direct call (throws), target casts (secret), mana regen,
 defense skill, `IsActiveSpell`, swing range (`checksRange` always false).
 
+### Weapon enhancements and range reads
+
+Forever's `C_Item.GetWeaponEnchantInfo(weaponSlot)` returns multiple entries per weapon.
+`Enum.ItemEnchantType.Imbue` and `Temporary` are separate channels: Rockbiter can be active
+while the first entry, or the legacy `GetWeaponEnchantInfo()` return, reports no enchant.
+`BlizzardAPI.GetWeaponEnhancementInfo` selects the requested channel across all entries.
+The precombat checklist and redundancy filter share it. Retail continues using the legacy
+API, selected by the existing `IsForever()` client check.
+
+The queue polls hostile targets out of combat, but an event-only swing-range cache need
+not update during movement. On Forever, `IsTargetInSwingRange` polls
+`C_SwingTimer.IsTargetWithinSwingRange` and retains a valid event result when that API
+is absent or returns nil (measured in the saved probe). Target changes clear the event
+cache, and `checksRange=false` invalidates it. Attack and next-swing spells use
+`SpellDB.IsTargetWithin(5)`, combining known
+spell-range probes with the live swing read. An unknown range never becomes an
+out-of-range verdict. Retail's Attack spell-range path is unchanged.
+
+The Cooldown Manager option uses Blizzard's registered Settings value when available
+and verifies the CVar afterward. Its checked state reads the client CVar, not a saved
+profile flag. A refused change is reported without recording a successful opt-in.
+
+Regression harnesses: `tools/test_forever_weapon_enchants.py`,
+`tools/test_forever_swing.py`, `tools/test_forever_primary.py`,
+`tools/test_forever_autoattack.py` and `tools/test_forever_options.py`.
+The in-game check remains necessary: `/jac inspect forever` reports both enchant
+channels, the legacy read, live swing range, and the Cooldown Manager CVar state.
+
 ## 4. Architecture
+
+### Defensive routing audit (Forever DB2 build 1.60.1.70245)
+
+Compared the nine class pools and defensive defaults against the single-build
+Forever CSV exports. This is a routing review, not authorization to add every
+candidate to a health-triggered list.
+
+| Class | Finding |
+|---|---|
+| Shaman | Stoneskin is maintained physical protection, not DPS. Windwall is ranged protection. Grounding, Tremor, resistance and cleansing totems need contextual conditions. Healing Stream already belongs to group help; mana totems are resource support. |
+| Mage | Fire Ward and Frost Ward are missing defensive candidates, but school-specific absorption must not become unconditional upkeep. |
+| Paladin | Templar's Bulwark is a missing personal absorb. Holy Shield is mixed block/damage tank maintenance. Blessing of Sacrifice protects an ally, not the caster; it is not a generic self-defense offer. |
+| Priest | Elune's Grace is a missing avoidance candidate. Fear Ward and Shadow Protection are preparation/contextual protection. Fade is threat management. Divine Grace cannot target self; Contingency Plan targets an ally. Dark Sacrifice spends health for mana. |
+| Warrior | Shield Block is missing rotational mitigation. Retaliation combines survival context and damage. Berserker Rage belongs to CC/resource handling. Demoralizing Shout and Thunder Clap retain their tank-rotation roles. |
+| Druid | Barkskin and Frenzied Regeneration already have defensive defaults but can enter the automatic offensive pool. Forms, Enrage and Demoralizing Roar must retain their combat roles. Innervate is resource support. |
+| Rogue | Evasion and Vanish already have defensive defaults but can enter the automatic pool. Sprint belongs to movement; stealth needs opener context. |
+| Hunter | Deterrence and Feign Death already have defensive defaults but can enter the automatic pool. Control traps are situational; damage traps remain offensive. Scouting and taming are utility, not health defenses. |
+| Warlock | Shadow Ward is already defensive. Drain Life and Death Coil have both damage and defensive value; Siphon Life remains damage/healing. Pet resummoning is not a generic low-health defense. |
+
+The automatic-pool generator admits damage OR short-lived combat buffs/summons.
+The latter is not evidence of an offensive role. Conversely, its damage detector
+does not prove the absence of damage from summons, scripts, traps or retaliation.
+Category-only filtering is therefore insufficient: Drain Life, Death Coil,
+Holy Shock, Holy Nova and Holy Shield are important dual-purpose exceptions.
+Use explicit role data with a shared routing rule; preserve custom entries,
+Always Show overrides and retail behavior.
+
+For maintained protection, the selected default policy is to preserve any active
+totem in the same elemental slot. Offer Stoneskin only when the Earth slot is
+empty, behind urgent healing, and suppress it when active. Never alternate
+Stoneskin and Strength of Earth merely because each queue prefers its own.
+
+Live saved probes identify Earth as slot 2. In combat, GetTotemInfo's occupied
+boolean and spellID are secret, and branching on occupied throws. The
+GetTotemDuration object passed to the existing duration-readiness probe returned
+a plain active boolean for slot 2 while a totem was present; unused slots returned
+false. Out of combat Stoneskin returned spellID 8071 and duration-active true.
+Another out-of-combat snapshot had occupied=true but spellID=0 and
+duration-active=false: do not assume the presence flag and duration are always
+equivalent. A follow-up saved combat capture returned duration-active false
+with an empty Earth slot, then true after Stoneskin was cast, while occupied
+and spellID remained secret in both states. This validates the empty-to-active
+transition without reading identity. The captured active-to-empty endpoint was
+out of combat, so destruction/expiry mid-combat still needs explicit coverage.
+API failure must remain unknown, not be interpreted as an empty slot.
+
+Implemented: curated role routing, elemental-slot preservation and maintained
+Stoneskin offers from the editable defensive list. Templar's Bulwark and
+Elune's Grace join defensive defaults. Only unchanged previous defaults migrate;
+customized lists and deliberately removed entries remain untouched.
+
+A later probe explicitly tested duration-object presence: the empty Earth slot
+returned no object in and out of combat. A successful nil-duration result is
+therefore empty, not an API failure. An active Stoneskin returns an active
+duration object. The shared helper catches thrown reads, reports the error and
+returns unknown, suppressing offers until it can read the slot again.
+
+Situational wards, cleansing/resistance totems and rotational Shield Block
+are classified but still need their appropriate conditional defensive surfaces.
+They are not unconditional health-triggered default additions.
+
+### Out-of-combat opener audit (2026-10-12)
+
+Combat priority is not automatically pull priority. Reviewed all nine classes in
+`Data/Forever/Rotations.lua` against the local `forever-guides` notes:
+
+| Class | Decision |
+|---|---|
+| Shaman | Prefer a confirmed usable, ready, in-range Lightning Bolt before combat. The guides explicitly recommend bolt pulls; Enhancement's sole five-stack Maelstrom gate applies to instant bolts during combat, not a hardcast pull. Earth Shock remains in the queue and interrupt reminder. |
+| Druid | Retain form, stealth, resource and DoT conditions; Balance guides disagree between Wrath and Starfire pulls. No universal replacement. |
+| Rogue | Retain stealth openers and weapon/positional usability, not a generic cast-time preference. |
+| Warrior | Retain preparation and rage/reactive conditions; Charge is handled by the gap-closer stage. |
+| Hunter | Retain mark, sting, cooldown and swing conditions; pet engagement is not inferred from being out of combat. |
+| Mage | Retain tree-specific proc/stack and mana conditions; no blanket hardcast override. |
+| Priest | Retain Holy Fire/Smite and Shadow setup priorities. |
+| Paladin | Retain seal preparation, Judgement and ability usability. |
+| Warlock | Retain curse/DoT setup and mana recovery rather than automatically promoting Shadow Bolt. |
+
+The Shaman exception lives in queue assembly, not generated combat data. It applies
+only to the Forever automatic pool with theorycraft ordering, with no target or a
+hostile target confirmed in range. With no target, range and hostility are not
+requirements for previewing a pull. Friendly targets do not receive the override.
+It only promotes a bolt already accepted by the queue filters. It recognizes all
+bolt ranks through `RotationImport.RankBase`. Only the exact sole Maelstrom stack
+gate is waived; other gates, blacklist, cooldown, resource, range and lockout checks
+remain in force. Real proc suggestions retain their higher-priority bucket.
+Combat, custom queues, exact/source ordering and retail are unchanged.
+
+Regression: `tools/test_forever_openers.py`. In game, target an enemy out of combat,
+check `/jac why Lightning Bolt` and the leading spell, then enter combat and check
+that the ordinary Maelstrom condition resumes. Repeat with a custom list to verify
+that its order is not replaced.
 
 ```
             shell (unchanged)                         core (new on Forever)
@@ -91,7 +211,7 @@ single-repo build can put retail's pick engine and this engine behind the same s
   remaining -> `delegated`. Item and trinket entries are skipped. IMPLEMENTED 2026-10-07:
   `tools/gen_forever_rotations.py` (vendored sources in `tools/forever-apl-src/` with
   `UPSTREAM_COMMIT`; rule tests in `tools/test_forever_rotations.py`) writes
-  `Data/ForeverRotations.lua`: 28 trees across the 9 classes, the full MIT notice embedded
+  `Data/Forever/Rotations.lua`: 28 trees across the 9 classes, the full MIT notice embedded
   (tools/ is not packaged). Fight-length conditions fold under a "fight goes on" assumption;
   the tree -> source-file mapping (e.g. Arms = `dps_battle`, Fury = `dps_reck`, Holy and
   Discipline priest = `smite`) is the `TREES` table. Not in the TOC yet: it registers through
@@ -104,7 +224,7 @@ single-repo build can put retail's pick engine and this engine behind the same s
 - Checked by `tools/gen_forever_rotations.py`, using the learnability rules in
   `tools/check_forever_apl.py` (every token must be learnable by the class on
   Forever; exit 1 otherwise).
-- Generated into `Data/ForeverRotations.lua`, registered through the existing
+- Generated into `Data/Forever/Rotations.lua`, registered through the existing
   `RotationImport.RegisterGated`, keyed `<CLASS>_F` with one list per tree:
   `["WARRIOR_F"] = { default = {st=...}, arms = {st=..., aoe=...}, fury = ..., protection = ... }`.
 
@@ -194,7 +314,7 @@ priority position with no gate, which is how the retail pipeline already fails s
 
 1. Fix the behaviour bugs from the dead-code pass, including the GCD source.
 2. Delete the revised dead list.
-3. Generator Forever profile, `Data/ForeverRotations.lua`, rank chains; warrior `default` +
+3. Generator Forever profile, `Data/Forever/Rotations.lua`, rank chains; warrior `default` +
    `arms` first.
 4. `ForeverEngine` behind the `GetCurrentSpellQueue` seam; tree selection. DONE 2026-10-07,
    without a new module: the existing tail pipeline already ranks a pool by imported

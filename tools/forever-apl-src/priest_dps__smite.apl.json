@@ -27,7 +27,7 @@
 				}
 			}
 		},
-		{ "action": { "castSpell": { "spellId": { "spellId": 1240721, "rank": 3 } } } },
+		{ "action": { "castSpell": { "spellId": { "spellId": 1316995, "rank": 3 } } } },
 		{
 			"action": {
 				"condition": {

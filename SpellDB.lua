@@ -229,6 +229,19 @@ local function StaticLookup(t, spellID)
 end
 SpellDB.StaticLookup = StaticLookup   -- shared with RedundancyFilter's own tables
 
+function SpellDB.GetForeverAbilityRole(spellID)
+    return SpellDB.FOREVER_ABILITY_ROLES and StaticLookup(SpellDB.FOREVER_ABILITY_ROLES, spellID) or nil
+end
+
+function SpellDB.GetForeverTotemSlot(spellID)
+    return SpellDB.FOREVER_TOTEM_SLOTS and StaticLookup(SpellDB.FOREVER_TOTEM_SLOTS, spellID) or nil
+end
+
+function SpellDB.IsMaintainedProtection(spellID)
+    return SpellDB.FOREVER_MAINTAINED_PROTECTION ~= nil
+        and StaticLookup(SpellDB.FOREVER_MAINTAINED_PROTECTION, spellID) == true
+end
+
 -- Distinct base spell of a talent-override variant, or nil when there is none
 -- (self is its own base, or C_Spell.GetBaseSpell is unavailable). Shares
 -- StaticLookup's cache; exposed so other modules reuse this resolution instead
@@ -542,7 +555,7 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
 -- every maintained-buff member across all classes, flat (PrecombatEngine's applied-latch
 -- keys off it). auraIDs count as members too - a ranked buff (WoW Forever) is cast as any
 -- rank. Rebuilt IN PLACE (readers hold the tables) whenever the source changes:
--- Data/ForeverDefaults.lua swaps in Forever's groups.
+-- Data/Forever/Defaults.lua swaps in Forever's groups.
 SpellDB.ROGUE_POISON_CAST_IDS = {}
 SpellDB.MAINTAINED_BUFF_MEMBERS = {}
 function SpellDB.IndexMaintainedBuffs()
@@ -660,7 +673,7 @@ local function PlayerPrefersOil()
     return select(6, C_SpecializationInfo.GetSpecializationInfo(spec)) == 4  -- 4 = Intellect -> caster -> oil
 end
 
--- WoW Forever: the stats each class gets something from (Data/ForeverConsumables.lua tags
+-- WoW Forever: the stats each class gets something from (Data/Forever/Consumables.lua tags
 -- each buff with one). Druids use them all, so they are left out (no filter).
 local FOREVER_CLASS_STATS = {}
 for class, stats in pairs({
@@ -679,7 +692,7 @@ for class, stats in pairs({
 end
 
 -- Out-of-combat recovery items (WoW Forever: food, drink, bandages): kind -> list, the most
--- restored per use first. Filled by Data/ForeverConsumables.lua; empty on retail.
+-- restored per use first. Filled by Data/Forever/Consumables.lua; empty on retail.
 local RECOVERY = {}
 function SpellDB.RegisterRecoveryItems(t)
     if type(t) ~= "table" then return end

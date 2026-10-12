@@ -363,6 +363,7 @@ L["Hide Utility"] = "Ocultar recargas de utilidade"
 L["Hide Tracked Buffs"] = "Ocultar buffs rastreados"
 L["Hide Tracked Bars"] = "Ocultar barras rastreadas"
 L["Cooldown Manager combat warning"] = "O Gerenciador de recarga não pode ser alterado em combate - tente novamente após a luta."
+L["Cooldown Manager enable failed"] = "O jogo não alterou a configuração do Gerenciador de recarga (%s). Altere-a nas opções do jogo e tente novamente."
 
 L["Health Top-off Threshold"] = "Completar abaixo de"
 L["Health Top-off Threshold desc"] = "Quanto abaixo da vida cheia o lembrete de cura entre pulls aparece. O aviso de emergência com vida crítica é separado e está sempre ativo."

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 wealdly
-# WoW Forever consumables (Data/ForeverConsumables.lua, tools/gen_forever_consumables.py)
+# WoW Forever consumables (Data/Forever/Consumables.lua, tools/gen_forever_consumables.py)
 # through the real SpellDB.lua, on BOTH clients: Forever's recovery picks (best drink / food /
 # bandage the player owns and can use, plain food before Well Fed food), the class-aware Auto
 # pick for buffs, and that each client loads only its own consumable lists.
@@ -71,7 +71,7 @@ def load(forever):
     lua.execute(PRELUDE)
     if forever:
         lua.execute("WOW_PROJECT_CAMELOT = 18; WOW_PROJECT_ID = 18")
-    for f in ("SpellDB.lua", "Data/HealingItems.lua", "Data/PrecombatBuffs.lua", "Data/ForeverConsumables.lua"):
+    for f in ("SpellDB.lua", "Data/HealingItems.lua", "Data/PrecombatBuffs.lua", "Data/Forever/Consumables.lua"):
         lua.execute((ROOT / f).read_text(encoding="utf-8"))
     return lua, lua.eval('LibStub("JustAC-SpellDB")')
 
