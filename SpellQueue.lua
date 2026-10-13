@@ -1599,6 +1599,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     if onCooldown and sinkCooldowns then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = spellID
+                        sunkSet[spellID] = true
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = spellID
@@ -1832,6 +1833,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- rank. Cooldown (not-ready) spells trail, unranked.
     spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
+    b.foreverWaitEligible = BlizzardAPI.IsForever() and sinkCooldowns and contextOrder ~= "off"
+        and spellCount == 0 and cooldownCount > 0
     -- Regeneration/cooldown waits precede unmet class-resource prerequisites. Wasted
     -- presses (an active buff/DoT, a running Attack, or a range failure) trail both.
     for pass = 1, 3 do
@@ -2180,6 +2183,7 @@ end
 local safeLeadID
 function SpellQueue._ApplySafeLead(b)
     safeLeadID = nil
+    if b.foreverWaiting then return end
     if b.leadMode ~= "safe" then return end
     -- A wait reaches slot 1 in TWO shapes: our sentinel, when the engine answered
     -- nothing at all, and the engine's own passive placeholder, which _StagePrimary
@@ -2208,6 +2212,29 @@ end
 
 --- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
 --- copy into lastSpellIDs (the shared return buffer).
+function SpellQueue._StageForeverWait(b)
+    if not b.foreverWaitEligible or b.spellCount == 0 then return end
+    if not b.inCombat then
+        if not UnitExists("target") or not UnitCanAttack("player", "target") then return end
+        local ok, dead = pcall(UnitIsDeadOrGhost, "target")
+        if not ok then
+            geterrorhandler()(dead)
+            return
+        end
+        if BlizzardAPI.IsSecretValue(dead) or dead ~= false then return end
+    end
+    local queue = b.recommendedSpells
+    -- A later injection (such as the burst cue) can supply an actionable spell.
+    for i = 1, b.spellCount do
+        if not sunkSet[queue[i]] then return end
+    end
+    local count = math.min(b.spellCount + 1, b.maxIcons)
+    for i = count, 2, -1 do queue[i] = queue[i - 1] end
+    queue[1] = SpellQueue.WAIT_SENTINEL
+    b.spellCount = count
+    b.foreverWaiting = true
+end
+
 function SpellQueue._StageFinalize(b)
     local spellCount, recommendedSpells = b.spellCount, b.recommendedSpells
     -- When Blizzard returns no spells (e.g. target out of range OOC) but
@@ -2679,6 +2706,7 @@ function SpellQueue.GetCurrentSpellQueue()
     SpellQueue._StageContext(b)        -- E: context inference (fills b.ctx*)
     SpellQueue._StageTail(b)           -- F: tail ordering + assembly over positions 2+
     SpellQueue._StageBurstCue(b)       -- G: burst-ready cue at position 2
+    SpellQueue._StageForeverWait(b)    -- no actionable Forever entry: reserve slot 1 for WAIT
     SpellQueue._StageFinalize(b)       -- H: blank bookkeeping, dedup, copy-out
     return lastSpellIDs
 end

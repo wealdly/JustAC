@@ -25,6 +25,7 @@ function RI.RankBase(id) return rankBases[id] or id end
 RotationImport = RI
 function wipe(t) for k in pairs(t) do t[k] = nil end end
 SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true end }
+SpellQueue.WAIT_SENTINEL = -999999999
 SpellDB = { GetSpecKey = function() return specKey end }
 FOREVER_REAR_ATTACKS = {}
 function SpellDB.RegisterCategories(t) FOREVER_REAR_ATTACKS = t.foreverRear end
@@ -58,6 +59,7 @@ BlizzardAPI = {
 }
 function UnitExists() return targetExists end
 function UnitCanAttack() return hostile end
+function UnitIsDeadOrGhost() return targetDead end
 function NoteManaStarved() end
 function ClaimSpellID(id, added) added[id] = true; return id end
 function PassesRotationFilters(id) return not filtered[RotationImport.RankBase(id)] end
@@ -99,6 +101,7 @@ end
 function Reset()
     forever, specKey, stacks = true, "SHAMAN_F", 0
     targetExists, hostile = true, true
+    targetDead = false
     ranges, cooldown, unusable, starved, locked, filtered, blacklisted, procs =
         {[403] = true, [8042] = true}, {}, {}, {}, {}, {}, {}, {}
     SpellQueue._rotationIsCustom = false
@@ -177,6 +180,9 @@ def main():
             return b.recommendedSpells
         end
     """)
+    wait_start = source.index("function SpellQueue._StageForeverWait(")
+    wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
+    lua.execute(source[wait_start:wait_end])
     cases = [
         ("", [403, 8042], "OOC bolt leads without Maelstrom stacks"),
         ("pool = {10414, 15208}", [15208, 10414], "highest-rank entries use the same opener"),
@@ -339,6 +345,48 @@ def main():
         actual = list(lua.globals().Build().values())
         assert actual == expected, f"{description}: got {actual}, expected {expected}"
         assert lua.globals().resourceReads <= 1, f"{description}: duplicate class-resource read"
+    wait = lua.globals().SpellQueue.WAIT_SENTINEL
+    wait_cases = [
+        (rogue + "points=0", [wait, 1752, 2098], "all-starved queue shows WAIT before missing-point finisher"),
+        (rogue + "points=2; b.ctxPointCap=2", [wait, 2098, 1752], "eligible finisher still waits for energy"),
+        (rogue + "points=0; ranges[1752]=false; ranges[2098]=false", [wait, 2098, 1752], "all-out-of-range queue shows WAIT"),
+        (rogue + "points=0; b.inCombat=false", [wait, 1752, 2098], "live OOC target shows WAIT"),
+        (rogue + "points=0; b.inCombat=false; targetExists=false", [1752, 2098], "no-target OOC preview unchanged"),
+        (rogue + "points=0; b.inCombat=false; hostile=false", [1752, 2098], "friendly OOC target unchanged"),
+        (rogue + "points=0; b.inCombat=false; targetDead=true", [1752, 2098], "dead OOC target unchanged"),
+        (rogue + "points=0; b.inCombat=false; targetDead=secret", [1752, 2098], "unknown alive status does not show OOC WAIT"),
+        (rogue + "points=0; forever=false", [1752, 2098], "retail does not gain synthetic WAIT"),
+        (rogue + "points=0; b.contextOrder='off'", [2098, 1752], "exact source order unchanged"),
+        (rogue + "points=0; b.sinkCooldowns=false", [2098, 1752], "unavailable-last opt-out unchanged"),
+        (rogue + "points=0; starved[1752]=nil", [1752, 2098], "usable builder removes WAIT"),
+        (rogue + "points=2; b.ctxPointCap=2; starved[2098]=nil", [2098, 1752], "affordable consumer removes WAIT"),
+        (rogue + "points=0; b.maxIcons=1", [wait], "one-icon queue shows WAIT"),
+        (rogue + "points=0; b.maxIcons=2", [wait, 1752], "WAIT respects icon limit"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}};
+            cooldown[53]=true; cooldown[1752]=true; b.inCombat=true""",
+         [wait, 53, 1752], "cooldown-only queue shows WAIT"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}};
+            points=0; holdPoints[53]=2; holdPoints[1752]=2; b.inCombat=true""",
+         [wait, 53, 1752], "all-held queue shows WAIT"),
+        (rogue + "points=0; b.spellCount=1; b.recommendedSpells={999}", [999, 1752, 2098], "early injected suggestion prevents WAIT"),
+        ("pool={}; entries={}", [], "empty pool never synthesizes WAIT"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true;
+            specKey='ROGUE_F'; starved[1752]=true; b.inCombat=true""", [wait, 1752, 53], "rear-blocked attack does not count as actionable"),
+    ]
+    for setup, expected, description in wait_cases:
+        lua.execute("Reset(); " + setup)
+        queue = lua.globals().Build()
+        lua.globals().b.spellCount = len(queue)
+        lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
+        actual = [queue[i] for i in range(1, lua.globals().b.spellCount + 1)]
+        assert actual == expected, f"{description}: got {actual}, expected {expected}"
+    lua.execute("Reset(); " + rogue + "points=0")
+    queue = lua.globals().Build()
+    lua.globals().b.spellCount = len(queue) + 1
+    queue[len(queue) + 1] = 999
+    lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
+    assert queue[1] != wait, "later actionable burst injection prevents WAIT"
+    print(f"Forever WAIT: {len(wait_cases)} cases and late-injection check passed")
     lua.execute(extract("AddSpellbookProcs", source) + """
         function PassesSpellFilters() return true end
         SpellDB.IsOffensiveSpell = function() return true end

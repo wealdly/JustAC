@@ -2419,7 +2419,7 @@ local function ItemIconInfo(itemID)
 end
 
 --- Render slot 1 as the assist's WAIT state (sentinel path - GetNextCastSpell answered
---- nil in combat while the assist was available; see SpellQueue._StagePrimary). Same
+--- nil in combat while the assist was available, or Forever has only sunk entries). Same
 --- presentation as the placeholder-spell wait the engine hands us directly (timer icon
 --- 134377 + the WAIT label), so the two shapes are indistinguishable on screen.
 local function RenderWaitSlot(icon, i, ctx)
