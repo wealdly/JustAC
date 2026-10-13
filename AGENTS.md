@@ -4,10 +4,23 @@ WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua +
 
 ## Client version
 
-12.x only: `JustAC.toc` pins `## Interface: 120100` and there are NO version
-conditionals in the code. A client API that is missing on the pinned version is a bug
-to fix, not a branch to keep; `C_Secrets` predicates, duration-object cooldowns and
-the aura container are all assumed present.
+Support both Retail and WoW Forever. `JustAC.toc` currently declares
+`## Interface: 120100, 16001`; read the TOC for the current supported versions.
+
+- Maintain cross-client compatibility on every change, including shared queue
+  ordering, resource gates, UI, options, saved profiles, generated data and packaging.
+- Prefer shared, capability-based logic and existing helpers. Use `SpellDB.IsForever()`
+  or `BlizzardAPI.IsForever()` only for a verified client-specific difference; do not
+  scatter build-number checks or add spell/class exceptions to generic behavior.
+- Do not assume Retail APIs, Assisted Combat picks, resource representations or
+  secrecy rules apply to Forever. Verify each affected client's signals against
+  source documentation or saved in-game probes. See `Documentation/CLIENT_COMPAT.md`.
+- Builder/consumer logic must work for every supported resource context with
+  confirmed signals, not just the spell or class that exposed a bug. Unknown reads
+  remain unknown; do not infer hidden resources or change player overrides.
+- Test affected shared behavior for both clients, including custom lists and
+  explicit settings. A client-specific fix must preserve the other client's
+  intended behavior unless a cross-client change was explicitly approved.
 
 ## Critical Workflow
 
