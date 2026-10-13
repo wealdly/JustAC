@@ -107,8 +107,9 @@ function Reset()
     b = {
         profile = {}, blacklist = {}, addedSpellIDs = {}, recommendedSpells = {},
         spellCount = 0, maxIcons = 4, effectiveBypassProcs = false,
-        contextOrder = "simc", sinkCooldowns = true, inCombat = false,
+        contextOrder = "simc", sinkCooldowns = true, inCombat = false, ctxPointCap = nil,
     }
+    finisher = {[2098] = true}
     pool = {8042, 403}
 end
 """
@@ -126,15 +127,29 @@ def main():
     ))
     lua.execute(helpers + """
         local originalBlocks = SimcGateBlocks
-        function SimcGateBlocks(gates, count, name, maximum, skipResource)
-            skipResource = skipResource or BlizzardAPI.IsForever()
+        function SimcGateBlocks(gates, count, name, maximum, skipResource, pointCap)
+            local blocked, short = false, false
             if not skipResource and count ~= nil then
                 for _, g in ipairs(gates or {}) do
-                    if g.t == "resource" and g.res == name
-                        and ResourceGateHolds(g, count, maximum) == false then return true end
+                    local atLeast = not g.deficit and (g.op == ">=" or g.op == ">")
+                    if g.t == "resource" and g.res == name then
+                        local holds
+                        local need = g.op == ">" and g.n + 1 or g.n
+                        if atLeast and pointCap and pointCap < need then
+                            if pointCap > 0 then holds = count >= pointCap end
+                        else
+                            holds = ResourceGateHolds(g, count, maximum)
+                        end
+                        if holds == false then blocked, short = true, short or atLeast end
+                    end
                 end
             end
-            return originalBlocks(gates)
+            return blocked or originalBlocks(gates), short
+        end
+        function PointGateCap(id, resource, cap)
+            if cap and resource ~= nil and not BlizzardAPI.HasGamePick()
+                and finisher[RotationImport.RankBase(id)] == true then return cap end
+            return nil
         end
     """ + source[start:end] + """
         function Build()
@@ -185,7 +200,19 @@ def main():
     """
     cases.extend([
         (rogue + "points=0", [1752, 2098], "builder leads at zero points even while energy-starved"),
-        (rogue + "points=2", [2098, 1752], "minimum met does not enforce imported five-point preference"),
+        (rogue + "points=2", [1752, 2098], "imported five-point preference waits for the builder"),
+        (rogue + "points=2; b.ctxPointCap=0", [2098, 1752], "dying target lowers the preference to the minimum"),
+        (rogue + "points=0; b.ctxPointCap=0", [1752, 2098], "dying target still requires the actual minimum"),
+        (rogue + "points=2; b.ctxPointCap=3", [1752, 2098], "normal mob waits for three points"),
+        (rogue + "points=3; b.ctxPointCap=3", [2098, 1752], "normal mob finisher at three points"),
+        (rogue + "points=2; b.ctxPointCap=2", [2098, 1752], "wounded normal mob finisher at two points"),
+        (rogue + "points=4; b.ctxPointCap=3; entries[1].gates[1].op='>'; entries[1].gates[1].n=4",
+         [2098, 1752], "strict gate above the cap uses the cap"),
+        (rogue + "points=2; b.ctxPointCap=3; entries[1].gates[1].n=2", [2098, 1752], "cap never raises a lower source target"),
+        (rogue + "points=2; b.ctxPointCap=0; forever=false", [1752, 2098], "retail keeps its preference on a dying target"),
+        (rogue + "points=2; b.ctxPointCap=0; finisher[2098]=nil", [1752, 2098], "non-damage finishers keep their preference"),
+        (rogue + "points=2; b.ctxPointCap=0; entries[1].gates[2]={t='stack',id=1,op='>=',n=1}",
+         [2098, 1752], "other blocking gates stay blocking without a points shortfall"),
         (rogue + "points=5", [2098, 1752], "met finisher requirement preserves source order"),
         (rogue + "points=nil", [2098, 1752], "unknown points never infer a missing prerequisite"),
         (rogue + "points=0; forever=false", [1752, 2098], "retail tail shares prerequisite ordering"),
@@ -221,15 +248,18 @@ def main():
          [1752, 2098], "proc cannot bypass a confirmed actual minimum"),
         (rogue + "points=0; starved[2098]=nil; minimum=0; procs[2098]=true",
          [2098, 1752], "free proc with zero minimum remains usable"),
-        (rogue + "points=0; minimum=nil", [2098, 1752], "missing minimum remains unknown"),
-        (rogue + "points=0; costAura=123; hasCostAura=false",
+        (rogue + "points=0; minimum=nil; entries[1].gates=nil", [2098, 1752], "missing minimum remains unknown"),
+        (rogue + "points=0; minimum=nil", [1752, 2098], "imported points gate still applies without a minimum"),
+        (rogue + "points=0; costAura=123; hasCostAura=false; entries[1].gates=nil",
          [2098, 1752], "inactive conditional cost is ignored"),
         (rogue + "points=0; costAura=123; hasCostAura=true",
          [1752, 2098], "active conditional cost applies"),
         (rogue + "points=0; b.inCombat=false; capped=true; starved[2098]=nil; starved[1752]=nil; unusable[2098]=true",
          [1752, 2098], "precombat capped energy cannot promote a zero-point finisher"),
         (rogue + "points=2; starved[2098]=nil; starved[1752]=true",
-         [2098, 1752], "affordable two-point finisher leads while builder lacks energy"),
+         [1752, 2098], "imported preference keeps a short finisher behind the energy-starved builder"),
+        (rogue + "points=2; starved[2098]=nil; starved[1752]=true; b.ctxPointCap=0",
+         [2098, 1752], "affordable two-point finisher leads on a dying target"),
         (rogue + "points=2; b.contextOrder='ac'",
          [2098, 1752], "actual minimum applies outside theorycraft ordering"),
         (rogue + "points=nil; unusable[2098]=true; starved[2098]=nil",

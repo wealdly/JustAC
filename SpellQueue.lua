@@ -22,6 +22,7 @@ local IsMounted = IsMounted
 local GetShapeshiftFormID = GetShapeshiftFormID
 local UnitExists = UnitExists
 local UnitCanAttack = UnitCanAttack
+local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
 local wipe = wipe
 local type = type
 local ipairs = ipairs
@@ -965,6 +966,75 @@ local function MissingMinimumResource(spellID, count, resource)
     return false
 end
 
+--- How many points a TIERED finisher should pool against THIS target (see TargetPointCap
+--- for the per-target number). Without a game pick (Forever) combo points live on the
+--- target: whatever is left when it dies is lost, so a 5-point finisher on a normal mob is
+--- overkill paid for with extra builder GCDs and energy.
+--- Tiered: the discrete cost row has an optional part (cost > minCost - "costs 1 point,
+--- spends up to 4 more"), so any point count casts it, just weaker. Fixed-cost consumers
+--- (a 3 Holy Power or 2 Chi spender) have no tiers and keep the source threshold.
+--- Excluded even when tiered: self buffs (Slice and Dice) and DoTs (Rupture, Rip), whose
+--- value is their duration, and crowd control (Kidney Shot), whose value is its length.
+--- Returns the cap, or nil for "follow the source".
+local tieredSpenderCache = {}   -- spellID -> Enum.PowerType of its tiered cost row
+local function TieredSpenderType(spellID)
+    local cached = tieredSpenderCache[spellID]
+    if cached then return cached end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+    if not ok or type(costs) ~= "table" or BlizzardAPI.IsSecretValue(costs) then return nil end
+    for i = 1, #costs do
+        local c = costs[i]
+        if type(c) == "table" and not BlizzardAPI.IsSecretValue(c.type) and DISCRETE_POWER[c.type]
+           and not BlizzardAPI.IsSecretValue(c.cost) and not BlizzardAPI.IsSecretValue(c.minCost)
+           and type(c.cost) == "number" and type(c.minCost) == "number"
+           and c.cost > c.minCost then
+            -- Cached only once seen: the optional part can read 0 while no points are
+            -- held, so a non-tiered read is never final.
+            tieredSpenderCache[spellID] = c.type
+            return c.type
+        end
+    end
+    return nil
+end
+local function PointGateCap(spellID, resource, cap)
+    if not (cap and spellID and resource) or BlizzardAPI.HasGamePick() then return nil end
+    local powerType = resourcePowerTypes[resource]
+    if not powerType or not (C_Spell and C_Spell.GetSpellPowerCost) then return nil end
+    if TieredSpenderType(spellID) ~= powerType then return nil end
+    if not (SpellDB and SpellDB.IsPureSelfAura and SpellDB.IsTargetDot and SpellDB.IsOffensiveSpell)
+       or SpellDB.IsPureSelfAura(spellID) or SpellDB.IsTargetDot(spellID)
+       or not SpellDB.IsOffensiveSpell(spellID) then
+        return nil
+    end
+    return cap
+end
+SpellQueue._PointGateCap = PointGateCap   -- diagnostics / tests
+
+--- Points worth pooling against the current target, or nil for "follow the source".
+--- Elites, rares that are elite, and bosses get nil: they live long enough for full
+--- finishers. Everything else (normal, rare, trivial, minus):
+---   * CONFIRMED below 20%: 0 - the spell's own minimum cost is the only requirement.
+---   * CONFIRMED below 50%: 2.
+---   * otherwise 3, which is also the fallback when health cannot be read at all: the
+---     classification alone says the mob dies fast. Trivial and minus mobs fall back to 2.
+--- UnitClassification is NeverSecret; an unreadable one reads as elite (nil, no change).
+local function TargetPointCap()
+    if not (UnitExists("target") and UnitCanAttack("player", "target")) then return nil end
+    if BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss() then return nil end
+    local ok, class = pcall(UnitClassification, "target")
+    if not ok or type(class) ~= "string" or BlizzardAPI.IsSecretValue(class) then return nil end
+    if class ~= "normal" and class ~= "rare" and class ~= "trivial" and class ~= "minus" then
+        return nil
+    end
+    local below = BlizzardAPI.IsUnitHealthBelow
+    if below then
+        if below("target", DYING_TARGET_PCT) == true then return 0 end
+        if below("target", 50) == true then return 2 end
+    end
+    if class == "trivial" or class == "minus" then return 2 end
+    return 3
+end
+
 --- The resource a "Hold Until" dial gates on: the spell's OWN cost rows, discrete
 --- row preferred - points are the strategic resource, while a continuous cost is
 --- usually a tax the starved sink already covers. Returns kind ("pts"|"pct"),
@@ -1209,6 +1279,18 @@ local function GateVerdict(g, ctx)
     if t == "resource" then
         if ctx.skipResource then return nil end
         if not (ctx.resCount and g.res == ctx.resName and g.op and g.n) then return nil end
+        -- A point cap (PointGateCap): a finisher's "at least N points" is a pooling
+        -- preference, lowered to the cap; the spell's own minimum cost
+        -- (MissingMinimumResource) still holds, so a cap of 0 is no opinion here.
+        local cap = ctx.pointCap
+        if cap and not g.deficit and (g.op == ">=" or g.op == ">") then
+            local need = g.n
+            if g.op == ">" then need = need + 1 end
+            if cap < need then
+                if cap <= 0 then return nil end
+                return ctx.resCount >= cap
+            end
+        end
         return ResourceGateHolds(g, ctx.resCount, ctx.resMax)
     end
     if t == "power" or t == "execute" or t == "health" then
@@ -1301,7 +1383,7 @@ SpellQueue._GateVerdict = GateVerdict          -- diagnostics (/jac inspect simc
 local function GatesConfirmed(gates, resCount, resName, resMax)
     if not gates then return true end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
-    gateCtx.skipResource, gateCtx.strict = false, true
+    gateCtx.skipResource, gateCtx.strict, gateCtx.pointCap = false, true, nil
     for i = 1, #gates do
         if GateVerdict(gates[i], gateCtx) ~= true then return false end
     end
@@ -1312,16 +1394,26 @@ end
 --- cannot read never does.
 --- skipResource: an explicit Hold Until dial replaces the imported resource and power
 --- conditions for that spell; window/health/stack gates still apply.
-local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
-    if not gates then return false end
+--- pointCap: lower "at least N points" gates to this many points, 0 meaning the spell's
+--- own minimum cost (see PointGateCap); every other gate, energy included, still applies.
+--- Second return: a top-level "at least N points" gate is what blocks - more points
+--- are the prerequisite, so the builder that makes them should come first.
+local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource, pointCap)
+    if not gates then return false, false end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
-    -- Forever lists supply priority, not mandatory endgame resource pooling.
-    -- Live affordability/minimum costs handle resources; explicit holds still apply.
-    gateCtx.skipResource, gateCtx.strict = (skipResource or BlizzardAPI.IsForever()) and true or false, false
+    gateCtx.skipResource, gateCtx.strict = skipResource and true or false, false
+    gateCtx.pointCap = pointCap
+    local blocked, pointsShort = false, false
     for i = 1, #gates do
-        if GateVerdict(gates[i], gateCtx) == false then return true end
+        local g = gates[i]
+        if GateVerdict(g, gateCtx) == false then
+            blocked = true
+            if g.t == "resource" and not g.deficit and (g.op == ">=" or g.op == ">") then
+                pointsShort = true
+            end
+        end
     end
-    return false
+    return blocked, pointsShort
 end
 SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
 
@@ -1401,6 +1493,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local bypassProcs = b.effectiveBypassProcs
     local ctxArch, ctxRange, ctxRole = b.ctxArch, b.ctxRange, b.ctxRole
     local ctxExecute, ctxOutOfMelee, ctxDying = b.ctxExecute, b.ctxOutOfMelee, b.ctxDying
+    local ctxPointCap = b.ctxPointCap
     local contextOrder, sinkCooldowns = b.contextOrder, b.sinkCooldowns
     local simcCtx, pickWindows = b.simcCtx, b.pickWindows
     NoteManaStarved(rotationList)
@@ -1577,7 +1670,11 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             gates = nil
                         end
                     end
-                    local gateBlocked = simcRec and SimcGateBlocks(gates, resCount, resName, resMax, dialSet)
+                    local gateBlocked, pointsShort = false, false
+                    if simcRec then
+                        gateBlocked, pointsShort = SimcGateBlocks(gates, resCount, resName, resMax, dialSet,
+                            PointGateCap(displayID, resName, ctxPointCap))
+                    end
                     pullSpell = pullSpell and not gateBlocked
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
@@ -1610,7 +1707,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         sunkSet[displayID] = true
                         if contextOrder ~= "off"
                            and ((held and (holdPoints[spellID] or holdPoints[displayID]))
-                                or missingResource or castBarred) then
+                                or missingResource or pointsShort or castBarred) then
                             unavailableTier[displayID] = 2
                         end
                         -- No game pick only (Forever): the list leads there, so slot 1 is the
@@ -1821,9 +1918,11 @@ function SpellQueue._StageContext(b)
     lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
     lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
     lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
-    lastCtx.dying, lastCtx.enemies = ctxDying, enemies
+    local ctxPointCap = TargetPointCap()
+    lastCtx.dying, lastCtx.enemies, lastCtx.pointCap = ctxDying, enemies, ctxPointCap
     b.ctxArch, b.ctxRange, b.ctxRole = ctxArch, ctxRange, ctxRole
     b.ctxExecute, b.ctxOutOfMelee, b.ctxDying = ctxExecute, ctxOutOfMelee, ctxDying
+    b.ctxPointCap = ctxPointCap
 end
 
 --- Stage F - tail ordering and assembly: ordering settings, the SimC->AC
@@ -2696,6 +2795,7 @@ function SpellQueue.OnSpellsChanged()
     SpellQueue.InvalidateRotationCache()
     -- Power costs are talent-dependent; re-derive spender verdicts.
     wipe(spenderCache)
+    wipe(tieredSpenderCache)
     -- Burst-cue trigger set bakes in talent-resolved IDs; rebuild on talent change.
     cachedBurstTriggers = nil
     -- SimC rank lookup bakes in talent-dependent override resolution. Invalidate

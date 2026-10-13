@@ -115,17 +115,30 @@ def main():
     lua.execute("gateCtx={}; BlizzardAPI.IsForever=function() return not hasPick end")
     lua.execute(extract("SimcGateBlocks", SRC.read_text(encoding="utf-8")))
     preference = '{{t="resource",res="combo_points",op=">=",n=5}}'
-    lua.execute("hasPick=false")
-    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,false)') is False
-    lua.execute("hasPick=true")
-    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,false)') is True
-    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,true)') is False
-    assert run(f'return SimcGateBlocks({preference},nil,"combo_points",5,false)') is False
+    both = "function(...) local a, b = SimcGateBlocks(...); return {a, b} end"
+    blocks = lua.eval(both)
+    gates = lua.eval(f"function() return {preference} end")()
+    upper = lua.eval('function() return {{t="resource",res="combo_points",op="<=",n=1}} end')()
+    for pick in (False, True):
+        lua.globals().hasPick = pick
+        # The imported preference holds in both clients and names points as the shortfall.
+        assert list(blocks(gates, 2, "combo_points", 5, False).values()) == [True, True]
+        assert list(blocks(gates, 5, "combo_points", 5, False).values()) == [False, False]
+        # An explicit hold replaces it; an unknown count never blocks.
+        assert list(blocks(gates, 2, "combo_points", 5, True).values()) == [False, False]
+        assert list(blocks(gates, None, "combo_points", 5, False).values()) == [False, False]
+        # A point cap lowers "at least N": 0 leaves the minimum cost the queue checks
+        # separately, a positive cap becomes the new target.
+        assert list(blocks(gates, 2, "combo_points", 5, False, 0).values()) == [False, False]
+        assert list(blocks(gates, 2, "combo_points", 5, False, 3).values()) == [True, True]
+        assert list(blocks(gates, 3, "combo_points", 5, False, 3).values()) == [False, False]
+        # An upper bound is not a pooling preference: blocks, but is not a points shortfall.
+        assert list(blocks(upper, 3, "combo_points", 5, False, 0).values()) == [True, False]
     lua.execute("hasPick=false; enemies=2")
-    assert run('return SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false)') is True
+    assert run('return (SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false))') is True
     lua.execute("enemies=3")
-    assert run('return SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false)') is False
-    print("Resource pooling policy: 6 checks passed")
+    assert run('return (SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false))') is False
+    print("Resource pooling policy: 18 checks passed")
 
     ON = '{t="stealth"}'            # holds only while stealthed
     OFF = '{t="stealth",neg=true}'  # holds only while NOT stealthed
