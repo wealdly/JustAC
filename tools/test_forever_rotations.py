@@ -62,16 +62,25 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data = open(os.path.join(root, "Data", "Forever", "Rotations.lua"), encoding="utf-8").read()
 pool = {k: {int(i) for i in v.split(",")} for k, v in re.findall(r'\["(\w+_F)"\] = \{([\d,]+)\}', data)}
 IN = {"HUNTER_F": [75, 6603, 1510, 13795],        # Auto Shot, Attack, Volley, Immolation Trap
-      "WARRIOR_F": [12292, 2457],                 # Sweeping Strikes, Battle Stance
+      "WARRIOR_F": [12292, 2457, 2764],           # Sweeping Strikes, Battle Stance, Throw
       "DRUID_F": [768, 5487, 16914],              # Cat Form, Bear Form, Hurricane
-      "PRIEST_F": [15473, 20554]}                 # Shadowform, Berserking (offensive racial)
-OUT = {"HUNTER_F": [1494, 5118, 6991, 5116],      # Track Beasts, Aspect of the Cheetah, Feed Pet, Concussive Shot
-       "WARLOCK_F": [702, 5782],                  # Curse of Weakness, Fear: no damage, no DPS press
-       "DRUID_F": [783, 1066],                    # Travel Form, Aquatic Form
+      "PRIEST_F": [15473, 20554, 1277331],        # Shadowform, Berserking, Chastise (root side effect)
+      "ROGUE_F": [53, 2480, 14251],               # Backstab, Shoot Bow, Riposte
+      "SHAMAN_F": [8042, 8056],                   # Earth Shock (6s interrupt), Frost Shock
+      "MAGE_F": [5019, 401502],                   # Shoot (wand), Frostfire Bolt (slow side effect)
+      "PALADIN_F": [2812, 21082]}                 # Holy Wrath, Seal of the Crusader
+OUT = {"HUNTER_F": [1494, 5118, 6991, 5116,       # Track Beasts, Aspect of the Cheetah, Feed Pet, Concussive Shot
+                    19503, 1499, 1543],           # Scatter Shot (CC), Freezing Trap, Flare
+       "WARLOCK_F": [702, 5782, 755, 6789],       # Curse of Weakness, Fear, Health Funnel, Death Coil (horror)
+       "DRUID_F": [783, 1066, 1850, 9005, 339],   # Travel / Aquatic Form, Dash, Pounce (stun), Entangling Roots
        "MAGE_F": [587],                           # Conjure Food
        "SHAMAN_F": [2645],                        # Ghost Wolf
-       # racials by role only: Escape Artist (defensive), Rapid Regeneration (no combat role)
-       "WARRIOR_F": [20589, 1260270]}
+       "ROGUE_F": [1766, 1776, 1784, 2983],       # Kick (10s interrupt), Gouge, Stealth, Sprint
+       "PRIEST_F": [605],                         # Mind Control
+       "PALADIN_F": [20164, 461607],              # Seal of Justice, Divine Steed
+       # racials by role only: Escape Artist (defensive), Rapid Regeneration (no combat role);
+       # Pummel, Shield Bash (interrupts), Mocking Blow (taunt)
+       "WARRIOR_F": [20589, 1260270, 6552, 72, 694]}
 for k, ids in IN.items():
     assert all(i in pool[k] for i in ids), (k, [i for i in ids if i not in pool[k]])
 for k, ids in OUT.items():
@@ -90,6 +99,14 @@ for tree in ("beast_mastery", "marksmanship", "survival"):
     block = hunter[hunter.index(tree + " = {"):]
     ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)[:2]]
     assert ids == [1978, 75], (tree, ids)
+# Backstab leads the front-facing builder; the game greys it out unless you are behind.
+rogue = data[data.index('["ROGUE_F"] = {'):data.index('["SHAMAN_F"] = {')]
+for tree, order in (("combat", [53, 1752]), ("subtlety", [53, 16511, 1752]),
+                    ("assassination", [1310707, 53, 1752])):
+    block = rogue[rogue.index(tree + " = {"):]
+    block = block[:block.index("\n    },")]
+    ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)]
+    assert ids[-len(order):] == order and "{id=53,gates={}}" in block, (tree, ids)
 # Refreshed upstream conditions: three-tier conversion and known steady-state policy.
 from lupa import LuaRuntime  # type: ignore[import-not-found]  # noqa: E402
 
