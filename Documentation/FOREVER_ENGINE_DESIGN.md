@@ -305,6 +305,36 @@ New on Forever:
 Unreadable conditions stay in the source and classify as `delegated`: the entry keeps its
 priority position with no gate, which is how the retail pipeline already fails safe.
 
+### Finisher point caps on short-lived targets
+
+Forever combo points live on the target: points left when it dies are lost, and the
+imported lists are max-level boss APLs (Eviscerate at 4-5 points). Pooling to 5 on a mob
+that dies in a few hits only costs builder GCDs and energy. Without a game pick, an
+"at least N points" resource gate on a TIERED point spender (`PointGateCap` in
+`SpellQueue.lua`) is lowered to a per-target cap (`TargetPointCap`). Tiered means the
+discrete cost row has an optional part (`cost > minCost`: Eviscerate costs 1 point and
+spends up to 4 more), so any point count casts it, just weaker. Fixed-cost consumers
+(a 3 Holy Power or 2 Chi spender) have no tiers and keep the source threshold:
+
+| Target | Cap |
+|---|---|
+| Boss, elite, rare elite, unreadable classification | none (source target) |
+| Normal / rare, confirmed below 20% health | the spell's own minimum cost |
+| Normal / rare, confirmed below 50% health | 2 |
+| Normal / rare, health above 50% or unreadable | 3 |
+| Trivial / minus, health above 50% or unreadable | 2 |
+
+The cap only lowers a source target, never raises one. Tiered spenders whose value is
+duration keep the source target too: self buffs (Slice and Dice), DoTs (Rupture, Rip) and
+crowd control (Kidney Shot). Energy, buff and cooldown gates, explicit Hold Until dials and
+Retail are unchanged.
+
+The unreadable-health rows are the generic fallback: `UnitClassification` is NeverSecret,
+so if the health threshold reads (`IsUnitHealthBelow`) stop working the cap still drops
+from 5 to 3 (or 2 on trivial mobs). An unknown health read never lowers the cap further.
+A cast-informed health estimate (builder hits landed on this target) would be the next
+fallback, under the same rules as the resource contingency below.
+
 ### Contingency: cast-informed resource estimates
 
 If direct resource reads, resource widgets and threshold techniques stop working,

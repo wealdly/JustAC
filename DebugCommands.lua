@@ -9991,7 +9991,7 @@ function DebugCommands.SimcGateProbe(addon, arg)
     addon:Print(string.format("  countable resource: %s cur=%s max=%s",
         tostring(resName), tostring(resCount), tostring(resMax)))
     if BAPI.IsForever() then
-        addon:Print("  Resource/power pooling preferences do not sink Forever entries; live usability, minimum costs and explicit holds apply.")
+        addon:Print("  Forever: tiered finishers (cost > minCost, no duration/CC value) cap 'at least N points' per target: 3 normal, 2 below 50% or trivial, minimum below 20%; elites/bosses keep the source.")
     end
 
     local queueContext = SQ.DebugContextState and SQ.DebugContextState()
