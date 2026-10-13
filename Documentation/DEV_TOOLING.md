@@ -4,6 +4,22 @@ Reference for the local tools this repo expects, and how to install them if
 they are missing. None of this ships to players - `.pkgmeta` excludes `tools/`,
 `Documentation/`, and `.luacheckrc` from the CurseForge package.
 
+## Forever queue ordering probe
+
+Run `/jac inspect forever arm`, reproduce the ordering problem, then `/reload`
+to flush `JustACGlobal.probeLog` to SavedVariables.
+
+The change-only `queue` samples include spell usability, the resolved action slot,
+cached bar usability, and live bar usability. `queueDecision` records the last
+queue build's bucket, sink tier, source position, resource count, point cap, and
+blocking flags for the first three displayed abilities. Tier 1 is a regeneration
+or cooldown wait, tier 2 an unmet prerequisite, and tier 3 a wasted press.
+The tier only controls ordering in the sunk bucket.
+
+Decision capture is enabled only while this watcher is armed. It does not change
+queue ordering. Use these samples to distinguish source-order fallback when all
+abilities are unavailable from point-prerequisite and range demotion.
+
 ## Lua static analysis (the pre-commit / pre-reload gate)
 
 WoW loads the addon's Lua at runtime; a stray brace or a typo'd global
