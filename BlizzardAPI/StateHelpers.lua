@@ -23,6 +23,7 @@ local pcall          = pcall
 local UnitHealth     = UnitHealth
 local UnitHealthMax  = UnitHealthMax
 local UnitExists     = UnitExists
+local UnitCanAttack  = UnitCanAttack
 local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
@@ -1622,6 +1623,12 @@ end
 ---
 --- Design: fail-open.  If anything errors, assume target IS worth interrupting.
 function BlizzardAPI.IsTargetInterruptWorthy()
+    local ok, canAttack = pcall(UnitCanAttack, "player", "target")
+    if not ok then
+        geterrorhandler()(canAttack)
+        return false
+    end
+    if IsSecretValue(canAttack) or canAttack ~= true then return false end
     -- "minus" mobs are trivial adds (e.g. Explosive affix, swarm adds).
     -- Not worth a 15-24s kick cooldown.
     if UnitClassification("target") == "minus" then return false end
