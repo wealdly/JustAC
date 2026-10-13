@@ -107,6 +107,17 @@ Holy Shock, Holy Nova and Holy Shield are important dual-purpose exceptions.
 Use explicit role data with a shared routing rule; preserve custom entries,
 Always Show overrides and retail behavior.
 
+The generator then removes unlisted pool spells whose job is not damage, even when
+they hit (`not_dps` in `tools/gen_forever_rotations.py`): interrupts on a cooldown
+over 8s (Earth Shock at 6s stays a damage press), hard crowd control and taunts by
+SpellMechanic / taunt effect, non-damaging movement, stealth and mount buffs, and a
+short named `NOT_DPS` list for what the data cannot separate from a combat buff.
+Slows and roots on damage spells and every ranged weapon attack stay as fillers.
+List entries are never filtered. Positional builders (Backstab) need no facing
+model: the game greys them out unless the player is behind the target, and the
+queue sinks a non-resource "unusable" spell, so Backstab sits ahead of Sinister
+Strike and steps aside on its own.
+
 For maintained protection, the selected default policy is to preserve any active
 totem in the same elemental slot. Offer Stoneskin only when the Earth slot is
 empty, behind urgent healing, and suppress it when active. Never alternate

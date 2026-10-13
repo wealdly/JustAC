@@ -74,7 +74,8 @@ AOE_LEAD_TIERS = ["cleave", "aoe"]
 # Abilities the level-60 sims leave out but levelling play needs (tools/forever-guides, and the
 # missing-abilities audit of 2026-10-07), by ability name; the build exits on one the class
 # cannot learn. trees: which talent trees (None = all). tiers: which target-count lists (None
-# = all). at: "front" (after the own-buff leads; listed order kept), "end", or "after:<name>".
+# = all). at: "front" (after the own-buff leads; listed order kept), "end", "after:<name>" or
+# "before:<name>".
 # gates: "dot" = keep-it-up on the target (sinks while it runs, never on a dying target),
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
 # move: the ability is already on the sim list - take that entry, with its own conditions, to
@@ -88,8 +89,18 @@ EXTRA = {
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front")],
+    # Backstab is the hardest builder while levelling and leads whenever it can be pressed: the
+    # game greys it out unless you are behind the target (and hold a dagger), and the queue sinks
+    # a greyed-out spell, so the front-facing builder takes over without any facing guess.
+    # Sinister Strike backs up the talent builders (Mutilate, Hemorrhage) a levelling character
+    # does not have yet.
     "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
-              dict(spell="garrote", at="front", gates=["stealth", "dot"])],
+              dict(spell="garrote", at="front", gates=["stealth", "dot"]),
+              dict(spell="backstab", trees=["combat"], at="before:sinister_strike"),
+              dict(spell="backstab", trees=["subtlety"], at="before:hemorrhage"),
+              dict(spell="sinister_strike", trees=["subtlety"], at="after:hemorrhage"),
+              dict(spell="backstab", trees=["assassination"], at="after:mutilate"),
+              dict(spell="sinister_strike", trees=["assassination"], at="after:backstab")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate")],
@@ -160,10 +171,14 @@ def add_extras(cls, tree, entries, chains, unresolved):
         at = x.get("at", "end")
         if at == "front":
             fronts.append(e)
-        elif at.startswith("after:"):
-            anchor = r1_of(at[6:])
+        elif at.startswith(("after:", "before:")):
+            where, name = at.split(":", 1)
+            anchor = r1_of(name)
             i = next((n for n, y in enumerate(entries) if y["id"] == anchor), None)
-            entries.insert(len(entries) if i is None else i + 1, e)
+            if i is None:
+                entries.append(e)
+            else:
+                entries.insert(i + 1 if where == "after" else i, e)
         else:
             entries.append(e)
     entries[0:0] = fronts
@@ -637,6 +652,75 @@ def combat_buff(sid):
                for eff, _, _, targets, _ in effects)
 
 
+# The DPS queue holds damage presses only. A bar spell no list names still joins as a filler
+# (Backstab, Holy Wrath, a wand or bow shot, a damage spell whose slow or root is a side effect),
+# but not when its job is something other than damage, even if it hits too:
+#   an interrupt on a cooldown longer than INTERRUPT_DPS_CD (Kick, Pummel, Shield Bash are kept
+#   for the interrupt slot; Earth Shock at 6s stays a damage press);
+#   crowd control or a taunt (Gouge, Scatter Shot, Pounce, Mind Control, Death Coil, Mocking Blow);
+#   a movement, stealth or mount buff that deals no damage (Sprint, Dash, Stealth, Divine Steed);
+#   NOT_DPS: what the data cannot tell from a combat buff or a damage spell.
+# List entries are never filtered: a list that names one meant it.
+INTERRUPT, TAUNT_EFFECT = 68, 114
+TAUNT_AURA, STEALTH_AURA, SPEED_AURA, MOUNT_AURA = 11, 16, 31, 78
+INTERRUPT_DPS_CD = 8
+# SpellMechanic: charm, disoriented, fleeing, asleep, stunned, incapacitated, polymorphed,
+# banished, shackled, turned, horrified, sapped
+HARD_CC = {1, 2, 5, 10, 12, 14, 17, 18, 20, 23, 24, 30}
+MOUNT_MECHANIC = 21
+NOT_DPS = {
+    "paladin": ["seal_of_justice", "seal_of_light", "seal_of_wisdom"],
+    "rogue":   ["redirect"],
+    "shaman":  ["totemic_projection"],
+    "hunter":  ["flare", "enchanted_flare", "freezing_trap", "frost_trap"],
+    "druid":   ["entangling_roots", "natures_grasp"],
+    "warlock": ["health_funnel", "fel_domination"],
+    "warrior": ["berserker_rage"],
+    "priest":  ["focused_casting", "dark_sacrifice"],
+}
+NOT_DPS_ALL = ["grovel"]
+_mechanic = _cooldown = None
+
+
+def spell_meta(sid):
+    """(SpellCategories mechanic, cooldown seconds) of sid."""
+    global _mechanic, _cooldown
+    if _mechanic is None:
+        _mechanic = {r["SpellID"]: int(r["Mechanic"] or 0) for r in cfa.rows("SpellCategories")}
+        _cooldown = {}
+        for r in cfa.rows("SpellCooldowns"):
+            ms = max(int(r["RecoveryTime"] or 0), int(r["CategoryRecoveryTime"] or 0))
+            _cooldown[r["SpellID"]] = max(_cooldown.get(r["SpellID"], 0), ms / 1000)
+    return _mechanic.get(str(sid), 0), _cooldown.get(str(sid), 0)
+
+
+_effect_mechanics = None
+
+
+def not_dps(sid, damage):
+    """Why sid is no DPS press (see above), or None."""
+    global _effect_mechanics
+    if _effect_mechanics is None:
+        _effect_mechanics = {}
+        for r in cfa.rows("SpellEffect"):
+            m = int(r["EffectMechanic"] or 0)
+            if m:
+                _effect_mechanics.setdefault(r["SpellID"], set()).add(m)
+    effects = effects_of(sid)
+    mech, cd = spell_meta(sid)
+    mechanics = {mech} | _effect_mechanics.get(str(sid), set())
+    if any(eff == INTERRUPT for eff, *_ in effects) and cd > INTERRUPT_DPS_CD:
+        return "interrupt"
+    if mechanics & HARD_CC:
+        return "cc"
+    if any(eff == TAUNT_EFFECT or (eff == APPLY_AURA and aura == TAUNT_AURA) for eff, aura, *_ in effects):
+        return "taunt"
+    if not damage and (MOUNT_MECHANIC in mechanics or any(
+            eff == APPLY_AURA and aura in (STEALTH_AURA, SPEED_AURA, MOUNT_AURA) for eff, aura, *_ in effects)):
+        return "movement"
+    return None
+
+
 def entry_lua(e, names):
     parts = [f"id={e['id']}", "gates=" + lua(e["gates"])]
     if e["delegated"]:
@@ -671,8 +755,17 @@ def main():
         # curated burst cooldowns and damage racials (cfa.RACIAL_ROLES); list entries join below.
         # Racials join by that role only: Escape Artist passes as a short self buff, but it is
         # defensive, and an unclassified one (Rapid Regeneration) belongs to no combat queue.
-        pool = {rank1(chain) for chain in chains.values()
-                if any(deals_damage(i) for i, _ in chain) or combat_buff(rank1(chain))}
+        pool = set()
+        for chain in chains.values():
+            sid = rank1(chain)
+            damage = any(deals_damage(i) for i, _ in chain)
+            if (damage or combat_buff(sid)) and not_dps(sid, damage) is None:
+                pool.add(sid)
+        for name in NOT_DPS.get(cls, []) + NOT_DPS_ALL:
+            if name in chains:
+                pool.discard(rank1(chains[name]))
+            else:
+                unresolved.append(f"{cls}: NOT_DPS {name} is not learnable")
         pool -= {i for ids in cfa.racials().values() for i in ids}
         pool |= {rank1(chains[n]) for n in gfd.BURST.get(cls, []) if n in chains}
         pool |= set(cfa.racial_ids("offensive"))
