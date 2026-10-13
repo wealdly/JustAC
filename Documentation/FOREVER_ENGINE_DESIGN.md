@@ -113,10 +113,21 @@ over 8s (Earth Shock at 6s stays a damage press), hard crowd control and taunts 
 SpellMechanic / taunt effect, non-damaging movement, stealth and mount buffs, and a
 short named `NOT_DPS` list for what the data cannot separate from a combat buff.
 Slows and roots on damage spells and every ranged weapon attack stay as fillers.
-List entries are never filtered. Positional builders (Backstab) need no facing
-model: the game greys them out unless the player is behind the target, and the
-queue sinks a non-resource "unusable" spell, so Backstab sits ahead of Sinister
-Strike and steps aside on its own.
+List entries are never filtered. Forever's spell and macro-button usability can
+report Backstab usable even when a cast fails with "must be behind your target".
+Rear-required attacks therefore use a conservative targeting gate: when definitely
+not stealthed and `SafeUnitIsUnit("targettarget", "player", nil)` is definitely true,
+the attack is cast-barred. This uses the existing unavailable sink and promotion
+veto, preserves stealth openers and tank-held targets, and fails open when the
+comparison is restricted. Targeting is a heuristic, not a facing measurement:
+a stunned or turning enemy can still target the player.
+
+`Data/SpellCategories.lua` holds the verified Forever rear-required families:
+Backstab, Garrote, Shred, Ravage, Ambush and Pounce. Existing rank resolution covers
+their ranks. Learned Dirty Deeds waives Garrote's gate. The existing buff-state
+helper waives Shred's gate when it detects the legacy Feral set bonus (1213171);
+that bonus's availability in Forever is unverified, and an undetected bonus
+does not waive the heuristic. Retail does not use this classification.
 
 For maintained protection, the selected default policy is to preserve any active
 totem in the same elemental slot. Offer Stoneskin only when the Earth slot is

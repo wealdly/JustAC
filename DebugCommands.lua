@@ -8001,6 +8001,10 @@ local function ForeverWatch(on)
         end
         -- Pet: exists / dead / combat / health band (is the band plain for the pet in combat?)
         local B = LibStub("JustAC-BlizzardAPI", true)
+        Note("rearContext", string.format("stealth=%s targetOnPlayer=%s",
+            Cf(IsStealthed), Cf(function()
+                return B and B.SafeUnitIsUnit("targettarget", "player", nil)
+            end)))
         local function PetBelow(pct)
             return Cf(function() return B and B.IsUnitHealthBelow and B.IsUnitHealthBelow("pet", pct) end)
         end

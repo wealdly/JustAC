@@ -19,6 +19,9 @@ The tier only controls ordering in the sunk bucket.
 Decision capture is enabled only while this watcher is armed. It does not change
 queue ordering. Use these samples to distinguish source-order fallback when all
 abilities are unavailable from point-prerequisite and range demotion.
+`rear=true` identifies the Forever rear-attack targeting gate. `rearContext`
+shows stealth and the safe target-of-target comparison; an unknown comparison
+leaves rear attacks eligible.
 
 ## Lua static analysis (the pre-commit / pre-reload gate)
 
