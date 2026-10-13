@@ -201,7 +201,7 @@ local proccedSpells = {}
 local normalSpells = {}
 local cooldownSpells = {}
 local sunkSet = {}   -- [displayID] = true for this build's cooldownSpells (burst cue veto)
-local wastedSet = {}   -- [displayID] = true for sunk spells a press would waste right now
+local unavailableTier = {}   -- [displayID]: 2 = unmet class-resource prerequisite, 3 = wasted press
 local addedSpellIDs = {}
 local recommendedSpells = {}
 -- Scratch set for gap-closer suppression marks (filtered by Always Show pins
@@ -1410,6 +1410,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     if simcMode and BlizzardAPI.GetClassResourcePoints then
         local c, m, r = BlizzardAPI.GetClassResourcePoints()
         resCount, resName, resMax = c, r, m   -- max feeds the `.deficit` gates
+        holdPtsCur, holdPtsMax, holdPtsFresh = c, m, true
     end
     -- Primary resource capped (engine full-power pulse, plain - validated in combat
     -- 2026-07-24): promote ready, affordable spenders so regen stops going to waste.
@@ -1560,8 +1561,6 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         end
                     end
                     local gateBlocked = simcRec and SimcGateBlocks(gates, resCount, resName, resMax, dialSet)
-                    local resourceBlocked = not BlizzardAPI.HasGamePick() and not dialSet
-                        and SimcResourceGateBlocks(gates, resCount, resName, resMax)
                     pullSpell = pullSpell and not gateBlocked
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
@@ -1592,17 +1591,19 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                         sunkSet[displayID] = true
+                        if contextOrder ~= "off"
+                           and ((held and (holdPoints[spellID] or holdPoints[displayID]))
+                                or (not dialSet and SimcResourceGateBlocks(gates, resCount, resName, resMax))) then
+                            unavailableTier[displayID] = 2
+                        end
                         -- No game pick only (Forever): the list leads there, so slot 1 is the
-                        -- first sunk entry when nothing is ready. Retail keeps its sunk order.
+                        -- first sunk entry when nothing is ready. Wasted presses trail waits.
                         -- Out of range is wasted too: Auto Shot inside its minimum range must not
                         -- head the sunk spells over ones that are merely on cooldown. So is a
                         -- running Attack (pressing it switches it off); a running Auto Shot is
                         -- not, its timer leads the sunk spells so a hunter knows when to stand still.
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
-                                -- Missing class resources need another ability first, not just
-                                -- energy regeneration. Keep builders ahead even when both sink.
-                                or resourceBlocked
                                 or IsConfirmedOutOfRange(displayID)
                                 or BlizzardAPI.RunningAutoSwing(displayID) == 0
                                 -- Offered only when its conditions hold (Life Tap): otherwise it
@@ -1610,7 +1611,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                                 or (simcRec and simcRec.w)
                                 or (not alwaysShow and DotTracker
                                     and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
-                            wastedSet[displayID] = true
+                            unavailableTier[displayID] = 3
                         end
                     else
                         normalCount = normalCount + 1
@@ -1652,14 +1653,13 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- rank. Cooldown (not-ready) spells trail, unranked.
     spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
-    -- A press that would be wasted (its DoT already ticking, its buff already up) trails the
-    -- rest of the sunk spells, which are still worth pressing once rage or a soft condition
-    -- allows (Heroic Strike, not a second Rend or Battle Shout, nor a shot out of range).
-    for pass = 1, 2 do
+    -- Regeneration/cooldown waits precede unmet class-resource prerequisites. Wasted
+    -- presses (an active buff/DoT, a running Attack, or a range failure) trail both.
+    for pass = 1, 3 do
         for i = 1, cooldownCount do
             if spellCount >= maxIcons then break end
             local id = cooldownSpells[i]
-            if (wastedSet[id] == true) == (pass == 2)
+            if (unavailableTier[id] or 1) == pass
                and id ~= pickLeads then   -- a sunk pick was just seated at the front
                 spellCount = spellCount + 1
                 recommendedSpells[spellCount] = id
@@ -2470,7 +2470,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(burstCueSpells)
     wipe(cooldownSpells)
     wipe(sunkSet)
-    wipe(wastedSet)
+    wipe(unavailableTier)
     local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local hideItems = profile.hideItemAbilities
 

@@ -37,15 +37,16 @@ BlizzardAPI = {
     RunningAutoSwing = function() end,
     IsSpellLoCLocked = function(id) return locked[RI.RankBase(id)] == true end,
     IsSpellProcced = function(id) return procs[RI.RankBase(id)] == true end,
-    GetClassResourcePoints = function() return points, 5, "combo_points" end,
+    GetClassResourcePoints = function()
+        resourceReads = resourceReads + 1
+        return points, maximum, resourceName
+    end,
 }
 function UnitExists() return targetExists end
 function UnitCanAttack() return hostile end
 function NoteManaStarved() end
 function ClaimSpellID(id, added) added[id] = true; return id end
 function PassesRotationFilters(id) return not filtered[RotationImport.RankBase(id)] end
-function HeldByUserHold() return false end
-function HasUserHold(id) return holds[id] == true end
 function IsSpenderSpell(id) return specKey == "ROGUE_F" end
 function IsConfirmedOutOfRange(id) return BlizzardAPI.AbilityInRange(id) == false end
 function SimcBuffWindowActive() return false end
@@ -87,10 +88,12 @@ function Reset()
     ranges, cooldown, unusable, starved, locked, filtered, blacklisted, procs =
         {[403] = true, [8042] = true}, {}, {}, {}, {}, {}, {}, {}
     SpellQueue._rotationIsCustom = false
-    points, holds = nil, {}
+    points = nil
+    maximum, resourceName, resourceReads = 5, "combo_points", 0
+    maxChargeGated, holdPoints, holdPctVal, holdPctType = {}, {}, {}, {}
     entries = classes.SHAMAN_F.enhancement.st
     proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
-    cooldownSpells, sunkSet, wastedSet, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
+    cooldownSpells, sunkSet, unavailableTier, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
     b = {
         profile = {}, blacklist = {}, addedSpellIDs = {}, recommendedSpells = {},
         spellCount = 0, maxIcons = 4, effectiveBypassProcs = false,
@@ -109,7 +112,7 @@ def main():
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
-        "ResourceGateHolds", "GateVerdict", "SimcResourceGateBlocks"
+        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "GateVerdict", "SimcResourceGateBlocks"
     ))
     lua.execute("resourceGateCtx = { resourceOnly = true }\n" + helpers + """
         local originalBlocks = SimcGateBlocks
@@ -169,9 +172,16 @@ def main():
         (rogue + "points=2", [1752, 2098], "unmet finisher threshold trails an energy-starved builder"),
         (rogue + "points=5", [2098, 1752], "met finisher requirement preserves source order"),
         (rogue + "points=nil", [2098, 1752], "unknown points never infer a missing prerequisite"),
-        (rogue + "points=0; forever=false", [2098, 1752], "retail sunk ordering unchanged"),
+        (rogue + "points=0; forever=false", [1752, 2098], "retail tail shares prerequisite ordering"),
         (rogue + "points=0; b.sinkCooldowns=false", [2098, 1752], "unavailable-last opt-out unchanged"),
-        (rogue + "points=0; holds[2098]=true", [2098, 1752], "explicit hold replaces imported threshold"),
+        (rogue + "points=2; holdPoints[2098]=2", [2098, 1752], "satisfied explicit hold replaces imported threshold"),
+        (rogue + "points=0; holdPoints[2098]=2", [1752, 2098], "unmet explicit points hold is a prerequisite"),
+        (rogue + "points=0; holdPoints[2098]=2; b.contextOrder='ac'", [1752, 2098], "points hold works without theorycraft ordering"),
+        (rogue + "points=0; holdPoints[2098]=2; b.contextOrder='off'", [2098, 1752], "points hold retains exact source order"),
+        (rogue + "points=0; holdPoints[2098]=2; entries[1].gates=nil; SpellQueue._rotationIsCustom=true",
+         [1752, 2098], "custom list without imported gates honors point prerequisites"),
+        (rogue + "points=0; b.spellCount=1; b.recommendedSpells={999}", [999, 1752, 2098],
+         "existing primary slot stays ahead of reordered unavailable tail"),
         (rogue + """points=0; entries[1].gates={{t="any",g={
             {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
          [2098, 1752], "unknown OR alternative prevents prerequisite demotion"),
@@ -179,14 +189,37 @@ def main():
             {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
          [1752, 2098], "confirmed missing AND prerequisite demotes the finisher"),
         (rogue + "points=0; starved[1752]=nil", [1752, 2098], "affordable builder still leads"),
+        (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
+         [2098, 1752], "builder-like upper bound holds at low resource"),
+        (rogue + "points=5; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
+         [1752, 2098], "builder-like upper bound yields to a consumer at high resource"),
+        (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
+         [1752, 2098], "deficit prerequisite uses current maximum"),
+        (rogue + "points=0; maximum=nil; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
+         [2098, 1752], "unknown deficit stays unknown"),
+        (rogue + "points=0; entries[1].gates[1].res='chi'",
+         [2098, 1752], "different resource token never uses the player's count"),
+        (rogue + "points=0; ranges[1752]=false",
+         [2098, 1752], "out-of-range builder trails a missing-resource finisher"),
+        (rogue + "points=0; starved[2098]=nil; procs[2098]=true",
+         [2098, 1752], "usable game proc remains authoritative over imported preferences"),
     ])
+    for resource in ("combo_points", "holy_power", "chi", "soul_shard", "runes", "essence", "arcane_charges"):
+        for retail in (False, True):
+            cases.append((rogue + f"""points=0; resourceName='{resource}';
+                entries[1].gates[1].res=resourceName; forever={str(not retail).lower()}""",
+                [1752, 2098], f"{resource} prerequisite shares logic, retail={retail}"))
+    cases.append((rogue + """points=0.5; resourceName='soul_shard';
+        entries[1].gates[1].res=resourceName; entries[1].gates[1].n=1""",
+        [1752, 2098], "fractional shards retain exact prerequisite comparisons"))
     for setup, expected, description in cases:
         lua.execute("Reset(); " + setup)
         actual = list(lua.globals().Build().values())
         assert actual == expected, f"{description}: got {actual}, expected {expected}"
+        assert lua.globals().resourceReads <= 1, f"{description}: duplicate class-resource read"
     lua.execute("Reset(); " + rogue + "points=5")
     assert list(lua.globals().Build().values()) == [2098, 1752]
-    lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}")
+    lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}; unavailableTier={}")
     assert list(lua.globals().Build().values()) == [1752, 2098], "spending points must immediately surface the builder"
     lua.execute("Reset()")
     bolt = next(e for e in lua.globals().entries.values() if e.id == 403)

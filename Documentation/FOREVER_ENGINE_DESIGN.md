@@ -266,12 +266,19 @@ Inherited, evaluated by the existing code:
 
 - `execute` / `health`: target health threshold curve.
 - `power`: power threshold curve; usability for "can afford this".
-- `resource`: readable discrete class-resource points. With Unavailable Last enabled,
-  a confirmed unmet imported requirement trails abilities merely waiting for energy,
-  even when both are unavailable. This keeps builders ahead after a finisher spends
-  combo points. Nested AND/OR gates retain three-valued logic; unknown reads do not
-  establish a missing prerequisite. Explicit Hold Until settings replace imported
-  resource requirements. Retail's unavailable ordering is unchanged.
+- `resource`: readable discrete class-resource points. With Unavailable Last enabled
+  in ranked ordering, unavailable abilities use three tiers: regeneration/cooldown
+  waits, confirmed unmet class-resource prerequisites, then wasted presses.
+  Classification runs only after an entry sinks. Imported resource gates and
+  explicit point holds share the rule on Forever and Retail; Retail's primary game
+  pick remains untouched. This keeps builders ahead after a finisher spends combo
+  points. Upper-bound gates also allow consumers ahead of builders at high resource.
+  Nested AND/OR gates retain three-valued logic; unknown reads do not establish a
+  missing prerequisite. Explicit holds replace imported resource requirements.
+  Exact source-order mode is unchanged, and usable game procs remain authoritative
+  over imported preferences. Point holds reuse the assembly's class-resource read.
+  Without a readable requirement or point hold, the queue does not infer which
+  ability builds or consumes a resource from spell identity or low energy alone.
 - `buff` (own buffs): buff window from own-cast observation with the spell's duration.
 - `dot` (own DoTs on the target): `DotTracker`, cast observation. Its
   `IsAuraFilteredOutByInstanceID` bridge needs an instance id, which Forever denies in combat,
