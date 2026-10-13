@@ -786,6 +786,7 @@ function JustAC:OnEnable()
     self:RegisterEvent("ACTIONBAR_PAGE_CHANGED", "OnActionBarChanged")
     self:RegisterEvent("UPDATE_BONUS_ACTIONBAR", "OnSpecialBarChanged")
     self:RegisterEvent("UPDATE_BINDINGS", "OnBindingsUpdated")
+    self:RegisterEvent("UPDATE_MACROS", "OnMacrosUpdated")
     self:RegisterEvent("GAME_PAD_CONNECTED", "OnGamePadChanged")
     self:RegisterEvent("GAME_PAD_DISCONNECTED", "OnGamePadChanged")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "OnCooldownUpdate")
@@ -1739,6 +1740,13 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
             self.updateTimeLeft = 0
         end
     end
+end
+
+-- A macro edit changes what its slot casts without firing ACTIONBAR_SLOT_CHANGED, so the
+-- per-slot parse (including a cached "this macro does not cast X") must be dropped here.
+function JustAC:OnMacrosUpdated()
+    self:InvalidateCaches({macros = true, hotkeys = true})
+    self:ForceUpdate()
 end
 
 function JustAC:OnActionBarChanged(event, slot)
