@@ -683,6 +683,7 @@ local function AddSpellbookProcs(b)
                and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
                and PassesSpellFilters(procSpellID, profile)
                and BlizzardAPI.IsSpellUsable(displayID, true)
+               and BlizzardAPI.AbilityInRange(displayID) ~= false
                -- A proc glow that outlives its cast (execute-type spells inside a
                -- window) kept seating the spell here ON COOLDOWN, swipe and all, ahead
                -- of the whole tail - usability never looks at cooldowns. Not ready ->
@@ -1692,6 +1693,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     end
                     local rearBlocked = IsRearAttackBlocked(displayID)
                     castBarred = castBarred or rearBlocked
+                    local outOfRange = IsConfirmedOutOfRange(displayID)
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
@@ -1734,6 +1736,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     local probeBucket
                     if not bypassProcs and ready and not starved and not held and not locLocked
                        and not castBarred and not missingResource
+                       and (not sinkCooldowns or not outOfRange)
                        and (BlizzardAPI.IsSpellProcced(displayID)
                             or (not leadBarred and not gateBlocked and chargeCapped)
                             or (not leadBarred and not gateBlocked and powerCapped and IsSpenderSpell(displayID))
@@ -1750,7 +1753,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                            or BlizzardAPI.RunningAutoSwing(displayID)   -- running: shown with its timer
                            or gateBlocked
                            or castBarred
-                           or IsConfirmedOutOfRange(displayID)
+                           or outOfRange
                            or (not alwaysShow and DotTracker
                                and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
                         -- On cooldown / uncastable / DoT already live on target: sink to
@@ -1773,7 +1776,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- not, its timer leads the sunk spells so a hunter knows when to stand still.
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
-                                or IsConfirmedOutOfRange(displayID)
+                                or outOfRange
                                 or BlizzardAPI.RunningAutoSwing(displayID) == 0
                                 -- Offered only when its conditions hold (Life Tap): otherwise it
                                 -- trails, never parked in slot 2 as a "soon".
@@ -1800,7 +1803,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             tostring(resCount), tostring(resName), tostring(ctxPointCap),
                             tostring(ready), tostring(starved), tostring(missingResource),
                             tostring(pointsShort), tostring(gateBlocked), tostring(held),
-                            tostring(castBarred), tostring(IsConfirmedOutOfRange(displayID)), tostring(locLocked),
+                            tostring(castBarred), tostring(outOfRange), tostring(locLocked),
                             tostring(rearBlocked))
                     end
                 else

@@ -362,6 +362,23 @@ def main():
         (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
             ranges[2098]=false; ranges[2764]=true""",
          [2764, 2098, 1752], "unranked Throw at range leads sunk melee instead of WAIT"),
+        (rogue + """points=0; pool[3]=2764; starved={}; capped=true;
+            ranges[1752]=false; ranges[2098]=false; ranges[2764]=true; b.inCombat=true""",
+         [2764, 2098, 1752], "full-energy melee promotion cannot displace in-range Throw"),
+        (rogue + """points=0; pool[3]=2764; starved={}; procs[1752]=true;
+            ranges[1752]=false; ranges[2098]=false; ranges[2764]=true; b.inCombat=true""",
+         [2764, 2098, 1752], "real proc glow cannot promote out-of-range melee over Throw"),
+        (rogue + """points=0; pool[3]=2764; starved={}; capped=true;
+            ranges[1752]=false; ranges[2098]=false; ranges[2764]=true;
+            cooldown[2764]=true; b.inCombat=true""",
+         [wait, 2764, 2098, 1752], "WAIT during Throw cooldown rather than out-of-range full-energy melee"),
+        (rogue + """points=0; pool[3]=2764; starved={}; capped=true;
+            ranges[1752]=true; ranges[2098]=true; ranges[2764]=false; b.inCombat=true""",
+         [1752, 2098, 2764], "melee promotion returns when target enters range"),
+        (rogue + """points=0; pool[3]=2764; starved={}; capped=true;
+            ranges[1752]=false; ranges[2098]=false; ranges[2764]=true;
+            b.sinkCooldowns=false; b.inCombat=true""",
+         [1752, 2764, 2098], "unavailable-last opt-out retains full-energy promotion"),
         (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
             ranges[2098]=false; ranges[2764]=true; b.maxIcons=1; b.inCombat=false""",
          [2764], "single-icon OOC queue recommends eligible Throw, not WAIT"),
@@ -414,6 +431,11 @@ def main():
     assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unusable finisher"
     lua.execute("Reset(); starved[2098]=true")
     assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unaffordable finisher"
+    lua.execute("Reset(); ranges[2098]=false")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject out-of-range spell"
+    assert not lua.globals().b.addedSpellIDs[2098], "range rejection must release the spell for tail sinking"
+    lua.execute("Reset(); ranges[2098]=nil")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "unknown range does not reject early spellbook proc"
     lua.execute("Reset()")
     assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "usable spellbook proc remains available"
     lua.execute("Reset(); " + rogue + "points=5")
@@ -423,7 +445,7 @@ def main():
     lua.execute("Reset()")
     bolt = next(e for e in lua.globals().entries.values() if e.id == 403)
     assert len(bolt.gates) == 1 and bolt.gates[1].t == "stack", "imported stack gates were not mutated"
-    print(f"Forever openers and prerequisites: {len(cases)} cases, spend transition and 3 early-proc checks passed")
+    print(f"Forever openers and prerequisites: {len(cases)} cases, spend transition and 5 early-proc checks passed")
 
 
 if __name__ == "__main__":

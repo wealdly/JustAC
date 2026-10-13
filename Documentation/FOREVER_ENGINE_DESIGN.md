@@ -123,6 +123,18 @@ Macros and missing bindings do not prevent admission. An unranked but eligible
 Throw leads sunk melee entries, so WAIT is only offered when that filler is also
 unavailable. Retail and custom lists retain their existing sources.
 
+Live validation on 2026-10-13 confirmed macro-slot Throw enters the pool and leads
+out-of-range melee before combat. It also exposed full-energy promotion bypassing
+range sinking after combat starts: Sinister Strike recorded `bucket=proc` together
+with `range=true`, even after Throw became ready again. Assembly now uses one
+range verdict for promotion, sinking and diagnostics. With Unavailable Last on,
+confirmed out-of-range entries cannot receive any proc-bucket promotion.
+Early spellbook-proc injection also rejects confirmed out-of-range entries and
+releases their claims so the tail can sink them. Unknown range still fails open.
+When Throw is cooling down and everything else is unavailable, WAIT remains the
+first slot; once Throw is ready it leads again until a higher-ranked entry is
+eligible. This corrected transition still needs a fresh live recording.
+
 List entries are never filtered. Forever's spell and macro-button usability can
 report Backstab usable even when a cast fails with "must be behind your target".
 Rear-required attacks therefore use a conservative targeting gate: when definitely
