@@ -1,6 +1,7 @@
 # Forever engine design
 
-Status: proposal, 2026-10-07. Branch `forever`. Inputs: `FOREVER_PROBE_PLAN.md` (measured
+Status: implementation reference with historical proposal sections, updated 2026-10-13.
+Branch `forever`. Inputs: `FOREVER_PROBE_PLAN.md` (measured
 signals), `FOREVER_DEAD_CODE.md` (what is dead), `tools/simc-apl-forever/` (first list).
 
 ## 1. Problem
@@ -306,8 +307,9 @@ Inherited, evaluated by the existing code:
   full cost or the imported preferred point threshold. Only matching, readable
   discrete-resource rows whose conditional aura applies establish a shortage.
   Unknown minimum costs do not establish a missing prerequisite. Explicit holds
-  remain authoritative. Forever's sinking evaluation skips imported resource and
-  power pooling preferences and relies on live usability and minimum-cost reads;
+  remain authoritative. Forever evaluates the imported resource and power
+  preferences, with the tiered damage-finisher caps below; an explicit Hold Until
+  dial replaces imported resource and power preferences for that entry.
   Retail retains its imported gates and primary pick.
   Exact source-order mode is unchanged. Confirmed minimum shortages veto tail
   promotions, while zero-cost procs remain eligible. The early spellbook-proc
@@ -336,7 +338,10 @@ priority position with no gate, which is how the retail pipeline already fails s
 
 ### Finisher point caps on short-lived targets
 
-Forever combo points live on the target: points left when it dies are lost, and the
+The leveling policy treats Forever combo points as target-bound: points left when
+the target dies are not worth pooling for. Logs show `GetComboPoints("player", "target")`
+falling to zero when the target clears, but carryover between two living targets
+has not been established by a controlled A-to-B-to-A test. The
 imported lists are max-level boss APLs (Eviscerate at 4-5 points). Pooling to 5 on a mob
 that dies in a few hits only costs builder GCDs and energy. Without a game pick, an
 "at least N points" resource gate on a TIERED point spender (`PointGateCap` in
@@ -357,6 +362,12 @@ The cap only lowers a source target, never raises one. Tiered spenders whose val
 duration keep the source target too: self buffs (Slice and Dice), DoTs (Rupture, Rip) and
 crowd control (Kidney Shot). Energy, buff and cooldown gates, explicit Hold Until dials and
 Retail are unchanged.
+
+All-unavailable ordering is not a usability claim. At two points, when a wounded
+target's cap falls from three to two, an energy-starved Eviscerate joins the
+builders in tier 1 and leads by source position. If all attacks are out of range,
+tier 3 also supersedes a finisher's missing-point tier. WAIT now leads in both
+cases; the tail remains an ordered preview, not an instruction to cast.
 
 The unreadable-health rows are the generic fallback: `UnitClassification` is NeverSecret,
 so if the health threshold reads (`IsUnitHealthBelow`) stop working the cap still drops
