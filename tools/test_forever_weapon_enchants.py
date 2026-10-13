@@ -145,7 +145,7 @@ def main():
     lua.execute("""
         SpellQueue = { IsSpellBlacklisted = function() return false end }
         proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
-        cooldownSpells, sunkSet, wastedSet, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
+        cooldownSpells, sunkSet, unavailableTier, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
         function NoteManaStarved() end
         function ClaimSpellID(id, added) added[id] = true; return id end
         function PassesRotationFilters() return true end
@@ -165,7 +165,7 @@ def main():
     """)
     lua.execute(source[start:end] + """
         function BuildQueue(sink)
-            wipe(sunkSet); wipe(wastedSet)
+            wipe(sunkSet); wipe(unavailableTier)
             local b = {
                 profile = {}, blacklist = {}, addedSpellIDs = {}, recommendedSpells = {},
                 spellCount = 0, maxIcons = 4, effectiveBypassProcs = true,

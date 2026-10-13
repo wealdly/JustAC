@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-- In Forever, put abilities waiting for energy ahead of finishers whose combo-point requirements are not met, so builders lead immediately after spending combo points.
+- With Unavailable Last enabled in ranked ordering, put abilities waiting for regeneration ahead of abilities with unmet class-resource requirements or point holds. This surfaces builders after spending combo points in Forever and applies the same rule to Retail's queue tail without replacing Blizzard's primary pick. Exact source-order mode is unchanged.
 - Honor exact enemy-count conditions in Forever, including four-target Blizzard and Volley. Imported totem upkeep uses live slot presence, and Fire Nova no longer gains unconditional single-target priority from an unreadable fight-duration condition.
 - Refresh Forever's source rotations, including Hunter multi-target Volley, Mage point-blank AoE conditions, Paladin multi-target attacks, Enhancement Fire Nova priority, and Protection Warrior's Heroic Strike/Cleave selection.
 - Keep pure protection, healing, and utility abilities out of Forever's automatic DPS queue without removing damage/healing hybrids. Custom entries and Always Show remain available.
