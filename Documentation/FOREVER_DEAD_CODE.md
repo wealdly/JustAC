@@ -4,12 +4,17 @@
 > retail** (one codebase, `## Interface: 120100, 16001`). Nothing below is to be DELETED;
 > "dead on Forever" now means "gate on `SpellDB.IsForever()` / `BlizzardAPI.HasGamePick()`"
 > or "add a `<CLASS>_F` entry". The inventory stays useful as the list of retail-only paths.
+>
+> **2026-10-13 correction:** the WAIT sentinel and `RenderWaitSlot` are shared, live
+> Forever paths. `_StageForeverWait` uses them when the ranked DPS queue has only
+> sunk entries. The inventory below is historical, not a current deletion plan.
 
 Branch `forever`. Three things make code dead on Forever, and every finding below traces to
 one of them:
 
-- **No pick.** `GetNextCastSpell` is always nil, so `primarySpellID`, the WAIT sentinel, and
-  everything that reads "the game's pick" never run. (The rotation POOL still exists: it is
+- **No pick.** `GetNextCastSpell` is always nil, so `primarySpellID` and
+  everything that requires "the game's pick" have no input. WAIT has a separate
+  Forever trigger. (The rotation POOL still exists: it is
   the action bars now.)
 - **`<CLASS>_F` spec key.** Every table keyed `CLASS_N` or by retail spec ID misses. Tables
   read through `SpellDB.ResolveDefaults` fall back to the class key; tables read directly
@@ -26,7 +31,7 @@ Line counts are approximate.
 |---|---|---|---|
 | SimC stack - **REVISED by `FOREVER_ENGINE_DESIGN.md`: keep `RotationImport`, the generator and the gate evaluators (they become the engine); only the retail data and pick-relative parts are dead** | `Data/SimcRotations.lua`, `RotationImport.lua`, SpellQueue gate layer 819-873 + 941-1211 + SimC parts of CategorizeAndAssemble / `_StageTail`, `WithAdditions` (SpellQuery 177-237), PriorityList simc tab + gate phrasing 355-536, CustomQueue 86-170, UIRenderer `EmpowerNumeral` | 3,300 | TOC, DebugHUD, locale keys `Priority Tab Simc`, `Burst Source simc` |
 | Blizzard order data | `Data/AssistedCombatOrder.lua`, `GetBlizzardRank` and its readers (SpellQueue `rankOf` "ac", PriorityList 122-132) | 560 | "Match Blizzard's pick" ordering degrades to context fit only |
-| Pick consumers | Safe Lead (`_ApplySafeLead`, `SafeLeadCandidate`, `CostsPrimary`, `GatesConfirmed`, `IsSafeLead`), `_StagePrimary` pick/WAIT/dot-spread/highlight lookahead, WAIT sentinel + `RenderWaitSlot`, `displacedPrimary`, gap-closer pick shifting, `_StageContext` pick tags, `pickWindows`, `NotePick` | 450 | `_StageFinalize`, Options "safe" lead value + locale keys, UIRenderer readers |
+| Pick consumers | Safe Lead (`_ApplySafeLead`, `SafeLeadCandidate`, `CostsPrimary`, `GatesConfirmed`, `IsSafeLead`), `_StagePrimary` pick/dot-spread/highlight lookahead, `displacedPrimary`, gap-closer pick shifting, `_StageContext` pick tags, `pickWindows`, `NotePick`. WAIT sentinel + `RenderWaitSlot` are shared and live on Forever. | 450 | `_StageFinalize`, Options "safe" lead value + locale keys, UIRenderer readers |
 | FightWindow | whole file | 160 | TOC, SpellQueue context, JustAC 2024, DebugCommands |
 | AC plumbing | SpellQuery next-cast trio, `IsWaitPlaceholder`, AC branch of `GetRotationSpells`, `ValidateAssistedCombatSetup`; ActionBarScanner `GetAssistedCombatSlot`/`InvalidateAssistedSlot`; BlizzardAPI.lua AC-slot usability fallback; UIRenderer raw `GetNextCastSpell(true)` per icon refresh; JustAC `AssistedCombatManager.*` callbacks, `ASSISTED_COMBAT_ACTION_SPELL_CAST`, AC CVar handling + update-rate CVar read | 280 | |
 | AC options | General `disableBlizzardHighlight`, Offensive `includeHiddenAbilities`, PriorityList "Blizzard's pick" pin label | 40 | locale keys |

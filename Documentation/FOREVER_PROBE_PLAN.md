@@ -16,6 +16,13 @@ Source facts (wow-ui-source `forever` branch, wago.tools build 1.60.1.70205):
 
 ## Port status (branch `forever`)
 
+This section records the initial 2026-10-04 port, not the current implementation.
+See [Forever engine design](FOREVER_ENGINE_DESIGN.md) for current queue behavior.
+The branch now supports Retail and Forever in one codebase, imports Forever
+priorities, resolves spell ranks, and filters the automatic pool for DPS.
+Ranked ordering includes resource-prerequisite sinking, leveling finisher caps,
+rear-attack targeting gates and an all-unavailable WAIT slot.
+
 What runs unchanged: defensives / heals / potions / pet cluster (own frame), health and
 power bars, maintenance slot (Cooldown Manager loads on camelot), spellbook proc glows,
 interrupt slot on the nameplate overlay, key-press flash, all list editing via spellbook search.
@@ -93,6 +100,29 @@ decision a Forever rotation makes, is there a signal that answers it in combat? 
   on GCD), the player (form, stealth, speed, combo points, threat, auto attack) and the
   nameplates (count, in combat, within 10 yd). Lines: `fw` = event, `fs` = sampler change.
   Caps reset per combat phase; overflow is counted (`fw: over cap last phase`).
+
+The recorder now also captures `queue` (spell and cached/live action-bar
+usability), `queueDecision` (actual last-build bucket, sink tier and blocking
+flags) and `rearContext` (stealth and safe target-of-target comparison).
+See [development tooling](DEV_TOOLING.md#forever-queue-ordering-probe).
+
+### Follow-up findings (2026-10-13)
+
+- After detection from stealth, Backstab's spell and resolved macro-button
+  usability both stayed true with sufficient energy, even after a cast failed
+  with "You must be behind your target". Usability is not a facing signal.
+- A proc bucket does not prove a proc glow or castability: full-power promotion
+  also uses that bucket. Confirmed cast prerequisites now veto those promotions.
+- The rear-attack gate uses a definite non-stealth state and a definite
+  `targettarget == player` comparison, not threat or measured facing. Its live
+  activation still needs verification; an unknown comparison leaves it inactive.
+- All-energy-starved entries may share a sink tier and then follow source order.
+  A wounded target's lower finisher cap can legitimately put Eviscerate in that
+  tier. WAIT distinguishes this preview from an actionable first press.
+- A controlled living-target A-to-B-to-A test is still needed before claiming
+  whether Forever combo points carry between targets.
+- Interrupt eligibility now requires an attackable target. Friendly Fishing
+  rejection and WAIT entry/exit transitions still need live confirmation.
 
 ### Decision -> candidate signal
 

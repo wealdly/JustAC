@@ -23,6 +23,17 @@ abilities are unavailable from point-prerequisite and range demotion.
 shows stealth and the safe target-of-target comparison; an unknown comparison
 leaves rear attacks eligible.
 
+`WAIT{no actionable entry}` is the synthetic Forever first slot, not a spell ID.
+While it leads, the remaining entries describe the unavailable tail. A valid
+late injection prevents WAIT, and Safe Lead cannot replace it.
+
+For live validation, record detection from stealth by an enemy targeting you,
+then a target held by a tank. Compare `rearContext` with `rear=true`. Also exhaust
+resources or move outside melee range until all DPS entries sink: WAIT should
+lead, then disappear when an eligible entry returns. Out-of-combat no-target,
+friendly-target and dead-target previews should not gain WAIT. Exact-order mode
+and disabling Unavailable Last should preserve their prior behavior.
+
 ## Lua static analysis (the pre-commit / pre-reload gate)
 
 WoW loads the addon's Lua at runtime; a stray brace or a typo'd global
