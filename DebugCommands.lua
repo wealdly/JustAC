@@ -7884,6 +7884,8 @@ local function WatchPayload(event, a, b, c, d, e)
 end
 
 local function ForeverWatch(on)
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    if SQ and SQ.SetQueueProbeEnabled then SQ.SetQueueProbeEnabled(on) end
     local w = DebugCommands._foreverWatch
     if w then
         w.frame:UnregisterAllEvents(); w.frame:SetScript("OnEvent", nil)
@@ -7971,12 +7973,32 @@ local function ForeverWatch(on)
         local SQ = LibStub("JustAC-SpellQueue", true)
         local q = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue() or {}
         local shown = {}
+        local ABS = LibStub("JustAC-ActionBarScanner", true)
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
         for i = 1, math.min(#q, 3) do
             local okU, usable, noMana = pcall(C_Spell.IsSpellUsable, q[i])
-            shown[i] = string.format("%s(%s)", C_Spell.GetSpellName(q[i]) or q[i],
-                okU and (Cv(usable) .. "/noPower=" .. Cv(noMana)) or "err")
+            -- The bar read the queue's grey-out sink uses: which slot, and what it says.
+            local barSlot = ABS and ABS.GetSlotForSpell and ABS.GetSlotForSpell(q[i])
+            local okB, barUse, barNoPower = false, nil, nil
+            if BAPI and BAPI.GetActionBarUsability then
+                okB, barUse, barNoPower = pcall(BAPI.GetActionBarUsability, q[i])
+            end
+            local okL, liveUse = false, nil
+            if barSlot then okL, liveUse = pcall(C_ActionBar.IsUsableAction, barSlot) end
+            shown[i] = string.format("%s(%s bar[%s]=%s/%s live=%s)", C_Spell.GetSpellName(q[i]) or q[i],
+                okU and (Cv(usable) .. "/noPower=" .. Cv(noMana)) or "err",
+                tostring(barSlot), okB and Cv(barUse) or "err", okB and Cv(barNoPower) or "err",
+                okL and Cv(liveUse) or "-")
         end
         Note("queue", #shown > 0 and table.concat(shown, " ") or "empty")
+        if SQ and SQ.GetQueueProbeEntry then
+            local decisions = {}
+            for i = 1, math.min(#q, 3) do
+                decisions[i] = string.format("%s{%s}", C_Spell.GetSpellName(q[i]) or q[i],
+                    SQ.GetQueueProbeEntry(q[i]) or "not evaluated in rotation pool")
+            end
+            Note("queueDecision", #decisions > 0 and table.concat(decisions, " ") or "empty")
+        end
         -- Pet: exists / dead / combat / health band (is the band plain for the pet in combat?)
         local B = LibStub("JustAC-BlizzardAPI", true)
         local function PetBelow(pct)

@@ -203,6 +203,18 @@ local normalSpells = {}
 local cooldownSpells = {}
 local sunkSet = {}   -- [displayID] = true for this build's cooldownSpells (burst cue veto)
 local unavailableTier = {}   -- [displayID]: 2 = unmet class-resource prerequisite, 3 = wasted press
+local queueProbeEnabled = false
+local queueProbeEntries = {}
+
+function SpellQueue.SetQueueProbeEnabled(enabled)
+    queueProbeEnabled = enabled == true
+    wipe(queueProbeEntries)
+end
+
+function SpellQueue.GetQueueProbeEntry(spellID)
+    return queueProbeEntries[spellID]
+end
+
 local addedSpellIDs = {}
 local recommendedSpells = {}
 -- Scratch set for gap-closer suppression marks (filtered by Always Show pins
@@ -1692,6 +1704,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
                              or (HasPositiveBuffGate(simcRec.gates) and not windowUp))
+                    local probeBucket
                     if not bypassProcs and ready and not starved and not held and not locLocked
                        and not castBarred and not missingResource
                        and (BlizzardAPI.IsSpellProcced(displayID)
@@ -1702,6 +1715,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                                 and not gateBlocked))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
+                        probeBucket = "proc"
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if not leadBarred then anyTimeable = true end
@@ -1716,6 +1730,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- the back. A DoT un-sinks on cleanse/expiry or inside its pandemic
                         -- refresh window (DotTracker), and a proc still wins (checked above).
                         cooldownCount = cooldownCount + 1
+                        probeBucket = "sunk"
                         cooldownSpells[cooldownCount] = displayID
                         sunkSet[displayID] = true
                         if contextOrder ~= "off"
@@ -1742,6 +1757,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         end
                     else
                         normalCount = normalCount + 1
+                        probeBucket = "normal"
                         normalSpells[normalCount] = displayID
                         normalRank[normalCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if pullSpell then
@@ -1749,6 +1765,15 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             b.pullOpenerID = displayID
                         end
                         if not leadBarred then anyTimeable = true end
+                    end
+                    if queueProbeEnabled then
+                        queueProbeEntries[displayID] = string.format(
+                            "bucket=%s tier=%d source=%d order=%s points=%s/%s cap=%s ready=%s starved=%s minimum=%s pointsShort=%s gate=%s held=%s barred=%s range=%s loc=%s",
+                            probeBucket, unavailableTier[displayID] or 1, i, contextOrder,
+                            tostring(resCount), tostring(resName), tostring(ctxPointCap),
+                            tostring(ready), tostring(starved), tostring(missingResource),
+                            tostring(pointsShort), tostring(gateBlocked), tostring(held),
+                            tostring(castBarred), tostring(IsConfirmedOutOfRange(displayID)), tostring(locLocked))
                     end
                 else
                     -- Undo claim if filters rejected
@@ -2600,6 +2625,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(cooldownSpells)
     wipe(sunkSet)
     wipe(unavailableTier)
+    wipe(queueProbeEntries)
     local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local hideItems = profile.hideItemAbilities
 
