@@ -359,6 +359,21 @@ def main():
         (rogue + "points=0; b.contextOrder='off'", [2098, 1752], "exact source order unchanged"),
         (rogue + "points=0; b.sinkCooldowns=false", [2098, 1752], "unavailable-last opt-out unchanged"),
         (rogue + "points=0; starved[1752]=nil", [1752, 2098], "usable builder removes WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=true""",
+         [2764, 2098, 1752], "unranked Throw at range leads sunk melee instead of WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=true; b.maxIcons=1; b.inCombat=false""",
+         [2764], "single-icon OOC queue recommends eligible Throw, not WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=true; cooldown[2764]=true""",
+         [wait, 2764, 2098, 1752], "Throw on cooldown waits ahead of wasted melee presses"),
+        (rogue + """points=0; pool[3]=2764; starved[1752]=nil;
+            ranges[2764]=false""",
+         [1752, 2098, 2764], "usable melee leads Throw inside its minimum range"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=false""",
+         [wait, 2098, 1752, 2764], "Throw outside its range does not prevent WAIT"),
         (rogue + "points=2; b.ctxPointCap=2; starved[2098]=nil", [2098, 1752], "affordable consumer removes WAIT"),
         (rogue + "points=0; b.maxIcons=1", [wait], "one-icon queue shows WAIT"),
         (rogue + "points=0; b.maxIcons=2", [wait, 1752], "WAIT respects icon limit"),

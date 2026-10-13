@@ -114,6 +114,15 @@ over 8s (Earth Shock at 6s stays a damage press), hard crowd control and taunts 
 SpellMechanic / taunt effect, non-damaging movement, stealth and mount buffs, and a
 short named `NOT_DPS` list for what the data cannot separate from a combat buff.
 Slows and roots on damage spells and every ranged weapon attack stay as fillers.
+Runtime discovery merges bar spells with the learned player spellbook, including
+known flyout spells. It walks each skill line separately to avoid gaps between
+tabs, excludes passive/off-spec/future entries and uses the generated class
+admission list. Bar-selected ranks win; otherwise the highest known rank is used.
+Discovery is cached until availability invalidation on spell/talent/spec changes.
+Macros and missing bindings do not prevent admission. An unranked but eligible
+Throw leads sunk melee entries, so WAIT is only offered when that filler is also
+unavailable. Retail and custom lists retain their existing sources.
+
 List entries are never filtered. Forever's spell and macro-button usability can
 report Backstab usable even when a cast fails with "must be behind your target".
 Rear-required attacks therefore use a conservative targeting gate: when definitely
@@ -409,8 +418,8 @@ evidence is unknown, the configured priority remains the advisory fallback.
 - `FOREVER_DEAD_CODE.md` Tier 1 "SimC stack" splits: keep `RotationImport`, the generator,
   and the gate evaluators; delete `Data/SimcRotations.lua`, `Data/AssistedCombatOrder.lua`,
   pick windows, pick-leads, Safe Lead and the SimC probes tied to them.
-- `BlizzardAPI.GetRotationSpells`' action-bar fallback stays as the pool for the options
-  tools; the live queue comes from the engine.
+- `BlizzardAPI.GetRotationSpells` supplies the shared learned-spellbook/bar pool to
+  the options tools and live queue; imported priorities order that pool.
 - Healer handling keys off the group role (`UnitGroupRolesAssigned`) or a setting, because
   every Forever spec reports DAMAGER.
 - The GCD source moves from 61304 to a known GCD-bound spell (bug 7).
@@ -441,7 +450,8 @@ evidence is unknown, the configured priority remains the advisory fallback.
      tree with the most talent points (class default with none; Feral -> bear list in bear
      form), re-picked on `InvalidateLookup` (SPELLS_CHANGED) and druid form changes;
    - rank chains: every rank resolves to its entry, insertions use `HighestKnownRank`;
-   - pool = bar spells + every known list ability (delegated included on Forever),
+   - pool = bar spells + learned player-spellbook abilities + every known list ability
+     (delegated included on Forever),
      deduplicated by rank family (`ForeverPool`, `WithAdditions`);
    - `SpellQueue.LeadMode` = "mylist" when Assisted Combat is unavailable, so what we
      cannot time never leads;

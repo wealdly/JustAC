@@ -254,11 +254,9 @@ end
 --- The rotation pool: the game's list plus the abilities theorycraft ordering can time
 --- (WithAdditions). gameOnly = the game's own list alone - what "the rotation changed"
 --- compares against, which must not depend on which ordering happened to be on.
---- Forever has no Assisted Combat, so its pool is empty. The list the player has already
---- curated is their action bars: every non-passive spell on them, in slot order. It seeds
---- and baselines the priority list exactly like the game's pool does on retail.
---- ponytail: bars also hold utility (stances, buffs, professions); the player's own list
---- prunes them. Filter by spellbook skill line if the default pool proves too noisy.
+--- Forever has no Assisted Combat. Its learned player-spellbook abilities and bar spells
+--- stand in for the game's pool, with the generated class/DPS admission list and downstream
+--- role/redundancy filters excluding non-damage upkeep and utility.
 local barSpells   -- cached GetBarSpells result; nil = rescan (bar or spellbook changed)
 
 --- Every distinct spell on the action bars as { slot, id } in slot order, through the
@@ -279,6 +277,7 @@ function BlizzardAPI.GetBarSpells()
 end
 
 local barRankOf   -- rank-1 id -> the rank of that ability on the bars; nil = rebuild
+local foreverSpellbookSpells
 
 function BlizzardAPI.InvalidateBarSpells()
     barSpells, barRankOf = nil, nil
@@ -301,25 +300,70 @@ local function PressedRank(spellID)
     return barRankOf[chain[1]] or RI.HighestKnownRank(spellID)
 end
 
-local function ActionBarPool()
-    local RI = LibStub("JustAC-RotationImport", true)
+local function ReadForeverSpellbook()
     local out = {}
+    local bank = Enum.SpellBookSpellBank.Player
+    local function AddSpell(id)
+        if id and BlizzardAPI.IsSpellAvailable(id) then out[#out + 1] = id end
+    end
+    local function ReadSlot(slot)
+        local info = C_SpellBook.GetSpellBookItemInfo(slot, bank)
+        if not info or info.isPassive or info.isOffSpec then return end
+        if info.itemType == Enum.SpellBookItemType.Spell then
+            AddSpell(info.spellID)
+        elseif info.itemType == Enum.SpellBookItemType.Flyout then
+            local _, _, numSlots, known = GetFlyoutInfo(info.actionID)
+            if not known then return end
+            for i = 1, numSlots do
+                local id, overrideID, slotKnown = GetFlyoutSlotInfo(info.actionID, i)
+                if slotKnown then AddSpell(overrideID or id) end
+            end
+        end
+    end
+    -- Skill lines can have gaps, so a flat scan stopping at the first nil loses tabs.
+    for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local info = C_SpellBook.GetSpellBookSkillLineInfo(line)
+        if info then
+            for i = 1, info.numSpellBookItems do ReadSlot(info.itemIndexOffset + i) end
+        end
+    end
+    return out
+end
+
+local function ForeverLearnedPool()
+    local RI = LibStub("JustAC-RotationImport", true)
+    local out, have = {}, {}
+    local function AddSpell(id)
+        local base = RI and RI.RankBase(id) or id
+        if have[base] or IsPassiveID(id) or (RI and not RI.IsClassAbility(id)) then return end
+        have[base] = true
+        out[#out + 1] = id
+    end
     for _, s in ipairs(BlizzardAPI.GetBarSpells()) do
         -- Class abilities only: a bar also carries tracking, professions and racials.
-        if not IsPassiveID(s.id) and not (RI and not RI.IsClassAbility(s.id)) then
-            out[#out + 1] = s.id
+        AddSpell(s.id)
+    end
+    if not foreverSpellbookSpells then
+        local ok, spells = pcall(ReadForeverSpellbook)
+        if not ok then
+            geterrorhandler()(spells)
+            return #out > 0 and out or nil
         end
+        foreverSpellbookSpells = spells
+    end
+    for _, id in ipairs(foreverSpellbookSpells) do
+        AddSpell(PressedRank(id) or id)
     end
     return #out > 0 and out or nil
 end
 
---- Forever's full pool: the bar spells (all a gameOnly caller gets - they stand in for the
---- game's list) plus every ability of the imported Forever list the character knows, at
+--- Forever's full pool: bar spells plus learned player-spellbook class abilities
+--- (also for gameOnly callers), plus every known imported Forever ability, at
 --- the rank they would press (WithAdditions + RotationImport's rank chains).
 local function ForeverPool(gameOnly)
-    local bars = ActionBarPool()
-    if gameOnly then return bars end
-    local out = WithAdditions(bars or {})
+    local learned = ForeverLearnedPool()
+    if gameOnly then return learned end
+    local out = WithAdditions(learned or {})
     return #out > 0 and out or nil
 end
 
@@ -689,6 +733,7 @@ local spellAvailabilityCache = {}
 function BlizzardAPI.ClearAvailabilityCache()
     wipe(spellAvailabilityCache)
     wipe(passiveMemo)   -- the spellbook half of IsPassiveID moves with talents
+    foreverSpellbookSpells = nil
 end
 
 -- Event-only invalidation: cleared by SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,

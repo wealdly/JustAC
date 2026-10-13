@@ -86,7 +86,7 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 
 JustAC also runs on WoW Forever, from the same download. This is an early build for the Forever beta, and some suggestions are still being checked in game.
 
-WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus the abilities on your action bars.
+WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
 
 What works differently on Forever:
 
