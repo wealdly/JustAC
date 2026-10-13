@@ -41,6 +41,8 @@ BlizzardAPI = {
         resourceReads = resourceReads + 1
         return points, maximum, resourceName
     end,
+    IsSecretValue = function() return false end,
+    IsPrimaryPowerCapped = function() return capped end,
 }
 function UnitExists() return targetExists end
 function UnitCanAttack() return hostile end
@@ -90,6 +92,14 @@ function Reset()
     SpellQueue._rotationIsCustom = false
     points = nil
     maximum, resourceName, resourceReads = 5, "combo_points", 0
+    capped, minimum, costAura, hasCostAura = false, 1, 0, false
+    resourcePowerTypes = {combo_points=4, holy_power=9, chi=12, soul_shard=7,
+        runes=5, essence=19, arcane_charges=16}
+    C_Spell = {GetSpellPowerCost=function(id)
+        if id == 2098 then return {{type=resourcePowerTypes[resourceName], minCost=minimum,
+            cost=5, requiredAuraID=costAura, hasRequiredAura=hasCostAura}} end
+        return {}
+    end}
     maxChargeGated, holdPoints, holdPctVal, holdPctType = {}, {}, {}, {}
     entries = classes.SHAMAN_F.enhancement.st
     proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
@@ -112,13 +122,19 @@ def main():
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
-        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "GateVerdict", "SimcResourceGateBlocks"
+        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource"
     ))
-    lua.execute("resourceGateCtx = { resourceOnly = true }\n" + helpers + """
+    lua.execute(helpers + """
         local originalBlocks = SimcGateBlocks
         function SimcGateBlocks(gates, count, name, maximum, skipResource)
-            return (not skipResource and SimcResourceGateBlocks(gates, count, name, maximum))
-                or originalBlocks(gates)
+            skipResource = skipResource or BlizzardAPI.IsForever()
+            if not skipResource and count ~= nil then
+                for _, g in ipairs(gates or {}) do
+                    if g.t == "resource" and g.res == name
+                        and ResourceGateHolds(g, count, maximum) == false then return true end
+                end
+            end
+            return originalBlocks(gates)
         end
     """ + source[start:end] + """
         function Build()
@@ -169,7 +185,7 @@ def main():
     """
     cases.extend([
         (rogue + "points=0", [1752, 2098], "builder leads at zero points even while energy-starved"),
-        (rogue + "points=2", [1752, 2098], "unmet finisher threshold trails an energy-starved builder"),
+        (rogue + "points=2", [2098, 1752], "minimum met does not enforce imported five-point preference"),
         (rogue + "points=5", [2098, 1752], "met finisher requirement preserves source order"),
         (rogue + "points=nil", [2098, 1752], "unknown points never infer a missing prerequisite"),
         (rogue + "points=0; forever=false", [1752, 2098], "retail tail shares prerequisite ordering"),
@@ -184,25 +200,48 @@ def main():
          "existing primary slot stays ahead of reordered unavailable tail"),
         (rogue + """points=0; entries[1].gates={{t="any",g={
             {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
-         [2098, 1752], "unknown OR alternative prevents prerequisite demotion"),
+         [1752, 2098], "actual cost applies independently of imported OR preferences"),
         (rogue + """points=0; entries[1].gates={{t="all",g={
             {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
          [1752, 2098], "confirmed missing AND prerequisite demotes the finisher"),
         (rogue + "points=0; starved[1752]=nil", [1752, 2098], "affordable builder still leads"),
         (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
-         [2098, 1752], "builder-like upper bound holds at low resource"),
+         [1752, 2098], "actual minimum still applies despite imported upper bound"),
         (rogue + "points=5; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
-         [1752, 2098], "builder-like upper bound yields to a consumer at high resource"),
+         [2098, 1752], "imported upper bound is not a casting prerequisite"),
         (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
          [1752, 2098], "deficit prerequisite uses current maximum"),
         (rogue + "points=0; maximum=nil; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
-         [2098, 1752], "unknown deficit stays unknown"),
+         [1752, 2098], "known minimum does not require a maximum read"),
         (rogue + "points=0; entries[1].gates[1].res='chi'",
-         [2098, 1752], "different resource token never uses the player's count"),
+         [1752, 2098], "actual cost uses the player's resource rather than imported token"),
         (rogue + "points=0; ranges[1752]=false",
          [2098, 1752], "out-of-range builder trails a missing-resource finisher"),
         (rogue + "points=0; starved[2098]=nil; procs[2098]=true",
-         [2098, 1752], "usable game proc remains authoritative over imported preferences"),
+         [1752, 2098], "proc cannot bypass a confirmed actual minimum"),
+        (rogue + "points=0; starved[2098]=nil; minimum=0; procs[2098]=true",
+         [2098, 1752], "free proc with zero minimum remains usable"),
+        (rogue + "points=0; minimum=nil", [2098, 1752], "missing minimum remains unknown"),
+        (rogue + "points=0; costAura=123; hasCostAura=false",
+         [2098, 1752], "inactive conditional cost is ignored"),
+        (rogue + "points=0; costAura=123; hasCostAura=true",
+         [1752, 2098], "active conditional cost applies"),
+        (rogue + "points=0; b.inCombat=false; capped=true; starved[2098]=nil; starved[1752]=nil; unusable[2098]=true",
+         [1752, 2098], "precombat capped energy cannot promote a zero-point finisher"),
+        (rogue + "points=2; starved[2098]=nil; starved[1752]=true",
+         [2098, 1752], "affordable two-point finisher leads while builder lacks energy"),
+        (rogue + "points=2; b.contextOrder='ac'",
+         [2098, 1752], "actual minimum applies outside theorycraft ordering"),
+        (rogue + "points=nil; unusable[2098]=true; starved[2098]=nil",
+         [1752, 2098], "unknown count uses confirmed structural unusability before energy wait"),
+        (rogue + "points=nil; unusable[2098]=true; starved[2098]=nil; forever=false",
+         [1752, 2098], "retail unavailable tail shares usability fallback"),
+        (rogue + "points=nil; starved[2098]=nil",
+         [2098, 1752], "usable consumer leads without an exact count"),
+        (rogue + "points=nil; C_Spell=nil",
+         [2098, 1752], "unknown counts and minimums retain priority order"),
+        (rogue + "points=2; forever=false; starved[2098]=nil; starved[1752]=nil",
+         [1752, 2098], "retail retains its imported five-point preference"),
     ])
     for resource in ("combo_points", "holy_power", "chi", "soul_shard", "runes", "essence", "arcane_charges"):
         for retail in (False, True):
@@ -217,6 +256,20 @@ def main():
         actual = list(lua.globals().Build().values())
         assert actual == expected, f"{description}: got {actual}, expected {expected}"
         assert lua.globals().resourceReads <= 1, f"{description}: duplicate class-resource read"
+    lua.execute(extract("AddSpellbookProcs", source) + """
+        function PassesSpellFilters() return true end
+        SpellDB.IsOffensiveSpell = function() return true end
+        ActionBarScanner = {
+            GetSpellbookProccedSpells = function() return {2098} end,
+            GetSpellHotkey = function() return "1" end,
+        }
+        Reset(); unusable[2098]=true
+    """)
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unusable finisher"
+    lua.execute("Reset(); starved[2098]=true")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unaffordable finisher"
+    lua.execute("Reset()")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "usable spellbook proc remains available"
     lua.execute("Reset(); " + rogue + "points=5")
     assert list(lua.globals().Build().values()) == [2098, 1752]
     lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}; unavailableTier={}")
@@ -224,7 +277,7 @@ def main():
     lua.execute("Reset()")
     bolt = next(e for e in lua.globals().entries.values() if e.id == 403)
     assert len(bolt.gates) == 1 and bolt.gates[1].t == "stack", "imported stack gates were not mutated"
-    print(f"Forever openers and prerequisites: {len(cases)} cases plus spend transition passed")
+    print(f"Forever openers and prerequisites: {len(cases)} cases, spend transition and 3 early-proc checks passed")
 
 
 if __name__ == "__main__":

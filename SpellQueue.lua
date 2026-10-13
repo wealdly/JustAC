@@ -669,6 +669,7 @@ local function AddSpellbookProcs(b)
                and not SpellQueue.IsSpellBlacklisted(procSpellID, blacklist)
                and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
                and PassesSpellFilters(procSpellID, profile)
+               and BlizzardAPI.IsSpellUsable(displayID, true)
                -- A proc glow that outlives its cast (execute-type spells inside a
                -- window) kept seating the spell here ON COOLDOWN, swipe and all, ahead
                -- of the whole tail - usability never looks at cooldowns. Not ready ->
@@ -928,6 +929,7 @@ end
 -- Discrete point-style power types: exact plain count via GetClassResourcePoints;
 -- everything else is continuous and gates through the engine threshold curve.
 local DISCRETE_POWER = {}
+local resourcePowerTypes = {}
 do
     local PT = Enum and Enum.PowerType
     if PT then
@@ -935,7 +937,32 @@ do
                              "Chi", "ArcaneCharges", "Essence" }) do
             if PT[k] then DISCRETE_POWER[PT[k]] = true end
         end
+        for res, name in pairs({ combo_points = "ComboPoints", runes = "Runes",
+            soul_shard = "SoulShards", holy_power = "HolyPower", chi = "Chi",
+            arcane_charges = "ArcaneCharges", essence = "Essence" }) do
+            resourcePowerTypes[res] = PT[name]
+        end
     end
+end
+
+local function MissingMinimumResource(spellID, count, resource)
+    local powerType = resource and resourcePowerTypes[resource]
+    if count == nil or not powerType or not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+    if not ok or BlizzardAPI.IsSecretValue(costs) or type(costs) ~= "table" then return false end
+    for i = 1, #costs do
+        local c = costs[i]
+        if not BlizzardAPI.IsSecretValue(c) and type(c) == "table"
+           and not BlizzardAPI.IsSecretValue(c.type) and c.type == powerType
+           and not BlizzardAPI.IsSecretValue(c.minCost) and type(c.minCost) == "number"
+           and not BlizzardAPI.IsSecretValue(c.requiredAuraID)
+           and not BlizzardAPI.IsSecretValue(c.hasRequiredAura)
+           and (c.requiredAuraID == 0 or c.hasRequiredAura == true)
+           and count < c.minCost then
+            return true
+        end
+    end
+    return false
 end
 
 --- The resource a "Hold Until" dial gates on: the spell's OWN cost rows, discrete
@@ -1139,8 +1166,6 @@ local function GateVerdict(g, ctx)
         return not decisive           -- nothing decided it, so every member agreed
     end
 
-    if ctx.resourceOnly and t ~= "resource" then return nil end
-
     if t == "stealth" then
         local stealthed = (IsStealthed and IsStealthed()) and true or false
         return (g.neg == true) ~= stealthed
@@ -1290,23 +1315,15 @@ end
 local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
     if not gates then return false end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
-    gateCtx.skipResource, gateCtx.strict = skipResource and true or false, false
+    -- Forever lists supply priority, not mandatory endgame resource pooling.
+    -- Live affordability/minimum costs handle resources; explicit holds still apply.
+    gateCtx.skipResource, gateCtx.strict = (skipResource or BlizzardAPI.IsForever()) and true or false, false
     for i = 1, #gates do
         if GateVerdict(gates[i], gateCtx) == false then return true end
     end
     return false
 end
 SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
-
-local resourceGateCtx = { resourceOnly = true }
-local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
-    if not gates then return false end
-    resourceGateCtx.resCount, resourceGateCtx.resName, resourceGateCtx.resMax = resCount, resName, resMax
-    for i = 1, #gates do
-        if GateVerdict(gates[i], resourceGateCtx) == false then return true end
-    end
-    return false
-end
 
 -- True if a NEGATIVE buff gate (!buff[Y], "must NOT have Y") is CONFIRMED active - the window
 -- condition is currently violated, so the entry must not promote (e.g. Rip's `!buff.berserk`
@@ -1403,11 +1420,10 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- back). e.g. fits-pick + SimC #3 -> 3; fits-pick but unlisted -> 999; off-pattern + SimC #1
     -- -> 1001. The SimC entry is pre-fetched per spell and passed in to avoid a second lookup.
     local simcMode = (contextOrder == "simc")
-    -- Discrete class-resource count once per build (combo points / holy power / chi / shards /
-    -- runes / essence / arcane charges), for the SimC resource gates. nil = unknown -> those
-    -- gates fail open. Only needed in SimC mode, where gates exist.
+    -- One discrete-resource read serves imported gates, minimum casting costs and point
+    -- holds. Unknown stays unknown; usability and source priority remain the fallback.
     local resCount, resName, resMax
-    if simcMode and BlizzardAPI.GetClassResourcePoints then
+    if (simcMode or (sinkCooldowns and contextOrder ~= "off")) and BlizzardAPI.GetClassResourcePoints then
         local c, m, r = BlizzardAPI.GetClassResourcePoints()
         resCount, resName, resMax = c, r, m   -- max feeds the `.deficit` gates
         holdPtsCur, holdPtsMax, holdPtsFresh = c, m, true
@@ -1502,6 +1518,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- One usability read serves both verdicts below (starved / castBarred):
                     -- this loop runs per pool spell per build, at 20-33Hz in combat.
                     local usable, notEnough = BlizzardAPI.IsSpellUsable(displayID, true)
+                    local missingResource = sinkCooldowns and MissingMinimumResource(displayID, resCount, resName)
                     local starved = false
                     if (simcRec and simcRec.delegated) or IsSpenderSpell(displayID) then
                         starved = notEnough and true or false
@@ -1566,10 +1583,10 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         and (not simcRec or simcRec.delegated
                              or (HasPositiveBuffGate(simcRec.gates) and not windowUp))
                     if not bypassProcs and ready and not starved and not held and not locLocked
-                       and not castBarred
+                       and not castBarred and not missingResource
                        and (BlizzardAPI.IsSpellProcced(displayID)
-                            or (not leadBarred and chargeCapped)
-                            or (not leadBarred and powerCapped and IsSpenderSpell(displayID))
+                            or (not leadBarred and not gateBlocked and chargeCapped)
+                            or (not leadBarred and not gateBlocked and powerCapped and IsSpenderSpell(displayID))
                             or (windowUp and not leadBarred
                                 and not SimcNegativeBuffBlocks(simcRec.gates)
                                 and not gateBlocked))
@@ -1578,7 +1595,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if not leadBarred then anyTimeable = true end
-                    elseif sinkCooldowns and (not ready or starved or held or locLocked
+                    elseif sinkCooldowns and (not ready or starved or held or locLocked or missingResource
                            or BlizzardAPI.RunningAutoSwing(displayID)   -- running: shown with its timer
                            or gateBlocked
                            or castBarred
@@ -1593,7 +1610,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         sunkSet[displayID] = true
                         if contextOrder ~= "off"
                            and ((held and (holdPoints[spellID] or holdPoints[displayID]))
-                                or (not dialSet and SimcResourceGateBlocks(gates, resCount, resName, resMax))) then
+                                or missingResource or castBarred) then
                             unavailableTier[displayID] = 2
                         end
                         -- No game pick only (Forever): the list leads there, so slot 1 is the

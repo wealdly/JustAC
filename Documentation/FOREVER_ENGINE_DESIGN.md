@@ -269,15 +269,21 @@ Inherited, evaluated by the existing code:
 - `resource`: readable discrete class-resource points. With Unavailable Last enabled
   in ranked ordering, unavailable abilities use three tiers: regeneration/cooldown
   waits, confirmed unmet class-resource prerequisites, then wasted presses.
-  Classification runs only after an entry sinks. Imported resource gates and
-  explicit point holds share the rule on Forever and Retail; Retail's primary game
+  Minimum-cost and explicit point-hold shortages share the rule on Forever and
+  Retail; Retail's primary game
   pick remains untouched. This keeps builders ahead after a finisher spends combo
-  points. Upper-bound gates also allow consumers ahead of builders at high resource.
-  Nested AND/OR gates retain three-valued logic; unknown reads do not establish a
-  missing prerequisite. Explicit holds replace imported resource requirements.
-  Exact source-order mode is unchanged, and usable game procs remain authoritative
-  over imported preferences. Point holds reuse the assembly's class-resource read.
-  Without a readable requirement or point hold, the queue does not infer which
+  points.
+  Casting prerequisites use `C_Spell.GetSpellPowerCost().minCost`, not optional
+  full cost or the imported preferred point threshold. Only matching, readable
+  discrete-resource rows whose conditional aura applies establish a shortage.
+  Unknown minimum costs do not establish a missing prerequisite. Explicit holds
+  remain authoritative. Forever's sinking evaluation skips imported resource and
+  power pooling preferences and relies on live usability and minimum-cost reads;
+  Retail retains its imported gates and primary pick.
+  Exact source-order mode is unchanged. Confirmed minimum shortages veto tail
+  promotions, while zero-cost procs remain eligible. The early spellbook-proc
+  path requires usability too. Point holds reuse the assembly's resource read.
+  Without a readable minimum cost or point hold, the queue does not infer which
   ability builds or consumes a resource from spell identity or low energy alone.
 - `buff` (own buffs): buff window from own-cast observation with the spell's duration.
 - `dot` (own DoTs on the target): `DotTracker`, cast observation. Its
@@ -298,6 +304,35 @@ New on Forever:
 
 Unreadable conditions stay in the source and classify as `delegated`: the entry keeps its
 priority position with no gate, which is how the retail pipeline already fails safe.
+
+### Contingency: cast-informed resource estimates
+
+If direct resource reads, resource widgets and threshold techniques stop working,
+a cast/hit-informed estimate is a viable fallback for builder/consumer ordering.
+This is a future contingency, not an implemented resource reader.
+
+- Prefer confirmed generation evidence: a successful hit from a known combo-point
+  generator can provisionally add its verified base gain. A successful cast alone
+  is weaker evidence: it may miss, be dodged or parried, or generate no points.
+- If only successful casts remain observable, label the result as an estimate,
+  not a confirmed count. Do not assume unavailable hit evidence exists or infer
+  secret damage/combat-log values.
+- A confirmed consumer cast can update or invalidate the estimate according to
+  that ability's verified spending rules. Do not assume all consumers empty the
+  resource, or that all generators grant exactly one point. Procs, extra gains,
+  refunds, optional costs and passive regeneration can change the result.
+- Keep estimated state separate from the existing confirmed resource reader.
+  Use it for advisory ordering only, never to satisfy a strict confirmed gate or
+  suppress a spell the client's readable usability says can be cast.
+- Reconcile immediately when a trusted read returns. Invalidate stale estimates
+  on reload, death and relevant state changes; target-bound resources also need
+  target-change handling. Preserve explicit player holds and Retail's game pick.
+- Implement through shared resource/spell metadata, not a Rogue-only counter.
+  Verify gains, spending rules and observable event semantics on each client.
+
+For now, readable minimum costs and usability take precedence. When counts are
+unknown, confirmed non-resource unusability trails regeneration waits; when all
+evidence is unknown, the configured priority remains the advisory fallback.
 
 ## 8. What changes elsewhere
 

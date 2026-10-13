@@ -112,6 +112,20 @@ def main():
         signal_cases += 1
     lua.globals().ctx.strict = False
     print(f"Forever signal gates: {signal_cases} cases passed")
+    lua.execute("gateCtx={}; BlizzardAPI.IsForever=function() return not hasPick end")
+    lua.execute(extract("SimcGateBlocks", SRC.read_text(encoding="utf-8")))
+    preference = '{{t="resource",res="combo_points",op=">=",n=5}}'
+    lua.execute("hasPick=false")
+    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,false)') is False
+    lua.execute("hasPick=true")
+    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,false)') is True
+    assert run(f'return SimcGateBlocks({preference},2,"combo_points",5,true)') is False
+    assert run(f'return SimcGateBlocks({preference},nil,"combo_points",5,false)') is False
+    lua.execute("hasPick=false; enemies=2")
+    assert run('return SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false)') is True
+    lua.execute("enemies=3")
+    assert run('return SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false)') is False
+    print("Resource pooling policy: 6 checks passed")
 
     ON = '{t="stealth"}'            # holds only while stealthed
     OFF = '{t="stealth",neg=true}'  # holds only while NOT stealthed

@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-- With Unavailable Last enabled in ranked ordering, put abilities waiting for regeneration ahead of abilities with unmet class-resource requirements or point holds. This surfaces builders after spending combo points in Forever and applies the same rule to Retail's queue tail without replacing Blizzard's primary pick. Exact source-order mode is unchanged.
+- With Unavailable Last enabled in ranked ordering, put abilities waiting for regeneration ahead of abilities missing their actual minimum class-resource cost or explicit point hold. Forever finishers can return to the front when usable instead of waiting for imported maximum-point preferences, including at low levels. Unusable abilities no longer jump ahead through precombat power-cap or spellbook-proc promotion. Retail's primary pick and exact source-order mode are unchanged.
 - Honor exact enemy-count conditions in Forever, including four-target Blizzard and Volley. Imported totem upkeep uses live slot presence, and Fire Nova no longer gains unconditional single-target priority from an unreadable fight-duration condition.
 - Refresh Forever's source rotations, including Hunter multi-target Volley, Mage point-blank AoE conditions, Paladin multi-target attacks, Enhancement Fire Nova priority, and Protection Warrior's Heroic Strike/Cleave selection.
 - Keep pure protection, healing, and utility abilities out of Forever's automatic DPS queue without removing damage/healing hybrids. Custom entries and Always Show remain available.

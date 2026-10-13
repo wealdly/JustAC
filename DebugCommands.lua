@@ -9990,6 +9990,9 @@ function DebugCommands.SimcGateProbe(addon, arg)
     end
     addon:Print(string.format("  countable resource: %s cur=%s max=%s",
         tostring(resName), tostring(resCount), tostring(resMax)))
+    if BAPI.IsForever() then
+        addon:Print("  Resource/power pooling preferences do not sink Forever entries; live usability, minimum costs and explicit holds apply.")
+    end
 
     local queueContext = SQ.DebugContextState and SQ.DebugContextState()
     if queueContext and queueContext.pullOpenerID then
