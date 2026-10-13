@@ -805,9 +805,8 @@ end
 --- refills every GCD) is transient and must NOT sink or the queue churns every
 --- press, so notEnoughResources is excluded. A secret/unknown read fails open to
 --- "usable" (BlizzardAPI.IsSpellUsable handles that fallback) and leaves order alone.
--- The action button greys out (IsUsableAction false with enough resources) for cast
--- conditions the spell-level read does not report: Backstab's "must be behind the target"
--- on Forever reads usable from C_Spell.IsSpellUsable while its button is greyed in combat.
+-- Action-bar usability can expose cast conditions the spell-level read misses.
+-- Neither read reliably exposes facing on Forever; rear attacks use a separate gate.
 -- Fail-open: a spell on no bar, or a secret read, is never treated as barred.
 local function IsBarGreyedOut(spellID)
     local barUsable, barNoPower = BlizzardAPI.GetActionBarUsability(spellID)
@@ -996,14 +995,11 @@ local resourcePowerTypes = {}
 do
     local PT = Enum and Enum.PowerType
     if PT then
-        for _, k in ipairs({ "ComboPoints", "Runes", "SoulShards", "HolyPower",
-                             "Chi", "ArcaneCharges", "Essence" }) do
-            if PT[k] then DISCRETE_POWER[PT[k]] = true end
-        end
         for res, name in pairs({ combo_points = "ComboPoints", runes = "Runes",
             soul_shard = "SoulShards", holy_power = "HolyPower", chi = "Chi",
             arcane_charges = "ArcaneCharges", essence = "Essence" }) do
             resourcePowerTypes[res] = PT[name]
+            if PT[name] then DISCRETE_POWER[PT[name]] = true end
         end
     end
 end
@@ -1029,9 +1025,8 @@ local function MissingMinimumResource(spellID, count, resource)
 end
 
 --- How many points a TIERED finisher should pool against THIS target (see TargetPointCap
---- for the per-target number). Without a game pick (Forever) combo points live on the
---- target: whatever is left when it dies is lost, so a 5-point finisher on a normal mob is
---- overkill paid for with extra builder GCDs and energy.
+--- for the per-target number). Forever's leveling policy avoids pooling extra points
+--- on short-lived enemies; living-target carryover has not been verified.
 --- Tiered: the discrete cost row has an optional part (cost > minCost - "costs 1 point,
 --- spends up to 4 more"), so any point count casts it, just weaker. Fixed-cost consumers
 --- (a 3 Holy Power or 2 Chi spender) have no tiers and keep the source threshold.
@@ -1710,6 +1705,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     castBarred = castBarred or rearBlocked
                     local abilityRange = BlizzardAPI.AbilityInRange(displayID)
                     local outOfRange = abilityRange == false
+                    local runningSwing = BlizzardAPI.RunningAutoSwing(displayID)
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
@@ -1766,7 +1762,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         proccedRank[proccedCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if not leadBarred then anyTimeable = true end
                     elseif sinkCooldowns and (not ready or starved or held or locLocked or missingResource
-                           or BlizzardAPI.RunningAutoSwing(displayID)   -- running: shown with its timer
+                           or runningSwing   -- running: shown with its timer
                            or gateBlocked
                            or castBarred
                            or outOfRange
@@ -1786,7 +1782,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                            and usable == true and not notEnough and not held and not locLocked
                            and not missingResource and not gateBlocked and not castBarred
                            and abilityRange == true
-                           and not BlizzardAPI.RunningAutoSwing(displayID)
+                           and not runningSwing
                            and IsLiveAttackableTarget() then
                             local rank = rankOf(spellID, simcRec)
                             if not b.rangedWaitRank or rank < b.rangedWaitRank then
@@ -1807,7 +1803,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
                                 or outOfRange
-                                or BlizzardAPI.RunningAutoSwing(displayID) == 0
+                                or runningSwing == 0
                                 -- Offered only when its conditions hold (Life Tap): otherwise it
                                 -- trails, never parked in slot 2 as a "soon".
                                 or (simcRec and simcRec.w)

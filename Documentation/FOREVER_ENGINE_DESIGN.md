@@ -28,9 +28,10 @@ The retail SimC layer is a priority-list engine in disguise:
   (readiness probe, threshold curves, usability, buff windows from own-cast observation).
 
 On retail this layer only re-ranks positions 2+ around the pick. On Forever it becomes the
-whole engine. So the dead-code pass's "SimC stack: dead" verdict is revised: the DATA MODEL,
-the parser/classifier and the gate EVALUATORS are kept; only the pick-relative parts
-(pick windows, pick-leads, Safe Lead, retail APL data) are dead.
+whole engine. The dead-code pass's "SimC stack: dead" verdict is superseded:
+the data model, parser/classifier and gate evaluators are shared. Pick-relative
+parts (pick windows, pick-leads, Safe Lead and Retail APL data) remain for Retail;
+their absence of input on Forever is not grounds for deleting them.
 
 ## 3. Signals the engine may use (all measured in combat on Forever)
 
@@ -448,8 +449,9 @@ evidence is unknown, the configured priority remains the advisory fallback.
 ## 8. What changes elsewhere
 
 - `FOREVER_DEAD_CODE.md` Tier 1 "SimC stack" splits: keep `RotationImport`, the generator,
-  and the gate evaluators; delete `Data/SimcRotations.lua`, `Data/AssistedCombatOrder.lua`,
-  pick windows, pick-leads, Safe Lead and the SimC probes tied to them.
+  and the gate evaluators. The original deletion proposal is superseded: retain
+  Retail data, pick windows, pick-leads, Safe Lead and their probes in the shared
+  codebase, gated by client/game-pick context.
 - `BlizzardAPI.GetRotationSpells` supplies the shared learned-spellbook/bar pool to
   the options tools and live queue; imported priorities order that pool.
 - Healer handling keys off the group role (`UnitGroupRolesAssigned`) or a setting, because
@@ -472,7 +474,7 @@ evidence is unknown, the configured priority remains the advisory fallback.
 ## 10. Phases
 
 1. Fix the behaviour bugs from the dead-code pass, including the GCD source.
-2. Delete the revised dead list.
+2. Gate Retail-only paths rather than deleting them (supersedes the original plan).
 3. Generator Forever profile, `Data/Forever/Rotations.lua`, rank chains; warrior `default` +
    `arms` first.
 4. `ForeverEngine` behind the `GetCurrentSpellQueue` seam; tree selection. DONE 2026-10-07,
