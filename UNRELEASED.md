@@ -1,24 +1,29 @@
 ## [Unreleased]
 
-- Spellbook proc suggestions now respect the same confirmed action-bar cast restrictions and Forever rear-attack targeting rules as the normal queue, including Rogue and Feral attacks.
-- In Forever, keep Throw and other ranged weapon fillers visible with their cooldown swipe between shots while the enemy remains beyond melee reach. A ready alternative takes over immediately; WAIT still applies when the filler cannot reach or otherwise cannot be used.
-- With Unavailable Last enabled, proc and full-resource promotion no longer puts confirmed out-of-range abilities ahead of usable alternatives. In Forever, Throw keeps priority as an enemy approaches until a higher-priority attack can actually reach it. Spellbook proc suggestions also respect confirmed range limits.
-- Forever's automatic DPS queue now discovers learned damage abilities from the spellbook, even if they are only in macros or have no action-bar button. An eligible ranged filler such as Throw leads unavailable melee abilities instead of WAIT; imported priorities and custom lists are unchanged.
-- Forever now shows WAIT when every DPS ability is waiting for resources, cooldowns, range or other requirements, rather than presenting an unavailable ability as the next press. Waiting abilities remain behind it. Requires Unavailable Last and ranked ordering; out-of-combat previews without a live attackable target are unchanged.
-- In Forever, move rear-required attacks such as Backstab and Shred behind usable alternatives when you are out of stealth and the enemy is targeting you. They cannot jump back to the front through proc or full-energy promotion. Stealth openers and tank-held targets keep their priority; unreadable targeting information leaves the order unchanged. Dirty Deeds and detected Shred positional-removal bonuses are respected.
-- Stop offering interrupts or playing interrupt alerts for friendly and non-attackable targets, such as players fishing on a PvE realm. Attackable enemies remain eligible out of combat.
-- With Unavailable Last enabled in ranked ordering, put abilities waiting for regeneration ahead of abilities missing their actual minimum class-resource cost or explicit point hold. On Forever, finishers that can be cast at any combo-point count (such as Eviscerate) follow the rotation's combo-point targets on elites and bosses, but on normal enemies ask for 3 points, 2 once the enemy is below half health, and any affordable amount when it is nearly dead, so combo points are not wasted on overkill. If enemy health cannot be read, normal enemies still use the 3-point target. Unusable abilities no longer jump ahead through precombat power-cap or spellbook-proc promotion. Retail's primary pick and exact source-order mode are unchanged.
-- Honor exact enemy-count conditions in Forever, including four-target Blizzard and Volley. Imported totem upkeep uses live slot presence, and Fire Nova no longer gains unconditional single-target priority from an unreadable fight-duration condition.
-- Refresh Forever's source rotations, including Hunter multi-target Volley, Mage point-blank AoE conditions, Paladin multi-target attacks, Enhancement Fire Nova priority, and Protection Warrior's Heroic Strike/Cleave selection.
-- Keep pure protection, healing, and utility abilities out of Forever's automatic DPS queue without removing damage/healing hybrids. Custom entries and Always Show remain available.
-- Forever's automatic DPS queue now also leaves out abilities whose job is not damage even when they hit: interrupts with a cooldown over 8 seconds (Kick, Pummel, Shield Bash; Earth Shock stays), crowd control (Gouge, Scatter Shot, Pounce, Death Coil, Mind Control), taunts (Mocking Blow), and movement or stealth (Sprint, Dash, Stealth, Divine Steed), plus a few utility spells such as Flare, control traps, Entangling Roots, Health Funnel and the non-damage Seals. Damage spells with a slow or root, and wand, bow, gun and thrown shots, stay as fillers. Abilities on the rotation list are unchanged.
-- Rogues: Backstab has priority over Sinister Strike (and Hemorrhage) when eligible. Assassination and Subtlety also fall back to Backstab and Sinister Strike before their talent builders are learned.
-- Abilities whose action-bar usability reports a missing cast condition rather than insufficient resources now move behind usable alternatives. Positional requirements that the client does not report use the Forever targeting heuristic above.
-- Fix missing hotkeys for a macro that shares its name with an account-wide macro (for example two macros both named "M1"). Editing a macro now updates its hotkey without a reload.
-- Offer Stoneskin in the defensive queue when its Earth totem slot is empty, behind urgent healing. Active totems are preserved instead of repeatedly recommending replacements.
-- Add Templar's Bulwark and Elune's Grace to Forever's defensive defaults. Unchanged old defaults update automatically; customized lists can use Restore Class Defaults to adopt the additions.
-- In Forever's automatic Shaman ordering, prefer a usable Lightning Bolt before combat, including with no target selected, instead of spending Earth Shock's cooldown and mana on the pull. With a target selected, the bolt must be in range. Combat priorities, custom lists, and retail are unchanged.
-- Stop recommending melee autoattack when the target is out of melee range in Forever, including while moving out of combat.
-- Fix an error opening options in Forever and restore the Cooldown Manager's add/remove button availability.
-- Make the Cooldown Manager toggle reflect the game's actual setting and report when the game refuses a change.
-- Recognize active weapon imbues such as Rockbiter in Forever, so they are not repeatedly offered while already applied. Retail weapon-enchant tracking is unchanged.
+### Forever DPS queue
+
+- Discover learned damage abilities from the spellbook, including spells only in macros or without action-bar buttons. Supplemental abilities exclude protection, healing, utility, crowd control, taunts, movement/stealth and interrupts with cooldowns over 8 seconds. Damage/healing hybrids, damaging slows or roots, Earth Shock and ranged weapon fillers remain eligible. Imported rotation entries are preserved; custom entries and Always Show remain available.
+- Show WAIT when every DPS ability is waiting for resources, cooldowns, range or other requirements, with waiting abilities behind it. Requires Unavailable Last and ranked ordering; out-of-combat previews without a live attackable target are unchanged.
+- Keep Throw and other ranged weapon fillers ahead of unavailable melee attacks while the enemy remains beyond melee reach, including between shots with a cooldown swipe. A ready alternative takes over immediately; WAIT still applies when the filler cannot reach or otherwise cannot be used. Melee autoattack also moves behind usable alternatives when out of range, including out of combat.
+- Move rear-required attacks such as Backstab and Shred behind usable alternatives when out of stealth and the enemy is targeting you, including during proc or full-energy promotion. Stealth openers, tank-held targets, Dirty Deeds and detected Shred positional-removal bonuses retain their eligibility; unknown targeting leaves the order unchanged.
+- Reduce combo-point overkill on normal enemies for variable-point finishers such as Eviscerate: aim for 3 points, 2 below half health, and any affordable amount when nearly dead. Unknown health keeps the 3-point target; elites and bosses retain the rotation's targets.
+
+### Availability and priorities
+
+- With Unavailable Last enabled, proc and full-resource promotion respect confirmed range limits. Confirmed action-bar cast restrictions also keep unusable abilities behind usable alternatives, including spellbook proc suggestions.
+- In ranked ordering with Unavailable Last, abilities waiting for regeneration precede those missing their minimum class-resource cost or explicit point hold. Retail's primary pick and exact source-order mode are unchanged.
+- Refresh Forever rotations and honor exact enemy-count conditions, including four-target Blizzard and Volley, Mage point-blank AoE, Paladin multi-target attacks and Protection Warrior's Heroic Strike/Cleave selection. Totem upkeep checks live slot presence; Fire Nova no longer gets unconditional single-target priority from an unreadable fight-duration condition.
+- Rogues prioritize eligible Backstab over Sinister Strike and Hemorrhage. Assassination and Subtlety fall back to Backstab and Sinister Strike before talent builders are learned.
+- Forever's automatic Shaman ordering prefers usable Lightning Bolt before combat rather than spending Earth Shock's cooldown and mana on the pull. No-target previews also prefer the bolt; a selected target must be in range. Combat priorities, custom lists and Retail are unchanged.
+
+### Defensives and buff tracking
+
+- Offer Stoneskin behind urgent healing when its Earth totem slot is empty, preserving active totems rather than repeatedly recommending replacements.
+- Add Templar's Bulwark and Elune's Grace to Forever defensive defaults. Unchanged defaults update automatically; customized lists can adopt them with Restore Class Defaults.
+- Recognize active Forever weapon imbues such as Rockbiter instead of repeatedly offering them. Retail weapon-enchant tracking is unchanged.
+- Stop interrupt suggestions and alerts for friendly or non-attackable targets. Attackable enemies remain eligible out of combat.
+
+### Settings and hotkeys
+
+- Fix missing hotkeys when a character macro shares a name with an account-wide macro. Macro edits now update hotkeys without a reload.
+- Fix an error opening Forever options and restore Cooldown Manager add/remove button availability. Its toggle now reflects the game's actual setting and reports refused changes.
