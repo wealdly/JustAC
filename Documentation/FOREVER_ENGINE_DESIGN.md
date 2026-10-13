@@ -129,6 +129,13 @@ helper waives Shred's gate when it detects the legacy Feral set bonus (1213171);
 that bonus's availability in Forever is unverified, and an undetected bonus
 does not waive the heuristic. Retail does not use this classification.
 
+With Unavailable Last and ranked ordering, an all-sunk Forever queue reserves its
+first slot for the shared WAIT sentinel after burst-cue processing. Existing
+actionable injections prevent WAIT. The unavailable tail keeps its order within
+the configured icon limit. Out of combat this requires a live attackable target;
+no-target, friendly-target and dead-target previews remain unchanged. Retail's
+WAIT continues to follow Blizzard's own demand rather than this rule.
+
 For maintained protection, the selected default policy is to preserve any active
 totem in the same elemental slot. Offer Stoneskin only when the Earth slot is
 empty, behind urgent healing, and suppress it when active. Never alternate
