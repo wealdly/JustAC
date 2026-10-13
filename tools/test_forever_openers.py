@@ -5,6 +5,8 @@ from pathlib import Path
 
 from lupa import LuaRuntime  # type: ignore[import-not-found]
 
+from test_gate_groups import extract
+
 ROOT = Path(__file__).resolve().parent.parent
 
 PRELUDE = r"""
@@ -35,6 +37,7 @@ BlizzardAPI = {
     RunningAutoSwing = function() end,
     IsSpellLoCLocked = function(id) return locked[RI.RankBase(id)] == true end,
     IsSpellProcced = function(id) return procs[RI.RankBase(id)] == true end,
+    GetClassResourcePoints = function() return points, 5, "combo_points" end,
 }
 function UnitExists() return targetExists end
 function UnitCanAttack() return hostile end
@@ -42,8 +45,8 @@ function NoteManaStarved() end
 function ClaimSpellID(id, added) added[id] = true; return id end
 function PassesRotationFilters(id) return not filtered[RotationImport.RankBase(id)] end
 function HeldByUserHold() return false end
-function HasUserHold() return false end
-function IsSpenderSpell() return false end
+function HasUserHold(id) return holds[id] == true end
+function IsSpenderSpell(id) return specKey == "ROGUE_F" end
 function IsConfirmedOutOfRange(id) return BlizzardAPI.AbilityInRange(id) == false end
 function SimcBuffWindowActive() return false end
 function GateInPickWindows() return false end
@@ -84,6 +87,7 @@ function Reset()
     ranges, cooldown, unusable, starved, locked, filtered, blacklisted, procs =
         {[403] = true, [8042] = true}, {}, {}, {}, {}, {}, {}, {}
     SpellQueue._rotationIsCustom = false
+    points, holds = nil, {}
     entries = classes.SHAMAN_F.enhancement.st
     proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
     cooldownSpells, sunkSet, wastedSet, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
@@ -104,7 +108,16 @@ def main():
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
-    lua.execute(source[start:end] + """
+    helpers = "\n".join(extract(name, source) for name in (
+        "ResourceGateHolds", "GateVerdict", "SimcResourceGateBlocks"
+    ))
+    lua.execute("resourceGateCtx = { resourceOnly = true }\n" + helpers + """
+        local originalBlocks = SimcGateBlocks
+        function SimcGateBlocks(gates, count, name, maximum, skipResource)
+            return (not skipResource and SimcResourceGateBlocks(gates, count, name, maximum))
+                or originalBlocks(gates)
+        end
+    """ + source[start:end] + """
         function Build()
             CategorizeAndAssembleRotation(pool, b)
             return b.recommendedSpells
@@ -146,14 +159,39 @@ def main():
     ]
     for cls in ("DRUID", "ROGUE", "WARRIOR", "HUNTER", "MAGE", "PRIEST", "PALADIN", "WARLOCK"):
         cases.append((f"specKey = '{cls}_F'", [8042, 403], f"{cls} receives no blanket override"))
+    rogue = """
+        specKey = "ROGUE_F"; b.inCombat = true; pool = {2098,1752}
+        entries = {{id=2098,gates={{t="resource",res="combo_points",op=">=",n=5}}},{id=1752}}
+        starved[2098], starved[1752] = true, true
+    """
+    cases.extend([
+        (rogue + "points=0", [1752, 2098], "builder leads at zero points even while energy-starved"),
+        (rogue + "points=2", [1752, 2098], "unmet finisher threshold trails an energy-starved builder"),
+        (rogue + "points=5", [2098, 1752], "met finisher requirement preserves source order"),
+        (rogue + "points=nil", [2098, 1752], "unknown points never infer a missing prerequisite"),
+        (rogue + "points=0; forever=false", [2098, 1752], "retail sunk ordering unchanged"),
+        (rogue + "points=0; b.sinkCooldowns=false", [2098, 1752], "unavailable-last opt-out unchanged"),
+        (rogue + "points=0; holds[2098]=true", [2098, 1752], "explicit hold replaces imported threshold"),
+        (rogue + """points=0; entries[1].gates={{t="any",g={
+            {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
+         [2098, 1752], "unknown OR alternative prevents prerequisite demotion"),
+        (rogue + """points=0; entries[1].gates={{t="all",g={
+            {t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171}}}}""",
+         [1752, 2098], "confirmed missing AND prerequisite demotes the finisher"),
+        (rogue + "points=0; starved[1752]=nil", [1752, 2098], "affordable builder still leads"),
+    ])
     for setup, expected, description in cases:
         lua.execute("Reset(); " + setup)
         actual = list(lua.globals().Build().values())
         assert actual == expected, f"{description}: got {actual}, expected {expected}"
+    lua.execute("Reset(); " + rogue + "points=5")
+    assert list(lua.globals().Build().values()) == [2098, 1752]
+    lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}")
+    assert list(lua.globals().Build().values()) == [1752, 2098], "spending points must immediately surface the builder"
     lua.execute("Reset()")
     bolt = next(e for e in lua.globals().entries.values() if e.id == 403)
     assert len(bolt.gates) == 1 and bolt.gates[1].t == "stack", "imported stack gates were not mutated"
-    print(f"Forever openers: {len(cases)} cases passed")
+    print(f"Forever openers and prerequisites: {len(cases)} cases plus spend transition passed")
 
 
 if __name__ == "__main__":

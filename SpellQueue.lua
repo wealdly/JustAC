@@ -1139,6 +1139,8 @@ local function GateVerdict(g, ctx)
         return not decisive           -- nothing decided it, so every member agreed
     end
 
+    if ctx.resourceOnly and t ~= "resource" then return nil end
+
     if t == "stealth" then
         local stealthed = (IsStealthed and IsStealthed()) and true or false
         return (g.neg == true) ~= stealthed
@@ -1295,6 +1297,16 @@ local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
     return false
 end
 SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
+
+local resourceGateCtx = { resourceOnly = true }
+local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
+    if not gates then return false end
+    resourceGateCtx.resCount, resourceGateCtx.resName, resourceGateCtx.resMax = resCount, resName, resMax
+    for i = 1, #gates do
+        if GateVerdict(gates[i], resourceGateCtx) == false then return true end
+    end
+    return false
+end
 
 -- True if a NEGATIVE buff gate (!buff[Y], "must NOT have Y") is CONFIRMED active - the window
 -- condition is currently violated, so the entry must not promote (e.g. Rip's `!buff.berserk`
@@ -1548,6 +1560,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         end
                     end
                     local gateBlocked = simcRec and SimcGateBlocks(gates, resCount, resName, resMax, dialSet)
+                    local resourceBlocked = not BlizzardAPI.HasGamePick() and not dialSet
+                        and SimcResourceGateBlocks(gates, resCount, resName, resMax)
                     pullSpell = pullSpell and not gateBlocked
                     local leadBarred = leadsMode and spellID ~= pickID and displayID ~= pickDisplay
                         and (not simcRec or simcRec.delegated
@@ -1586,6 +1600,9 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- not, its timer leads the sunk spells so a hunter knows when to stand still.
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates) or DotGateBlocks(simcRec.gates)))
+                                -- Missing class resources need another ability first, not just
+                                -- energy regeneration. Keep builders ahead even when both sink.
+                                or resourceBlocked
                                 or IsConfirmedOutOfRange(displayID)
                                 or BlizzardAPI.RunningAutoSwing(displayID) == 0
                                 -- Offered only when its conditions hold (Life Tap): otherwise it

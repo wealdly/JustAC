@@ -265,7 +265,13 @@ does today. Group ids map to tree names through `displayName` once, recorded in 
 Inherited, evaluated by the existing code:
 
 - `execute` / `health`: target health threshold curve.
-- `power` / `resource`: power threshold curve; usability for "can afford this".
+- `power`: power threshold curve; usability for "can afford this".
+- `resource`: readable discrete class-resource points. With Unavailable Last enabled,
+  a confirmed unmet imported requirement trails abilities merely waiting for energy,
+  even when both are unavailable. This keeps builders ahead after a finisher spends
+  combo points. Nested AND/OR gates retain three-valued logic; unknown reads do not
+  establish a missing prerequisite. Explicit Hold Until settings replace imported
+  resource requirements. Retail's unavailable ordering is unchanged.
 - `buff` (own buffs): buff window from own-cast observation with the spell's duration.
 - `dot` (own DoTs on the target): `DotTracker`, cast observation. Its
   `IsAuraFilteredOutByInstanceID` bridge needs an instance id, which Forever denies in combat,
