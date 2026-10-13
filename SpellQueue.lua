@@ -676,13 +676,16 @@ local function AddSpellbookProcs(b)
         if spellCount >= maxIcons then break end
         if procSpellID and not addedSpellIDs[procSpellID] then
             local displayID = ClaimSpellID(procSpellID, addedSpellIDs)
+            local usable, notEnoughResources
+            if displayID then usable, notEnoughResources = BlizzardAPI.IsSpellUsable(displayID, true) end
             if displayID
                and (not SpellDB or SpellDB.IsOffensiveSpell(procSpellID))
                and (ActionBarScanner.GetSpellHotkey(procSpellID) or "") ~= ""
                and not SpellQueue.IsSpellBlacklisted(procSpellID, blacklist)
                and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
                and PassesSpellFilters(procSpellID, profile)
-               and BlizzardAPI.IsSpellUsable(displayID, true)
+               and usable
+               and not SpellQueue.IsUnusableNonResource(displayID, usable, notEnoughResources)
                and BlizzardAPI.AbilityInRange(displayID) ~= false
                -- A proc glow that outlives its cast (execute-type spells inside a
                -- window) kept seating the spell here ON COOLDOWN, swipe and all, ahead
@@ -836,9 +839,11 @@ local function IsRearAttackBlocked(spellID)
     return true
 end
 
-local function IsUnusableNonResource(spellID)
+local function IsUnusableNonResource(spellID, usable, notEnoughResources)
     if IsRearAttackBlocked(spellID) then return true end
-    local usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
+    if usable == nil then
+        usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
+    end
     if usable == false then return not notEnoughResources end
     return IsBarGreyedOut(spellID)
 end
@@ -855,11 +860,6 @@ local function IsConfirmedOutOfRange(spellID)
     return BlizzardAPI.AbilityInRange(spellID) == false
 end
 SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac why
-
-local FOREVER_RANGED_FILLERS = {
-    [75] = true, [2480] = true, [2764] = true, [5019] = true,
-    [7918] = true, [7919] = true,
-}
 
 local function IsLiveAttackableTarget()
     if not UnitExists("target") or not UnitCanAttack("player", "target") then return false end
@@ -1533,8 +1533,8 @@ end
 local function IsForeverPullSpell(spellID, b)
     if b.inCombat ~= false or b.contextOrder ~= "simc" or SpellQueue._rotationIsCustom
        or not BlizzardAPI.IsForever() then return false end
-    if not (SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey() == "SHAMAN_F"
-       and RotationImport and RotationImport.RankBase(spellID) == 403) then return false end
+    local policy = SpellDB and SpellDB.GetForeverPullPolicy(spellID)
+    if not policy or SpellDB.GetSpecKey() ~= policy.spec then return false end
     if not UnitExists("target") then return true end
     return UnitCanAttack("player", "target")
         and BlizzardAPI.AbilityInRange(spellID, "target") == true
@@ -1731,8 +1731,9 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- Only waive that exact condition, never another imported requirement.
                     if pullSpell and gates and #gates == 1 then
                         local g = gates[1]
-                        if g.t == "stack" and g.id == 408505 and g.op == ">=" and g.n == 5
-                           and not g.tgt then
+                        local waive = SpellDB.GetForeverPullPolicy(displayID).waive
+                        if waive and g.t == waive.t and g.id == waive.id
+                           and g.op == waive.op and g.n == waive.n and not g.tgt then
                             gates = nil
                         end
                     end
@@ -1778,7 +1779,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- Keep the repeat-shot plan visible between casts, but never ahead
                         -- of an actionable spell or when melee reach is unknown.
                         if BlizzardAPI.IsForever() and contextOrder ~= "off" and b.ctxOutOfMelee
-                           and FOREVER_RANGED_FILLERS[displayID] and ready == false
+                           and SpellDB.IsForeverRangedFiller(displayID) and ready == false
                            and usable == true and not notEnough and not held and not locLocked
                            and not missingResource and not gateBlocked and not castBarred
                            and abilityRange == true
