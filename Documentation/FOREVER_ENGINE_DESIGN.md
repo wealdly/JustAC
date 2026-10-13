@@ -131,9 +131,29 @@ range verdict for promotion, sinking and diagnostics. With Unavailable Last on,
 confirmed out-of-range entries cannot receive any proc-bucket promotion.
 Early spellbook-proc injection also rejects confirmed out-of-range entries and
 releases their claims so the tail can sink them. Unknown range still fails open.
-When Throw is cooling down and everything else is unavailable, WAIT remains the
-first slot; once Throw is ready it leads again until a higher-ranked entry is
-eligible. This corrected transition still needs a fresh live recording.
+The fresh 10:16:54 recording confirmed the corrected transition: Throw returned
+to first at combat +2.06s while melee remained out of range; Sinister Strike
+only took over at +3.90s after its range check cleared.
+
+### Ranged weapon cooldown continuity
+
+The subsequent display policy keeps the repeat-shot plan visible between casts.
+In ranked Forever ordering with Unavailable Last, if no actionable entry was
+assembled and the enemy is confirmed beyond melee reach, a ranged weapon filler
+may lead with its cooldown swipe instead of WAIT. The filler must be cooling
+down but otherwise definitely usable and in range, with a live attackable target
+and no resource shortage, hold, imported gate, cast restriction or lockout.
+Running auto-repeat attacks do not qualify. Supported spell IDs, verified in the
+Forever SpellName export, are Auto Shot (75), Shoot Bow (2480), Throw (2764),
+wand Shoot (5019), Shoot Gun (7918) and Shoot Crossbow (7919).
+
+All actionable proc/normal entries take precedence. Among qualifying cooling
+fillers, imported rank wins, with source order breaking ties. The selected filler
+is omitted from the sunk tail to avoid duplication, but remains in `sunkSet` for
+burst-cue vetoes. Its diagnostic bucket is `rangedWait`. Unknown melee reach,
+unknown shot range, a dead/non-attackable target or any other blocker prevents
+this exception. Retail and exact source order are unchanged. Live validation of
+this new display policy is pending.
 
 List entries are never filtered. Forever's spell and macro-button usability can
 report Backstab usable even when a cast fails with "must be behind your target".

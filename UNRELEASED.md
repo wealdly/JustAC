@@ -1,5 +1,6 @@
 ## [Unreleased]
 
+- In Forever, keep Throw and other ranged weapon fillers visible with their cooldown swipe between shots while the enemy remains beyond melee reach. A ready alternative takes over immediately; WAIT still applies when the filler cannot reach or otherwise cannot be used.
 - With Unavailable Last enabled, proc and full-resource promotion no longer puts confirmed out-of-range abilities ahead of usable alternatives. In Forever, Throw keeps priority as an enemy approaches until a higher-priority attack can actually reach it. Spellbook proc suggestions also respect confirmed range limits.
 - Forever's automatic DPS queue now discovers learned damage abilities from the spellbook, even if they are only in macros or have no action-bar button. An eligible ranged filler such as Throw leads unavailable melee abilities instead of WAIT; imported priorities and custom lists are unchanged.
 - Forever now shows WAIT when every DPS ability is waiting for resources, cooldowns, range or other requirements, rather than presenting an unavailable ability as the next press. Waiting abilities remain behind it. Requires Unavailable Last and ranked ordering; out-of-combat previews without a live attackable target are unchanged.

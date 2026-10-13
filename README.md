@@ -92,6 +92,7 @@ What works differently on Forever:
 
 - **Spell ranks** - the queue shows the rank you have on your bars, with its keybind, and finds any rank in your lists.
 - **WAIT** - with Unavailable Last and ranked ordering, the timer icon leads when every DPS ability is unavailable. The waiting abilities stay behind it, and an eligible suggestion replaces it. Out of combat this requires a live enemy you can attack; no-target previews are unchanged.
+- **Between ranged shots** - while the enemy is confirmed beyond melee reach, an otherwise eligible Throw or ranged weapon filler keeps its first slot and cooldown swipe instead of alternating with WAIT. Any ready alternative takes precedence; blocked or unknown shot range still falls back to WAIT.
 - **Rear-required attacks** - Backstab, Shred and similar attacks step back when you are out of stealth and the enemy is targeting you. Stealth openers and enemies targeting your tank retain priority. This is a targeting heuristic, not a facing check; unreadable targeting information leaves the order unchanged.
 - **Tiered damage finishers** - on normal enemies, aim for 3 combo points, 2 below half health, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
 - **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
