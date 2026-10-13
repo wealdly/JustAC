@@ -857,6 +857,21 @@ local function IsConfirmedOutOfRange(spellID)
 end
 SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac why
 
+local FOREVER_RANGED_FILLERS = {
+    [75] = true, [2480] = true, [2764] = true, [5019] = true,
+    [7918] = true, [7919] = true,
+}
+
+local function IsLiveAttackableTarget()
+    if not UnitExists("target") or not UnitCanAttack("player", "target") then return false end
+    local ok, dead = pcall(UnitIsDeadOrGhost, "target")
+    if not ok then
+        geterrorhandler()(dead)
+        return false
+    end
+    return not BlizzardAPI.IsSecretValue(dead) and dead == false
+end
+
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
 local rankSortIdx = {}
@@ -1693,7 +1708,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     end
                     local rearBlocked = IsRearAttackBlocked(displayID)
                     castBarred = castBarred or rearBlocked
-                    local outOfRange = IsConfirmedOutOfRange(displayID)
+                    local abilityRange = BlizzardAPI.AbilityInRange(displayID)
+                    local outOfRange = abilityRange == false
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
@@ -1763,6 +1779,20 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         probeBucket = "sunk"
                         cooldownSpells[cooldownCount] = displayID
                         sunkSet[displayID] = true
+                        -- Keep the repeat-shot plan visible between casts, but never ahead
+                        -- of an actionable spell or when melee reach is unknown.
+                        if BlizzardAPI.IsForever() and contextOrder ~= "off" and b.ctxOutOfMelee
+                           and FOREVER_RANGED_FILLERS[displayID] and ready == false
+                           and usable == true and not notEnough and not held and not locLocked
+                           and not missingResource and not gateBlocked and not castBarred
+                           and abilityRange == true
+                           and not BlizzardAPI.RunningAutoSwing(displayID)
+                           and IsLiveAttackableTarget() then
+                            local rank = rankOf(spellID, simcRec)
+                            if not b.rangedWaitRank or rank < b.rangedWaitRank then
+                                b.rangedWaitID, b.rangedWaitRank = displayID, rank
+                            end
+                        end
                         if contextOrder ~= "off"
                            and ((held and (holdPoints[spellID] or holdPoints[displayID]))
                                 or missingResource or pointsShort or castBarred) then
@@ -1836,6 +1866,16 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- rank. Cooldown (not-ready) spells trail, unranked.
     spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
     spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
+    local rangedWaitID
+    if spellCount == 0 and b.rangedWaitID then
+        rangedWaitID = b.rangedWaitID
+        spellCount = 1
+        recommendedSpells[1] = rangedWaitID
+        if queueProbeEnabled and queueProbeEntries[rangedWaitID] then
+            queueProbeEntries[rangedWaitID] = queueProbeEntries[rangedWaitID]:gsub(
+                "^bucket=sunk", "bucket=rangedWait")
+        end
+    end
     b.foreverWaitEligible = BlizzardAPI.IsForever() and sinkCooldowns and contextOrder ~= "off"
         and spellCount == 0 and cooldownCount > 0
     -- Regeneration/cooldown waits precede unmet class-resource prerequisites. Wasted
@@ -1845,7 +1885,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
             if spellCount >= maxIcons then break end
             local id = cooldownSpells[i]
             if (unavailableTier[id] or 1) == pass
-               and id ~= pickLeads then   -- a sunk pick was just seated at the front
+               and id ~= pickLeads and id ~= rangedWaitID then
                 spellCount = spellCount + 1
                 recommendedSpells[spellCount] = id
             end
@@ -2217,15 +2257,7 @@ end
 --- copy into lastSpellIDs (the shared return buffer).
 function SpellQueue._StageForeverWait(b)
     if not b.foreverWaitEligible or b.spellCount == 0 then return end
-    if not b.inCombat then
-        if not UnitExists("target") or not UnitCanAttack("player", "target") then return end
-        local ok, dead = pcall(UnitIsDeadOrGhost, "target")
-        if not ok then
-            geterrorhandler()(dead)
-            return
-        end
-        if BlizzardAPI.IsSecretValue(dead) or dead ~= false then return end
-    end
+    if not b.inCombat and not IsLiveAttackableTarget() then return end
     local queue = b.recommendedSpells
     -- A later injection (such as the burst cue) can supply an actionable spell.
     for i = 1, b.spellCount do

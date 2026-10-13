@@ -146,8 +146,11 @@ def main():
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
         "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
-        "IsBarGreyedOut", "IsRearAttackBlocked"
+        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget"
     ))
+    filler_start = source.index("local FOREVER_RANGED_FILLERS = {")
+    filler_end = source.index("\n}", filler_start) + 2
+    helpers = source[filler_start:filler_end] + "\n" + helpers
     lua.execute(helpers + """
         local originalBlocks = SimcGateBlocks
         function SimcGateBlocks(gates, count, name, maximum, skipResource, pointCap)
@@ -182,7 +185,8 @@ def main():
     """)
     wait_start = source.index("function SpellQueue._StageForeverWait(")
     wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
-    lua.execute(source[wait_start:wait_end])
+    lua.execute(extract("IsLiveAttackableTarget", source).replace("local function", "function", 1)
+                + "\n" + source[wait_start:wait_end])
     cases = [
         ("", [403, 8042], "OOC bolt leads without Maelstrom stacks"),
         ("pool = {10414, 15208}", [15208, 10414], "highest-rank entries use the same opener"),
@@ -385,6 +389,44 @@ def main():
         (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
             ranges[2098]=false; ranges[2764]=true; cooldown[2764]=true""",
          [wait, 2764, 2098, 1752], "Throw on cooldown waits ahead of wasted melee presses"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=true; cooldown[2764]=true;
+            b.ctxOutOfMelee=true""",
+         [2764, 2098, 1752], "cooling Throw keeps repeat-shot plan when melee is confirmed out"),
+        (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
+            ranges[2098]=false; ranges[2764]=true; cooldown[2764]=true;
+            b.ctxOutOfMelee=true; b.maxIcons=1""",
+         [2764], "single icon retains cooling Throw"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; starved[1752]=nil""",
+         [1752, 2764, 2098], "ready alternative takes precedence over cooling Throw"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=false;
+            cooldown[2764]=true; b.ctxOutOfMelee=true""",
+         [wait, 1752, 2098, 2764], "blocked-range Throw cannot replace WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=nil;
+            cooldown[2764]=true; b.ctxOutOfMelee=true""",
+         [wait, 1752, 2764, 2098], "unknown-range Throw cannot replace WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; unusable[2764]=true""",
+         [wait, 1752, 2098, 2764], "uncastable Throw cannot replace WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; targetDead=true; b.inCombat=true""",
+         [wait, 1752, 2764, 2098], "dead target cannot retain cooling Throw"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; forever=false""",
+         [1752, 2764, 2098], "Retail never retains cooling ranged fillers"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; locked[2764]=true""",
+         [wait, 1752, 2764, 2098], "locked Throw cannot replace WAIT"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; holdPoints[2764]=2""",
+         [wait, 1752, 2098, 2764], "explicit point hold blocks cooling Throw continuity"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; starved[2764]=true""",
+         [wait, 1752, 2764, 2098], "resource shortage blocks ranged continuity"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+            cooldown[2764]=true; b.ctxOutOfMelee=true; b.contextOrder='off'""",
+         [2098, 1752, 2764], "exact source order ignores ranged continuity"),
         (rogue + """points=0; pool[3]=2764; starved[1752]=nil;
             ranges[2764]=false""",
          [1752, 2098, 2764], "usable melee leads Throw inside its minimum range"),
@@ -405,6 +447,10 @@ def main():
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true;
             specKey='ROGUE_F'; starved[1752]=true; b.inCombat=true""", [wait, 1752, 53], "rear-blocked attack does not count as actionable"),
     ]
+    for filler in (75, 2480, 5019, 7918, 7919):
+        wait_cases.append((rogue + f"""points=0; pool[3]={filler};
+            ranges[{filler}]=true; cooldown[{filler}]=true; b.ctxOutOfMelee=true""",
+            [filler, 1752, 2098], f"ranged weapon filler {filler} retains its cooldown plan"))
     for setup, expected, description in wait_cases:
         lua.execute("Reset(); " + setup)
         queue = lua.globals().Build()
@@ -412,6 +458,13 @@ def main():
         lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
         actual = [queue[i] for i in range(1, lua.globals().b.spellCount + 1)]
         assert actual == expected, f"{description}: got {actual}, expected {expected}"
+    lua.execute("Reset(); " + rogue + """points=0; pool[3]=2764; ranges[2764]=true;
+        cooldown[2764]=true; b.ctxOutOfMelee=true;
+        queueProbeEnabled=true; queueProbeEntries={}""")
+    assert lua.globals().Build()[1] == 2764
+    assert lua.globals().queueProbeEntries[2764].startswith("bucket=rangedWait ")
+    assert lua.globals().sunkSet[2764], "cooling filler must remain barred from burst injection"
+    lua.execute("queueProbeEnabled=false")
     lua.execute("Reset(); " + rogue + "points=0")
     queue = lua.globals().Build()
     lua.globals().b.spellCount = len(queue) + 1
