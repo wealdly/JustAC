@@ -1,5 +1,6 @@
 ## [Unreleased]
 
+- Forever's automatic DPS queue now discovers learned damage abilities from the spellbook, even if they are only in macros or have no action-bar button. An eligible ranged filler such as Throw leads unavailable melee abilities instead of WAIT; imported priorities and custom lists are unchanged.
 - Forever now shows WAIT when every DPS ability is waiting for resources, cooldowns, range or other requirements, rather than presenting an unavailable ability as the next press. Waiting abilities remain behind it. Requires Unavailable Last and ranked ordering; out-of-combat previews without a live attackable target are unchanged.
 - In Forever, move rear-required attacks such as Backstab and Shred behind usable alternatives when you are out of stealth and the enemy is targeting you. They cannot jump back to the front through proc or full-energy promotion. Stealth openers and tank-held targets keep their priority; unreadable targeting information leaves the order unchanged. Dirty Deeds and detected Shred positional-removal bonuses are respected.
 - Stop offering interrupts or playing interrupt alerts for friendly and non-attackable targets, such as players fishing on a PvE realm. Attackable enemies remain eligible out of combat.
