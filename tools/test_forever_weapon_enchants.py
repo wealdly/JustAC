@@ -152,6 +152,8 @@ def main():
         function HeldByUserHold() return false end
         function IsSpenderSpell() return false end
         function MissingMinimumResource() return false end
+        function IsBarGreyedOut() return false end
+        function IsRearAttackBlocked() return false end
         function IsConfirmedOutOfRange(id) return BlizzardAPI.AbilityInRange(id) == false end
         function rankOf() return 1 end
         function AppendRankedBucket(bucket, _, count, queue, size)

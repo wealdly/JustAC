@@ -11,7 +11,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 PRELUDE = r"""
 local RI = {}
-function LibStub() return RI end
+function LibStub(name)
+    if name == "JustAC-SpellDB" then return SpellDB end
+    return RI
+end
 function RI.RegisterForever(data, chains)
     classes, rankBases = data, {}
     for base, chain in pairs(chains) do
@@ -23,6 +26,12 @@ RotationImport = RI
 function wipe(t) for k in pairs(t) do t[k] = nil end end
 SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true end }
 SpellDB = { GetSpecKey = function() return specKey end }
+FOREVER_REAR_ATTACKS = {}
+function SpellDB.RegisterCategories(t) FOREVER_REAR_ATTACKS = t.foreverRear end
+function SpellDB.IsForever() return forever end
+function StaticLookup(t, id) return t[RI.RankBase(id)] end
+function IsStealthed() return stealthed end
+function IsPlayerSpell(id) return talents[id] == true end
 BlizzardAPI = {
     IsForever = function() return forever end,
     HasGamePick = function() return not forever end,
@@ -41,8 +50,11 @@ BlizzardAPI = {
         resourceReads = resourceReads + 1
         return points, maximum, resourceName
     end,
-    IsSecretValue = function() return false end,
+    IsSecretValue = function(value) return value == secret end,
     IsPrimaryPowerCapped = function() return capped end,
+    SafeUnitIsUnit = function() return targetingMe end,
+    GetActionBarUsability = function() return true, false end,
+    IsBuffWindowActive = function(id) return buffs[id] == true end,
 }
 function UnitExists() return targetExists end
 function UnitCanAttack() return hostile end
@@ -93,6 +105,8 @@ function Reset()
     points = nil
     maximum, resourceName, resourceReads = 5, "combo_points", 0
     capped, minimum, costAura, hasCostAura = false, 1, 0, false
+    stealthed, targetingMe, talents, buffs = false, false, {}, {}
+    secret = {}
     resourcePowerTypes = {combo_points=4, holy_power=9, chi=12, soul_shard=7,
         runes=5, essence=19, arcane_charges=16}
     C_Spell = {GetSpellPowerCost=function(id)
@@ -119,11 +133,17 @@ def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
     lua.execute((ROOT / "Data" / "Forever" / "Rotations.lua").read_text(encoding="utf-8"))
+    lua.execute((ROOT / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
+    db_source = (ROOT / "SpellDB.lua").read_text(encoding="utf-8")
+    start_db = db_source.index("function SpellDB.GetForeverRearRequirement(")
+    end_db = db_source.index("\nend", start_db) + len("\nend")
+    lua.execute(db_source[start_db:end_db])
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
-        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource"
+        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
+        "IsBarGreyedOut", "IsRearAttackBlocked"
     ))
     lua.execute(helpers + """
         local originalBlocks = SimcGateBlocks
@@ -199,6 +219,36 @@ def main():
         starved[2098], starved[1752] = true, true
     """
     cases.extend([
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true""",
+         [1752, 53], "detected rear attack sinks behind the usable builder"),
+        ("""pool={11281,1752}; entries={{id=53},{id=1752}}; targetingMe=true""",
+         [1752, 11281], "higher Backstab ranks share the rear requirement"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; stealthed=true""",
+         [53, 1752], "stealth opener keeps priority"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=false""",
+         [53, 1752], "tank-held target keeps rear attack priority"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=nil""",
+         [53, 1752], "unknown target-of-target fails open"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; stealthed=nil""",
+         [53, 1752], "unknown stealth state fails open"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; stealthed=secret""",
+         [53, 1752], "secret stealth state fails open"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; forever=false""",
+         [53, 1752], "retail rear attacks unchanged"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; capped=true""",
+         [1752, 53], "full-energy promotion cannot bypass rear gate"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; procs[53]=true""",
+         [1752, 53], "proc promotion cannot bypass rear gate"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; starved[1752]=true""",
+         [1752, 53], "blocked rear attack trails an energy-starved builder"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; b.sinkCooldowns=false""",
+         [53, 1752], "unavailable-last opt-out retains source order"),
+        ("""pool={9830,1082}; entries={{id=5221},{id=1082}}; targetingMe=true""",
+         [1082, 9830], "Shred ranks sink behind Claw"),
+        ("""pool={5221,1082}; entries={{id=5221},{id=1082}}; targetingMe=true; buffs[1213171]=true""",
+         [5221, 1082], "detected Shred set bonus waives the rear gate"),
+        ("""pool={703,1752}; entries={{id=703},{id=1752}}; targetingMe=true; talents[14082]=true""",
+         [703, 1752], "Dirty Deeds waives Garrote rear gate"),
         (rogue + "points=0", [1752, 2098], "builder leads at zero points even while energy-starved"),
         (rogue + "points=2", [1752, 2098], "imported five-point preference waits for the builder"),
         (rogue + "points=2; b.ctxPointCap=0", [2098, 1752], "dying target lowers the preference to the minimum"),
@@ -273,6 +323,9 @@ def main():
         (rogue + "points=2; forever=false; starved[2098]=nil; starved[1752]=nil",
          [1752, 2098], "retail retains its imported five-point preference"),
     ])
+    for rear, builder in ((703, 1752), (6785, 1082), (8676, 1752), (9005, 1082)):
+        cases.append(("pool={%d,%d}; entries={{id=%d},{id=%d}}; targetingMe=true" % (rear, builder, rear, builder),
+                      [builder, rear], f"rear-required spell {rear} shares the gate"))
     for resource in ("combo_points", "holy_power", "chi", "soul_shard", "runes", "essence", "arcane_charges"):
         for retail in (False, True):
             cases.append((rogue + f"""points=0; resourceName='{resource}';

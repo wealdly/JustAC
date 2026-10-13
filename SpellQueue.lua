@@ -813,7 +813,31 @@ local function IsBarGreyedOut(spellID)
     return barUsable == false and not barNoPower
 end
 
+local function IsRearAttackBlocked(spellID)
+    if not BlizzardAPI.IsForever() then return false end
+    local requirement = SpellDB.GetForeverRearRequirement(spellID)
+    if not requirement then return false end
+    local ok, stealthed = pcall(IsStealthed)
+    if not ok then
+        geterrorhandler()(stealthed)
+        return false
+    end
+    if BlizzardAPI.IsSecretValue(stealthed) or stealthed ~= false then return false end
+    if BlizzardAPI.SafeUnitIsUnit("targettarget", "player", nil) ~= true then return false end
+    if requirement.talent then
+        local knownOk, known = pcall(IsPlayerSpell, requirement.talent)
+        if not knownOk then
+            geterrorhandler()(known)
+            return false
+        end
+        if BlizzardAPI.IsSecretValue(known) or known ~= false then return false end
+    end
+    if requirement.aura and BlizzardAPI.IsBuffWindowActive(requirement.aura) then return false end
+    return true
+end
+
 local function IsUnusableNonResource(spellID)
+    if IsRearAttackBlocked(spellID) then return true end
     local usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
     if usable == false then return not notEnoughResources end
     return IsBarGreyedOut(spellID)
@@ -1665,6 +1689,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     if not castBarred and usable ~= false then
                         castBarred = IsBarGreyedOut(displayID)
                     end
+                    local rearBlocked = IsRearAttackBlocked(displayID)
+                    castBarred = castBarred or rearBlocked
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
@@ -1768,12 +1794,13 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     end
                     if queueProbeEnabled then
                         queueProbeEntries[displayID] = string.format(
-                            "bucket=%s tier=%d source=%d order=%s points=%s/%s cap=%s ready=%s starved=%s minimum=%s pointsShort=%s gate=%s held=%s barred=%s range=%s loc=%s",
+                            "bucket=%s tier=%d source=%d order=%s points=%s/%s cap=%s ready=%s starved=%s minimum=%s pointsShort=%s gate=%s held=%s barred=%s range=%s loc=%s rear=%s",
                             probeBucket, unavailableTier[displayID] or 1, i, contextOrder,
                             tostring(resCount), tostring(resName), tostring(ctxPointCap),
                             tostring(ready), tostring(starved), tostring(missingResource),
                             tostring(pointsShort), tostring(gateBlocked), tostring(held),
-                            tostring(castBarred), tostring(IsConfirmedOutOfRange(displayID)), tostring(locLocked))
+                            tostring(castBarred), tostring(IsConfirmedOutOfRange(displayID)), tostring(locLocked),
+                            tostring(rearBlocked))
                     end
                 else
                     -- Undo claim if filters rejected
