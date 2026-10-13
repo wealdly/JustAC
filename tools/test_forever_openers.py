@@ -28,7 +28,11 @@ SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true 
 SpellQueue.WAIT_SENTINEL = -999999999
 SpellDB = { GetSpecKey = function() return specKey end }
 FOREVER_REAR_ATTACKS = {}
-function SpellDB.RegisterCategories(t) FOREVER_REAR_ATTACKS = t.foreverRear end
+FOREVER_PULLS, FOREVER_RANGED_FILLERS = {}, {}
+function SpellDB.RegisterCategories(t)
+    FOREVER_REAR_ATTACKS, FOREVER_PULLS, FOREVER_RANGED_FILLERS =
+        t.foreverRear, t.foreverPull, t.foreverRanged
+end
 function SpellDB.IsForever() return forever end
 function StaticLookup(t, id) return t[RI.RankBase(id)] end
 function IsStealthed() return stealthed end
@@ -131,25 +135,26 @@ def main():
     lua.execute((ROOT / "Data" / "Forever" / "Rotations.lua").read_text(encoding="utf-8"))
     lua.execute((ROOT / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
     db_source = (ROOT / "SpellDB.lua").read_text(encoding="utf-8")
-    start_db = db_source.index("function SpellDB.GetForeverRearRequirement(")
-    end_db = db_source.index("\nend", start_db) + len("\nend")
-    lua.execute(db_source[start_db:end_db])
+    for name in ("GetForeverRearRequirement", "GetForeverPullPolicy", "IsForeverRangedFiller"):
+        start_db = db_source.index(f"function SpellDB.{name}(")
+        end_db = db_source.index("\nend", start_db) + len("\nend")
+        lua.execute(db_source[start_db:end_db])
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
         "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
         "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
-        "GateVerdict", "SimcGateBlocks", "TieredSpenderType", "PointGateCap"
+        "GateVerdict", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
+        "IsUnusableNonResource"
     ))
-    filler_start = source.index("local FOREVER_RANGED_FILLERS = {")
-    filler_end = source.index("\n}", filler_start) + 2
-    helpers = source[filler_start:filler_end] + """
+    helpers = """
         local gateCtx, tieredSpenderCache = {}, {}
         local DISCRETE_POWER = {[4]=true,[9]=true,[12]=true,[7]=true,
             [5]=true,[19]=true,[16]=true}
     """ + helpers
     lua.execute(helpers + """
+        SpellQueue.IsUnusableNonResource = IsUnusableNonResource
         local realVerdict = GateVerdict
         GateVerdict = function(g, ctx)
             if g.t == "stack" then return stacks >= g.n end
@@ -437,9 +442,12 @@ def main():
             specKey='ROGUE_F'; starved[1752]=true; b.inCombat=true""", [wait, 1752, 53], "rear-blocked attack does not count as actionable"),
     ]
     for filler in (75, 2480, 5019, 7918, 7919):
-        wait_cases.append((rogue + f"""points=0; pool[3]={filler};
+        spec = "HUNTER_F" if filler == 75 else "PRIEST_F" if filler == 5019 else "WARRIOR_F"
+        other = 2973 if filler == 75 else 585 if filler == 5019 else 78
+        wait_cases.append((f"""specKey='{spec}'; pool={{{filler},{other}}};
+            entries={{{{id={other}}}}}; ranges[{other}]=false;
             ranges[{filler}]=true; cooldown[{filler}]=true; b.ctxOutOfMelee=true""",
-            [filler, 1752, 2098], f"ranged weapon filler {filler} retains its cooldown plan"))
+            [filler, other], f"{spec} ranged weapon filler {filler} retains its cooldown plan"))
     for setup, expected, description in wait_cases:
         lua.execute("Reset(); " + setup)
         queue = lua.globals().Build()
@@ -480,6 +488,19 @@ def main():
     assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "unknown range does not reject early spellbook proc"
     lua.execute("Reset()")
     assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "usable spellbook proc remains available"
+    for spec, spell in (("ROGUE_F", 53), ("DRUID_F", 5221)):
+        lua.execute(f"""Reset(); specKey='{spec}'; targetingMe=true;
+            ActionBarScanner.GetSpellbookProccedSpells=function() return {{{spell}}} end""")
+        assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, f"{spec} rear gate vetoes early proc"
+        assert not lua.globals().b.addedSpellIDs[spell]
+        lua.execute("stealthed=true")
+        assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, f"{spec} stealth preserves early proc"
+    lua.execute("""Reset(); specKey='WARRIOR_F';
+        ActionBarScanner.GetSpellbookProccedSpells=function() return {7384} end;
+        BlizzardAPI.GetActionBarUsability=function() return false,false end""")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "greyed reactive attack vetoes early proc"
+    lua.execute("BlizzardAPI.GetActionBarUsability=function() return nil,nil end")
+    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "unknown bar state preserves early proc"
     lua.execute("Reset(); " + rogue + "points=5")
     assert list(lua.globals().Build().values()) == [2098, 1752]
     lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}; unavailableTier={}")
@@ -487,6 +508,18 @@ def main():
     lua.execute("Reset()")
     bolt = next(e for e in lua.globals().entries.values() if e.id == 403)
     assert len(bolt.gates) == 1 and bolt.gates[1].t == "stack", "imported stack gates were not mutated"
+    for points, expected in ((0, [5221, 22568]), (2, [5221, 22568]), (3, [22568, 5221])):
+        lua.execute(f"""Reset(); specKey='DRUID_F'; points={points}; b.ctxPointCap=3;
+            pool={{22568,5221}}; finisher={{[22568]=true}}; stealthed=true;
+            entries={{{{id=22568,gates={{{{t='resource',res='combo_points',op='>=',n=5}}}}}},
+                {{id=5221}}}};
+            C_Spell.GetSpellPowerCost=function(id)
+                if id==22568 then return {{{{type=4,minCost=1,cost=5,
+                    requiredAuraID=0,hasRequiredAura=false}}}} end
+                return {{}}
+            end""")
+        assert list(lua.globals().Build().values()) == expected, "Feral finisher shares point-cap/minimum-cost policy"
+    print("Cross-class: Rogue/Feral early rear procs, Warrior reactive usability, ranged fillers and Feral finishers passed")
     print(f"Forever openers and prerequisites: {len(cases)} cases, spend transition and 5 early-proc checks passed")
 
 

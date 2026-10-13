@@ -25,6 +25,8 @@ local HEALING_SPELLS = {}
 local CROWD_CONTROL_SPELLS = {}
 local UTILITY_SPELLS = {}
 local FOREVER_REAR_ATTACKS = {}
+local FOREVER_PULLS = {}
+local FOREVER_RANGED_FILLERS = {}
 -- Curated interrupt/CC ability data lives in Data/InterruptAbilities.lua (registered below).
 -- Flat [spellID] = {kind, mech, reach, radius, pri}; see that file for the field contract.
 local INTERRUPT_ABILITIES = {}
@@ -50,6 +52,12 @@ function SpellDB.RegisterCategories(t)
     if t.utility   then for id in pairs(t.utility)   do UTILITY_SPELLS[id] = true end end
     if t.foreverRear then
         for id, requirement in pairs(t.foreverRear) do FOREVER_REAR_ATTACKS[id] = requirement end
+    end
+    if t.foreverPull then
+        for id, policy in pairs(t.foreverPull) do FOREVER_PULLS[id] = policy end
+    end
+    if t.foreverRanged then
+        for id in pairs(t.foreverRanged) do FOREVER_RANGED_FILLERS[id] = true end
     end
 end
 
@@ -236,6 +244,15 @@ SpellDB.StaticLookup = StaticLookup   -- shared with RedundancyFilter's own tabl
 function SpellDB.GetForeverRearRequirement(spellID)
     if not SpellDB.IsForever() then return nil end
     return StaticLookup(FOREVER_REAR_ATTACKS, spellID)
+end
+
+function SpellDB.GetForeverPullPolicy(spellID)
+    if not SpellDB.IsForever() then return nil end
+    return StaticLookup(FOREVER_PULLS, spellID)
+end
+
+function SpellDB.IsForeverRangedFiller(spellID)
+    return SpellDB.IsForever() and StaticLookup(FOREVER_RANGED_FILLERS, spellID) == true
 end
 
 function SpellDB.GetForeverAbilityRole(spellID)

@@ -156,6 +156,16 @@ unknown shot range, a dead/non-attackable target or any other blocker prevents
 this exception. Retail and exact source order are unchanged. Live validation of
 this new display policy is pending.
 
+Pull preferences and ranged weapon filler membership are curated shared metadata
+in `Data/SpellCategories.lua`, read through rank-aware SpellDB accessors. The only
+approved pull preference remains Shaman Lightning Bolt; its metadata names the
+exact five-stack Maelstrom condition that a precombat hardcast may waive. This is
+not a generic permission to skip stacks, buffs or other prerequisites.
+Early spellbook-proc injection now uses the shared non-resource cast-restriction
+verdict, including action-bar grey-out and rear-targeting gates. Regression coverage
+includes Rogue/Feral rear procs, Warrior reactive usability, Hunter/wand/weapon
+fillers and Feral tiered finishers.
+
 List entries are never filtered. Forever's spell and macro-button usability can
 report Backstab usable even when a cast fails with "must be behind your target".
 Rear-required attacks therefore use a conservative targeting gate: when definitely
