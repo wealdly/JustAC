@@ -792,9 +792,19 @@ end
 --- refills every GCD) is transient and must NOT sink or the queue churns every
 --- press, so notEnoughResources is excluded. A secret/unknown read fails open to
 --- "usable" (BlizzardAPI.IsSpellUsable handles that fallback) and leaves order alone.
+-- The action button greys out (IsUsableAction false with enough resources) for cast
+-- conditions the spell-level read does not report: Backstab's "must be behind the target"
+-- on Forever reads usable from C_Spell.IsSpellUsable while its button is greyed in combat.
+-- Fail-open: a spell on no bar, or a secret read, is never treated as barred.
+local function IsBarGreyedOut(spellID)
+    local barUsable, barNoPower = BlizzardAPI.GetActionBarUsability(spellID)
+    return barUsable == false and not barNoPower
+end
+
 local function IsUnusableNonResource(spellID)
     local usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
-    return usable == false and not notEnoughResources
+    if usable == false then return not notEnoughResources end
+    return IsBarGreyedOut(spellID)
 end
 SpellQueue.IsUnusableNonResource = IsUnusableNonResource  -- shared with /jac why
 
@@ -1640,6 +1650,9 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- seated Shadow Dance at the front from stealth, where it is barred.
                     -- Same rule as IsUnusableNonResource, on the read already taken above.
                     local castBarred = usable == false and not notEnough
+                    if not castBarred and usable ~= false then
+                        castBarred = IsBarGreyedOut(displayID)
+                    end
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
