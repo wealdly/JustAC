@@ -71,13 +71,6 @@ function HasPositiveBuffGate() return false end
 function ProcPriorityEnabled() return true end
 function SimcNegativeBuffBlocks() return false end
 function DotGateBlocks() return false end
-function SimcGateBlocks(gates)
-    for _, g in ipairs(gates or {}) do
-        if g.t == "stack" and stacks < g.n then return true end
-        if g.t == "cd" then return true end
-    end
-    return false
-end
 function RotationImport.GetEntry(id)
     local base = RotationImport.RankBase(id)
     for i, e in ipairs(entries) do
@@ -146,36 +139,32 @@ def main():
     end = source.index("\n--- Largest icon count", start)
     helpers = "\n".join(extract(name, source) for name in (
         "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
-        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget"
+        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
+        "GateVerdict", "SimcGateBlocks", "TieredSpenderType", "PointGateCap"
     ))
     filler_start = source.index("local FOREVER_RANGED_FILLERS = {")
     filler_end = source.index("\n}", filler_start) + 2
-    helpers = source[filler_start:filler_end] + "\n" + helpers
+    helpers = source[filler_start:filler_end] + """
+        local gateCtx, tieredSpenderCache = {}, {}
+        local DISCRETE_POWER = {[4]=true,[9]=true,[12]=true,[7]=true,
+            [5]=true,[19]=true,[16]=true}
+    """ + helpers
     lua.execute(helpers + """
-        local originalBlocks = SimcGateBlocks
-        function SimcGateBlocks(gates, count, name, maximum, skipResource, pointCap)
-            local blocked, short = false, false
-            if not skipResource and count ~= nil then
-                for _, g in ipairs(gates or {}) do
-                    local atLeast = not g.deficit and (g.op == ">=" or g.op == ">")
-                    if g.t == "resource" and g.res == name then
-                        local holds
-                        local need = g.op == ">" and g.n + 1 or g.n
-                        if atLeast and pointCap and pointCap < need then
-                            if pointCap > 0 then holds = count >= pointCap end
-                        else
-                            holds = ResourceGateHolds(g, count, maximum)
-                        end
-                        if holds == false then blocked, short = true, short or atLeast end
-                    end
-                end
-            end
-            return blocked or originalBlocks(gates), short
+        local realVerdict = GateVerdict
+        GateVerdict = function(g, ctx)
+            if g.t == "stack" then return stacks >= g.n end
+            if g.t == "cd" then return false end
+            return realVerdict(g, ctx)
         end
-        function PointGateCap(id, resource, cap)
-            if cap and resource ~= nil and not BlizzardAPI.HasGamePick()
-                and finisher[RotationImport.RankBase(id)] == true then return cap end
-            return nil
+        SpellDB.IsPureSelfAura = function(id)
+            return finisher[RotationImport.RankBase(id)] ~= true
+        end
+        SpellDB.IsTargetDot = function() return false end
+        SpellDB.IsOffensiveSpell = function() return true end
+        local reset = Reset
+        Reset = function()
+            reset()
+            wipe(tieredSpenderCache)
         end
     """ + source[start:end] + """
         function Build()

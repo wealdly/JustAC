@@ -89,9 +89,8 @@ EXTRA = {
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front")],
-    # Backstab is the hardest builder while levelling and leads whenever it can be pressed: the
-    # game greys it out unless you are behind the target (and hold a dagger), and the queue sinks
-    # a greyed-out spell, so the front-facing builder takes over without any facing guess.
+    # Backstab leads when eligible; runtime usability and the rear-targeting heuristic
+    # let the front-facing builder take over without treating usability as a facing signal.
     # Sinister Strike backs up the talent builders (Mutilate, Hemorrhage) a levelling character
     # does not have yet.
     "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
