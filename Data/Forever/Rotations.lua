@@ -438,8 +438,8 @@ RotationImport.RegisterForever({
         {id=14177,gates={{t="buff",id=5171,dur=6}}},  -- Cold Blood
         {id=2098,gates={{t="resource",res="combo_points",op=">=",n=4},{t="any",g={{t="buff",id=5171,dur=6},{t="power",res="energy",op=">=",n=79}}}}},  -- Eviscerate
         {id=1310707,gates={}},  -- Mutilate
-        {id=53,gates={}},  -- Backstab
         {id=1752,gates={}},  -- Sinister Strike
+        {id=53,gates={}},  -- Backstab
       },
     },
     combat = {  -- rogue_dps__combat_sinister_strike
@@ -449,8 +449,8 @@ RotationImport.RegisterForever({
         {id=5171,gates={{t="any",g={{t="all",g={{t="resource",res="combo_points",op=">=",n=1},{t="buff",id=5171,dur=6,neg=true}}},{t="all",g={{t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171,dur=6,neg=true}}}}}}},  -- Slice and Dice
         {id=13750,gates={{t="power",res="energy",op="<",n=59},{t="tick",op="<",n=1}}},  -- Adrenaline Rush
         {id=2098,gates={{t="resource",res="combo_points",op=">=",n=5},{t="any",g={{t="buff",id=5171,dur=6},{t="power",res="energy",op=">=",n=79}}}}},  -- Eviscerate
-        {id=53,gates={}},  -- Backstab
         {id=1752,gates={}},  -- Sinister Strike
+        {id=53,gates={}},  -- Backstab
       },
     },
     subtlety = {  -- rogue_dps__forever_hemorrhage
@@ -463,9 +463,9 @@ RotationImport.RegisterForever({
         {id=8676,gates={}},  -- Ambush
         {id=1943,gates={{t="resource",res="combo_points",op=">=",n=3},{t="dot",id=1943}}},  -- Rupture
         {id=2098,gates={{t="resource",res="combo_points",op=">=",n=4},{t="any",g={{t="buff",id=5171,dur=6},{t="power",res="energy",op=">=",n=79}}}}},  -- Eviscerate
-        {id=53,gates={}},  -- Backstab
         {id=16511,gates={}},  -- Hemorrhage
         {id=1752,gates={}},  -- Sinister Strike
+        {id=53,gates={}},  -- Backstab
       },
     },
   },

@@ -99,14 +99,14 @@ for tree in ("beast_mastery", "marksmanship", "survival"):
     block = hunter[hunter.index(tree + " = {"):]
     ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)[:2]]
     assert ids == [1978, 75], (tree, ids)
-# Backstab leads the front-facing builder; the game greys it out unless you are behind.
+# Backstab is last in each Rogue base list, below the normal builders, and stays available.
 rogue = data[data.index('["ROGUE_F"] = {'):data.index('["SHAMAN_F"] = {')]
-for tree, order in (("combat", [53, 1752]), ("subtlety", [53, 16511, 1752]),
-                    ("assassination", [1310707, 53, 1752])):
+for tree, tail in (("combat", [1752, 53]), ("subtlety", [16511, 1752, 53]),
+                   ("assassination", [1310707, 1752, 53])):
     block = rogue[rogue.index(tree + " = {"):]
     block = block[:block.index("\n    },")]
     ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)]
-    assert ids[-len(order):] == order and "{id=53,gates={}}" in block, (tree, ids)
+    assert ids[-len(tail):] == tail and ids[-1] == 53 and "{id=53,gates={}}" in block, (tree, ids)
 # Refreshed upstream conditions: three-tier conversion and known steady-state policy.
 from lupa import LuaRuntime  # type: ignore[import-not-found]  # noqa: E402
 

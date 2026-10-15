@@ -89,17 +89,16 @@ EXTRA = {
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front")],
-    # Backstab leads when eligible; runtime usability and the rear-targeting heuristic
-    # let the front-facing builder take over without treating usability as a facing signal.
-    # Sinister Strike backs up the talent builders (Mutilate, Hemorrhage) a levelling character
-    # does not have yet.
+    # Backstab is absent from the selected upstream APLs; keep it last among builders for when
+    # its rear-position requirement is met. Sinister Strike backs up the talent builders
+    # (Mutilate, Hemorrhage) a levelling character does not have yet.
     "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
               dict(spell="garrote", at="front", gates=["stealth", "dot"]),
-              dict(spell="backstab", trees=["combat"], at="before:sinister_strike"),
-              dict(spell="backstab", trees=["subtlety"], at="before:hemorrhage"),
+              dict(spell="backstab", trees=["combat"], at="after:sinister_strike"),
               dict(spell="sinister_strike", trees=["subtlety"], at="after:hemorrhage"),
-              dict(spell="backstab", trees=["assassination"], at="after:mutilate"),
-              dict(spell="sinister_strike", trees=["assassination"], at="after:backstab")],
+              dict(spell="backstab", trees=["subtlety"], at="after:sinister_strike"),
+              dict(spell="sinister_strike", trees=["assassination"], at="after:mutilate"),
+              dict(spell="backstab", trees=["assassination"], at="after:sinister_strike")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate")],

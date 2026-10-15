@@ -82,9 +82,9 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 - **Overrides** tab - hide a spell (or Shift+Right-click it in the queue), change its queue settings, or **take it off your action bars** so the game's assist stops suggesting it too. **Put Back** restores it to the same buttons; macros are never touched.
 - Light on your CPU: event-driven, with other players' events filtered out before they reach the addon.
 
-## WoW Forever (preliminary)
+## WoW Forever
 
-JustAC also runs on WoW Forever, from the same download. This is an early build for the Forever beta, and some suggestions are still being checked in game.
+JustAC 6.0 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
 WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
 
@@ -176,7 +176,7 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **Midnight compliant, currently live on 12.1.0** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
+- **Midnight compliant, targeting Retail 12.1.5** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
 - **Taint is fatal around secrets** - Tainted execution cannot read a secret at all, so writing any Lua field on a frame that reads secrets (Blizzard's Cooldown Manager viewers) breaks *Blizzard's* code, not just ours. Reads and widget C methods are safe; mixin methods that store state are not. See [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
 - **Threshold gates** - The engine evaluates a curve the addon authors against a secret value and returns a secret result; the addon reads only whether that result is *zero*. Nothing is compared, ordered or read in Lua, but the answer to "is this below N" is an ordinary branchable boolean. Health, power and aura/cooldown remaining time all go through the same path, which is what makes graded defensive bands and stack-aware ordering possible in combat. Deliberately scoped to answering *questions*, never recovering values
