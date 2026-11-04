@@ -240,6 +240,7 @@ end
 -- aura lookup returns nil for a buff that is up), so inside a fight the only thing that knows
 -- a buff window opened is the cast that opened it.
 local ownCastAt = {}
+local ownCastDuration = {}
 local auraUntil = {}   -- [spellID] = the buff's expiry, read while its aura was plain
 local formCache   -- resolved on first use: FormCache loads after this file
 local rotationImport   -- resolved on first use: rank chains (WoW Forever)
@@ -261,6 +262,11 @@ function BlizzardAPI.NoteOwnCast(spellID)
     if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
     local r1 = rotationImport and rotationImport.RankBase(spellID)
     if r1 and r1 ~= spellID then ownCastAt[r1] = now end
+    local duration = rotationImport and rotationImport.GetBuffDuration
+        and rotationImport.GetBuffDuration(spellID)
+    ownCastDuration[spellID] = duration
+    if base then ownCastDuration[base] = duration end
+    if r1 then ownCastDuration[r1] = duration end
     lastCast = base or r1 or spellID   -- rank 1 on Forever: prev.x matches any rank
     if not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(spellID)) then
         lastGcdCast = lastCast
@@ -468,7 +474,8 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
     local evidence = HasteBuffEvidence(spellID)
     if evidence ~= nil then return evidence end
     local castAt = durSecs and ownCastAt[spellID]
-    local castLive = castAt and (GetTime() - castAt) < durSecs or false
+    local castDuration = ownCastDuration[spellID] or durSecs
+    local castLive = castAt and (GetTime() - castAt) < castDuration or false
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
         return castLive
     end

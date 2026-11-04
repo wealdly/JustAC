@@ -31,7 +31,9 @@ libs["JustAC-RotationImport"] = {
     GetEntry = function(id) return { gates = { { t = id == 772 and "dot" or "buff", id = id } } } end,
 }
 db = { char = {}, profile = {} }
-libs["AceAddon-3.0"] = { GetAddon = function() return { db = db } end }
+libs["AceAddon-3.0"] = { GetAddon = function(_, name)
+    if name == "JustAssistedCombat" then return { db = db } end
+end }
 C = { Essential = 0, Utility = 1, TrackedBuff = 2, TrackedBar = 3, HiddenActive = -1, HiddenPassive = -2 }
 Enum = { CooldownViewerCategory = C, CompressionMethod = { Deflate = 1 } }
 -- Cooldown entries: id -> { spellID, default category }. 201/202 = the player's own icons.
@@ -49,9 +51,11 @@ saved = nil
 C_CooldownViewer = {
     GetLayoutData = function() return saved end,
     SetLayoutData = function(s) saved = s; writes = (writes or 0) + 1 end,
-    GetCooldownViewerCategorySet = function(cat)
+    GetCooldownViewerCategorySet = function(cat, allowUnlearned)
         local out = {}
-        for cid, e in pairs(entries) do if e[2] == cat then out[#out + 1] = cid end end
+        for cid, e in pairs(entries) do
+            if e[2] == cat and (allowUnlearned or e[3] ~= false) then out[#out + 1] = cid end
+        end
         table.sort(out)
         return out
     end,
@@ -109,6 +113,31 @@ def main():
 
     check(status() == ("ok", [6673], [772], 0),
           "offer Battle Shout only: Rend is hidden by the player, Mortal Strike already tracked: %s" % (status(),))
+
+    lua.execute("""
+        local RI = LibStub("JustAC-RotationImport")
+        oldInsertable, oldEntry = RI.GetInsertable, RI.GetEntry
+        RI.GetInsertable = function() return { 403 } end
+        RI.GetEntry = function() return { gates = {
+            { t = "all", g = { { t = "stack", id = 408505, op = ">=", n = 5 } } }
+        } } end
+        entries[104] = { 408505, C.HiddenPassive }
+        IsPlayerSpell = function(id) return id ~= 408505 end
+        RI.HighestKnownRank = function(id) if IsPlayerSpell(id) then return id end end
+    """)
+    check(CA.CriticalSpells()[408505] is True, "nested stack gates are setup requirements")
+    check(status()[1] == [408505], "a known CDM proc aura need not be a learned spell")
+    lua.execute("entries[104][3] = false")
+    check(status()[1] == [], "unlearned CDM entries are not offered")
+    lua.execute("entries[104][3] = true; entries[105] = { 408505, C.TrackedBuff }")
+    check(status()[1] == [], "any tracked rank prevents a duplicate setup offer")
+    lua.execute("""
+        local RI = LibStub("JustAC-RotationImport")
+        RI.GetInsertable, RI.GetEntry = oldInsertable, oldEntry
+        entries[104], entries[105] = nil, nil
+        IsPlayerSpell = function() return true end
+        RI.HighestKnownRank = function(id) return id end
+    """)
 
     check(CA.TargetCategory(CA.ActiveLayout(CA.Decode(g.saved))[0]) == g.C.TrackedBar,
           "additions go to Tracked Bars, the panel the player does not use")

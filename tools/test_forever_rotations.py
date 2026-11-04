@@ -2,7 +2,7 @@
 # The converter rules most likely to break silently. Run: python tools/test_forever_rotations.py
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gen_forever_rotations import Conv, TRUE, FALSE  # noqa: E402
+from gen_forever_rotations import Conv, TRUE, FALSE, convert_sim  # noqa: E402
 
 c = lambda v: {"const": {"val": v}}
 cmp = lambda op, lhs, n: {"cmp": {"op": op, "lhs": lhs, "rhs": c(n)}}
@@ -10,6 +10,13 @@ dot = lambda sid: {"dotIsActive": {"spellId": {"spellId": sid}}}
 targets = {"numberTargets": {}}
 
 conv = Conv({}, self_id=772)
+# The pinned bear source's retired rank must still offer the current castable Primal Bite.
+dropped = set()
+bear_entries = convert_sim("druid_feralbear__default", {407995: [("407995", "20")]}, dropped)
+assert [e["id"] for e in bear_entries] == [407995]
+assert 1238073 not in dropped and 1235827 in dropped
+without_bite = convert_sim("druid_feralbear__default", {}, set())
+assert not without_bite
 # const on the left flips the comparison
 assert conv.conv({"cmp": {"op": "OpLt", "lhs": c("40"), "rhs": {"currentRage": {}}}}) == \
     {"t": "power", "res": "rage", "op": ">", "n": 40.0}

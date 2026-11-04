@@ -32,7 +32,7 @@ local function Forever() return SpellDB and SpellDB.IsForever and SpellDB.IsFore
 
 local function Addon()
     local AceAddon = LibStub("AceAddon-3.0", true)
-    return AceAddon and AceAddon:GetAddon("JustAC", true)
+    return AceAddon and AceAddon:GetAddon("JustAssistedCombat", true)
 end
 
 --- The per-character record (layouts are per character): what we added, what was turned down.
@@ -123,14 +123,14 @@ local function R1(id)
     return RI and RI.RankBase(id) or id
 end
 
---- The buffs and debuffs the installed rotation list depends on: every buff and DoT condition
+--- The buffs and debuffs the installed rotation list depends on: buff, DoT and stack conditions
 --- (Battle Shout upkeep, buff windows, Rend), plus the attack-speed buffs judged from swings.
 function CdmAdvisor.CriticalSpells()
     local RI = LibStub("JustAC-RotationImport", true)
     local set = {}
     local function walk(gates)
         for _, g in ipairs(gates or {}) do
-            if (g.t == "buff" or g.t == "dot") and g.id then set[R1(g.id)] = true end
+            if (g.t == "buff" or g.t == "dot" or g.t == "stack") and g.id then set[R1(g.id)] = true end
             if g.g then walk(g.g) end
         end
     end
@@ -145,11 +145,11 @@ function CdmAdvisor.CriticalSpells()
 end
 
 --- Every Cooldown Manager entry for a spell (any rank): cooldownID -> its default category.
-function CdmAdvisor.CooldownIDsFor(spellID)
+function CdmAdvisor.CooldownIDsFor(spellID, learnedOnly)
     local CV, out = C_CooldownViewer, {}
     local r1 = R1(spellID)
     for _, cat in pairs(Enum.CooldownViewerCategory or {}) do
-        local ok, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
+        local ok, ids = pcall(CV.GetCooldownViewerCategorySet, cat, not learnedOnly)
         for _, cid in ipairs(ok and ids or {}) do
             local okI, info = pcall(CV.GetCooldownViewerCooldownInfo, cid)
             if okI and type(info) == "table" then
@@ -255,24 +255,23 @@ function CdmAdvisor.Status()
     local _, layout, key, _, why = LoadAndSync()
     if why == "unreadable" then return "unreadable", {}, {}, 0 end
     local r = Record() or { declined = {}, added = {} }
-    local homes, tracked, RI = AuraHomes(), TrackedCats(), LibStub("JustAC-RotationImport", true)
+    local homes, tracked = AuraHomes(), TrackedCats()
     local can, hidden = {}, {}
     for id in pairs(CdmAdvisor.CriticalSpells()) do
-        if (RI and RI.HighestKnownRank(id)) or (IsPlayerSpell and IsPlayerSpell(id)) then
-            local isTracked, candidate, playerHid = false, nil, false
-            for cid, default in pairs(CdmAdvisor.CooldownIDsFor(id)) do
-                local eff, overridden = CdmAdvisor.EffectiveCategory(layout, cid, default)
-                if tracked[eff] then isTracked = true end
-                if homes[default] and not tracked[eff] then
-                    if overridden or r.declined[cid] then playerHid = true
-                    else candidate = candidate or cid end
-                end
+        local isTracked, candidate, playerHid = false, nil, false
+        -- Proc auras need not be player spells; Blizzard knows which CDM entries are learned.
+        for cid, default in pairs(CdmAdvisor.CooldownIDsFor(id, true)) do
+            local eff, overridden = CdmAdvisor.EffectiveCategory(layout, cid, default)
+            if tracked[eff] then isTracked = true end
+            if homes[default] and not tracked[eff] then
+                if overridden or r.declined[cid] then playerHid = true
+                else candidate = candidate or cid end
             end
-            if not isTracked then
-                local name = C_Spell.GetSpellName(id) or tostring(id)
-                if candidate then can[#can + 1] = { id = id, name = name, cid = candidate }
-                elseif playerHid then hidden[#hidden + 1] = { id = id, name = name } end
-            end
+        end
+        if not isTracked then
+            local name = C_Spell.GetSpellName(id) or tostring(id)
+            if candidate then can[#can + 1] = { id = id, name = name, cid = candidate }
+            elseif playerHid then hidden[#hidden + 1] = { id = id, name = name } end
         end
     end
     table.sort(can, function(x, y) return x.name < y.name end)

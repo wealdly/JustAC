@@ -24,6 +24,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "tools", "forever-apl-src")
 PINS = os.path.join(ROOT, "tools", "simc-apl-forever")
 OUT = os.path.join(ROOT, "Data", "ForeverRotations.lua")
+# The pinned bear list names a Primal Bite rank removed from launch acquisition data.
+RETIRED_SOURCE_RANKS = {1238073: 407995}
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import check_forever_apl as cfa  # noqa: E402  (shared learnability + rank chains)
 import gen_simc_rotations as gsr  # noqa: E402  (the SimC condition parser, for hand pins)
@@ -501,6 +503,9 @@ def convert_sim(stem, by_id, dropped):
         action = e.get("action", {})
         cond = action.get("condition")
         for sid, extra in actions_of(action):
+            replacement = RETIRED_SOURCE_RANKS.get(sid)
+            if sid not in by_id and replacement in by_id:
+                sid = replacement
             if sid not in by_id:
                 dropped.add(sid)
                 continue
@@ -648,6 +653,12 @@ def main():
             DURATION[int(r["SpellID"])] = round(d, 1)
     commit = open(os.path.join(SRC, "UPSTREAM_COMMIT")).read().strip()
     body, chains_out, report, unresolved, abilities = [], {}, [], [], {}
+    buff_ids = set()
+    def collect_buffs(gates):
+        for gate in gates:
+            if gate["t"] == "buff" and gate.get("dur"):
+                buff_ids.add(gate["id"])
+            collect_buffs(gate.get("g", []))
     for cls in sorted(TREES):
         default, trees = TREES[cls]
         chains, by_id = cfa.class_chains(cfa.CLASS_MASK[cls])
@@ -682,6 +693,8 @@ def main():
                                     "gates": [{"t": "buff", "id": sid, "dur": DURATION.get(sid), "neg": True}]})
             add_extras(cls, tree, entries, chains, unresolved)
             regate(cls, entries, chains)
+            for entry in entries:
+                collect_buffs(entry["gates"])
             for sid in reversed(AOE_LEAD.get(cls, [])):
                 if not any(e["id"] == sid for e in entries):
                     entries.insert(0, {"id": sid, "delegated": False, "tiers": list(AOE_LEAD_TIERS), "gates": []})
@@ -709,6 +722,8 @@ def main():
         abilities[cls] = sorted(pool)
 
     rank_lines = [f"  [{k}] = {lua(v)}," for k, v in sorted(chains_out.items())]
+    buff_duration_ids = {rank for base in buff_ids for rank in chains_out.get(base, [base])}
+    duration_lines = [f"  [{id}] = {DURATION[id]:g}," for id in sorted(buff_duration_ids) if id in DURATION]
     # tools/ is not packaged (.pkgmeta), so the MIT notice must travel inside this file.
     mit = ["--   " + l.rstrip() if l.strip() else "--" for l in
            open(os.path.join(SRC, "LICENSE"), encoding="utf-8").read().strip().splitlines()]
@@ -738,6 +753,8 @@ def main():
         *rank_lines,
         "}, {",
         *[f'  ["{c.upper()}_F"] = {lua(v)},' for c, v in sorted(abilities.items())],
+        "}, {",
+        *duration_lines,
         "})",
         "",
     ])
