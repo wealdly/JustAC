@@ -61,7 +61,8 @@ committed, not the multi-MB source CSVs.
 
 ### Updating the CSVs
 
-`python tools/update_data.py [build] [--product wow|wowt]` does the whole cycle:
+`python tools/update_data.py [build] [--product wow|wowt|wowf] [--dir path]` does the
+whole cycle:
 pull the latest DB2 build for every table already present, diff row counts, swap
 the folder atomically, rerun every generator, and print `git diff --stat Data/`.
 The table set is **self-maintaining** - whatever `<Table>.<build>.csv` files sit
@@ -70,6 +71,12 @@ new table, download it once by hand from
 `https://wago.tools/db2/<Table>/csv?build=<build>` and re-run. Keep the folder on
 **one build**; generators join across tables. Full flag list: the header of
 `tools/update_data.py`.
+
+For WoW Forever, use `--product wowf --dir Documentation/wow_spell_csv_forever`.
+Refresh with `--skip-gen` when the retail CSV folder is not also present; then run the
+Forever generators individually (`gen_forever_defaults.py`, `gen_forever_rotations.py`,
+and `gen_forever_consumables.py`). `gen_cc_breakers.py` reads both the retail and Forever
+CSV folders, so run it only when both are available.
 
 ### Auditing the hand-curated tables
 
@@ -166,9 +173,9 @@ that spine:
 Curated-by-hand (no generator, no CSV): `SpellCategories.lua`,
 `InterruptAbilities.lua`, `RangeReferences.lua`.
 
-## Source & enum mirrors (`R:\WOW\00-SOURCE\`)
+## Source & enum mirrors (`D:\.src\WOW\WOW\00-SOURCE\`)
 
-Dev-local, **outside** the addon repo. Two sparse GitHub mirrors are the ground
+Dev-local, **outside** the addon repo. These sparse GitHub mirrors are the ground
 truth for "how does this API actually behave" (see AGENTS.md rule: never guess a
 WoW API):
 
@@ -177,11 +184,29 @@ WoW API):
   `wow-ui-source/Interface/AddOns/Blizzard_APIDocumentationGenerated/*.lua`, e.g.
   `AssistedCombatDocumentation.lua`, `Secret*Documentation.lua` (secret-value
   predicates), `Spell*Documentation.lua`.
+- **`wow-ui-source-forever`** (branch `forever`) - the same upstream UI source,
+  checked out separately for Forever. Its API documentation is under
+  `Interface/AddOns/Blizzard_APIDocumentationGenerated/`. Keep this separate from
+  `live` so a retail API change is never mistaken for a Forever change.
 - **`WowPacketParser`** (branch `master`) - server enum values at
   `WowPacketParser/WowPacketParser/Enums/*.cs`, e.g. `PowerType.cs`.
 
-**Refresh both:** `.\00-SOURCE\update-sources.ps1` (depth-1 fetch + hard reset per
-mirror). Build-immutable, so it is cheap to run once per patch.
+**Refresh:** `D:\.src\WOW\WOW\00-SOURCE\update-sources.ps1` fetches and
+fast-forwards each mirror, including the retail SimC source. It stops on a failed
+fetch or a branch that cannot fast-forward rather than resetting local work.
+
+To seed the Forever mirror in that folder:
+
+```powershell
+git clone --depth 1 --filter=blob:none --sparse --branch forever https://github.com/Gethe/wow-ui-source.git wow-ui-source-forever
+git -C wow-ui-source-forever sparse-checkout set Interface/AddOns
+```
+
+Forever rotation inputs are separate from the UI mirrors: the pinned upstream
+revision is in `tools/forever-apl-src/UPSTREAM_COMMIT`. See
+[FOREVER_ENGINE_DESIGN.md](FOREVER_ENGINE_DESIGN.md#lists) for their source and
+`tools/simc-apl-forever/` for the local healer lists. Preserve the upstream license
+and revision when refreshing those inputs; do not substitute retail SimC lists.
 
 **Looking something up** (grep the mirror instead of guessing):
 

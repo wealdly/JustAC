@@ -25,6 +25,12 @@ B.IsForever = function() return true end
 -- Slice and Dice: rank 1 5171, rank 3 6774 (the rank the player casts).
 local RI = LibStub:NewLibrary("JustAC-RotationImport")
 RI.RankBase = function(id) if id == 6774 then return 5171 end return id end
+local oldRankBase = RI.RankBase
+RI.RankBase = function(id) if id == 10438 then return 3599 end return oldRankBase(id) end
+RI.GetBuffDuration = function(id)
+    if id == 3599 then return 30 end
+    if id == 10438 then return 55 end
+end
 -- Battle Shout ranks 1-2, for the aura memory below.
 RI.RankChain = function(id) if id == 6673 or id == 5242 then return { 6673, 5242 } end end
 -- Player auras by id: { auraInstanceID, expirationTime }. aurasSecret = combat on Forever.
@@ -133,6 +139,15 @@ def main():
     check(B.IsBuffWindowActive(6673, 180) is False, "readable and absent: gone, memory dropped")
     g.aurasSecret = True
     check(B.IsBuffWindowActive(6673, 180) is False, "dropped memory stays dropped in combat")
+
+    at(400); B.NoteOwnCast(10438)
+    at(431)
+    check(B.IsBuffWindowActive(3599, 30) is True, "rank-six totem lasts past rank-one duration")
+    at(455)
+    check(B.IsBuffWindowActive(3599, 30) is False, "rank-six window expires at 55 seconds")
+    at(460); B.NoteOwnCast(3599)
+    at(491)
+    check(B.IsBuffWindowActive(3599, 30) is False, "downranking replaces the longer cast window")
 
     # Auto Shot switched on: the bar is seeded before the first shot. Its cooldown kept running
     # while off, so the first shot is due when that ends, or 0.15s in (measured), whichever is later.

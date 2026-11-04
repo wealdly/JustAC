@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [5.9.0-beta3] - 2026-11-04
+
+- Updated Forever spell ranks, tracked effects, and consumable suggestions for the launch client.
+- Fixed Battle Shout being hidden in combat after the launch targeting changes.
+- Kept Primal Bite in bear priorities after the launch spell-rank changes.
+- Fixed Forever buff-tracking setup prompts, including requirements for proc and stack effects.
+- Fixed talent-based Forever rotation selection on non-English clients.
+- Fixed higher-rank stack checks and premature Searing Totem refresh suggestions.
+- The launch client hides crowd-control types from addons, so matching escape suggestions cannot appear when that information is restricted.
+
 ## [5.9.0-beta2] - 2026-10-08
 
 ### New

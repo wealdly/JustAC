@@ -216,8 +216,8 @@ local CHANNELED = {
 }
 local FRONTAL_DOTS = {
     [133] = true,  -- Fireball (90% upfront)
-    [143] = true,  -- Fireball (92% upfront)
-    [145] = true,  -- Fireball (90% upfront)
+    [143] = true,  -- Fireball (91% upfront)
+    [145] = true,  -- Fireball (89% upfront)
     [348] = true,  -- Immolate (35% upfront)
     [707] = true,  -- Immolate (36% upfront)
     [1094] = true,  -- Immolate (35% upfront)
@@ -225,11 +225,11 @@ local FRONTAL_DOTS = {
     [1823] = true,  -- Rake (33% upfront)
     [1824] = true,  -- Rake (37% upfront)
     [2941] = true,  -- Immolate (37% upfront)
-    [3140] = true,  -- Fireball (86% upfront)
+    [3140] = true,  -- Fireball (87% upfront)
     [8050] = true,  -- Flame Shock (42% upfront)
     [8052] = true,  -- Flame Shock (51% upfront)
     [8053] = true,  -- Flame Shock (43% upfront)
-    [8400] = true,  -- Fireball (87% upfront)
+    [8400] = true,  -- Fireball (88% upfront)
     [8401] = true,  -- Fireball (86% upfront)
     [8402] = true,  -- Fireball (89% upfront)
     [8921] = true,  -- Moonfire (40% upfront)
@@ -259,12 +259,12 @@ local FRONTAL_DOTS = {
     [12524] = true,  -- Pyroblast (71% upfront)
     [12525] = true,  -- Pyroblast (72% upfront)
     [12526] = true,  -- Pyroblast (72% upfront)
-    [14914] = true,  -- Holy Fire (74% upfront)
+    [14914] = true,  -- Holy Fire (73% upfront)
     [15261] = true,  -- Holy Fire (73% upfront)
     [15262] = true,  -- Holy Fire (72% upfront)
     [15263] = true,  -- Holy Fire (73% upfront)
     [15264] = true,  -- Holy Fire (72% upfront)
-    [15265] = true,  -- Holy Fire (62% upfront)
+    [15265] = true,  -- Holy Fire (70% upfront)
     [15266] = true,  -- Holy Fire (74% upfront)
     [15267] = true,  -- Holy Fire (73% upfront)
     [18809] = true,  -- Pyroblast (73% upfront)
@@ -306,7 +306,7 @@ local NEXT_SWING = {
     [9880] = true,  -- Maul (druid)
     [9881] = true,  -- Maul (druid)
 }
-local SHORT_BUFFS = {
+local COMBAT_BUFFS = {
     10,  -- Blizzard (8s)
     126,  -- Eye of Kilrogg (45s)
     130,  -- Slow Fall (30s)
@@ -343,8 +343,9 @@ local SHORT_BUFFS = {
     6197,  -- Eagle Eye (60s)
     6229,  -- Shadow Ward (30s)
     6495,  -- Sentry Totem (300s)
-    6673,  -- Battle Shout (180s)
+    6673,  -- Battle Shout (combat buff)
     7267,  -- Grovel (3s)
+    7744,  -- Will of the Forsaken (0.1s)
     11426,  -- Ice Barrier (60s)
     11958,  -- Ice Block (10s)
     12042,  -- Arcane Power (15s)
@@ -357,6 +358,7 @@ local SHORT_BUFFS = {
     13896,  -- Feedback (15s)
     14183,  -- Premeditation (20s)
     14278,  -- Ghostly Strike (7s)
+    16166,  -- Elemental Mastery (15s)
     16689,  -- Nature's Grasp (45s)
     16914,  -- Hurricane (10s)
     18288,  -- Amplify Curse (30s)
@@ -369,7 +371,8 @@ local SHORT_BUFFS = {
     20166,  -- Seal of Wisdom (30s)
     20230,  -- Retaliation (15s)
     20375,  -- Seal of Command (30s)
-    20554,  -- Berserking (10s)
+    20554,  -- Berserking (15s)
+    20572,  -- Blood Fury (15s)
     20589,  -- Escape Artist (3s)
     20925,  -- Holy Shield (10s)
     21082,  -- Seal of the Crusader (30s)
@@ -383,13 +386,14 @@ local SHORT_BUFFS = {
     425336,  -- Rage of the Farseer (25s)
     438040,  -- Redirect (15s)
     461607,  -- Divine Steed (3s)
-    1259812,  -- Eureka! (15s)
-    1259813,  -- Eureka! (15s)
-    1259817,  -- Eureka! (15s)
-    1259821,  -- Eureka! (15s)
-    1259823,  -- Eureka! (15s)
+    1259812,  -- Eureka! (8s)
+    1259813,  -- Eureka! (8s)
+    1259817,  -- Eureka! (8s)
+    1259821,  -- Eureka! (8s)
+    1259823,  -- Eureka! (8s)
     1260270,  -- Rapid Regeneration (6s)
     1277324,  -- Dark Sacrifice (15s)
+    1299026,  -- Shatter Curse (8s)
     1310687,  -- Sniper Shot (10s)
     1310703,  -- Venom (6s)
     1311015,  -- Templar's Bulwark (8s)
@@ -419,12 +423,12 @@ local DOTS = {
     [13553] = 15,  -- Serpent Sting
     [13554] = 15,  -- Serpent Sting
     [13555] = 15,  -- Serpent Sting
-    [13797] = 15,  -- Immolation Trap Effect
+    [13797] = 15,  -- Immolation Trap
     [14296] = 30,  -- Black Arrow
-    [14298] = 15,  -- Immolation Trap Effect
-    [14299] = 15,  -- Immolation Trap Effect
-    [14300] = 15,  -- Immolation Trap Effect
-    [14301] = 15,  -- Immolation Trap Effect
+    [14298] = 15,  -- Immolation Trap
+    [14299] = 15,  -- Immolation Trap
+    [14300] = 15,  -- Immolation Trap
+    [14301] = 15,  -- Immolation Trap
     [14323] = 120,  -- Hunter's Mark
     [14324] = 120,  -- Hunter's Mark
     [14325] = 120,  -- Hunter's Mark
@@ -549,6 +553,8 @@ local DOTS = {
     [414644] = 15,  -- Lacerate
     [1235826] = 15,  -- Lacerate
     [1235827] = 15,  -- Lacerate
+    [1328616] = 15,  -- Lacerate
+    [1328617] = 15,  -- Lacerate
 }
 
 --- Forever entries under <CLASS>_F (the spec key there); byClass also replaces the
@@ -573,7 +579,7 @@ Put(SpellDB.CLASS_TOPOFF_HEALS, TOPOFF, true)
 -- retail behaviour.
 wipe(SpellDB.CLASS_MAINTAINED_BUFFS)
 for class, groups in pairs(MAINTAINED) do SpellDB.CLASS_MAINTAINED_BUFFS[class] = groups end
-for _, id in ipairs(SHORT_BUFFS) do
+for _, id in ipairs(COMBAT_BUFFS) do
     SpellDB.RAID_BUFF_SPELLS[id], SpellDB.UNIQUE_AURA_SPELLS[id] = nil, nil
 end
 if SpellDB.IndexMaintainedBuffs then SpellDB.IndexMaintainedBuffs() end

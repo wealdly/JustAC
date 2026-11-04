@@ -66,8 +66,7 @@ TOPOFF = {"priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "hol
 # Maintained buffs (read by class): (group names, default name, raidWide).
 # ponytail: rogue poisons left out until a rogue probe shows whether they apply an aura or a
 # weapon enchant on Forever (the wrong path nags forever).
-# Only long buffs belong here: one shorter than SHORT_BUFF_SECS (Battle Shout, 3 min) is a
-# combat buff the rotation list keeps up, and the build refuses it (see SHORT_BUFFS below).
+# Only long buffs belong here: buffs shorter than SHORT_BUFF_SECS are combat buffs.
 MAINTAINED = {
     "priest":  [(["power_word_fortitude"], "power_word_fortitude", True),
                 (["inner_fire"], "inner_fire", False)],
@@ -79,6 +78,8 @@ MAINTAINED = {
     "paladin": [(["devotion_aura", "retribution_aura", "concentration_aura"], "devotion_aura", False)],
     "hunter":  [(["aspect_of_the_hawk", "aspect_of_the_monkey"], "aspect_of_the_hawk", False)],
 }
+# Battle Shout's launch target type is 56, outside the short self/party-buff scan below.
+COMBAT_BUFFS = {"warrior": ["battle_shout"]}
 # Shaman weapon imbues: first KNOWN wins as the default (the table's rule).
 IMBUES = ["windfury_weapon", "flametongue_weapon", "rockbiter_weapon"]
 IMBUE_ALL = IMBUES + ["frostbrand_weapon"]
@@ -338,15 +339,18 @@ def main():
                 lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({cls})")
     lines.append("}")
 
-    # Short buffs (rank 1): kept up in combat, so off retail's party-buff and unique-aura
-    # lists, which hide their members in combat when buffs cannot be read.
+    # Combat buffs (rank 1): off retail's party-buff and unique-aura lists, which hide their
+    # members in combat when buffs cannot be read.
     buff_ids = {r["SpellID"] for r in cfa.rows("SpellEffect")
                 if r["Effect"] == DOT_EFFECT and r["ImplicitTarget_0"] in BUFF_TARGETS}
     short = {int(ch[0][0]) for cls in CLASSES for ch in res.by_class[cls][0].values()
              if ch[0][0] in buff_ids and 0 < duration(ch[0][0]) < SHORT_BUFF_SECS}
-    lines.append("local SHORT_BUFFS = {")
-    for sid in sorted(short):
-        lines.append(f"    {sid},  -- {names.get(str(sid), '?')} ({duration(sid):g}s)")
+    combat_buffs = short | {sid for cls, spell_names in COMBAT_BUFFS.items()
+                            for sid in ids(res, cls, spell_names)}
+    lines.append("local COMBAT_BUFFS = {")
+    for sid in sorted(combat_buffs):
+        desc = (f"{duration(sid):g}s" if sid in short else "combat buff")
+        lines.append(f"    {sid},  -- {names.get(str(sid), '?')} ({desc})")
     lines.append("}")
 
     lines.append("local DOTS = {")
@@ -399,7 +403,7 @@ def main():
         "-- retail behaviour.",
         "wipe(SpellDB.CLASS_MAINTAINED_BUFFS)",
         "for class, groups in pairs(MAINTAINED) do SpellDB.CLASS_MAINTAINED_BUFFS[class] = groups end",
-        "for _, id in ipairs(SHORT_BUFFS) do",
+        "for _, id in ipairs(COMBAT_BUFFS) do",
         "    SpellDB.RAID_BUFF_SPELLS[id], SpellDB.UNIQUE_AURA_SPELLS[id] = nil, nil",
         "end",
         "if SpellDB.IndexMaintainedBuffs then SpellDB.IndexMaintainedBuffs() end",

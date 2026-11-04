@@ -14,9 +14,9 @@
 # in the folder define what gets pulled. To track a new table, download it once
 # by hand (https://wago.tools/db2/<Table>/csv?build=<build>) and re-run.
 #
-# Run: python tools/update_data.py [build] [--product wow|wowt] [--skip-gen] [--keep-old] [--dir path]
+# Run: python tools/update_data.py [build] [--product wow|wowt|wowf] [--skip-gen] [--keep-old] [--dir path]
 #   build      target build (e.g. 12.1.0.68412); default = latest for --product
-#   --product  wago product line for build auto-detection: wow (retail, default) or wowt (PTR)
+#   --product  wago product line: wow (retail, default), wowt (PTR), or wowf (Forever)
 #   --skip-gen download + diff + swap only; don't run generators
 #   --keep-old keep the previous build's CSVs after a successful swap
 #   --dir      override the CSV folder (testing)
@@ -129,7 +129,7 @@ def find_file(csv_dir, table, build):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("build", nargs="?", help="target build; default = latest for --product")
-    ap.add_argument("--product", default="wow", help="wago product for auto-detect (wow/wowt)")
+    ap.add_argument("--product", default="wow", help="wago product for auto-detect (wow/wowt/wowf)")
     ap.add_argument("--skip-gen", action="store_true")
     ap.add_argument("--keep-old", action="store_true")
     ap.add_argument("--dir", type=Path, default=DEFAULT_CSV_DIR)

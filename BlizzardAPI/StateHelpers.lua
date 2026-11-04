@@ -927,7 +927,7 @@ function BlizzardAPI.UnitHasAbsorb(unit)
 end
 
 --- Is this aura at or above `threshold` stacks? The engine renders the count
---- ONLY at/above the threshold (nil below it), so the nil-vs-string answer is
+--- ONLY at/above the threshold (nil or empty below it), so the nil-vs-string answer is
 --- itself the boolean - the count is never read, and `~= nil` on a secret
 --- string is a type-mismatch short-circuit (field-proven safe, no compare).
 function BlizzardAPI.AuraStacksAtLeast(unit, auraInstanceID, threshold)
@@ -935,6 +935,7 @@ function BlizzardAPI.AuraStacksAtLeast(unit, auraInstanceID, threshold)
     if not (fn and unit and auraInstanceID and threshold) then return nil end
     local ok, text = pcall(fn, unit, auraInstanceID, threshold)
     if not ok then return nil end
+    if type(text) == "string" and not IsSecretValue(text) then return text ~= "" end
     return text ~= nil
 end
 
@@ -942,29 +943,41 @@ end
 --- speaks. The spellID -> auraInstanceID hop is the one IsBuffWindowActive has used
 --- in production since the buff-window gates shipped.
 --- @return boolean|nil true / false / nil when the answer cannot be trusted
+local stackRotationImport
 function BlizzardAPI.GetAuraStackAtLeast(unit, spellID, threshold)
     if not (unit and spellID and threshold and C_UnitAuras
             and BlizzardAPI.AuraStacksAtLeast) then return nil end
     if threshold <= 0 then return true end          -- "at least zero" is always true
-    local ok, aura
+    local lookup
     if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
-        ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+        lookup = C_UnitAuras.GetPlayerAuraBySpellID
     elseif C_UnitAuras.GetUnitAuraBySpellID then
-        ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+        lookup = C_UnitAuras.GetUnitAuraBySpellID
     else
         return nil
     end
-    if not ok then return nil end
-    local instId = aura and aura.auraInstanceID
-    if not instId then
-        -- Nothing came back. That means ZERO STACKS only where the lookup can be
-        -- trusted: these queries are RequiresNonSecretAura, so under aura secrecy a
-        -- PRESENT aura also returns nothing and absent-vs-hidden is undecidable.
-        -- Answer only in the clear; otherwise say nothing and let callers fail open.
-        if BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret() then return nil end
-        return false
+    if stackRotationImport == nil then
+        stackRotationImport = LibStub("JustAC-RotationImport", true) or false
     end
-    return BlizzardAPI.AuraStacksAtLeast(unit, instId, threshold)
+    local chain = stackRotationImport and stackRotationImport.RankChain(spellID)
+    for i = 1, chain and #chain or 1 do
+        local id = chain and chain[i] or spellID
+        local ok, aura
+        if lookup == C_UnitAuras.GetPlayerAuraBySpellID then
+            ok, aura = pcall(lookup, id)
+        else
+            ok, aura = pcall(lookup, unit, id)
+        end
+        if not ok or IsSecretValue(aura) then return nil end
+        if aura then
+            local instId = aura.auraInstanceID
+            if IsSecretValue(instId) then return nil end
+            if instId then return BlizzardAPI.AuraStacksAtLeast(unit, instId, threshold) end
+        end
+    end
+    -- RequiresNonSecretAura: absent and hidden are indistinguishable in combat.
+    if BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret() then return nil end
+    return false
 end
 
 --------------------------------------------------------------------------------

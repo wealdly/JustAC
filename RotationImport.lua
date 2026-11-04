@@ -75,11 +75,12 @@ end
 local foreverTrees = {}   -- "WARRIOR_F" -> { default = "arms", arms = { st = ..., aoe = ... }, ... }
 local rankBase = {}       -- any rank's id -> rank 1 id
 local rankChain = {}      -- rank 1 id -> { rank1, rank2, ... } (learn order)
+local buffDurations = {}  -- actual cast id -> static duration (Forever buff gates)
 local installed = {}      -- specKey -> tree key installed since the last invalidation
 local classAbilities = {} -- "WARRIOR_F" -> { [rank-1 id] = true } for every class ability
 local BEAR_FORMS = { [5] = true, [8] = true }   -- Bear, Dire Bear (GetShapeshiftFormID)
 
-function RotationImport.RegisterForever(classes, chains, abilities)
+function RotationImport.RegisterForever(classes, chains, abilities, durations)
     if type(classes) ~= "table" then return end
     -- WoW Forever only. Without this, retail registered every Forever rank chain too, and the
     -- 131 rank-1 ids retail shares (Rend, Moonfire, Polymorph...) resolved through Forever's
@@ -96,7 +97,12 @@ function RotationImport.RegisterForever(classes, chains, abilities)
         rankChain[r1] = chain
         for i = 1, #chain do rankBase[chain[i]] = r1 end
     end
+    for id, seconds in pairs(durations or {}) do buffDurations[id] = seconds end
     RotationImport.InvalidateLookup()
+end
+
+function RotationImport.GetBuffDuration(id)
+    return buffDurations[id]
 end
 
 --- Rank 1 of id's rank chain; id itself when it has no ranks.
@@ -122,11 +128,16 @@ function RotationImport.HighestKnownRank(id)
     return nil
 end
 
---- "Beast Mastery" -> "beast_mastery".
-local function TreeSlug(name)
-    if type(name) ~= "string" then return nil end
-    return (name:lower():gsub("[^%a]+", "_"):gsub("^_+", ""):gsub("_+$", ""))
-end
+-- SkillLine IDs from the Forever launch data. Display names are localized.
+local TREE_SKILLS = {
+    [6] = "frost", [8] = "fire", [26] = "arms", [38] = "combat", [39] = "subtlety",
+    [50] = "beast_mastery", [51] = "survival", [56] = "holy", [78] = "shadow",
+    [134] = "feral", [163] = "marksmanship", [184] = "retribution", [237] = "arcane",
+    [253] = "assassination", [256] = "fury", [257] = "protection", [267] = "protection",
+    [354] = "demonology", [355] = "affliction", [373] = "enhancement", [374] = "restoration",
+    [375] = "elemental", [573] = "restoration", [574] = "balance", [593] = "destruction",
+    [594] = "holy", [613] = "discipline",
+}
 
 --- Talent points spent per trait group, the same reads Forever's talent frame makes.
 --- Shared with `/jac inspect forever` so the probe measures exactly what the pick reads.
@@ -162,10 +173,8 @@ local function PickTree(trees)
     for _, d in ipairs(displays or {}) do
         local n = spent[d.groupID]
         if type(n) == "number" and not (issecretvalue and issecretvalue(n)) and n > bestSpent then
-            local slug = TreeSlug(d.displayName)
-            local first = slug and slug:match("^[^_]+")   -- "feral_combat" -> "feral"
-            local key = (slug and trees[slug] and slug) or (first and trees[first] and first)
-            if key then best, bestSpent = key, n end
+            local key = TREE_SKILLS[d.skillLineID]
+            if key and trees[key] then best, bestSpent = key, n end
         end
     end
     best = best or trees.default
@@ -623,4 +632,3 @@ function RotationImport.GetEntry(spellID, context)
     if not m then return nil end
     return m[spellID] or m[baseID(spellID)]
 end
-
