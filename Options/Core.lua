@@ -219,7 +219,8 @@ local function HandleSlashCommand(addon, input)
             addon:Print("DebugCommands module not available")
             return
         end
-        DebugCommands[methodName](addon, ...)
+        local output = DebugCommands.ChatOutput(addon)
+        DebugCommands[methodName](output, ...)
     end
 
     if command == "toggle" then

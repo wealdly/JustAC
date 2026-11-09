@@ -391,6 +391,49 @@ function DefensiveEngine.GetClassSpellList(addon, listKey)
     return nil
 end
 
+local function PetNeedsRez(addon)
+    if IsMounted and IsMounted() then return false, "mounted" end
+    if UnitHasVehicleUI and UnitHasVehicleUI("player") then return false, "vehicle" end
+    local list = DefensiveEngine.GetClassSpellList(addon, "petRezSpells")
+    local available = false
+    for _, id in ipairs(list or {}) do
+        if BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(id) then
+            available = true
+            break
+        end
+    end
+    if not available then return false, "no learned spell in configured list" end
+    local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
+    if petStatus == "alive" then return false, "pet alive" end
+    if petStatus ~= "dead" and petStatus ~= "missing" then return false, "pet state unknown" end
+    local petlessByChoice = BlizzardAPI and BlizzardAPI.IsPetlessByChoice and BlizzardAPI.IsPetlessByChoice()
+    if petlessByChoice == nil then return false, "petless choice unknown" end
+    if petlessByChoice then return false, "deliberately petless" end
+    return true, "dead/missing pet; no petless buff"
+end
+
+local function IsPetCombatPrioritySpec()
+    if not SpellDB or not SpellDB.GetSpecKey then return false end
+    local specKey, playerClass = SpellDB.GetSpecKey()
+    if not specKey or not playerClass then return false end
+
+    if SpellDB.IsForever and SpellDB.IsForever() then
+        local RotationImport = LibStub("JustAC-RotationImport", true)
+        local tree = RotationImport and RotationImport.GetForeverTree and RotationImport.GetForeverTree()
+        return (playerClass == "HUNTER" and tree == "beast_mastery")
+            or (playerClass == "WARLOCK" and tree == "demonology")
+    end
+
+    function DefensiveEngine.GetPetReminderState(addon)
+        if UnitAffectingCombat("player") and not IsPetCombatPrioritySpec() then
+            return false, "combat spec not eligible"
+        end
+        return PetNeedsRez(addon)
+    end
+
+    return specKey == "HUNTER_1" or specKey == "WARLOCK_2"
+end
+
 --------------------------------------------------------------------------------
 -- Initialization & registration
 --------------------------------------------------------------------------------
@@ -434,10 +477,18 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
         end
     end
 
-    -- Populate empty spell lists from SpellDB defaults (spec→class fallback)
+    -- Missing lists receive defaults; an existing empty list is player intent.
+    if cs.defensiveSpells == nil then
+        local defaults = SpellDB and SpellDB.CLASS_DEFENSIVE_DEFAULTS
+            and SpellDB.ResolveDefaults(SpellDB.CLASS_DEFENSIVE_DEFAULTS, specKey, playerClass)
+        if defaults then CopySpellList(cs, "defensiveSpells", defaults) end
+    end
+    cs.personalDefensiveListInitialized = true
+
+    -- Populate other empty spell lists from SpellDB defaults (spec→class fallback).
     for _, cfg in ipairs(SPELL_LIST_CONFIG) do
-        if not cs[cfg.listKey] or (#cs[cfg.listKey] == 0 and not cfg.keepEmpty
-            and not (previous and cfg.listKey == "defensiveSpells")) then
+        if cfg.listKey ~= "defensiveSpells"
+           and (not cs[cfg.listKey] or (#cs[cfg.listKey] == 0 and not cfg.keepEmpty)) then
             local defaults = SpellDB and SpellDB[cfg.defaultsKey]
                 and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
@@ -529,6 +580,7 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
                 -- seed flag exists so that manually REMOVING the tile sticks, and an explicit
                 -- "restore defaults" is not a manual removal.
                 if cfg.listKey == "defensiveSpells" then
+                    cs.personalDefensiveListInitialized = true
                     cs.emergencyPotionRemoved = nil
                     EnsureEmergencyPotion(cs)
                 end
@@ -612,14 +664,10 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- secret (ordering needs a comparison), so the queue could only ever offer it out of combat.
     -- The slot has no such limit: it hands the pet's health fraction to the engine as a curve
     -- index and lets the alpha decide, so the cue finally works when it actually matters.
-    -- Pet REZ stays here - UnitIsDead/UnitExists are not secret, so it ranks normally.
-
-    -- UnitIsDead/UnitExists are NOT secret - pet rez/summon works reliably in combat.
-    -- Suppress when the player is petless on purpose (Lone Wolf / sacrificed pet) so
-    -- those specs aren't nagged to summon a pet they intentionally don't run.
-    local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
-    local petlessByChoice = BlizzardAPI and BlizzardAPI.IsPetlessByChoice and BlizzardAPI.IsPetlessByChoice()
-    local petNeedsRez = (petStatus == "dead" or petStatus == "missing") and not petlessByChoice
+    -- Petless-by-choice and pet state are reliable in combat; only Beast Mastery
+    -- and Demonology depend on the pet enough to receive an in-combat reminder.
+    local petCombatPriority = inCombat and IsPetCombatPrioritySpec()
+    local petNeedsRez = petCombatPriority and PetNeedsRez(addon)
 
     -- What a surface's damage queue already shows, its defensive cluster leaves out - but
     -- only while that queue IS on screen. "Show in" hides a surface in the renderer, not in
@@ -653,10 +701,10 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local defensiveQueue, mainAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 4
 
-        -- Pet rez/summon: HIGH priority - pet dead or missing (reliable in combat).
+        -- Pet rez/summon fills a spare slot after configured defensives; never displaces them.
         -- Cap at one icon: getting the pet back is a single action, not a queue.
-        if petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #defensiveQueue + 1, mainAddedSet)
+        if petNeedsRez and petCombatPriority and #defensiveQueue < maxIcons then
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #defensiveQueue + 1, mainAddedSet, true)
         end
 
         -- (Pet heals are rendered by the Sustain slot now - see the note above.)
@@ -677,8 +725,8 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         -- Pet rez: parity with main panel (capped at one icon). Pet HEAL is the Sustain slot's
         -- now, on both surfaces - the overlay has its own maintenance icon and renders through
         -- the same RenderMaintenanceSlot, so it picks the cue up without a second code path.
-        if petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #npoQueue + 1, npoAddedSet)
+        if petNeedsRez and petCombatPriority and #npoQueue < npoMaxIcons then
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #npoQueue + 1, npoAddedSet, true)
         end
 
         ApplyOverlayQueue(addon, npoQueue)
@@ -800,7 +848,7 @@ local function EvalDefensiveItem(entry, profile, now)
     return m
 end
 
-local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
+local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded, respectBlacklist)
     wipe(usableResults)
     if not spellList or maxCount <= 0 then return usableResults end
 
@@ -825,7 +873,9 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
     --   3. Unusable (on CD or lacking resources - de-prioritized to end)
     -- Per-spell state comes from the per-tick memo; this loop is pure categorization.
     for _, entry in ipairs(spellList) do
-        if entry and entry > 0 then
+        if entry and entry > 0
+           and not (respectBlacklist and SpellQueue and SpellQueue.IsSpellBlacklisted
+               and SpellQueue.IsSpellBlacklisted(entry)) then
             local m = EvalDefensiveSpell(entry, profile, locActive, now)
             m.storedID = entry
             local resolvedID = m.spellID
@@ -898,9 +948,9 @@ end
 -- The evaluation tables returned by GetUsableDefensiveSpells are per-tick memo state;
 -- entries are COPIED into pooled result tables here so the queue a surface holds on to
 -- is never mutated by a later pass or the other surface's build.
-AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded, procsOnly)
+AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded, respectBlacklist, procsOnly)
     if #results >= maxIcons then return end
-    local spells = GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
+    local spells = GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded, respectBlacklist)
     for _, m in ipairs(spells) do
         if not procsOnly or m.isProcced then
             local e = PushEntry(results, m.spellID, m.isItem, m.isProcced, m.unusable, m.noResources)
@@ -908,6 +958,27 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
             alreadyAdded[m.spellID] = true
         end
     end
+end
+
+local precombatPetAdded = {}
+local function AppendPrecombatPetRez(addon, results, alreadyAdded, maxIcons)
+    if #results >= maxIcons or not PetNeedsRez(addon) then return end
+    -- Precombat owns this offer even when the offensive queue still shows it.
+    -- Only entries already in this cluster may block the handoff.
+    wipe(precombatPetAdded)
+    for _, entry in ipairs(results) do
+        if entry.spellID then precombatPetAdded[entry.spellID] = true end
+        if entry.storedID then precombatPetAdded[entry.storedID] = true end
+    end
+    local petRezSpells = DefensiveEngine.GetClassSpellList(addon, "petRezSpells")
+    local spells = GetUsableDefensiveSpells(addon, petRezSpells, 1, precombatPetAdded, true)
+    local m = spells[1]
+    if not m then return end
+
+    local entry = PushEntry(results, m.spellID, false, false, m.unusable, m.noResources, true)
+    entry.storedID = m.storedID
+    alreadyAdded[m.spellID] = true
+    alreadyAdded[m.storedID] = true
 end
 
 -- Reorder a defensive list by health band, stable within each tier so the user's
@@ -1279,6 +1350,10 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                 end
             end
         end
+        -- Pet summon/rez is a precombat class reminder, after consumables but before
+        -- other class buffs. It uses the configured list and the same blacklist rules
+        -- as the in-combat reminder.
+        AppendPrecombatPetRez(addon, results, alreadyAdded, maxIcons)
         -- Class maintained buffs (poisons, imbues) as spell entries, gated by IsPlayerSpell.
         -- These deliberately BYPASS dpsQueueExclusions: this queue wins the tie. The offer
         -- here is clickable and the offensive one is not, so out of combat the buff belongs
@@ -1351,7 +1426,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     defensiveSpells, maintainedProtection = SplitMaintainedProtection(defensiveSpells)
 
     -- Procced spells from configured list (any health level)
-    AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, true)
+    AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, false, true)
 
     -- Early exit: proc passes filled the queue
     if #results >= maxIcons then return results, alreadyAdded end

@@ -518,6 +518,7 @@ end
 function BlizzardAPI.IsSpellUsable(spellID, failOpen)
     if failOpen == nil then failOpen = true end
     if not spellID or spellID == 0 then return false, false end
+    if BlizzardAPI.HasRequiredAttackWeapon(spellID) ~= true then return false, false end
 
     if C_Spell_IsSpellUsable then
         local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
@@ -728,6 +729,42 @@ function BlizzardAPI.RefreshItemSpellCache()
     RebuildItemSpellCache()
 end
 
+local attackWeaponTypes = {
+    [75] = {"Bows", "Guns", "Crossbow"},
+    [2480] = {"Bows"},
+    [7918] = {"Guns"},
+    [2764] = {"Thrown"},
+    [7919] = {"Crossbow"},
+    [5019] = {"Wand"},
+}
+
+-- Learned ranged attacks can survive unequipping their weapon. Query equipment
+-- live, outside the learned-spell cache, including on clients with no ranged slot.
+function BlizzardAPI.HasRequiredAttackWeapon(spellID)
+    local required = attackWeaponTypes[spellID]
+    if not required then return true end
+    local subclasses = Enum and Enum.ItemWeaponSubclass
+    local weaponClass = Enum and Enum.ItemClass and Enum.ItemClass.Weapon
+    if not (subclasses and weaponClass and C_Item and C_Item.GetItemSubClassInfo
+        and C_Item.IsEquippedItemType) then return nil end
+    local unknown = false
+    for _, key in ipairs(required) do
+        local ok, name = pcall(C_Item.GetItemSubClassInfo, weaponClass, subclasses[key])
+        if ok and not IsSecretValue(name) and type(name) == "string" then
+            local equippedOk, equipped = pcall(C_Item.IsEquippedItemType, name)
+            if equippedOk and not IsSecretValue(equipped) and type(equipped) == "boolean" then
+                if equipped then return true end
+            else
+                unknown = true
+            end
+        else
+            unknown = true
+        end
+    end
+    if unknown then return nil end
+    return false
+end
+
 local spellAvailabilityCache = {}
 
 function BlizzardAPI.ClearAvailabilityCache()
@@ -741,6 +778,7 @@ end
 -- availability only changes on talent/spec/spell-grant events.
 function BlizzardAPI.IsSpellAvailable(spellID)
     if not spellID or spellID == 0 then return false end
+    if BlizzardAPI.HasRequiredAttackWeapon(spellID) ~= true then return false end
 
     local cached = spellAvailabilityCache[spellID]
     if cached ~= nil then

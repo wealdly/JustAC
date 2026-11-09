@@ -18,10 +18,28 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **DoT awareness** - a damage-over-time effect already on your target steps back until it's time to refresh. When the game keeps recommending one that's already up, an arrow on the first slot suggests spreading it to another enemy.
 - **Burst-ready cue** - your major cooldown glows purple when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
 - **Gap-closers** - melee specs get a movement ability suggested when the target is out of range (DPS Queue → Gap-Closers).
+- **Mana Conservation** (both clients, off by default; tune Forever first) - under DPS Queue → General → Queue Content, choose Solo Only or Always (PvE). With one detected normal enemy and safe player health, an available free attack can lead ahead of a mana-costing single-target attack, including the game's recommendation, when mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context block conservation. Prefers confirmed reach; unknown/out-of-range attacks can still lead, leaving positioning to you. No level cutoff; custom/exact lists, procs and utility picks remain unchanged.
 - **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
 - Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
 
 ### Priority
+
+**Mana Conservation** offers only Off, Solo Only and Always (PvE), with no
+percentage or recovery-time tuning controls. Existing saved tuning is preserved.
+The option greys out when
+the player is confirmed to have no mana pool. Hybrid forms are checked against
+explicit mana capacity, not their current energy/rage bar. Saved settings are
+preserved; unreadable capacity is not treated as absence. This is a mana policy,
+not a reserve rule for energy, focus, rage, runic power or discrete resources.
+
+Mana Conservation displays **WAIT** instead of another auto-attack prompt when the
+attack is confirmed running and in range, unless another eligible in-range free
+attack needs starting. Unknown running state or reach keeps the attack prompt.
+Shoot requires a wand equipped; other ranged auto-attacks likewise require a
+compatible weapon. Swapping equipment refreshes the available attacks.
+Before pulling, automatic queues without a native game pick keep a ready attack
+ahead of DPS buffs even when out of range, as a cue to move closer. Combat
+range ordering and custom/exact lists are unchanged.
 
 - **Three orders, one queue** - tabs show the game's order, the theorycraft order and your own list, one line per ability with what it waits for. Looking at a tab never changes the queue; **Use This Order** does, and a green dot marks the one in use.
 - **Your own list** (per spec) - start from **Export to My List** or **Merge** from another tab, then drag rows to reorder. Click a row for its settings, right-click to open it on the Overrides tab, and undo the last ten changes. If the game's rotation changes later, **Merge Changes** brings your list up to date without reordering it.
@@ -43,6 +61,7 @@ The slot ahead of the damage queue, for anything that stops what the enemy is do
 ### Defensives
 
 - **Your defensive list** - self-heals and major cooldowns in one list with per-spec defaults, arranged the same way as the damage priority. Pet rez/summon and pet heal have lists of their own.
+- Pet summon and revive reminders appear on the pre-combat queue without duplicating damage suggestions. Beast Mastery Hunters and Demonology Warlocks can also receive reminders during combat.
 - **Help Your Group** - party-wide buttons (Rallying Cry, Darkness, Anti-Magic Zone, Vampiric Embrace and the like) in a list of their own, offered when your group could use the help or your own health is low.
 - **Emergency heals held until you need them** *(on by default)* - immunity bubbles, big instant heals and health potions wait at the end of the queue with a WAIT tag while you're healthy. Damage-reduction cooldowns stay live, since a wall is meant to be pressed before the hit lands.
 - The order follows how much trouble you're in: damage reduction first while you're taking damage, big heals after a real hit, bubbles only when you're close to dying.
@@ -77,6 +96,7 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 ### Keybinds and filtering
 
 - Finds your keybind for every suggestion across all action bars, including macros with conditions (`[mod]`, `[form]`, `[spec]`, `[stealth]`, `[combat]`) and transformed spells. Gamepad button icons for Xbox, PlayStation and generic controllers.
+- Ability search filters out unlearned, off-spec and passive spells, and refreshes pet abilities when your pet changes.
 - Right-click an icon to set your own hotkey label; icons flash when you press their key.
 - Buffs you already have, your current form and a pet that's already out aren't suggested. Abilities that stack keep being suggested while you build stacks.
 - **Overrides** tab - hide a spell (or Shift+Right-click it in the queue), change its queue settings, or **take it off your action bars** so the game's assist stops suggesting it too. **Put Back** restores it to the same buttons; macros are never touched.
@@ -84,9 +104,11 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 
 ## WoW Forever
 
-JustAC 6.0 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
+JustAC 6.1 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
 WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
+
+These are general-purpose priorities, intended to be useful in most ordinary fights, not optimal in every situation. Specialized simulator sequences and seal twisting are not part of the defaults. Conditions use the client signals JustAC can reliably check; unavailable information is not guessed. Your custom priority list and explicit settings remain your choice.
 
 What works differently on Forever:
 
@@ -162,7 +184,22 @@ Button skinning library that allows JustAC icons to match your UI's button theme
 
 ### WoW Forever priority lists
 
-The WoW Forever priorities derive from the rotation files of the [WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the wowsims project, used under its MIT license (the notice travels with the data).
+The WoW Forever priorities derive from the rotation files of ElliotWood's
+[WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the
+wowsims project, used under its MIT license (the notice travels with the data).
+The original repository is currently unavailable; JustAC retains its pinned
+snapshot and local healer damage-filler lists rather than silently replacing
+the source. Source revisions and adaptations are documented in
+[CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review).
+
+### Retail priority lists
+
+Retail's alternate priorities derive from the
+[SimulationCraft project and its contributors](https://github.com/simulationcraft/simc),
+under GPL-3.0. JustAC adapts those lists to its supported combat-safe conditions
+and retains local healer damage-filler lists. Source revisions and refresh
+procedures are documented in
+[DEV_TOOLING.md](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh).
 
 ### Blizzard Entertainment
 

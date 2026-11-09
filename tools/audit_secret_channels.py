@@ -33,12 +33,13 @@ Usage:
     python tools/audit_secret_channels.py [--docs DIR] [--absence] [--doors]
 """
 import argparse
-import os
 import re
 import sys
+from pathlib import Path
 
-DEFAULT_DOCS = os.path.join("R:", os.sep, "WOW", "00-SOURCE", "wow-ui-source", "Interface",
-                            "AddOns", "Blizzard_APIDocumentationGenerated")
+DEFAULT_DOCS = Path(
+    r"D:\.src\WOW\WOW\00-SOURCE\wow-ui-source\Interface\AddOns\Blizzard_APIDocumentationGenerated"
+)
 
 # One entry per `{ Name = "X", Type = "Function", ... }` block. The docs are generated and
 # uniformly formatted, so a block scanner beats a Lua parser here - and a malformed block
@@ -97,7 +98,7 @@ def scan(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--docs", default=DEFAULT_DOCS)
+    ap.add_argument("--docs", type=Path, default=DEFAULT_DOCS)
     ap.add_argument("--absence", action="store_true",
                     help="also list conditional-empty returns (the other mechanism)")
     ap.add_argument("--doors", action="store_true",

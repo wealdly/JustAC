@@ -100,9 +100,10 @@ EXTRA = {
               dict(spell="sinister_strike", trees=["assassination"], at="after:mutilate"),
               dict(spell="backstab", trees=["assassination"], at="after:sinister_strike")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
-              dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front")],
+              dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
+              dict(spell="wrath", trees=["balance"], at="end")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate")],
-    "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front"),
+    "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
              dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end")],
     "priest": [dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
@@ -156,6 +157,11 @@ def add_extras(cls, tree, entries, chains, unresolved):
             continue
         mine = next((e for e in entries if e["id"] == sid), None)
         if mine and x.get("move") and x.get("at") == "front":
+            if x.get("tiers"):
+                mine["tiers"] = list(x["tiers"])
+                count = min(k for name, k in TIERS if name in x["tiers"])
+                mine["gates"] = [g for g in mine["gates"] if g["t"] != "targets"]
+                mine["gates"].append({"t": "targets", "op": ">=", "n": count})
             entries.remove(mine)
             fronts.append(mine)
             continue
@@ -184,8 +190,8 @@ def add_extras(cls, tree, entries, chains, unresolved):
 
 def keeps_own_buff(e):
     g = e["gates"]
-    return (len(g) == 1 and g[0].get("t") == "buff" and g[0].get("id") == e["id"]
-            and g[0].get("neg") and g[0].get("dur"))
+    return (bool(g) and all(x.get("t") == "buff" and x.get("neg") and x.get("dur") for x in g)
+            and any(x.get("id") == e["id"] for x in g))
 TIERS = [("st", 1), ("cleave", 2), ("aoe", 3)]
 OPS = {"OpLt": "<", "OpLe": "<=", "OpGt": ">", "OpGe": ">=", "OpEq": "=", "OpNe": "!="}
 FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "=": "=", "!=": "!="}
@@ -301,19 +307,11 @@ class Conv:
             if UNK in members:
                 return UNK
             return {"t": "all" if t == "any" else "any", "g": members}
-        # A dot gate has no sense to flip: it means "this DoT is being maintained". So
-        # "not my own DoT up" (Rend, Flame Shock) is exactly that gate. "Not my OTHER debuff
-        # up" (Bane of Agony unless Bane of Doom) holds while that one is unknown: a low-level
-        # character casts the line; one who has learned it lets that one own the slot.
-        # "Not another class's debuff up" (Sunder unless Expose Armor) holds solo, where
-        # nobody else applies it.
-        # ponytail: in a group the other class's debuff is invisible here; Sunder still shows.
+        # Another spell being learned is not evidence its debuff is active.
         if t == "dot":
             if g.get("id") == self.self_id:
                 return g
-            if g.get("id") in self.by_id:
-                return {"t": "known", "id": g["id"], "neg": True}
-            return TRUE
+            return UNK
         return UNK
 
     def conv(self, node):
@@ -359,7 +357,7 @@ class Conv:
             aid = self.rank1(sid_of(val.get("auraId")))
             if not aid:
                 return UNK
-            if val.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(val, aid):
                 return {"t": "dot", "id": aid}
             return self.buff(aid)
         if key == "dotIsActive":
@@ -385,13 +383,11 @@ class Conv:
             # dot / buff gate on Forever (timed from the cast). Someone else's: given up.
             if aid != self.self_id:
                 self.lose(node)
-            if val.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(val, aid):
                 return {"t": "dot", "id": aid}
             return self.buff(aid, True)
         if key == "frontOfTarget":
-            # Solo levelling, the mob faces you: Claw (front) yes, Shred (behind) no.
-            # ponytail: a tank-held mob turns its back; a group-aware check needs facing data.
-            return TRUE
+            return UNK
         return UNK
 
     def cmp(self, val):
@@ -446,7 +442,7 @@ class Conv:
             if not aid:
                 return UNK
             g = {"t": "stack", "id": aid, "op": op, "n": n}
-            if side.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(side, aid):
                 g["tgt"] = True
             return g
         if name == "autoTimeToNext":
@@ -455,7 +451,7 @@ class Conv:
                 g["ranged"] = True
             return g
         if name == "timeToNextEnergyTick":
-            return {"t": "tick", "op": op, "n": n}
+            return UNK
         return UNK
 
 
@@ -465,7 +461,7 @@ class Conv:
         sid = self.rank1(raw)
         if not sid:
             return UNK
-        target = name == "dotRemainingTime" or side.get("sourceUnit", {}).get("type") == "CurrentTarget"
+        target = name == "dotRemainingTime" or aura_on_target(side, raw)
         # "My own DoT about to run out" (Immolate if its time left <= its cast time) IS the dot
         # gate on Forever: an early recast overwrites the ticks left, so it is refreshed as it
         # drops (DotTracker times it from the cast; no secret read, nothing delegated).
@@ -487,12 +483,9 @@ class Conv:
 
 
 def actions_of(action):
-    """(spellID, extra gate) for every cast an action makes; sequences expand in order."""
+    """Independent suggestions only; strict sequences need state we do not model."""
     if "strictSequence" in action:
-        out = []
-        for a in action["strictSequence"].get("actions", []):
-            out += actions_of(a)
-        return out
+        return []
     for key in ("castSpell", "channelSpell"):
         if key in action:
             sid = sid_of(action[key].get("spellId"))
@@ -568,17 +561,48 @@ def lua(v):
     return "{" + ",".join(f"{k}={lua(x)}" for k, x in v.items()) + "}"
 
 
+def generalize_entries(cls, tree, entries, chains):
+    """Adapt specialized execution into stable defaults before selecting each context."""
+    if cls == "paladin" and tree == "retribution":
+        seals = [rank1(chains[n]) for n in ("seal_of_command", "seal_of_righteousness")]
+        seen = set()
+        out = []
+        for e in entries:
+            if e["id"] in seals:
+                if e["id"] in seen:
+                    continue
+                seen.add(e["id"])
+                e = dict(e, gates=[Conv({}, e["id"]).buff(sid, True) for sid in seals],
+                         delegated=False, tiers=[t for t, _ in TIERS])
+            out.append(e)
+        entries[:] = out
+    if cls == "druid" and tree == "feral":
+        bite = rank1(chains["ferocious_bite"])
+        for e in entries:
+            if e["id"] == bite:
+                e["gates"] = [dict(g, op=">=") if g["t"] == "resource" and g.get("res") == "combo_points"
+                              and g.get("op") == "=" and g.get("n") == 5
+                              else g for g in e["gates"]]
+
+
 def tier_lists(entries):
     lists = {t: [] for t, _ in TIERS}
     for e in entries:
         for t in e["tiers"]:
             lists[t].append(e)
     for t, lines in lists.items():
-        fallbackIDs = {e["id"] for e in lines if not e["gates"]}
-        # Lookup keeps the first occurrence. An unobservable pacing-only line
-        # must not mask a later unconditional filler for the same ability.
-        lists[t] = [e for e in lines if not
-                    (e["id"] in fallbackIDs and e["gates"] == [{"t": "unconfirmed"}])]
+        selected = {}
+        for e in lines:
+            previous = selected.get(e["id"])
+            if previous is None or not e["gates"]:
+                selected[e["id"]] = e
+            elif len(previous["gates"]) == len(e["gates"]) == 1:
+                old, new = previous["gates"][0], e["gates"][0]
+                if old["t"] == new["t"] == "targets" and old.get("op") == new.get("op") == ">=" \
+                        and new["n"] < old["n"]:
+                    selected[e["id"]] = e
+        # A general fallback keeps its own position, never the special branch's earlier rank.
+        lists[t] = [e for e in lines if selected[e["id"]] is e]
     out = {"st": lists["st"]}
     if lists["aoe"] != lists["st"]:
         out["aoe"] = lists["aoe"]
@@ -626,6 +650,17 @@ def on_self(sid):
     return any(eff == APPLY_AURA and targets & SELF_TARGETS for eff, _, _, targets, _ in effects_of(sid))
 
 
+def on_enemy(sid):
+    """Infer omitted source-unit annotations only for exclusively enemy-applied auras."""
+    return not on_self(sid) and any(eff == APPLY_AURA and targets & ENEMY_TARGETS
+                                   for eff, _, _, targets, _ in effects_of(sid))
+
+
+def aura_on_target(node, sid):
+    source = node.get("sourceUnit", {}).get("type")
+    return source == "CurrentTarget" or (not source and on_enemy(sid))
+
+
 def deals_damage(sid, depth=0):
     for eff, aura, trig, targets, _ in effects_of(sid):
         if eff in DMG_EFFECTS or aura in DMG_AURAS or (eff == AREA_TRIGGER and targets & ENEMY_TARGETS):
@@ -669,7 +704,6 @@ MOUNT_MECHANIC = 21
 NOT_DPS = {
     "paladin": ["seal_of_justice", "seal_of_light", "seal_of_wisdom"],
     "rogue":   ["redirect"],
-    "shaman":  ["totemic_projection"],
     "hunter":  ["flare", "enchanted_flare", "freezing_trap", "frost_trap"],
     "druid":   ["entangling_roots", "natures_grasp"],
     "warlock": ["health_funnel", "fel_domination"],
@@ -781,6 +815,7 @@ def main():
                                     "gates": [{"t": "buff", "id": sid, "dur": DURATION.get(sid), "neg": True}]})
             add_extras(cls, tree, entries, chains, unresolved)
             regate(cls, entries, chains)
+            generalize_entries(cls, tree, entries, chains)
             for sid in reversed(AOE_LEAD.get(cls, [])):
                 if not any(e["id"] == sid for e in entries):
                     entries.insert(0, {"id": sid, "delegated": False, "tiers": list(AOE_LEAD_TIERS), "gates": []})

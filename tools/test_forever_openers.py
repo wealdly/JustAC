@@ -28,6 +28,7 @@ SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true 
 SpellQueue.WAIT_SENTINEL = -999999999
 SpellDB = { GetSpecKey = function() return specKey end }
 FOREVER_REAR_ATTACKS = {}
+LEAD_BARRED_PENALTY = 100000
 FOREVER_PULLS, FOREVER_RANGED_FILLERS = {}, {}
 function SpellDB.RegisterCategories(t)
     FOREVER_REAR_ATTACKS, FOREVER_PULLS, FOREVER_RANGED_FILLERS =
@@ -129,7 +130,7 @@ end
 """
 
 
-def main():
+def create_runtime(real_gates=False):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
     lua.execute((ROOT / "Data" / "Forever" / "Rotations.lua").read_text(encoding="utf-8"))
@@ -146,7 +147,7 @@ def main():
         "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
         "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
         "GateVerdict", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
-        "IsUnusableNonResource"
+        "IsUnusableNonResource", "SimcPowerType", "ThresholdGateBlocks", "StackAtLeast", "StackHolds"
     ))
     helpers = """
         local gateCtx, tieredSpenderCache = {}, {}
@@ -155,12 +156,16 @@ def main():
     """ + helpers
     lua.execute(helpers + """
         SpellQueue.IsUnusableNonResource = IsUnusableNonResource
+        SpellQueue._GateVerdict = GateVerdict
+        SpellQueue._SimcGateBlocks = SimcGateBlocks
+    """ + ("" if real_gates else """
         local realVerdict = GateVerdict
         GateVerdict = function(g, ctx)
             if g.t == "stack" then return stacks >= g.n end
             if g.t == "cd" then return false end
             return realVerdict(g, ctx)
         end
+    """) + """
         SpellDB.IsPureSelfAura = function(id)
             return finisher[RotationImport.RankBase(id)] ~= true
         end
@@ -181,6 +186,58 @@ def main():
     wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
     lua.execute(extract("IsLiveAttackableTarget", source).replace("local function", "function", 1)
                 + "\n" + source[wait_start:wait_end])
+    power_start = source.index("function SpellQueue.PowerGateThreshold(")
+    power_end = source.index("\nend", power_start) + len("\nend")
+    lua.execute(source[power_start:power_end])
+    return lua
+
+
+def check_positioning_openers():
+    lua = create_runtime()
+    setup = """
+        specKey='WARLOCK_F'
+        pool={1459,686,172}
+        entries={{id=1459},{id=686},{id=172}}
+        ranges[686],ranges[172]=false,false
+        SpellDB.IsPureSelfAura=function(id) return id==1459 end
+        C_Spell.IsSpellHarmful=function(id) return id==686 or id==172 end
+    """
+    cases = [
+        ("", [686, 172, 1459]),
+        ("b.maxIcons=1", [686]),
+        ("ranges[686]=nil", [686, 172, 1459]),
+        ("ranges[172]=true", [686, 172, 1459]),
+        ("b.contextOrder='ac'", [686, 172, 1459]),
+        ("cooldown[686]=true", [172, 1459, 686]),
+        ("unusable[686]=true", [172, 1459, 686]),
+        ("starved[686]=true", [172, 1459, 686]),
+        ("locked[686]=true", [172, 1459, 686]),
+        ("filtered[686]=true", [172, 1459]),
+        ("blacklisted[686]=true", [172, 1459]),
+        ("b.inCombat=true", [1459, 686, 172]),
+        ("forever=false", [1459, 686, 172]),
+        ("SpellQueue._rotationIsCustom=true", [1459, 686, 172]),
+        ("b.contextOrder='off'", [1459, 686, 172]),
+        ("targetExists=false", [1459, 686, 172]),
+        ("hostile=false", [1459, 686, 172]),
+        ("targetDead=true", [1459, 686, 172]),
+        ("C_Spell.IsSpellHarmful=nil", [1459, 686, 172]),
+        ("C_Spell.IsSpellHarmful=function() error('denied') end", [1459, 686, 172]),
+        ("C_Spell.IsSpellHarmful=function() return secret end", [1459, 686, 172]),
+        ("b.spellCount=1; b.recommendedSpells={999}", [999, 686, 172, 1459]),
+        ("procs[1459]=true", [1459, 686, 172]),
+    ]
+    for extra, expected in cases:
+        lua.execute("Reset(); " + setup + extra)
+        queue = lua.globals().Build()
+        actual = list(queue.values())
+        assert actual == expected, (extra, actual, expected)
+    print(f"Pre-pull positioning: {len(cases)} cases preserve attacks over self buffs, safety gates and explicit ordering")
+
+
+def main():
+    lua = create_runtime()
+    source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     cases = [
         ("", [403, 8042], "OOC bolt leads without Maelstrom stacks"),
         ("pool = {10414, 15208}", [15208, 10414], "highest-rank entries use the same opener"),
@@ -190,8 +247,8 @@ def main():
         ("SpellQueue._rotationIsCustom = true", [8042, 403], "custom list retains combat gates"),
         ("b.contextOrder = 'off'", [8042, 403], "exact source order unchanged"),
         ("b.contextOrder = 'ac'", [8042, 403], "non-theorycraft ordering unchanged"),
-        ("ranges[403] = false", [8042, 403], "out-of-range bolt never promoted"),
-        ("ranges[403] = nil", [8042, 403], "unknown range never promotes a pull"),
+        ("ranges[403] = false", [403, 8042], "out-of-range bolt remains the pull cue"),
+        ("ranges[403] = nil", [403, 8042], "unknown range retains the pull cue"),
         ("cooldown[403] = true", [8042, 403], "cooldown prevents promotion"),
         ("unusable[403] = true", [8042, 403], "unusable bolt never leads"),
         ("starved[403] = true", [8042, 403], "unaffordable bolt never leads"),
@@ -510,18 +567,20 @@ def main():
     assert len(bolt.gates) == 1 and bolt.gates[1].t == "stack", "imported stack gates were not mutated"
     for points, expected in ((0, [5221, 22568]), (2, [5221, 22568]), (3, [22568, 5221])):
         lua.execute(f"""Reset(); specKey='DRUID_F'; points={points}; b.ctxPointCap=3;
-            pool={{22568,5221}}; finisher={{[22568]=true}}; stealthed=true;
-            entries={{{{id=22568,gates={{{{t='resource',res='combo_points',op='>=',n=5}}}}}},
+            pool={{22568,5221}}; finisher={{[RotationImport.RankBase(22568)]=true}}; stealthed=true;
+            entries={{{{id=RotationImport.RankBase(22568),gates={{{{t='resource',res='combo_points',op='>=',n=5}}}}}},
                 {{id=5221}}}};
             C_Spell.GetSpellPowerCost=function(id)
                 if id==22568 then return {{{{type=4,minCost=1,cost=5,
                     requiredAuraID=0,hasRequiredAura=false}}}} end
                 return {{}}
             end""")
-        assert list(lua.globals().Build().values()) == expected, "Feral finisher shares point-cap/minimum-cost policy"
+        actual = list(lua.globals().Build().values())
+        assert actual == expected, ("Feral finisher shares point-cap/minimum-cost policy", points, actual, expected)
     print("Cross-class: Rogue/Feral early rear procs, Warrior reactive usability, ranged fillers and Feral finishers passed")
     print(f"Forever openers and prerequisites: {len(cases)} cases, spend transition and 5 early-proc checks passed")
 
 
 if __name__ == "__main__":
+    check_positioning_openers()
     main()

@@ -51,6 +51,7 @@ def main():
         function GetRedundancyFilter() return nil end
         SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue")
         SpellQueue._rotationIsCustom = false
+        SpellQueue.ResolvePetRecoveryPick = function(spellID) return spellID end
         rotationFilterCache = {}
         BlizzardAPI = B
         SpellDB = LibStub("JustAC-SpellDB")

@@ -41,7 +41,7 @@ S.IsForever = function() return true end
 recov = { food = 117, drink = 159, bandage = 1251 }
 S.GetBestRecoveryItem = function(k) return recov[k] end
 eating = nil
-S.GetActiveEatingAura = function() return eating end
+S.GetActiveEatingAura = function() return eating, true end
 hpLow, mpLow = false, false
 B.IsUnitHealthBelow = function() return hpLow end
 B.IsUnitPowerBelow = function() return mpLow end

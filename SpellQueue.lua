@@ -457,6 +457,7 @@ local function PassesSpellFilters(spellID, profile)
         or (BlizzardAPI.IsPlayerAbilityLockout and BlizzardAPI.IsPlayerAbilityLockout())
     local result = BlizzardAPI.IsSpellAvailable(spellID)
        and isUsable
+       and SpellQueue.ResolvePetRecoveryPick(spellID, profile.spellBlacklist) == spellID
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
     filterResultCache[spellID] = result
     return result
@@ -483,6 +484,7 @@ local function PassesRotationFilters(spellID, profile, sourceID)
             or (sourceID and sourceID ~= spellID and BlizzardAPI.IsSpellAvailable(sourceID)) or false)
        and not (role and role ~= "mixed")
        and not (totemSlot and BlizzardAPI.IsTotemSlotOccupied(totemSlot) ~= false)
+       and SpellQueue.ResolvePetRecoveryPick(spellID, profile.spellBlacklist) == spellID
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
        -- Upkeep never belongs in the TAIL: poisons, imbues and long raid buffs are offered
        -- before the pull by the pre-combat reminder, and in positions 2+ they are just
@@ -1536,8 +1538,7 @@ local function IsForeverPullSpell(spellID, b)
     local policy = SpellDB and SpellDB.GetForeverPullPolicy(spellID)
     if not policy or SpellDB.GetSpecKey() ~= policy.spec then return false end
     if not UnitExists("target") then return true end
-    return UnitCanAttack("player", "target")
-        and BlizzardAPI.AbilityInRange(spellID, "target") == true
+    return IsLiveAttackableTarget()
 end
 
 local function CategorizeAndAssembleRotation(rotationList, b)
@@ -1705,6 +1706,18 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     castBarred = castBarred or rearBlocked
                     local abilityRange = BlizzardAPI.AbilityInRange(displayID)
                     local outOfRange = abilityRange == false
+                    -- Before a pull, retain the attack as a positioning cue instead
+                    -- of letting self buffs win solely because they have no range.
+                    local positioningOpener = b.inCombat == false and contextOrder ~= "off"
+                        and not SpellQueue._rotationIsCustom and not BlizzardAPI.HasGamePick()
+                        and ready == true and usable == true and not notEnough
+                        and IsLiveAttackableTarget()
+                        and SpellDB.IsOffensiveSpell(displayID)
+                        and C_Spell and C_Spell.IsSpellHarmful
+                    if positioningOpener then
+                        local ok, harmful = pcall(C_Spell.IsSpellHarmful, displayID)
+                        positioningOpener = ok and not BlizzardAPI.IsSecretValue(harmful) and harmful == true
+                    end
                     local runningSwing = BlizzardAPI.RunningAutoSwing(displayID)
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
@@ -1766,7 +1779,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                            or runningSwing   -- running: shown with its timer
                            or gateBlocked
                            or castBarred
-                           or outOfRange
+                           or (outOfRange and not positioningOpener and not pullSpell)
                            or (not alwaysShow and DotTracker
                                and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
                         -- On cooldown / uncastable / DoT already live on target: sink to
@@ -1817,8 +1830,14 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         probeBucket = "normal"
                         normalSpells[normalCount] = displayID
                         normalRank[normalCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
+                        if positioningOpener then
+                            normalRank[normalCount] = normalRank[normalCount] - LEAD_BARRED_PENALTY
+                        end
                         if pullSpell then
                             normalRank[normalCount] = -1
+                            if positioningOpener then
+                                normalRank[normalCount] = -LEAD_BARRED_PENALTY - 1
+                            end
                             b.pullOpenerID = displayID
                         end
                         if not leadBarred then anyTimeable = true end
@@ -2030,6 +2049,7 @@ function SpellQueue._StageContext(b)
     lastCtx.dying, lastCtx.enemies, lastCtx.pointCap = ctxDying, enemies, ctxPointCap
     b.ctxArch, b.ctxRange, b.ctxRole = ctxArch, ctxRange, ctxRole
     b.ctxExecute, b.ctxOutOfMelee, b.ctxDying = ctxExecute, ctxOutOfMelee, ctxDying
+    b.ctxEnemies = enemies
     b.ctxPointCap = ctxPointCap
 end
 
@@ -2088,6 +2108,161 @@ function SpellQueue._StageTail(b)
     local rotationList = SpellQueue.FilterHealerTail(cachedRotationList, profile)
     b.spellCount = CategorizeAndAssembleRotation(rotationList, b)
     lastCtx.pullOpenerID = b.pullOpenerID
+end
+
+local EFFICIENCY_ATTACKS = {5019, 75, AUTO_ATTACK_SPELL} -- wand, Auto Shot, melee
+local EFFICIENCY_SAFE_HEALTH_PCT = 80
+local EFFICIENCY_DEFAULT_MANA_PCT = 40
+local EFFICIENCY_DEFAULT_RECOVERY_SECONDS = 10
+local efficiencyDetails = {}
+
+local function EfficiencyRead(fn, ...)
+    if not fn then return nil end
+    local ok, value = pcall(fn, ...)
+    if ok and not BlizzardAPI.IsSecretValue(value) then return value end
+    return nil
+end
+
+local function EfficiencyFreeAttack(id, b)
+    if SpellQueue.IsSpellBlacklisted(id, b.blacklist) then return false, "blacklisted" end
+    if SpellQueue.IsCasterSuppressedPick(id, b.profile) then return false, "caster filler" end
+    if EfficiencyRead(IsPlayerSpell, id) ~= true then return false, "not learned or unknown" end
+    if EfficiencyRead(BlizzardAPI.HasRequiredAttackWeapon, id) ~= true then
+        return false, "required weapon missing or unknown"
+    end
+    if SpellQueue.IsHeldByHold(id) then return false, "held" end
+    if EfficiencyRead(BlizzardAPI.IsSpellReady, id) ~= true then return false, "not ready or unknown" end
+    if EfficiencyRead(BlizzardAPI.IsSpellUsable, id, false) ~= true then return false, "unusable or unknown" end
+    if not (C_Spell and C_Spell.GetSpellPowerCost) then return false, "costs unavailable" end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, id)
+    if not ok then return false, "costs denied" end
+    if BlizzardAPI.IsSecretValue(costs) then return false, "costs secret" end
+    -- The API documents nil for no resource cost as well as unknown spells;
+    -- learned, ready and usable were confirmed above.
+    if costs == nil then return true, "eligible" end
+    if type(costs) ~= "table" then return false, "costs unknown" end
+    for _, cost in ipairs(costs) do
+        if BlizzardAPI.IsSecretValue(cost) or type(cost) ~= "table"
+           or BlizzardAPI.IsSecretValue(cost.cost) or type(cost.cost) ~= "number"
+           or cost.cost ~= 0 then return false, "not confirmed free" end
+    end
+    return true, "eligible"
+end
+
+local function EfficiencyCandidate(b)
+    local mode = b.profile.efficiencyMode
+    if mode == nil or mode == "off" then return nil, "off" end
+    if mode ~= "solo" and mode ~= "always" then return nil, "invalid mode" end
+    if SpellQueue._rotationIsCustom or b.contextOrder == "off" then return nil, "explicit order" end
+    if not b.inCombat then return nil, "out of combat" end
+    if b.ctxEnemies ~= 1 then return nil, "enemy count not exactly one" end
+    if b.ctxArch == "aoe" or b.ctxArch == "cleave" then return nil, "multi-target context" end
+    if EfficiencyRead(UnitExists, "target") ~= true
+       or EfficiencyRead(UnitCanAttack, "player", "target") ~= true then return nil, "no confirmed hostile target" end
+    if EfficiencyRead(BlizzardAPI.IsTargetBoss) ~= false then return nil, "boss or unknown" end
+    if EfficiencyRead(UnitClassification, "target") ~= "normal" then return nil, "not a normal target" end
+    if EfficiencyRead(UnitIsPVP, "player") ~= false
+       or EfficiencyRead(UnitIsPVPFreeForAll, "player") ~= false
+       or EfficiencyRead(UnitIsPlayer, "target") ~= false
+       or EfficiencyRead(UnitPlayerControlled, "target") ~= false
+       or EfficiencyRead(UnitIsDeadOrGhost, "player") ~= false
+       or EfficiencyRead(UnitIsDeadOrGhost, "target") ~= false then return nil, "unsafe or unreadable units" end
+    if mode == "solo" and (EfficiencyRead(IsInGroup) ~= false
+       or EfficiencyRead(IsInInstance) ~= false) then return nil, "not solo open world" end
+    if EfficiencyRead(BlizzardAPI.IsUnitHealthBelow, "player", EFFICIENCY_SAFE_HEALTH_PCT) ~= false then
+        return nil, "health unsafe or unknown"
+    end
+    local pct = b.profile.efficiencyManaThreshold
+    if pct == nil then pct = EFFICIENCY_DEFAULT_MANA_PCT end
+    if type(pct) ~= "number" or not (pct >= 10 and pct <= 80) then return nil, "invalid mana threshold" end
+    local seconds = b.profile.efficiencyRecoverySeconds
+    if seconds == nil then seconds = EFFICIENCY_DEFAULT_RECOVERY_SECONDS end
+    if type(seconds) ~= "number" or not (seconds >= 5 and seconds <= 60) then
+        return nil, "invalid recovery threshold"
+    end
+    local full, source, baseFull = BlizzardAPI.GetManaRecoveryEstimate()
+    lastCtx.efficiencyRecoverySource = source
+    lastCtx.efficiencyFullSeconds, lastCtx.efficiencyBaseFullSeconds = full, baseFull
+    if source == "no mana" then return nil, "no mana resource" end
+    if source == "readable" then
+        lastCtx.efficiencyResourceDecision = "recovery estimate"
+        if full < seconds then return nil, "fast mana recovery" end
+    elseif source == "no combat regeneration" then
+        lastCtx.efficiencyResourceDecision = "no combat regeneration"
+    else
+        lastCtx.efficiencyResourceDecision = "mana threshold fallback"
+        local below = EfficiencyRead(BlizzardAPI.IsUnitPowerBelow, "player", pct, Enum.PowerType.Mana)
+        lastCtx.efficiencyManaBelow = below
+        if below == false then return nil, "mana at or above threshold" end
+        if below ~= true then return nil, "mana threshold unreadable" end
+    end
+    local lead = b.recommendedSpells[1]
+    if not lead or lead <= 0 or syntheticProcs[lead] or not SpellDB or SpellDB.GetArch(lead) ~= "st"
+       or not SpellDB.IsOffensiveSpell(lead) or not CostsMana(lead)
+       or EfficiencyRead(BlizzardAPI.IsSpellProcced, lead) ~= false then return nil, "preserve leading ability" end
+    -- Native rotation feeds can omit auto attacks. Learned/actionable checks,
+    -- not rotation membership, establish whether a free finisher is available.
+    local candidate, candidateRank, candidateRange, candidateWaiting
+    wipe(efficiencyDetails)
+    for _, id in ipairs(EFFICIENCY_ATTACKS) do
+        local eligible, reason = EfficiencyFreeAttack(id, b)
+        if eligible then
+            local range = EfficiencyRead(BlizzardAPI.SpellInRange, id, "target")
+            local running
+            if id == AUTO_ATTACK_SPELL then
+                running = EfficiencyRead(C_Spell.IsCurrentSpell, id)
+            else
+                running = EfficiencyRead(C_Spell.IsAutoRepeatSpell, id)
+            end
+            local waiting = range == true and running == true
+            local rank, rangeText = 3, "unknown"
+            if range == true then rank, rangeText = 1, "in range"
+            elseif range == false then rank, rangeText = 4, "out of range" end
+            if waiting then rank = 2 end
+            reason = reason .. ": " .. rangeText
+            if running == true then reason = reason .. ", running" end
+            if not candidateRank or rank < candidateRank then
+                candidate, candidateRank, candidateRange, candidateWaiting = id, rank, rangeText, waiting
+            end
+        end
+        efficiencyDetails[#efficiencyDetails + 1] = id .. "=" .. reason
+    end
+    lastCtx.efficiencyCandidates = table.concat(efficiencyDetails, "; ")
+    lastCtx.efficiencyRange = candidateRange
+    if candidateWaiting then return candidate, "wait for auto attack" end
+    if candidate then return candidate, "conserve mana" end
+    return nil, "no confirmed free attack"
+end
+
+function SpellQueue._StageEfficiency(b)
+    b.efficiencyWaiting = nil
+    lastCtx.efficiencyManaBelow = nil
+    lastCtx.efficiencyRecoverySource, lastCtx.efficiencyResourceDecision = nil, nil
+    lastCtx.efficiencyFullSeconds, lastCtx.efficiencyBaseFullSeconds = nil, nil
+    lastCtx.efficiencyCandidates, lastCtx.efficiencyRange = nil, nil
+    local id, reason = EfficiencyCandidate(b)
+    lastCtx.efficiencyReason, lastCtx.efficiencyID = reason, id
+    if not id then return end
+    b.efficiencyWaiting = reason == "wait for auto attack"
+    local queue = b.recommendedSpells
+    if b.primarySpellID and queue[1] == b.primarySpellID then
+        displacedPrimary[b.primarySpellID] = true
+    end
+    local position
+    for i = 1, b.spellCount do
+        if queue[i] == id then position = i; break end
+    end
+    if not position then
+        position = math.min(b.spellCount + 1, b.maxIcons)
+        b.spellCount = position
+    end
+    for i = position, 2, -1 do queue[i] = queue[i - 1] end
+    if b.efficiencyWaiting then
+        queue[1] = SpellQueue.WAIT_SENTINEL
+    else
+        queue[1] = id
+    end
+    b.addedSpellIDs[id] = true
 end
 
 --- Stage G - burst-ready cue: emphasize a burst trigger only when a burst
@@ -2223,7 +2398,7 @@ end
 local safeLeadID
 function SpellQueue._ApplySafeLead(b)
     safeLeadID = nil
-    if b.foreverWaiting then return end
+    if b.foreverWaiting or b.efficiencyWaiting then return end
     if b.leadMode ~= "safe" then return end
     -- A wait reaches slot 1 in TWO shapes: our sentinel, when the engine answered
     -- nothing at all, and the engine's own passive placeholder, which _StagePrimary
@@ -2269,6 +2444,14 @@ end
 
 function SpellQueue._StageFinalize(b)
     local spellCount, recommendedSpells = b.spellCount, b.recommendedSpells
+    if spellCount == 0 then
+        for i = #lastSpellIDs, 1, -1 do
+            local id = lastSpellIDs[i]
+            if SpellQueue.ResolvePetRecoveryPick(id, b.blacklist) ~= id then
+                table.remove(lastSpellIDs, i)
+            end
+        end
+    end
     -- When Blizzard returns no spells (e.g. target out of range OOC) but
     -- visibility conditions passed, preserve the previous queue so the frame
     -- stays visible with stale icons instead of hiding entirely.
@@ -2545,6 +2728,36 @@ local function NotePick(id)
     end
 end
 
+function SpellQueue.ResolvePetRecoveryPick(pick, blacklist)
+    local isSummon = RedundancyFilter and RedundancyFilter.IsPetSummonSpell
+        and RedundancyFilter.IsPetSummonSpell(pick)
+    if not isSummon then return pick end
+    local status = BlizzardAPI.GetPetStatus()
+    if status == "alive" then return nil end
+    local usable, noResources = BlizzardAPI.IsSpellUsable(pick, true)
+    local blocked = usable == false and noResources == false
+    if status ~= "dead" and not blocked then return pick end
+    local DE = LibStub("JustAC-DefensiveEngine", true)
+    local addon = BlizzardAPI.GetAddon()
+    local list = DE and addon and DE.GetClassSpellList(addon, "petRezSpells")
+    local hasRevive = false
+    for _, id in ipairs(list or {}) do
+        if RedundancyFilter.IsPetReviveSpell and RedundancyFilter.IsPetReviveSpell(id) then
+            hasRevive = true
+            if not SpellQueue.IsSpellBlacklisted(id, blacklist, true)
+                and BlizzardAPI.IsSpellAvailable(id) then
+                local display = BlizzardAPI.GetDisplaySpellID(id)
+                local canCast, lacksPower = BlizzardAPI.IsSpellUsable(display, false)
+                if canCast == true and lacksPower ~= true and BlizzardAPI.IsSpellReady(display) then
+                    return display
+                end
+            end
+        end
+    end
+    if not hasRevive and not blocked then return pick end
+    return nil
+end
+
 function SpellQueue._StagePrimary(b)
     local profile, primarySpellID = b.profile, b.primarySpellID
     local blacklist, addedSpellIDs = b.blacklist, b.addedSpellIDs
@@ -2576,7 +2789,9 @@ function SpellQueue._StagePrimary(b)
         end
     end
 
-    -- AC never recommends an uncastable spell: expire any stale local CD/charge
+    -- Consume AC's pick as readiness evidence, but recheck pet recovery before display:
+    -- Call Pet can remain the pick while the pet needs Revive Pet.
+    -- Expire any stale local CD/charge
     -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
     -- can't keep sinking this spell in later builds.
     if primarySpellID and primarySpellID > 0 then
@@ -2597,7 +2812,9 @@ function SpellQueue._StagePrimary(b)
         -- Caster filler treats a melee/form pick like a blacklisted one: the
         -- highlight lookahead below supplies AC's next-best suggestion.
         local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)
-        local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
+        local petPick = SpellQueue.ResolvePetRecoveryPick(primarySpellID, blacklist)
+        local displaySpellID
+        if petPick then displaySpellID = ClaimSpellID(petPick, addedSpellIDs) end
         if displaySpellID
            and not outOfRangeAttack
            and not casterSuppressed
@@ -2619,7 +2836,9 @@ function SpellQueue._StagePrimary(b)
                    and hlSpellID ~= primarySpellID
                    and not SpellQueue.IsCasterSuppressedPick(hlSpellID, profile)
                    and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist, true) then
-                    local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
+                    local hlPetPick = SpellQueue.ResolvePetRecoveryPick(hlSpellID, blacklist)
+                    local hlDisplay
+                    if hlPetPick then hlDisplay = ClaimSpellID(hlPetPick, addedSpellIDs) end
                     if hlDisplay then
                         b.spellCount = b.spellCount + 1
                         recommendedSpells[b.spellCount] = hlDisplay
@@ -2739,6 +2958,7 @@ function SpellQueue.GetCurrentSpellQueue()
     SpellQueue._StageTail(b)           -- F: tail ordering + assembly over positions 2+
     SpellQueue._StageBurstCue(b)       -- G: burst-ready cue at position 2
     SpellQueue._StageForeverWait(b)    -- no actionable Forever entry: reserve slot 1 for WAIT
+    SpellQueue._StageEfficiency(b)     -- opt-in low-mana finishing policy
     SpellQueue._StageFinalize(b)       -- H: blank bookkeeping, dedup, copy-out
     return lastSpellIDs
 end

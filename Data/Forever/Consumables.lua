@@ -33,7 +33,6 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 250329, buff = 1250920, stat = "stamina" },  -- Elixir of the Phalanx
         { id = 250348, buff = 1250981, stat = "spirit" },  -- Elixir of the Whale
         { id = 250333, buff = 1250926, stat = "healing" },  -- Greater Cleric's Elixir
-        { id = 13445, buff = 11348, stat = "armor" },  -- Elixir of Greater Defense
         { id = 21546, buff = 1310077, stat = "spellpower" },  -- Elixir of Holy Power
         { id = 9264, buff = 11474, stat = "spellpower" },  -- Elixir of Shadow Power
         { id = 12820, buff = 17038, stat = "attackpower" },  -- Winterfall Firewater
@@ -49,15 +48,14 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 250346, buff = 1250978, stat = "spirit" },  -- Elixir of Spirit
         { id = 250349, buff = 1250984, stat = "strength" },  -- Elixir of Strength
         { id = 13447, buff = 17535, stat = "intellect" },  -- Elixir of the Sages
-        { id = 8951, buff = 11349, stat = "armor" },  -- Elixir of Defense
         { id = 17708, buff = 21920, stat = "spellpower" },  -- Elixir of Frost Power
         { id = 217398, buff = 439959, stat = "spellpower" },  -- Lesser Arcane Elixir
         { id = 8949, buff = 11328, stat = "agility" },  -- Elixir of Agility
         { id = 3825, buff = 3593, stat = "stamina" },  -- Elixir of Lesser Fortitude
+        { id = 289082, buff = 1327736, stat = "intellect" },  -- Elixir of Endless Intellect
         { id = 3391, buff = 3164, stat = "strength" },  -- Elixir of Ogre Strength
         { id = 6373, buff = 7844, stat = "spellpower" },  -- Elixir of Fire Power
         { id = 3390, buff = 3160, stat = "agility" },  -- Elixir of Lesser Agility
-        { id = 3389, buff = 3220, stat = "armor" },  -- Elixir of Lesser Defense
         { id = 250353, buff = 1250988, stat = "intellect" },  -- Elixir of Lesser Intellect
         { id = 250345, buff = 1250976, stat = "spirit" },  -- Elixir of Lesser Spirit
         { id = 250342, buff = 1250971, stat = "spellpower" },  -- Lesser Arcane Elixir
@@ -65,7 +63,6 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 3383, buff = 3166, stat = "intellect" },  -- Elixir of Wisdom
         { id = 2457, buff = 2374, stat = "agility" },  -- Elixir of Minor Agility
         { id = 2458, buff = 2378, stat = "stamina" },  -- Elixir of Minor Fortitude
-        { id = 5997, buff = 673, stat = "armor" },  -- Elixir of Minor Defense
         { id = 247755, buff = 1245249, stat = "spellpower" },  -- Elixir of Minor Force
         { id = 250344, buff = 1250974, stat = "spirit" },  -- Elixir of Minor Spirit
         { id = 2454, buff = 2367, stat = "strength" },  -- Elixir of Minor Strength
@@ -77,28 +74,24 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 10310, buff = 12179, stat = "strength" },  -- Scroll of Strength IV
         { id = 10308, buff = 12176, stat = "intellect" },  -- Scroll of Intellect IV
         { id = 10307, buff = 12178, stat = "stamina" },  -- Scroll of Stamina IV
-        { id = 10305, buff = 12175, stat = "armor" },  -- Scroll of Protection IV
         { id = 10306, buff = 12177, stat = "spirit" },  -- Scroll of Spirit IV
         { id = 4425, buff = 8117, stat = "agility" },  -- Scroll of Agility III
         { id = 4426, buff = 8120, stat = "strength" },  -- Scroll of Strength III
         { id = 4419, buff = 8098, stat = "intellect" },  -- Scroll of Intellect III
         { id = 4422, buff = 8101, stat = "stamina" },  -- Scroll of Stamina III
         { id = 277493, buff = 1302303, stat = "intellect" },  -- Scroll of Cat Familiar
-        { id = 4421, buff = 8095, stat = "armor" },  -- Scroll of Protection III
         { id = 4424, buff = 8114, stat = "spirit" },  -- Scroll of Spirit III
         { id = 1477, buff = 8116, stat = "agility" },  -- Scroll of Agility II
         { id = 2289, buff = 8119, stat = "strength" },  -- Scroll of Strength II
         { id = 2290, buff = 8097, stat = "intellect" },  -- Scroll of Intellect II
         { id = 1711, buff = 8100, stat = "stamina" },  -- Scroll of Stamina II
         { id = 277483, buff = 1302285, stat = "intellect" },  -- Scroll of Frog Familiar
-        { id = 1478, buff = 8094, stat = "armor" },  -- Scroll of Protection II
         { id = 1712, buff = 8113, stat = "spirit" },  -- Scroll of Spirit II
         { id = 3012, buff = 8115, stat = "agility" },  -- Scroll of Agility
         { id = 954, buff = 8118, stat = "strength" },  -- Scroll of Strength
         { id = 955, buff = 8096, stat = "intellect" },  -- Scroll of Intellect
         { id = 275069, buff = 1296202, stat = "intellect" },  -- Scroll of Rat Familiar
         { id = 1180, buff = 8099, stat = "stamina" },  -- Scroll of Stamina
-        { id = 3013, buff = 8091, stat = "armor" },  -- Scroll of Protection
         { id = 1181, buff = 8112, stat = "spirit" },  -- Scroll of Spirit
     },
     food = {
@@ -117,13 +110,11 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 250068, buff = 1248406, stat = "stamina" },  -- Savory Turtle Stew
         { id = 20452, buff = 1248422, stat = "strength" },  -- Smoked Desert Dumplings
         { id = 250066, buff = 1248421, stat = "intellect" },  -- Soaring Pamplona
-        { id = 8957, buff = 1249521, stat = "intellect" },  -- Spinefin Halibut
         { id = 250071, buff = 1248422, stat = "strength" },  -- Steaming Stag Steak
         { id = 250072, buff = 1248420, stat = "agility" },  -- Swiftstrike Steak
         { id = 249876, buff = 1249926, stat = "spirit" },  -- Wicked Smoothie
         { id = 16971, buff = 19710, stat = "stamina" },  -- Clamlette Surprise
         { id = 13927, buff = 1249519, stat = "attackpower" },  -- Cooked Glossy Mightfish
-        { id = 13930, buff = 1249521, stat = "intellect" },  -- Filet of Redgill
         { id = 12212, buff = 1248420, stat = "agility" },  -- Jungle Stew
         { id = 12218, buff = 1248406, stat = "stamina" },  -- Monster Omelet
         { id = 13931, buff = 1249520, stat = "spellpower" },  -- Nightfin Soup
@@ -136,6 +127,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 6887, buff = 1249520, stat = "spellpower" },  -- Spotted Yellowtail
         { id = 249869, buff = 1249927, stat = "healing" },  -- Sunny Tea
         { id = 18045, buff = 1248420, stat = "agility" },  -- Tender Wolf Steak
+        { id = 287973, buff = 1248420, stat = "agility" },  -- Tender Wolf Steak
         { id = 4457, buff = 1248421, stat = "intellect" },  -- Barbecued Buzzard Wing
         { id = 250074, buff = 1248422, stat = "strength" },  -- Bear Brisket
         { id = 274971, buff = 1249520, stat = "spellpower" },  -- Briny Seafood Stew
@@ -148,11 +140,9 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 8364, buff = 1249519, stat = "attackpower" },  -- Mithril Head Trout
         { id = 274976, buff = 1248422, stat = "strength" },  -- Plain Ol' Paletusk
         { id = 250073, buff = 1248421, stat = "intellect" },  -- Raging Raptor Ribs
-        { id = 4594, buff = 1249521, stat = "intellect" },  -- Rockscale Cod
         { id = 12216, buff = 1248421, stat = "intellect" },  -- Spiced Chili Crab
         { id = 3728, buff = 1248420, stat = "agility" },  -- Tasty Lion Steak
         { id = 249868, buff = 1249927, stat = "healing" },  -- Triage Tea
-        { id = 4593, buff = 1249521, stat = "intellect" },  -- Bristle Whisker Catfish
         { id = 3664, buff = 1248420, stat = "agility" },  -- Crocolisk Gumbo
         { id = 3665, buff = 1248406, stat = "stamina" },  -- Curiously Tasty Omelet
         { id = 5527, buff = 19708, stat = "stamina" },  -- Goblin Deviled Clams
@@ -179,9 +169,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 2687, buff = 1248422, stat = "strength" },  -- Dry Pork Ribs
         { id = 268912, buff = 1248406, stat = "stamina" },  -- Expiring Crab Cake
         { id = 268913, buff = 1248406, stat = "stamina" },  -- Expiring Crocolisk Steak
-        { id = 5476, buff = 1249521, stat = "intellect" },  -- Fillet of Frenzy
         { id = 724, buff = 1248422, stat = "strength" },  -- Goretusk Liver Pie
-        { id = 6316, buff = 1249521, stat = "intellect" },  -- Loch Frenzy Delight
         { id = 4592, buff = 1249519, stat = "attackpower" },  -- Longjaw Mud Snapper
         { id = 263512, buff = 1248421, stat = "intellect" },  -- Pincer Bites
         { id = 5095, buff = 1249520, stat = "spellpower" },  -- Rainbow Fin Albacore
@@ -214,12 +202,14 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 249871, buff = 1249926, stat = "spirit" },  -- Venomous Smoothie
         { id = 21151, buff = 25804, stat = "stamina" },  -- Rumsey Rum Black Label
         { id = 21114, buff = 25722, stat = "stamina" },  -- Rumsey Rum Dark
+        { id = 287972, buff = 25722, stat = "stamina" },  -- Rumsey Rum Dark
         { id = 20709, buff = 25037, stat = "stamina" },  -- Rumsey Rum Light
         { id = 5265, buff = 5909, stat = "spirit" },  -- Watered-down Beer
     },
     weaponEnchant = {
         { id = 217347, buff = 439465, stat = "physical", wmask = 173555 },  -- Atrophic Poison
         { id = 18262, buff = 22756, stat = "physical", wmask = 42483 },  -- Elemental Sharpening Stone
+        { id = 287980, buff = 22756, stat = "physical", wmask = 42483 },  -- Elemental Sharpening Stone
         { id = 217346, buff = 439464, stat = "physical", wmask = 173555 },  -- Numbing Poison
         { id = 234444, buff = 1214171, stat = "physical", wmask = 173555 },  -- Occult Poison II
         { id = 217345, buff = 439462, stat = "physical", wmask = 173555 },  -- Sebacious Poison
@@ -249,6 +239,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 268880, buff = 8087, stat = "physical", wmask = 1048576 },  -- "Secret" Bait
         { id = 6529, buff = 8087, stat = "physical", wmask = 1048576 },  -- Shiny Bauble
         { id = 2862, buff = 2828, stat = "physical", wmask = 33219 },  -- Rough Sharpening Stone
+        { id = 287978, buff = 2828, stat = "physical", wmask = 33219 },  -- Rough Sharpening Stone
         { id = 3239, buff = 3112, stat = "physical", wmask = 9264 },  -- Rough Weightstone
     },
 })
@@ -282,6 +273,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 250069, amount = 10740, level = 45, wellfed = true },  -- Flank au Poivre
         { id = 23160, amount = 10740, level = 45 },  -- Friendship Bread
         { id = 13928, amount = 10740, level = 35 },  -- Grilled Squid
+        { id = 287974, amount = 10740, level = 1 },  -- Grilled Squid
         { id = 11444, amount = 10740, level = 45 },  -- Grim Guzzler Boar
         { id = 8950, amount = 10740, level = 45 },  -- Homemade Cherry Pie
         { id = 13929, amount = 10740, level = 35 },  -- Hot Smoked Bass
@@ -292,6 +284,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 250075, amount = 10740, level = 45, wellfed = true },  -- Prehistoric Pulled Raptor
         { id = 21033, amount = 10740, level = 45 },  -- Radish Kimchi
         { id = 8952, amount = 10740, level = 45 },  -- Roasted Quail
+        { id = 287963, amount = 10740, level = 1 },  -- Roasted Quail
         { id = 260627, amount = 10740, level = 45 },  -- Savory Shen'dralar Steak
         { id = 250068, amount = 10740, level = 45, wellfed = true },  -- Savory Turtle Stew
         { id = 16171, amount = 10740, level = 45 },  -- Shinsollo
@@ -312,7 +305,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 19306, amount = 6960, level = 35 },  -- Crunchy Frog
         { id = 4599, amount = 6960, level = 35 },  -- Cured Ham Steak
         { id = 21030, amount = 6960, level = 35 },  -- Darnassus Kimchi Pie
-        { id = 13930, amount = 6960, level = 35, wellfed = true },  -- Filet of Redgill
+        { id = 13930, amount = 6960, level = 35 },  -- Filet of Redgill
         { id = 3927, amount = 6960, level = 35 },  -- Fine Aged Cheddar
         { id = 260625, amount = 6960, level = 35 },  -- Garnished Rice Cake
         { id = 9681, amount = 6960, level = 35 },  -- Grilled King Crawler Legs
@@ -333,10 +326,11 @@ SpellDB.RegisterRecoveryItems({
         { id = 4601, amount = 6960, level = 35 },  -- Soft Banana Bread
         { id = 17408, amount = 6960, level = 35 },  -- Spicy Beefstick
         { id = 17222, amount = 6960, level = 35, wellfed = true },  -- Spider Sausage
-        { id = 8957, amount = 6960, level = 45, wellfed = true },  -- Spinefin Halibut
+        { id = 8957, amount = 6960, level = 45 },  -- Spinefin Halibut
         { id = 6887, amount = 6960, level = 35, wellfed = true },  -- Spotted Yellowtail
         { id = 21552, amount = 6960, level = 35 },  -- Striped Yellowtail
         { id = 18045, amount = 6960, level = 35, wellfed = true },  -- Tender Wolf Steak
+        { id = 287973, amount = 6960, level = 1, wellfed = true },  -- Tender Wolf Steak
         { id = 16766, amount = 6960, level = 35 },  -- Undermine Clam Chowder
         { id = 4457, amount = 4374, level = 25, wellfed = true },  -- Barbecued Buzzard Wing
         { id = 250074, amount = 4374, level = 25, wellfed = true },  -- Bear Brisket
@@ -361,7 +355,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 13755, amount = 4374, level = 35 },  -- Raw Winter Squid
         { id = 19224, amount = 4374, level = 25 },  -- Red Hot Wings
         { id = 278118, amount = 4374, level = 25 },  -- Rich Broth
-        { id = 4594, amount = 4374, level = 25, wellfed = true },  -- Rockscale Cod
+        { id = 4594, amount = 4374, level = 25 },  -- Rockscale Cod
         { id = 12216, amount = 4374, level = 25, wellfed = true },  -- Spiced Chili Crab
         { id = 1707, amount = 4374, level = 25 },  -- Stormwind Brie
         { id = 3728, amount = 4374, level = 25, wellfed = true },  -- Tasty Lion Steak
@@ -369,7 +363,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 3771, amount = 4374, level = 25 },  -- Wild Hog Shank
         { id = 16169, amount = 4374, level = 25 },  -- Wild Ricecake
         { id = 1119, amount = 2760, level = 0 },  -- Bottled Spirits
-        { id = 4593, amount = 2760, level = 15, wellfed = true },  -- Bristle Whisker Catfish
+        { id = 4593, amount = 2760, level = 15 },  -- Bristle Whisker Catfish
         { id = 1114, amount = 2760, level = 15 },  -- Conjured Rye
         { id = 3664, amount = 2760, level = 15, wellfed = true },  -- Crocolisk Gumbo
         { id = 3665, amount = 2760, level = 15, wellfed = true },  -- Curiously Tasty Omelet
@@ -414,7 +408,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 2687, amount = 1218, level = 5, wellfed = true },  -- Dry Pork Ribs
         { id = 268912, amount = 1218, level = 5, wellfed = true },  -- Expiring Crab Cake
         { id = 268913, amount = 1218, level = 5, wellfed = true },  -- Expiring Crocolisk Steak
-        { id = 5476, amount = 1218, level = 5, wellfed = true },  -- Fillet of Frenzy
+        { id = 5476, amount = 1218, level = 5 },  -- Fillet of Frenzy
         { id = 5066, amount = 1218, level = 5 },  -- Fissure Plant
         { id = 4541, amount = 1218, level = 5 },  -- Freshly Baked Bread
         { id = 724, amount = 1218, level = 5, wellfed = true },  -- Goretusk Liver Pie
@@ -461,7 +455,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 6888, amount = 306, level = 1, wellfed = true },  -- Herb Baked Egg
         { id = 5472, amount = 306, level = 1, wellfed = true },  -- Kaldorei Spider Kabob
         { id = 7097, amount = 306, level = 1 },  -- Leg Meat
-        { id = 6316, amount = 306, level = 5, wellfed = true },  -- Loch Frenzy Delight
+        { id = 6316, amount = 306, level = 5 },  -- Loch Frenzy Delight
         { id = 7806, amount = 306, level = 1, wellfed = true },  -- Lollipop
         { id = 3663, amount = 306, level = 1, wellfed = true },  -- Murloc Fin Soup
         { id = 263512, amount = 306, level = 5, wellfed = true },  -- Pincer Bites
@@ -494,6 +488,7 @@ SpellDB.RegisterRecoveryItems({
         { id = 18300, amount = 21000, level = 55 },  -- Hyjal Nectar
         { id = 8078, amount = 14670, level = 45 },  -- Conjured Sparkling Water
         { id = 8766, amount = 14670, level = 45 },  -- Morning Glory Dew
+        { id = 287964, amount = 14670, level = 1 },  -- Morning Glory Dew
         { id = 249870, amount = 14670, level = 45, wellfed = true },  -- Sage's Tea
         { id = 249876, amount = 14670, level = 45, wellfed = true },  -- Wicked Smoothie
         { id = 19300, amount = 9960, level = 35 },  -- Bottled Winterspring Water
@@ -587,6 +582,8 @@ SpellDB.RegisterHealingItems({
     247241,  -- Greater Discolored Healing Potion
     1710,  -- Greater Healing Potion
     223914,  -- Greater Healing Potion
+    287977,  -- Greater Healing Potion
+    288896,  -- Superior Healing Potion
     247240,  -- Discolored Healing Potion
     929,  -- Healing Potion
     5511,  -- Lesser Healthstone
@@ -598,11 +595,13 @@ SpellDB.RegisterHealingItems({
     5205,  -- Sprouted Frond
     247239,  -- Lesser Discolored Healing Potion
     858,  -- Lesser Healing Potion
+    287967,  -- Lesser Healing Potion
     268882,  -- Perishable Lesser Healing Potion
     5512,  -- Minor Healthstone
     19004,  -- Minor Healthstone
     19005,  -- Minor Healthstone
     118,  -- Minor Healing Potion
+    287966,  -- Minor Healing Potion
     268881,  -- Perishable Minor Healing Potion
     255663,  -- Windstone
 })
