@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-11-09
+
+### Queues and priorities
+
+- Add optional Mana Conservation for both clients, off by default. When health is safe and only one enemy is engaged, it can favor an available free attack when mana is low or recovery would be slow. Multiple enemies, custom priorities and other resource types keep their intended behavior.
+- Require a compatible equipped weapon for ranged auto-attacks, and refresh attack availability after equipment changes.
+- Before a pull, show an available attack ahead of DPS buffs in automatic queues, even when out of range, as a cue to move closer.
+- Improve general-purpose priorities and fillers across both clients, including multi-target abilities, low-level alternatives and updated spell data.
+
+### Pets, buffs and defensives
+
+- Add summon and revive reminders to the precombat queue without duplicating offensive suggestions; Beast Mastery Hunters and Demonology Warlocks can also receive in-combat reminders.
+- Improve ability search to exclude unlearned, off-spec and passive spells, and refresh pet abilities when pets change.
+- Keep the active armor, shield or aura choice when refreshing buffs, including learned ranks.
+- Improve defensive health-threshold handling and the leading personal-heal cue; keep empty custom defensive lists empty after reload.
+- Avoid unusable precombat consumables and buffs whose state cannot be verified. Fix stale Call Pet suggestions when a usable Revive Pet is needed.
+
 ## [6.0.0] - 2026-10-15
 
 ### Retail and WoW Forever

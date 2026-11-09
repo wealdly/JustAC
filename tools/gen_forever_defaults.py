@@ -79,7 +79,7 @@ PET_HEAL = {"hunter": ["mend_pet"], "warlock": ["health_funnel"]}
 PET_REZ = {"hunter": ["revive_pet", "call_pet"],
            "warlock": ["summon_imp", "summon_voidwalker", "summon_succubus", "summon_felhunter"]}
 # Party-wide, press-and-done relief for non-healers (retail's "group help" rule).
-GROUP_HELP = {"shaman": ["healing_stream_totem"]}
+GROUP_HELP = {"warrior": [], "mage": [], "shaman": ["healing_stream_totem"]}
 # Group heals and the emergency ladder: opt-in healing features.
 GROUP_HEAL = {"priest": ["prayer_of_healing"], "shaman": ["chain_heal"], "druid": ["tranquility"]}
 EMERGENCY = {"druid": ["tranquility"]}
@@ -95,7 +95,7 @@ BURST = {
     "priest":  ["power_infusion", "shadowfiend"],
 }
 # Cheap between-pull heals (read by class).
-TOPOFF = {"priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
+TOPOFF = {"rogue": [], "priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
           "druid": ["rejuvenation", "regrowth"], "shaman": ["lesser_healing_wave", "healing_wave"]}
 # Maintained buffs (read by class): (group names, default name, raidWide).
 # ponytail: rogue poisons left out until a rogue probe shows whether they apply an aura or a
@@ -172,7 +172,7 @@ NUKE_SHARE, FRONTAL_SHARE = 0.5, 0.25
 # rotation list, never offered as between-pull upkeep, never treated as an hour-long party
 # buff. Longer than the 5 min upkeep window with room to spare.
 SHORT_BUFF_SECS = 600
-BUFF_TARGETS = {"1", "20"}   # the caster; the caster's party (Battle Shout)
+BUFF_TARGETS = {"1", "20", "56"}   # caster, caster-area party, caster-area raid
 
 
 class Resolver:
@@ -208,11 +208,14 @@ def lua(v):
         return '"' + v + '"'
     if isinstance(v, list):
         return "{" + ", ".join(lua(x) for x in v) + "}"
-    return "{ " + ", ".join(f"{k} = {lua(x)}" for k, x in v.items()) + " }"
+    return "{ " + ", ".join(
+        (f"[{k}] = " if isinstance(k, int) else f"{k} = ") + lua(x)
+        for k, x in v.items()
+    ) + " }"
 
 
 def class_block(var, table):
-    return [f"local {var} = {{"] + [f"    {c.upper()} = {lua(v)}," for c, v in table.items() if v] + ["}"]
+    return [f"local {var} = {{"] + [f"    {c.upper()} = {lua(v)}," for c, v in table.items()] + ["}"]
 
 
 def main():
@@ -283,7 +286,11 @@ def main():
             if 0 < duration(d) < SHORT_BUFF_SECS:
                 res.missing.append(f"{cls}: {default} lasts {duration(d):g}s - a combat buff, not upkeep")
                 continue
-            e = {"group": g, "default": d}
+            member_auras = {
+                res.r1(cls, name): res.ranks(cls, name)
+                for name in group if res.r1(cls, name)
+            }
+            e = {"group": g, "default": d, "memberAuraIDs": member_auras}
             if raid:
                 e["raidWide"] = True
             e["auraIDs"] = auras          # every rank's aura: a rank-3 cast applies the rank-3 buff

@@ -30,6 +30,8 @@ local PET_REZ = {
     WARLOCK = {688, 697, 712, 691},
 }
 local GROUP_HELP = {
+    WARRIOR = {},
+    MAGE = {},
     SHAMAN = {5394},
 }
 local GROUP_HEAL = {
@@ -53,6 +55,7 @@ local BURST = {
     PRIEST = {10060, 401977},
 }
 local TOPOFF = {
+    ROGUE = {},
     PRIEST = {139, 2050},
     PALADIN = {19750, 635},
     DRUID = {774, 8936},
@@ -160,13 +163,13 @@ local TOTEM_SLOTS = {
 }
 local MAINTAINED_PROTECTION = { [8071] = true }
 local MAINTAINED = {
-    PRIEST = { { group = {1243}, default = 1243, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938} }, { group = {588}, default = 588, auraIDs = {588, 7128, 602, 1006, 10951, 10952} } },
-    MAGE = { { group = {1459}, default = 1459, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157} }, { group = {168, 7302, 6117}, default = 168, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
-    DRUID = { { group = {1126}, default = 1126, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885} } },
-    WARLOCK = { { group = {687, 706}, default = 687, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
-    SHAMAN = { { group = {324, 408510}, default = 324, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
-    PALADIN = { { group = {465, 7294, 19746}, default = 465, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} } },
-    HUNTER = { { group = {13165, 13163}, default = 13165, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163} } },
+    PRIEST = { { group = {1243}, default = 1243, memberAuraIDs = { [1243] = {1243, 1244, 1245, 2791, 10937, 10938} }, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938} }, { group = {588}, default = 588, memberAuraIDs = { [588] = {588, 7128, 602, 1006, 10951, 10952} }, auraIDs = {588, 7128, 602, 1006, 10951, 10952} } },
+    MAGE = { { group = {1459}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
+    DRUID = { { group = {1126}, default = 1126, memberAuraIDs = { [1126] = {1126, 5232, 6756, 5234, 8907, 9884, 9885} }, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885} } },
+    WARLOCK = { { group = {687, 706}, default = 687, memberAuraIDs = { [687] = {687, 696}, [706] = {706, 1086, 11733, 11734, 11735} }, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
+    SHAMAN = { { group = {324, 408510}, default = 324, memberAuraIDs = { [324] = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363}, [408510] = {408510} }, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
+    PALADIN = { { group = {465, 7294, 19746}, default = 465, memberAuraIDs = { [465] = {465, 10290, 643, 10291, 1032, 10292, 10293}, [7294] = {7294, 10298, 10299, 10300, 10301}, [19746] = {19746} }, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} } },
+    HUNTER = { { group = {13165, 13163}, default = 13165, memberAuraIDs = { [13165] = {13165, 14318, 14319, 14320, 14321, 14322, 25296}, [13163] = {13163} }, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163} } },
 }
 local IMBUES = {8232, 8024, 8017}
 local IMBUE_CASTS = {8232, 8235, 10486, 16362, 8024, 8027, 8030, 16339, 16341, 16342, 8017, 8018, 8019, 10399, 16314, 16315, 16316, 8033, 8038, 10456, 16355, 16356}
@@ -352,20 +355,20 @@ local CHANNELED = {
 }
 local FRONTAL_DOTS = {
     [133] = true,  -- Fireball (90% upfront)
-    [143] = true,  -- Fireball (92% upfront)
-    [145] = true,  -- Fireball (90% upfront)
+    [143] = true,  -- Fireball (91% upfront)
+    [145] = true,  -- Fireball (89% upfront)
     [348] = true,  -- Immolate (35% upfront)
     [707] = true,  -- Immolate (36% upfront)
     [1094] = true,  -- Immolate (35% upfront)
-    [1822] = true,  -- Rake (32% upfront)
+    [1822] = true,  -- Rake (31% upfront)
     [1823] = true,  -- Rake (33% upfront)
     [1824] = true,  -- Rake (37% upfront)
     [2941] = true,  -- Immolate (37% upfront)
-    [3140] = true,  -- Fireball (86% upfront)
-    [8050] = true,  -- Flame Shock (42% upfront)
-    [8052] = true,  -- Flame Shock (51% upfront)
-    [8053] = true,  -- Flame Shock (43% upfront)
-    [8400] = true,  -- Fireball (87% upfront)
+    [3140] = true,  -- Fireball (87% upfront)
+    [8050] = true,  -- Flame Shock (47% upfront)
+    [8052] = true,  -- Flame Shock (52% upfront)
+    [8053] = true,  -- Flame Shock (50% upfront)
+    [8400] = true,  -- Fireball (88% upfront)
     [8401] = true,  -- Fireball (86% upfront)
     [8402] = true,  -- Fireball (89% upfront)
     [8921] = true,  -- Moonfire (40% upfront)
@@ -378,13 +381,13 @@ local FRONTAL_DOTS = {
     [9833] = true,  -- Moonfire (37% upfront)
     [9834] = true,  -- Moonfire (36% upfront)
     [9835] = true,  -- Moonfire (36% upfront)
-    [9904] = true,  -- Rake (37% upfront)
+    [9904] = true,  -- Rake (38% upfront)
     [10148] = true,  -- Fireball (88% upfront)
     [10149] = true,  -- Fireball (88% upfront)
     [10150] = true,  -- Fireball (89% upfront)
     [10151] = true,  -- Fireball (89% upfront)
     [10447] = true,  -- Flame Shock (49% upfront)
-    [10448] = true,  -- Flame Shock (48% upfront)
+    [10448] = true,  -- Flame Shock (49% upfront)
     [11366] = true,  -- Pyroblast (71% upfront)
     [11665] = true,  -- Immolate (37% upfront)
     [11667] = true,  -- Immolate (36% upfront)
@@ -395,18 +398,18 @@ local FRONTAL_DOTS = {
     [12524] = true,  -- Pyroblast (71% upfront)
     [12525] = true,  -- Pyroblast (72% upfront)
     [12526] = true,  -- Pyroblast (72% upfront)
-    [14914] = true,  -- Holy Fire (74% upfront)
+    [14914] = true,  -- Holy Fire (73% upfront)
     [15261] = true,  -- Holy Fire (73% upfront)
     [15262] = true,  -- Holy Fire (72% upfront)
     [15263] = true,  -- Holy Fire (73% upfront)
     [15264] = true,  -- Holy Fire (72% upfront)
-    [15265] = true,  -- Holy Fire (62% upfront)
+    [15265] = true,  -- Holy Fire (70% upfront)
     [15266] = true,  -- Holy Fire (74% upfront)
     [15267] = true,  -- Holy Fire (73% upfront)
     [18809] = true,  -- Pyroblast (73% upfront)
     [25306] = true,  -- Fireball (89% upfront)
     [25309] = true,  -- Immolate (36% upfront)
-    [29228] = true,  -- Flame Shock (49% upfront)
+    [29228] = true,  -- Flame Shock (48% upfront)
     [401502] = true,  -- Frostfire Bolt (79% upfront)
     [1237312] = true,  -- Frostfire Bolt (82% upfront)
     [1237313] = true,  -- Frostfire Bolt (84% upfront)
@@ -481,6 +484,7 @@ local SHORT_BUFFS = {
     6495,  -- Sentry Totem (300s)
     6673,  -- Battle Shout (180s)
     7267,  -- Grovel (3s)
+    7744,  -- Will of the Forsaken (0.1s)
     11426,  -- Ice Barrier (60s)
     11958,  -- Ice Block (10s)
     12042,  -- Arcane Power (15s)
@@ -493,6 +497,7 @@ local SHORT_BUFFS = {
     13896,  -- Feedback (15s)
     14183,  -- Premeditation (20s)
     14278,  -- Ghostly Strike (7s)
+    16166,  -- Lightning Mastery (15s)
     16689,  -- Nature's Grasp (45s)
     16914,  -- Hurricane (10s)
     18288,  -- Amplify Curse (30s)
@@ -505,7 +510,8 @@ local SHORT_BUFFS = {
     20166,  -- Seal of Wisdom (30s)
     20230,  -- Retaliation (15s)
     20375,  -- Seal of Command (30s)
-    20554,  -- Berserking (10s)
+    20554,  -- Berserking (15s)
+    20572,  -- Blood Fury (15s)
     20589,  -- Escape Artist (3s)
     20925,  -- Holy Shield (10s)
     21082,  -- Seal of the Crusader (30s)
@@ -519,18 +525,19 @@ local SHORT_BUFFS = {
     425336,  -- Rage of the Farseer (25s)
     438040,  -- Redirect (15s)
     461607,  -- Divine Steed (3s)
-    1259812,  -- Eureka! (15s)
-    1259813,  -- Eureka! (15s)
-    1259817,  -- Eureka! (15s)
-    1259821,  -- Eureka! (15s)
-    1259823,  -- Eureka! (15s)
+    1259812,  -- Eureka! (8s)
+    1259813,  -- Eureka! (8s)
+    1259817,  -- Eureka! (8s)
+    1259821,  -- Eureka! (8s)
+    1259823,  -- Eureka! (8s)
     1260270,  -- Rapid Regeneration (6s)
     1277324,  -- Dark Sacrifice (15s)
+    1299026,  -- Shatter Curse (8s)
     1310687,  -- Sniper Shot (10s)
-    1310703,  -- Venom (6s)
     1311015,  -- Templar's Bulwark (8s)
     1311649,  -- Seal of Fury (30s)
     1317257,  -- Strider Kick (3s)
+    1329555,  -- Reckless Swings (8s)
 }
 local DOTS = {
     [772] = 9,  -- Rend
@@ -555,12 +562,12 @@ local DOTS = {
     [13553] = 15,  -- Serpent Sting
     [13554] = 15,  -- Serpent Sting
     [13555] = 15,  -- Serpent Sting
-    [13797] = 15,  -- Immolation Trap Effect
+    [13797] = 15,  -- Immolation Trap
     [14296] = 30,  -- Black Arrow
-    [14298] = 15,  -- Immolation Trap Effect
-    [14299] = 15,  -- Immolation Trap Effect
-    [14300] = 15,  -- Immolation Trap Effect
-    [14301] = 15,  -- Immolation Trap Effect
+    [14298] = 15,  -- Immolation Trap
+    [14299] = 15,  -- Immolation Trap
+    [14300] = 15,  -- Immolation Trap
+    [14301] = 15,  -- Immolation Trap
     [14323] = 120,  -- Hunter's Mark
     [14324] = 120,  -- Hunter's Mark
     [14325] = 120,  -- Hunter's Mark
@@ -581,6 +588,10 @@ local DOTS = {
     [11275] = 6,  -- Rupture
     [11289] = 18,  -- Garrote
     [11290] = 18,  -- Garrote
+    [1316709] = 6,  -- Death Mark
+    [1325756] = 6,  -- Death Mark
+    [1325757] = 6,  -- Death Mark
+    [1325758] = 6,  -- Death Mark
     [589] = 18,  -- Shadow Word: Pain
     [594] = 18,  -- Shadow Word: Pain
     [970] = 18,  -- Shadow Word: Pain
@@ -685,6 +696,8 @@ local DOTS = {
     [414644] = 15,  -- Lacerate
     [1235826] = 15,  -- Lacerate
     [1235827] = 15,  -- Lacerate
+    [1328616] = 15,  -- Lacerate
+    [1328617] = 15,  -- Lacerate
 }
 
 --- Forever entries under <CLASS>_F (the spec key there); byClass also replaces the

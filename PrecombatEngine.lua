@@ -2,8 +2,8 @@
 -- Copyright (C) 2024-2026 wealdly
 -- PrecombatEngine.lua - Out-of-combat buff checklist. Detects pre-combat buffs (flask,
 -- food, augment rune, weapon enchant) the player is missing AND owns something to fix.
--- Detection is aura-based and runs only out of combat, so it never touches the 12.0
--- secret-value wall (auras and item counts are plain values out of combat).
+-- Detection is aura-based and normally runs out of combat. Denied or unreadable aura
+-- queries are treated as unknown, never as proof that an offer is missing.
 
 local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 9)
 if not PrecombatEngine then return end
@@ -21,6 +21,62 @@ local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
 local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
+local pcall = pcall
+local issecretvalue = issecretvalue
+local geterrorhandler = geterrorhandler
+local UnitIsVisible = UnitIsVisible
+
+local AURA_ERROR_THROTTLE = 30
+local auraErrorReportedAt = {}
+local function ReportAuraReadError(apiName, err)
+    local now = GetTime()
+    local last = auraErrorReportedAt[apiName]
+    if last and now - last < AURA_ERROR_THROTTLE then return end
+    auraErrorReportedAt[apiName] = now
+    if not geterrorhandler then return end
+    local ok, handler = pcall(geterrorhandler)
+    if ok and type(handler) == "function" then
+        pcall(handler, "JustAC PrecombatEngine: " .. apiName .. " failed: " .. tostring(err))
+    end
+end
+
+local function IsSecret(value)
+    return (issecretvalue and issecretvalue(value)) or type(value) == "secret"
+end
+
+local function SafeAuraCall(fn, apiName, ...)
+    if not fn then return nil, false end
+    local ok, aura = pcall(fn, ...)
+    if not ok then
+        ReportAuraReadError(apiName, aura)
+        return nil, false
+    end
+    if IsSecret(aura) then return nil, false end
+    return aura, true
+end
+
+-- This list is used to prove an aura is absent. A denied or partial enumeration
+-- cannot establish absence, so read the batch API directly and treat any failure
+-- as unknown instead of falling back to BlizzardAPI.GetAuras' partial-list path.
+local function SafeAuraList(unit, filter)
+    local unitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
+    if unitAuras then
+        local auras, known = SafeAuraCall(unitAuras, "GetUnitAuras", unit, filter)
+        if not known or type(auras) ~= "table" then return nil, false end
+        return auras, true
+    end
+
+    local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not byIndex then return nil, false end
+    local auras = {}
+    for i = 1, 40 do
+        local aura, known = SafeAuraCall(byIndex, "GetAuraDataByIndex", unit, i, filter)
+        if not known then return nil, false end
+        if aura == nil then return auras, true end
+        auras[#auras + 1] = aura
+    end
+    return nil, false
+end
 
 -- Top-off "between pulls" reminder fires below this (exact read, OOC only) - toggle-gated.
 local RECUPERATE_HEALTH_PCT = 90
@@ -80,27 +136,14 @@ local function IsLapsing(aura)
     return (exp - GetTime()) <= RefreshWindow()
 end
 
--- Main-hand temp enchant (weapon oil / shaman imbue) present AND not about to run out.
--- Its expiry comes back as milliseconds REMAINING, not a timestamp - the one place in this
--- file where the window is not compared against expirationTime.
-local function MainHandEnchantHolds(imbue)
-    local has, expiryMs = BlizzardAPI.GetWeaponEnhancementInfo(0, imbue)
-    if has == nil then return true end
-    if not has then return false end
-    if issecretvalue and issecretvalue(expiryMs) then return true end
-    if type(expiryMs) ~= "number" then return true end
-    return (expiryMs / 1000) > RefreshWindow()
-end
-
--- Off-hand twin of MainHandEnchantHolds.
--- Only consulted when an off-hand imbue is actually offerable (see OffHandImbue).
-local function OffHandEnchantHolds()
-    local has, expiryMs = BlizzardAPI.GetWeaponEnhancementInfo(1, true)
-    if has == nil then return true end
-    if not has then return false end
-    if issecretvalue and issecretvalue(expiryMs) then return true end
-    if type(expiryMs) ~= "number" then return true end
-    return (expiryMs / 1000) > RefreshWindow()
+-- Weapon expiry is milliseconds remaining, not an aura expiration timestamp.
+local function WeaponEnchantHolds(slot, imbue)
+    local has, expiryMs = BlizzardAPI.GetWeaponEnhancementInfo(slot, imbue)
+    if has == nil then return true, false end
+    if not has then return false, true end
+    if IsSecret(expiryMs) then return true, false end
+    if type(expiryMs) ~= "number" then return true, false end
+    return (expiryMs / 1000) > RefreshWindow(), true
 end
 
 -- The off-hand imbue to offer, or nil. Blizzard routes the hands in SPELL DATA:
@@ -124,19 +167,32 @@ end
 -- so cost is independent of how big the set is - which matters because the food set can
 -- hold a few hundred Well Fed buff ids.
 local function HasAnyAura(buffSet)
-    if not buffSet or not BlizzardAPI or not BlizzardAPI.GetAuras then return false end
-    local auras = BlizzardAPI.GetAuras("player", "HELPFUL")
-    if not auras then return false end
-    for i = 1, #auras do
-        local spellId = auras[i].spellId
-        -- 12.0.7: some aura spellIds are secret even out of combat; a secret table
-        -- key throws, so skip those auras (their identity is unknowable here).
-        -- Keep scanning past a lapsing match: a category can be satisfied by more than one
-        -- buff, and a fresher one elsewhere in the list still counts.
-        if spellId and not (issecretvalue and issecretvalue(spellId))
-           and buffSet[spellId] and not IsLapsing(auras[i]) then return true end
+    if not buffSet then return true, false end
+    local auras, known = SafeAuraList("player", "HELPFUL")
+    if not known then return true, false end
+    local ok, found, uncertain = pcall(function()
+        local unsure = false
+        for i = 1, #auras do
+            local aura = auras[i]
+            if IsSecret(aura) then
+                unsure = true
+            else
+                local spellId = aura and aura.spellId
+                if spellId == nil or IsSecret(spellId) then
+                    unsure = true
+                elseif buffSet[spellId] then
+                    local lapsing = IsLapsing(aura)
+                    if not lapsing then return true, false end
+                end
+            end
+        end
+        return false, unsure
+    end)
+    if not ok then
+        ReportAuraReadError("HELPFUL aura fields", found)
+        return true, false
     end
-    return false
+    return found or uncertain, not uncertain
 end
 
 -- The weapon imbue the player knows (in preference order), or nil. Shaman only - IsPlayerSpell
@@ -198,11 +254,11 @@ function PrecombatEngine.IsCategorySatisfied(category)
     -- satisfied so we never nag someone to re-consume a buff they may already have.
     -- Live gate; false in normal content keeps this a no-op.
     if BlizzardAPI and BlizzardAPI.AreAurasSecret() then
-        return true
+        return true, false
     end
     if category == "weaponEnchant" then
-        if GetTime() - enchantAppliedAt < ENCHANT_APPLY_GRACE then return true end
-        return MainHandEnchantHolds()
+        if GetTime() - enchantAppliedAt < ENCHANT_APPLY_GRACE then return true, true end
+        return WeaponEnchantHolds(0)
     end
     local set = SpellDB and SpellDB.GetPrecombatBuffSet and SpellDB.GetPrecombatBuffSet(category)
     return HasAnyAura(set)
@@ -268,14 +324,21 @@ end
 -- mounted or dead. A no-op on retail, where no recovery items are registered.
 -- ponytail: fixed thresholds; make them options if players want them tuned.
 local RECOVERY_HEALTH_PCT, RECOVERY_MANA_PCT = 70, 50
+function PrecombatEngine.GetRecoveryThresholds()
+    return RECOVERY_HEALTH_PCT, RECOVERY_MANA_PCT
+end
 local RECENTLY_BANDAGED = 11196
 local NO_MANA = { WARRIOR = true, ROGUE = true }
 function PrecombatEngine.AddRecoveryItems(out)
     if not (SpellDB and SpellDB.IsForever() and SpellDB.GetBestRecoveryItem and BlizzardAPI) then return end
     local dead = UnitIsDeadOrGhost("player")
+    local eating, eatingKnown = nil, true
+    if SpellDB.GetActiveEatingAura then
+        eating, eatingKnown = SpellDB.GetActiveEatingAura()
+    end
     if InCombatLockdown() or (IsMounted and IsMounted())
        or (issecretvalue and issecretvalue(dead)) or dead
-       or (SpellDB.GetActiveEatingAura and SpellDB.GetActiveEatingAura()) then
+       or not eatingKnown or eating then
         return
     end
     local function add(id) if id then out[#out + 1] = id end end
@@ -288,8 +351,10 @@ function PrecombatEngine.AddRecoveryItems(out)
         if food then
             add(food)
         else
-            local ok, bandaged = pcall(C_UnitAuras.GetPlayerAuraBySpellID, RECENTLY_BANDAGED)
-            if not (ok and bandaged) then add(SpellDB.GetBestRecoveryItem("bandage")) end
+            local bandaged, known = SafeAuraCall(
+                C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID,
+                "GetPlayerAuraBySpellID", RECENTLY_BANDAGED)
+            if known and not bandaged then add(SpellDB.GetBestRecoveryItem("bandage")) end
         end
     end
 end
@@ -359,7 +424,6 @@ end
 -- throws), so secret entries are skipped. Returns the known group constant (never a queue
 -- value) and only one the player knows, so it can NEVER suppress the reliable default
 -- fallback at the call site.
-local issecretvalue = issecretvalue
 local function HighestQueuedInGroup(group)
     local SQ = LibStub("JustAC-SpellQueue", true)
     local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
@@ -375,8 +439,6 @@ local function HighestQueuedInGroup(group)
     end
     return nil
 end
-
-local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue or function() return false end
 
 -- Unit-state probes (exists / connected / dead / in-range) can return a SECRET BOOLEAN even
 -- out of combat: secrecy is per-CONTEXT, not per-combat, so an instanced context secrets them
@@ -403,33 +465,40 @@ end
 -- whose only failure mode would otherwise be nagging about a buff that is already up.
 local function UnitHasHelpfulAura(unit, auraIDs)
     if not auraIDs then return true end
-    -- Point queries FIRST: the by-spellID probe is the only mechanism that yields
-    -- an AUTHORITATIVE negative under 12.0 (presence/absence as plain table-or-nil;
-    -- the rule the Midnight-native frames addons converged on). The bulk scan below
-    -- stays as fallback, but its fail-silent rule reads any doubt as "has it", so
-    -- routing through it first muted the feature wherever reads were partial. A
-    -- throw here means a restricted read, not absence - fall through to the scan.
+    -- GetUnitAuraBySpellID also returns nil for units that cannot be seen, so it
+    -- proves absence only for a visible unit while aura reads are unrestricted.
+    local visible, visibleKnown = SafeAuraCall(UnitIsVisible, "UnitIsVisible", unit)
+    if not visibleKnown or ReadableBool(visible) ~= true
+       or (BlizzardAPI and BlizzardAPI.AreAurasSecret()) then
+        return true
+    end
     local byId = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
     if byId then
-        local sawThrow = false
         for j = 1, #auraIDs do
-            local ok, data = pcall(byId, unit, auraIDs[j])
-            if ok and data ~= nil then return true end
-            if not ok then sawThrow = true end
+            local data, known = SafeAuraCall(byId, "GetUnitAuraBySpellID", unit, auraIDs[j])
+            if not known or data ~= nil then return true end
         end
-        if not sawThrow then return false end   -- every id answered plainly: true absence
+        return false
     end
-    if not BlizzardAPI or not BlizzardAPI.GetAuras then return true end
-    local auras = BlizzardAPI.GetAuras(unit, "HELPFUL")
-    if not auras then return true end
-    for i = 1, #auras do
-        local sid = auras[i].spellId
-        if sid == nil or IsSecret(sid) then return true end
-        for j = 1, #auraIDs do
-            if sid == auraIDs[j] then return true end
+    local auras, known = SafeAuraList(unit, "HELPFUL")
+    if not known then return true end
+    local ok, found = pcall(function()
+        for i = 1, #auras do
+            local aura = auras[i]
+            local sid
+            if not IsSecret(aura) and aura then sid = aura.spellId end
+            if sid == nil or IsSecret(sid) then return true end
+            for j = 1, #auraIDs do
+                if sid == auraIDs[j] then return true end
+            end
         end
+        return false
+    end)
+    if not ok then
+        ReportAuraReadError("HELPFUL aura fields", found)
+        return true
     end
-    return false
+    return found
 end
 
 -- True when a PARTY member who could actually receive the buff right now is missing it.
@@ -578,7 +647,7 @@ end
 ---   and imbues are unaffected - only the health top-off reminder honors this flag.
 --- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
 ---   than read here for the same reason as offerTopoff: this module never touches the
----   profile. nil falls back to "below full".
+---   profile. nil falls back to the default 90% threshold.
 --- @param offerStealth boolean|nil  include the stealth reminder (precombatBuffs.stealth).
 function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerStealth)
     local now = GetTime()
@@ -656,19 +725,25 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
         end
         for _, grp in ipairs(groups) do
             local active, aura, latchedActive
+            local groupKnown = true
             for _, spellID in ipairs(grp.group) do
                 if IsPlayerSpell(spellID) then
-                    local a = get(spellID)
+                    local a, known = SafeAuraCall(get, "GetPlayerAuraBySpellID", spellID)
+                    if not known then groupKnown = false; break end
                     -- A buff that applies a per-class sub-aura instead of its own cast id
-                    -- is invisible to the cast-id probe - fall back to its declared aura
-                    -- family. `active` stays the CAST id (that's what gets suggested);
-                    -- only the detection changes.
-                    if not a and grp.auraIDs then
-                        for _, auraID in ipairs(grp.auraIDs) do
-                            a = get(auraID)
+                    -- is invisible to the cast-id probe. Forever rank families associate
+                    -- each aura with its own cast member; legacy shared families retain
+                    -- their group-wide detection semantics.
+                    local memberAuraIDs = grp.memberAuraIDs and grp.memberAuraIDs[spellID]
+                    local auraIDs = memberAuraIDs or grp.auraIDs
+                    if not a and auraIDs then
+                        for _, auraID in ipairs(auraIDs) do
+                            a, known = SafeAuraCall(get, "GetPlayerAuraBySpellID", auraID)
+                            if not known then groupKnown = false; break end
                             if a then break end
                         end
                     end
+                    if not groupKnown then break end
                     if a then active, aura = spellID, a; break end
                     -- Applied-latch: the cast landed a moment ago but the aura hasn't
                     -- registered yet. Treat as active with UNKNOWN timing (aura nil -
@@ -680,7 +755,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
                     end
                 end
             end
-            local acPick = ACPickInGroup(nextCast, rotation, grp.group)
+            local acPick = groupKnown and ACPickInGroup(nextCast, rotation, grp.group)
             -- While the active member is FRESHLY APPLIED, a differing AC demand is stale
             -- by definition - the demand API settles a few seconds behind the cast we
             -- just watched land (and behind Blizzard's own visible slot), and offering
@@ -690,14 +765,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
             -- `active` comes from the aura probe and latchedActive stays unset - the
             -- gate must hold in both orders. If AC still demands a different member
             -- once the grace lapses, that is a genuine wrong-member and it fires.
-            if active and acPick and acPick ~= active
+            if groupKnown and active and acPick and acPick ~= active
                and not (latchedActive or IsFreshlyApplied(active)) then
                 -- The WRONG member is up: the assisted rotation runs a different one, and
                 -- the active buff doesn't satisfy it, so AC's queue slot stays frozen on
                 -- its pick no matter how fresh the current buff is. Offer AC's member -
                 -- applying it replaces the active one and unfreezes the recommendation.
                 out[#out + 1] = acPick
-            elseif active then
+            elseif groupKnown and active then
                 local offered = IsLapsing(aura)
                 if offered then out[#out + 1] = active end
                 -- Group buff the player already has, but a party member is missing it
@@ -706,11 +781,13 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
                 -- copy is nowhere near lapsing.
                 -- latchedActive also blocks the party recast: the cast that just landed
                 -- covered the party too, and THEIR auras lag the same server beat.
+                local activeAuras = (grp.memberAuraIDs and grp.memberAuraIDs[active])
+                    or grp.auraIDs or grp.group
                 if not offered and grp.raidWide and not latchedActive
-                   and PartyMemberMissingBuff(active, grp.auraIDs or grp.group) then
+                   and PartyMemberMissingBuff(active, activeAuras) then
                     out[#out + 1] = active
                 end
-            else
+            elseif groupKnown then
                 -- Missing entirely (lapsed/cancelled): defer to the assisted rotation's
                 -- pick; the queue-scan/default fallbacks only run when NO AC demand is
                 -- pending in another group (see pendingDemand above) - otherwise this
@@ -758,11 +835,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
         for i = 1, #engineBuffs do
             local it = engineBuffs[i]
             if it.isKnown and not it.hideByDefault and not covered[it.spellID]
-               and IsPlayerSpell(it.spellID) and not get(it.spellID)
-               and not (BlizzardAPI and BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(it.spellID)) then
-                local cdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(it.spellID)
-                if not (cdMs and not (issecretvalue and issecretvalue(cdMs)) and cdMs > 60000) then
-                    out[#out + 1] = it.spellID
+               and IsPlayerSpell(it.spellID) then
+                local aura, known = SafeAuraCall(get, "GetPlayerAuraBySpellID", it.spellID)
+                if known and not aura
+                   and not (BlizzardAPI and BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(it.spellID)) then
+                    local cdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(it.spellID)
+                    if not (cdMs and not (issecretvalue and issecretvalue(cdMs)) and cdMs > 60000) then
+                        out[#out + 1] = it.spellID
+                    end
                 end
             end
         end
@@ -772,14 +852,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
     -- enchant is inside the refresh window - the same read IsCategorySatisfied uses for oils.
     if not InCombatLockdown() then
         local imbue = KnownWeaponImbue()
-        if imbue and not MainHandEnchantHolds(true) and not IsFreshlyApplied(imbue) then
+        if imbue and not WeaponEnchantHolds(0, true) and not IsFreshlyApplied(imbue) then
             out[#out + 1] = imbue
         end
         -- Off-hand imbue (dual-imbue specs, i.e. Enhancement). Never collides with the
         -- main-hand offer: that one is Windfury whenever Windfury is known, which is
         -- exactly the condition that makes Flametongue an off-hand cast (see OffHandImbue).
         local ohImbue = OffHandImbue()
-        if ohImbue and not OffHandEnchantHolds() and not IsFreshlyApplied(ohImbue) then
+        if ohImbue and not WeaponEnchantHolds(1, true) and not IsFreshlyApplied(ohImbue) then
             out[#out + 1] = ohImbue
         end
     end
@@ -823,8 +903,12 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
     --     alert key is a POSITIVE signal only: its absence means "above the ALERT threshold",
     --     which says nothing about the user's own topoffThreshold, so it must never suppress
     --     the regen heuristic.
+    local recuperateAura, recuperateAuraKnown
+    if not InCombatLockdown() and not restricted and get and recupKnown then
+        recuperateAura, recuperateAuraKnown = SafeAuraCall(get, "GetPlayerAuraBySpellID", SpellDB.RECUPERATE_AURA)
+    end
     if not InCombatLockdown() and not restricted and get and recupKnown
-        and not get(SpellDB.RECUPERATE_AURA) then
+        and recuperateAuraKnown and not recuperateAura then
         local hurt = false
         if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
             local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
@@ -833,7 +917,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
                 notFullSince = 0                             -- onset timer is the gate path's alone
             elseif offerTopoff then
                 if pct and not estimated then
-                    hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
+                    hurt = pct < (topoffPct or RECUPERATE_HEALTH_PCT)
                     notFullSince = 0
                 else
                     -- ONE QUESTION: are you below your top-off threshold? The
@@ -885,11 +969,13 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
             -- fails OPEN because resource state can be secret even out of combat -
             -- worst case an out-of-mana click errors and mana is back in seconds.
             local heal = SpellDB.GetKnownTopoffHeal and SpellDB.GetKnownTopoffHeal()
-            if heal and get(heal) then
+            local healAura, healAuraKnown
+            if heal then
+                healAura, healAuraKnown = SafeAuraCall(get, "GetPlayerAuraBySpellID", heal)
+            end
+            if heal and (not healAuraKnown or healAura) then
                 -- The chosen heal's own HoT is still ticking: the player IS being
-                -- healed - suggest nothing (mirrors the Recuperate aura gate, and
-                -- prevents the HoT's own no-change snapshots at full health from
-                -- keeping the suggestion alive).
+                -- healed, or its state is unknown - suggest nothing.
             elseif heal and BlizzardAPI
                 and (not BlizzardAPI.IsSpellUsable or BlizzardAPI.IsSpellUsable(heal, true))
                 and (not BlizzardAPI.IsSpellReady or BlizzardAPI.IsSpellReady(heal)) then

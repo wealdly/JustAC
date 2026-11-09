@@ -10,6 +10,11 @@ L["JustAssistedCombat"] = "JustAssistedCombat"
 L["General"] = "General"
 L["Offensive"] = "DPS Queue"
 L["Defensives"] = "Defensive Queue"
+L["Efficiency Mode"] = "Mana Conservation"
+L["Efficiency Mode desc"] = "Prefer an available free attack against one detected normal enemy when health is safe and mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context disable conservation. Shows WAIT for a confirmed running, in-range auto attack when no other in-range free attack needs starting. Unknown/out-of-range attacks can still lead: positioning remains yours. Solo Only requires ungrouped open-world play; Always allows grouped PvE too. Can lead ahead of the game's recommendation on either client; never changes custom/exact lists. Off by default."
+L["Efficiency Off"] = "Off"
+L["Efficiency Solo"] = "Solo Only"
+L["Efficiency Always"] = "Always (PvE)"
 
 -- General Options
 L["Max Icons"] = "Max Icons"

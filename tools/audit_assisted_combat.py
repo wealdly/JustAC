@@ -76,17 +76,8 @@ def lua_id_set(text):
     return {int(x) for x in re.findall(r"\[(\d+)\]\s*=\s*true", text)}
 
 
-def insertable_by_spec():
-    """Mirror of RotationImport.GetInsertable + the pool filter in BlizzardAPI/SpellQuery.lua."""
-    non_offensive = lua_id_set((REPO / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
-    never = never_insert()
-    sd = (REPO / "SpellDB.lua").read_text(encoding="utf-8")
-    gap_block = sd[sd.index("SpellDB.CLASS_GAPCLOSER_DEFAULTS = {"):]
-    gap_block = gap_block[:gap_block.index("\n}")]
-    gap = {m.group(1): {int(x) for x in re.findall(r"\d+", m.group(2))}
-           for m in re.finditer(r"(\w+_\d) = \{([^}]*)\}", gap_block)}
-
-    parts = re.split(r'\n  \["([A-Z_0-9]+)"\] = \{', (REPO / "Data" / "SimcRotations.lua").read_text(encoding="utf-8"))
+def priority_candidates(text):
+    parts = re.split(r'\n  \["([A-Z_0-9]+)"\] = \{', text)
     out = {}
     for k in range(1, len(parts), 2):
         key, body, ok = parts[k], parts[k + 1], {}
@@ -105,9 +96,22 @@ def insertable_by_spec():
             first.add(m.group(1))
             sid = int(m.group(1))
             ok[sid] = ok.get(sid, True) and ",delegated=true" not in line
-        out[key] = [i for i, good in ok.items()
-                    if good and i not in non_offensive and i not in never and i not in gap.get(key, set())]
+        out[key] = [i for i, good in ok.items() if good]
     return out
+
+
+def insertable_by_spec():
+    """Mirror of RotationImport.GetInsertable + the pool filter in BlizzardAPI/SpellQuery.lua."""
+    non_offensive = lua_id_set((REPO / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
+    never = never_insert()
+    sd = (REPO / "SpellDB.lua").read_text(encoding="utf-8")
+    gap_block = sd[sd.index("SpellDB.CLASS_GAPCLOSER_DEFAULTS = {"):]
+    gap_block = gap_block[:gap_block.index("\n}")]
+    gap = {m.group(1): {int(x) for x in re.findall(r"\d+", m.group(2))}
+           for m in re.finditer(r"(\w+_\d) = \{([^}]*)\}", gap_block)}
+    candidates = priority_candidates((REPO / "Data" / "SimcRotations.lua").read_text(encoding="utf-8"))
+    return {key: [i for i in ids if i not in non_offensive and i not in never and i not in gap.get(key, set())]
+            for key, ids in candidates.items()}
 
 
 def audit_insertion():
@@ -308,9 +312,22 @@ def self_check():
     devourer = {sid for _, sid, _ in rotations().get("DEMONHUNTER_3", [])}
     live = {473662, 473728, 1217605, 1226019}
     assert live <= devourer and 1245412 in devourer, "spec-key mapping or step join is broken"
-    # Hungering Slash is delegated in the data; reading it as insertable means the entry
-    # parser lost the flag (it did once - nested gate braces).
-    assert 1239123 not in insertable_by_spec()["DEMONHUNTER_3"], "delegated flag is not being parsed"
+    # Synthetic priorities keep the parser check independent of upstream rotation changes.
+    candidates = priority_candidates("""
+  ["TEST_1"] = {
+    st = {
+      {id=1,gates={{t="any",g={{t="buff",id=2}}}},delegated=true},
+      {id=1,gates={}},
+      {id=2,gates={}},
+      {id=2,gates={},delegated=true},
+      {id=3,gates={}},
+    },
+    aoe = {
+      {id=3,gates={},delegated=true},
+    },
+  },
+""")
+    assert candidates["TEST_1"] == [2], "first-line or cross-context delegation parsing is broken"
 
 
 def audit_safelead(path=None):

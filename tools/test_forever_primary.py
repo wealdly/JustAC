@@ -35,7 +35,7 @@ function NotePick() end
 
 def main():
     source = SRC.read_text(encoding="utf-8")
-    start = source.index("function SpellQueue._StagePrimary(b)")
+    start = source.index("function SpellQueue.ResolvePetRecoveryPick(")
     end = source.index("\nfunction SpellQueue.GetCurrentSpellQueue()", start)
     lua = LuaRuntime()
     compiled, error = lua.eval(

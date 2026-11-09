@@ -826,7 +826,15 @@ function BlizzardAPI.HiddenInContent(hideIn)
 end
 
 function BlizzardAPI.IsUnitHealthBelow(unit, pct)
-    return CachedBelow(unit, pct, false, nil)
+    local below = CachedBelow(unit, pct, false, nil)
+    if below ~= nil then return below, "gate" end
+    -- The player vignette is a coarse last resort, never evidence for a lower
+    -- threshold, another unit, or healthy state when the warning is absent.
+    if unit == "player" and type(pct) == "number" and pct >= 35 and pct <= 100
+        and not UnitIsDeadOrGhost("player") and BlizzardAPI.GetLowHealthState() == true then
+        return true, "vignette"
+    end
+    return nil, "unknown"
 end
 
 --- Is this unit's power below `pct` percent? Same engine-side comparison as the
@@ -839,6 +847,40 @@ end
 --- @param powerType number|nil Enum.PowerType; nil = the unit's current type
 function BlizzardAPI.IsUnitPowerBelow(unit, pct, powerType)
     return CachedBelow(unit, pct, true, powerType)
+end
+
+local function PlainRecoveryNumber(value)
+    return not BlizzardAPI.IsSecretValue(value) and type(value) == "number"
+        and value == value and value >= 0 and value < math.huge
+end
+
+-- Steady-rate estimates only: no inferred casting lockout, hidden-resource
+-- reconstruction or cached out-of-combat values carried into combat.
+function BlizzardAPI.GetManaRecoveryEstimate()
+    if not (UnitPower and UnitPowerMax and GetManaRegen) then return nil, "unavailable" end
+    local okMax, maximum = pcall(UnitPowerMax, "player", Enum.PowerType.Mana)
+    if not okMax then return nil, "maximum denied" end
+    if not PlainRecoveryNumber(maximum) then return nil, "maximum unreadable" end
+    if maximum == 0 then return nil, "no mana" end
+    local okPower, current = pcall(UnitPower, "player", Enum.PowerType.Mana)
+    if not okPower then return nil, "current denied" end
+    if not PlainRecoveryNumber(current) or current > maximum then return nil, "current unreadable" end
+    local okRegen, base, casting = pcall(GetManaRegen)
+    if not okRegen then return nil, "regeneration denied" end
+    if not PlainRecoveryNumber(casting) then
+        return nil, "regeneration unreadable"
+    end
+    local missing = maximum - current
+    if missing == 0 then return 0, "readable", 0 end
+    local baseFull, castingFull
+    if PlainRecoveryNumber(base) and base > 0 then baseFull = missing / base end
+    if casting > 0 then castingFull = missing / casting end
+    if (baseFull and not PlainRecoveryNumber(baseFull))
+       or (castingFull and not PlainRecoveryNumber(castingFull)) then
+        return nil, "estimate invalid"
+    end
+    if casting == 0 then return nil, "no combat regeneration", baseFull end
+    return castingFull, "readable", baseFull
 end
 
 --- Which band does this unit's health fall in? `boundaries` is an ASCENDING
@@ -1691,20 +1733,19 @@ function BlizzardAPI.GetPetHealthPercent()
     return (health / maxHealth) * 100
 end
 
--- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
+-- Returns pet status string: "dead", "missing", "alive", or nil (unknown).
 -- UnitExists and UnitIsDead are NOT secret - reliable in combat
 -- Pet health IS secret in combat - use GetPetHealthPercent() for best-effort health
 function BlizzardAPI.GetPetStatus()
     local ok, exists = pcall(UnitExists, "pet")
-    if not ok or not exists then
-        return "missing"
-    end
+    if not ok then geterrorhandler()(exists); return nil end
+    if IsSecretValue(exists) or exists == nil then return nil end
+    if not exists then return "missing" end
 
     local ok2, isDead = pcall(UnitIsDead, "pet")
-    if ok2 and isDead and not IsSecretValue(isDead) then
-        return "dead"
-    end
-
+    if not ok2 then geterrorhandler()(isDead); return nil end
+    if IsSecretValue(isDead) or isDead == nil then return nil end
+    if isDead then return "dead" end
     return "alive"
 end
 
@@ -1714,10 +1755,28 @@ local PETLESS_BY_CHOICE_AURAS = {
     155228,  -- Lone Wolf (Marksmanship Hunter running without a pet)
     196099,  -- Demonic Power (Warlock with pet sacrificed for a damage buff)
 }
+-- Verified against Forever's Spell/SpellEffect data: player sacrifice buffs and
+-- Lone Wolf's ability/active no-pet buff, not its engraving or pet penalty.
+local FOREVER_PETLESS_BY_CHOICE_AURAS = {
+    18789,  -- Burning Shadow
+    18790,  -- Fel Stamina
+    18791,  -- Touch of Fire
+    18792,  -- Fel Energy
+    415370, -- Lone Wolf
+    1310684, -- Lone Wolf: no-pet damage buff
+}
+--- True for a confirmed petless buff, false for confirmed absence, nil when unknown.
 function BlizzardAPI.IsPetlessByChoice()
-    for _, auraID in ipairs(PETLESS_BY_CHOICE_AURAS) do
-        if BlizzardAPI.IsAuraActive("player", auraID) then return true end
+    local auras = PETLESS_BY_CHOICE_AURAS
+    if BlizzardAPI.IsForever() then auras = FOREVER_PETLESS_BY_CHOICE_AURAS end
+    local RedundancyFilter = GetRedundancyFilter()
+    local cache = RedundancyFilter and RedundancyFilter.GetAuraCache
+        and RedundancyFilter.GetAuraCache()
+    for _, auraID in ipairs(auras) do
+        if cache and cache.byID and cache.byID[auraID] == true then return true end
     end
+    -- A pre-combat snapshot or partial scan can confirm presence, not absence.
+    if BlizzardAPI.AreAurasSecret() or not cache or cache.complete ~= true then return nil end
     return false
 end
 

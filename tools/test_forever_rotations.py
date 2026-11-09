@@ -2,7 +2,7 @@
 # The converter rules most likely to break silently. Run: python tools/test_forever_rotations.py
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gen_forever_rotations import Conv, TRUE, FALSE  # noqa: E402
+from gen_forever_rotations import Conv, TRUE, FALSE, UNK  # noqa: E402
 
 c = lambda v: {"const": {"val": v}}
 cmp = lambda op, lhs, n: {"cmp": {"op": op, "lhs": lhs, "rhs": c(n)}}
@@ -13,10 +13,10 @@ conv = Conv({}, self_id=772)
 # const on the left flips the comparison
 assert conv.conv({"cmp": {"op": "OpLt", "lhs": c("40"), "rhs": {"currentRage": {}}}}) == \
     {"t": "power", "res": "rage", "op": ">", "n": 40.0}
-# "not my own DoT" is the refresh gate; "not another class's debuff" holds solo
+# Only the spell's own maintained DoT can supply a refresh gate.
 assert conv.conv({"not": {"val": dot(772)}}) == {"t": "dot", "id": 772}
 other = Conv({}, self_id=772)
-assert other.conv({"not": {"val": dot(11198)}}) == TRUE and not other.delegated
+assert other.conv({"not": {"val": dot(11198)}}) == TRUE and other.delegated
 # an `or` with an inexpressible member is dropped whole, never made stricter
 o = Conv({})
 assert o.conv({"or": {"vals": [cmp("OpGe", {"currentRage": {}}, "80"), {"bossSpellIsCasting": {}}]}}) == TRUE
@@ -45,11 +45,12 @@ assert d.conv({"cmp": {"op": "OpLe", "lhs": rem("dotRemainingTime", 348),
 assert not d.delegated
 b = Conv({}, self_id=5171)  # Slice and Dice about to drop = my own buff down
 assert b.conv(cmp("OpLt", rem("auraRemainingTime", 5171), "3"))["neg"] is True and not b.delegated
-assert Conv({}).conv({"frontOfTarget": {}}) == TRUE                       # solo: the mob faces you
-assert Conv({}).conv({"not": {"val": {"frontOfTarget": {}}}}) == FALSE    # so never Shred from the list
+assert Conv({}).conv({"frontOfTarget": {}}) == UNK
+facing = Conv({})
+assert facing.conv({"not": {"val": {"frontOfTarget": {}}}}) == TRUE and facing.delegated
 k = Conv({603: [("603", "")]}, self_id=980)  # Bane of Agony unless Bane of Doom (a class spell)
-assert k.conv({"not": {"val": dot(603)}}) == {"t": "known", "id": 603, "neg": True} and not k.delegated
-assert Conv({}, self_id=7386).conv({"not": {"val": dot(11198)}}) == TRUE  # another class's debuff: solo
+assert k.conv({"not": {"val": dot(603)}}) == TRUE and k.delegated
+assert Conv({}, self_id=7386).conv({"not": {"val": dot(11198)}}) == TRUE
 assert Conv({}).conv(cmp("OpLe", {"unitDistance": {}}, "10")) == {"t": "near", "n": 10.0}
 assert Conv({}, self_id=8075).conv(cmp("OpLe", {"totemRemainingTime": {"totemType": "Earth"}}, "0s")) == \
     {"t": "totem", "slot": 2, "neg": True}
@@ -101,8 +102,12 @@ for tree in ("beast_mastery", "marksmanship", "survival"):
     assert ids == [1978, 75], (tree, ids)
 # Backstab is last in each Rogue base list, below the normal builders, and stays available.
 rogue = data[data.index('["ROGUE_F"] = {'):data.index('["SHAMAN_F"] = {')]
+import check_forever_apl as cfa  # noqa: E402
+from gen_forever_rotations import rank1  # noqa: E402
+
+rogueChains, _ = cfa.class_chains(cfa.CLASS_MASK["rogue"])
 for tree, tail in (("combat", [1752, 53]), ("subtlety", [16511, 1752, 53]),
-                   ("assassination", [1310707, 1752, 53])):
+                   ("assassination", [rank1(rogueChains["mutilate"]), 1752, 53])):
     block = rogue[rogue.index(tree + " = {"):]
     block = block[:block.index("\n    },")]
     ids = [int(i) for i in re.findall(r"\{id=(\d+),", block)]
@@ -120,7 +125,7 @@ runtime.execute(data)
 classes = runtime.globals().classes
 ids_of = lambda entries: [entry["id"] for entry in entries.values()]
 frost = classes.MAGE_F.frost
-assert 120 not in ids_of(frost.cleave), "Cone of Cold is no longer a two-target lead"
+assert 120 in ids_of(frost.cleave), "Cone of Cold retains reviewed two-target coverage"
 assert any(e["id"] == 120 and any(g["t"] == "near" and g["n"] == 10 for g in e["gates"].values())
            for e in frost.aoe.values()), "Frost point-blank AoE keeps its distance condition"
 prot = classes.WARRIOR_F.protection

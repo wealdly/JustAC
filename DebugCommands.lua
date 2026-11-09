@@ -47,6 +47,44 @@ local function SafeSecret(v)
     return PlainText(v) or "<secret>"
 end
 
+-- Chat-only presentation. Capture proxies continue receiving the original rows.
+function DebugCommands.ChatOutput(addon)
+    return setmetatable({ Print = function(_, message)
+        local text = SafeSecret(message)
+        for row in (text .. "\n"):gmatch("(.-)\n") do
+            local plain = row:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            if #plain <= 76 then
+                addon:Print(row)
+            else
+                local line, pos = "", 1
+                while pos <= #plain do
+                    local first, last = plain:find("%S+", pos)
+                    if not first then break end
+                    -- Keep clickable links intact, including spaces in their labels.
+                    local linkStart = plain:find("|H", first, true)
+                    if linkStart and linkStart <= last then
+                        local label = plain:find("|h", linkStart + 2, true)
+                        local finish = label and plain:find("|h", label + 2, true)
+                        if finish then last = finish + 1 end
+                    end
+                    local word = plain:sub(first, last)
+                    if #line + #word + 1 > 76 and line:find("%S") then
+                        addon:Print(line)
+                        line = "  "
+                    end
+                    if line == "" or line == "  " then
+                        line = line .. word
+                    else
+                        line = line .. " " .. word
+                    end
+                    pos = last + 1
+                end
+                if line:find("%S") then addon:Print(line) end
+            end
+        end
+    end }, { __index = addon, __newindex = addon })
+end
+
 --- Perform one candidate read and classify what came back. THE primitive every
 --- probe's per-read verdict is built on.
 --- @param fn function the read, called under pcall
@@ -155,6 +193,10 @@ end
 -- new ones next to the thing they diagnose rather than at the end.
 --------------------------------------------------------------------------------
 local INSPECT_TOPICS = {
+    { "start",       "StartDiagnostics",         nil, "Start the shared diagnostic session on either client" },
+    { "stop",        "StopDiagnostics",          nil, "Stop session-owned captures; preserve results for /reload" },
+    { "status",      "DiagnosticStatus",         nil, "Show diagnostic session state and recorder ownership" },
+    { "report",      "DiagnosticReport",         nil, "Summarize the latest diagnostic session" },
     { "modules",     "ModuleDiagnostics",        nil,  "Check module health" },
     { "cooldown",    "TestCooldownAPIs",         "[spell]", "Test cooldown APIs (defaults to AC suggestion)" },
     { "defensives",  "DefensiveDiagnostics",     nil,  "Diagnose defensive system" },
@@ -166,6 +208,7 @@ local INSPECT_TOPICS = {
     { "perf",        "PerformanceDiagnostics",   "[reset]", "Queue build rate + threshold-gate cost (requires debug mode)" },
     { "rank",        "ContextRankDiagnostics",   nil,  "Queue context inference and per-spell ordering ranks" },
     { "dots",        "DotDiagnostics",           nil,  "Maintained-DoT tracking state for the current target" },
+    { "curses",      "CurseDiagnostics",         nil,  "Cooldown Manager curse aura signals for the current target" },
     { "gates",       "GateDiagnostics",          nil,  "SimC gate layer: buff-window tracker + live gate eval (in combat)" },
     { "simcgates",   "SimcGateProbe",            "[st|aoe|cleave]", "Evaluate this spec's SimC gates live, with their inputs" },
     { "blank",       "QueueBlankReport",         nil,  "Why the queue last went empty (run right after it vanishes)" },
@@ -195,6 +238,7 @@ local INSPECT_TOPICS = {
     { "textlaunder", "TextLaunderProbe",         nil,  "The FontString zero-gate: does secret text launder back plain?" },
     { "healthprobe", "HealthProbe",              nil,  "Sweep every OOC health-detection channel (run while hurt)" },
     { "healthgate",  "HealthGatePreview",        nil,  "Toggle live swatches proving the curve gate tracks health" },
+    { "threshold",   "ThresholdDiagnostics",     "[health|power percent]", "One live health/power threshold verdict; defaults to configured topoff" },
     { "healprobe",   "HealProbe",                "[arm|show|watch]", "Heal-mode party probes: low-bridge, roster gates, curves, AC feed" },
     { "resource",    "ResourceDiagnostics",      nil,  "Probe secret-safe resource inference from usability" },
     { "resourcepoints", "ResourcePointProbe",    nil,  "Do class resource points (combo/holy power/chi) read plain?" },
@@ -425,6 +469,47 @@ end
 -- Watch while healing: the swatch VISIBLE while hurt and GONE at full marks the
 -- correct domain and proves the production gate works. Run again to remove.
 --------------------------------------------------------------------------------
+function DebugCommands.ThresholdDiagnostics(addon, arg)
+    local profile = addon:GetProfile()
+    local pre = profile and profile.precombatBuffs
+    local kind, value
+    if not arg or arg == "" then
+        kind, value = "health", pre and pre.topoffThreshold
+    else
+        kind, value = arg:match("^(%a+)%s+(%d+%.?%d*)$")
+        value = tonumber(value)
+    end
+    if (kind ~= "health" and kind ~= "power") or not value or value <= 0 or value > 100 then
+        addon:Print("Usage: /jac inspect threshold health|power <percent 1-100>; omit arguments for configured topoff")
+        return
+    end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local gate
+    if BAPI then
+        if kind == "health" then gate = BAPI.IsUnitHealthBelow else gate = BAPI.IsUnitPowerBelow end
+    end
+    if not gate then
+        addon:Print("threshold: health/power helper unavailable")
+        return
+    end
+    local ok, below, source = pcall(gate, "player", value)
+    if not ok then
+        addon:Print("threshold: read failed: " .. SafeSecret(below))
+        return
+    end
+    local verdict = "unknown"
+    if not IsSecret(below) then
+        if below == true then verdict = "true" elseif below == false then verdict = "false" end
+    end
+    addon:Print(string.format("  player %s below %g%%: %s (combat=%s)",
+        kind, value, verdict, tostring(UnitAffectingCombat("player"))))
+    if source then addon:Print("  health decision source: " .. SafeSecret(source)) end
+    if kind == "health" and pre and value == pre.topoffThreshold then
+        addon:Print("  topoff enabled: " .. tostring(pre.topoffHeal == true)
+            .. "; threshold only - learned ability, readiness and other offer gates still apply")
+    end
+end
+
 function DebugCommands.HealthGatePreview(addon)
     if DebugCommands._healthGateFrame then
         DebugCommands._healthGateFrame:Hide()
@@ -863,6 +948,10 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     if queueContext and queueContext.pullOpenerID == displayID then
         note("Forever pull opener: Lightning Bolt is preferred before combat; its combat-only Maelstrom requirement is waived")
     end
+    if queueContext and queueContext.efficiencyID == displayID then
+        note("Efficiency: " .. tostring(queueContext.efficiencyReason)
+            .. " using this free attack")
+    end
     local found
     if type(queue) == "table" then
         for i = 1, #queue do
@@ -974,9 +1063,10 @@ function DebugCommands.DefensiveDiagnostics(addon)
                 addon:Print("  Current Health: " .. string.format("%.1f%%", healthPct))
             end
         else
-            addon:Print("  Current Health: |cffff0000nil|r")
+            addon:Print("  Current Health: unreadable (not a threshold verdict)")
         end
     end
+    DebugCommands.ThresholdDiagnostics(addon)
 
     local inCombat = UnitAffectingCombat("player")
     addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
@@ -1014,6 +1104,20 @@ function DebugCommands.DefensiveDiagnostics(addon)
     if BlizzardAPI and BlizzardAPI.GetPetStatus then
         local petStatus = BlizzardAPI.GetPetStatus()
         addon:Print("  Pet Status: " .. (petStatus or "N/A"))
+        addon:Print("  Petless choice: " .. ProbeCell(function() return BlizzardAPI.IsPetlessByChoice() end)
+            .. " (nil = unknown, optional reminder suppressed)")
+        local DE = LibStub("JustAC-DefensiveEngine", true)
+        local list = DE and DE.GetClassSpellList(addon, "petRezSpells") or {}
+        local available = 0
+        for _, id in ipairs(list) do
+            if BlizzardAPI.IsSpellAvailable(id) then available = available + 1 end
+        end
+        addon:Print("  Pet summon/rez list: " .. #list .. " configured, " .. available .. " learned")
+        if DE and DE.GetPetReminderState then
+            local eligible, reason = DE.GetPetReminderState(addon)
+            addon:Print("  Pet reminder: eligible=" .. tostring(eligible) .. " reason=" .. SafeSecret(reason))
+            addon:Print("  Placement still requires an enabled surface and a spare icon; OOC uses the main precombat bar.")
+        end
         if petStatus == "alive" and BlizzardAPI.GetPetHealthPercent then
             local petHP = BlizzardAPI.GetPetHealthPercent()
             addon:Print("  Pet Health: " .. (petHP and string.format("%.0f%%", petHP) or "secret"))
@@ -1489,6 +1593,8 @@ function DebugCommands.AuraDiagnostics(addon)
     addon:Print("Aura Cache Status:")
     addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
     addon:Print("  hasSecrets: " .. tostring(auras.hasSecrets or false))
+    addon:Print("  complete: " .. tostring(auras.complete == true)
+        .. " (only a complete read can prove absence)")
     addon:Print("  byID entries: " .. countTable(auras.byID))
     addon:Print("  byName entries: " .. countTable(auras.byName))
 
@@ -1517,17 +1623,27 @@ function DebugCommands.AuraDiagnostics(addon)
     local count = 0
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 40 do
-            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-            if not auraData then break end
+            local status, text, auraData = ProbeRead(function()
+                return C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            end)
+            if status == "err" or status == "secret" then
+                addon:Print("  Enumeration " .. status .. ": " .. text .. " (count incomplete)")
+                break
+            end
+            if status == "nil" then break end
             count = count + 1
             if count <= 20 then
-                -- spellId/name are secret in combat; SafeSecret pcalls the tostring.
-                addon:Print("  [" .. i .. "] ID:" .. SafeSecret(auraData.spellId) .. " Name:" .. SafeSecret(auraData.name))
+                addon:Print("  [" .. i .. "] ID:" .. ProbeCell(function() return auraData.spellId end)
+                    .. " Name:" .. ProbeCell(function() return auraData.name end))
             end
         end
     else
         for i = 1, 40 do
-            local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", i, "HELPFUL")
+            local ok, name, _, _, _, _, _, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
+            if not ok then
+                addon:Print("  Enumeration err: " .. SafeSecret(name) .. " (count incomplete)")
+                break
+            end
             if not name and not spellId then break end
             count = count + 1
             if count <= 20 then
@@ -1535,7 +1651,7 @@ function DebugCommands.AuraDiagnostics(addon)
             end
         end
     end
-    addon:Print("  Total buffs: " .. count)
+    addon:Print("  Buffs enumerated: " .. count)
 
     addon:Print("==============================")
 end
@@ -1619,22 +1735,32 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         return
     end
 
+    local profile = addon:GetProfile()
+    local pre = profile and profile.precombatBuffs or {}
+    addon:Print("  Aura secrecy: " .. ProbeCell(function()
+        return LibStub("JustAC-BlizzardAPI").AreAurasSecret()
+    end))
+    addon:Print("  Offers enabled: " .. tostring(Engine.IsOfferingNow(profile)))
     for _, cat in ipairs(SpellDB.GetPrecombatBuffCategories()) do
         local items = SpellDB.GetPrecombatBuffItems(cat) or {}
-        local satisfied = Engine.IsCategorySatisfied(cat)
-        local best = SpellDB.GetBestOwnedBuff(cat)
-        local bestName = best and ((C_Item.GetItemInfo(best.id)) or ("item " .. best.id))
+        local pref = pre.categories and pre.categories[cat]
+        local satisfied, known = Engine.IsCategorySatisfied(cat)
+        local best = SpellDB.GetBestOwnedBuff(cat, type(pref) == "string" and pref or nil)
+        local bestName = best and ((best.source == "spell" and SpellLabel(best.id))
+            or (C_Item.GetItemInfo(best.id)) or ("item " .. best.id))
         local statTag = best and best.stat and (" |cff888888[" .. best.stat .. "]|r") or ""
-        local state = satisfied and "|cff00ff00active|r"
+        local state = pref == false and "|cff888888disabled|r"
+            or (known ~= true and "|cffffff00unknown (offer suppressed)|r")
+            or (satisfied and "|cff00ff00active|r")
             or (best and "|cffff6666MISSING|r" or "|cff888888missing, none owned|r")
         addon:Print(string.format("%s (%d known): %s%s%s", cat, #items, state,
             bestName and ("  best owned: " .. bestName) or "", statTag))
     end
 
-    local missing = Engine.GetMissingBuffs()
-    addon:Print("---- would surface ----")
+    local missing = Engine.GetMissingBuffs(pre.categories)
+    addon:Print("---- eligible checklist (before visibility/icon limits) ----")
     if #missing == 0 then
-        addon:Print("|cff00ff00Nothing missing (or nothing owned to fix it).|r")
+        addon:Print("|cff888888No eligible offers: active, disabled, unknown or none usable/owned.|r")
     else
         for _, m in ipairs(missing) do
             local nm = (C_Item.GetItemInfo(m.entry.id)) or ("item " .. m.entry.id)
@@ -1675,8 +1801,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
             addon:Print(string.format("  group %d: rotation-listed: %s", gi,
                 #inRot > 0 and table.concat(inRot, ", ") or "|cff888888none|r"))
         end
-        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
-                addon.db.profile.precombatBuffs.topoffThreshold, addon.db.profile.precombatBuffs.stealth) or {}) do
+        for _, s in ipairs(Engine.GetMissingClassBuffs(pre.topoffHeal,
+                pre.topoffThreshold, pre.stealth) or {}) do
             addon:Print("  offering: " .. SpellName(s))
         end
     end
@@ -1693,20 +1819,17 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
             .. "  queue[1]=" .. (head and SpellName(head) or "|cff888888nil|r"))
         local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
         for _, id in ipairs({ 465, 32223, 183435 }) do
-            local a = get and get(id)
+            local a = ProbeCell(function() return get and get(id) end)
             addon:Print(string.format("  %s known=%s auraByCastId=%s", SpellName(id),
-                tostring(IsPlayerSpell(id)), a and "|cff00ff00YES|r" or "|cffff6666no|r"))
+                tostring(IsPlayerSpell(id)), a))
         end
         -- Discovery dump: every readable helpful aura on the player, so a differing
         -- aura id (cast id != aura id) shows up by name.
         local auras = BAPI and BAPI.GetAuras and BAPI.GetAuras("player", "HELPFUL")
         if auras then
             for i = 1, #auras do
-                local sid, nm = auras[i].spellId, auras[i].name
-                if sid and not (issecretvalue and issecretvalue(sid))
-                   and not (nm and issecretvalue and issecretvalue(nm)) then
-                    addon:Print("  helpful: " .. tostring(nm) .. " (" .. sid .. ")")
-                end
+                addon:Print("  helpful: " .. ProbeCell(function() return auras[i].name end)
+                    .. " (" .. ProbeCell(function() return auras[i].spellId end) .. ")")
             end
         end
     end
@@ -1721,8 +1844,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         local knownAlt = (IsSpellKnown and IsSpellKnown(sid)) or false
         local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
         local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
-        local hotUp = get and get(SpellDB.RECUPERATE_AURA) ~= nil
-        local activeUp = get and get(sid) ~= nil
+        local hotUp = ProbeCell(function() return get and get(SpellDB.RECUPERATE_AURA) end)
+        local activeUp = ProbeCell(function() return get and get(sid) end)
         local BAPI = LibStub("JustAC-BlizzardAPI", true)
         local pct = BAPI and BAPI.GetPlayerHealthPercent and BAPI.GetPlayerHealthPercent()
         local safePct, estimated
@@ -1741,9 +1864,11 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         addon:Print("  health exact: " .. (pct and string.format("%.1f%%", pct) or "|cffff6666unreadable|r")
             .. "  safe: " .. (safePct and string.format("%.1f%%", safePct) or "nil")
             .. (estimated and " |cffffff00(vignette estimate)|r" or "")
-            .. " (offer below 90%)" .. (dead and "  |cffff6666DEAD/GHOST|r" or ""))
+            .. " (topoff threshold " .. tostring(pre.topoffThreshold or "?") .. "%)"
+            .. (dead and "  |cffff6666DEAD/GHOST|r" or ""))
         addon:Print("  health event activity: recent=" .. tostring(activity or false)
             .. " sustained=" .. tostring(sustained or false) .. " (sustained drives the offer)")
+        DebugCommands.ThresholdDiagnostics(addon)
         -- Fill-width probe: Blizzard's player frame sets its health fill from the
         -- secret value engine-side. If the fill texture's LAID-OUT width reads as a
         -- plain number, width/barWidth = exact health fraction even where UnitHealth
@@ -1764,8 +1889,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         end
         addon:Print("  health-bar fill-width probe: " .. FillRatio())
         local surfaced = false
-        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
-                addon.db.profile.precombatBuffs.topoffThreshold, addon.db.profile.precombatBuffs.stealth) or {}) do
+        for _, s in ipairs(Engine.GetMissingClassBuffs(pre.topoffHeal,
+                pre.topoffThreshold, pre.stealth) or {}) do
             if s == sid then surfaced = true break end
         end
         addon:Print("  would surface: " .. (surfaced and "|cff00ff00YES|r" or "|cffff6666NO|r"))
@@ -1830,6 +1955,16 @@ function DebugCommands.ContextRankDiagnostics(addon)
         dyingWhy = "|cff888888off - target above the threshold (or gate unavailable)|r"
     end
     addon:Print("Dying-target guard: " .. dyingWhy)
+    addon:Print("Efficiency (last build): " .. tostring(ctx.efficiencyReason or "not evaluated")
+        .. "; promoted=" .. tostring(ctx.efficiencyID))
+    addon:Print("  Resource decision: " .. tostring(ctx.efficiencyResourceDecision)
+        .. "; estimate source=" .. tostring(ctx.efficiencyRecoverySource)
+        .. "; combat/base seconds to full=" .. tostring(ctx.efficiencyFullSeconds)
+        .. "/" .. tostring(ctx.efficiencyBaseFullSeconds))
+    addon:Print("  Free attacks: " .. tostring(ctx.efficiencyCandidates)
+        .. "; chosen reach=" .. tostring(ctx.efficiencyRange))
+    addon:Print("  Fallback mana below configured threshold=" .. tostring(ctx.efficiencyManaBelow)
+        .. "; detected enemies=" .. tostring(ctx.enemies))
 
     -- State the ACTIVE ordering mode, not just the disabled case. In "simc" - the default -
     -- the sort key is a COMPOSITE (context * stride + SimC position), applied within buckets
@@ -2936,11 +3071,12 @@ local function CountPlayerAuraInstances()
     if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then return nil end
     local n = 0
     for i = 1, 60 do
-        local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
-        if not ok or not data then break end
+        local data = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+        if IsSecret(data) then return data end
+        if data == nil then return n end
         n = n + 1
     end
-    return n
+    return nil -- Reaching the scan cap cannot establish a complete count.
 end
 
 --- Classify one candidate read. Never throws.
@@ -3140,7 +3276,9 @@ function DebugCommands.SecrecyProbe(addon)
             return caa and caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
                 and (caa.partyHealthInfo.unitInfo["player"] ~= nil) end },
         { "CAA unitInfo['player'].frequency", function()
-            return caa.partyHealthInfo.unitInfo["player"].frequency end,
+            local info = caa and caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
+            local player = info and info["player"]
+            return player and player.frequency end,
           "Lerp'd from health % -> expect SECRET. If PLAIN this IS the health number" },
 
         { "-- COOLDOWN VIEWER pandemic window (needs Cooldown Manager shown) --" },
@@ -4207,7 +4345,7 @@ local SECRECY_LEVEL = { [0] = "NeverSecret", [1] = "AlwaysSecret", [2] = "Contex
 -- pasted out of chat. Intermittent faults - a tracker stuck "down" for minutes, a bind that
 -- never retries - are invisible in a snapshot and obvious in a sequence.
 -- SavedVariables flush on /reload or logout ONLY: play, then /reload, then read the file.
-local MAINTLOG_MAX = 400          -- ~6.5 min at 1s; bounded so it cannot bloat the file
+local MAINTLOG_MAX = 400          -- bounded transitions, not elapsed seconds
 local maintLogTicker = nil
 local lastMaintPayload = nil   -- change-only guard for MaintLogSample
 
@@ -4279,7 +4417,7 @@ local function MaintLogSample()
     end
 end
 
---- /jac inspect maintlog [on|off|clear] - record maintenance-slot state once a second.
+--- /jac inspect maintlog [on|off|clear] - sample maintenance state 10/s, save transitions.
 function DebugCommands.MaintenanceLog(addon, arg)
     arg = arg and arg:lower() or nil
     if arg == "clear" then
@@ -4299,10 +4437,21 @@ function DebugCommands.MaintenanceLog(addon, arg)
         addon:Print("|cffff6600C_Timer unavailable|r")
         return
     end
+    if maintLogTicker then
+        addon:Print("maintlog: already ON")
+        return
+    end
     -- 10/s: the reported lag is sub-second, which 1/s sampling cannot resolve at all.
     -- Cheap because the sample is change-only (see MaintLogSample).
     lastMaintPayload = nil
-    maintLogTicker = C_Timer.NewTicker(0.1, function() pcall(MaintLogSample) end)
+    maintLogTicker = C_Timer.NewTicker(0.1, function()
+        local ok, err = pcall(MaintLogSample)
+        if not ok then
+            maintLogTicker:Cancel()
+            maintLogTicker = nil
+            addon:Print("maintlog: stopped after sample error: " .. SafeSecret(err))
+        end
+    end)
     addon:Print("maintlog: |cff00ff00ON|r - sampling 10/s, transitions only. Press the buff a few")
     addon:Print("times (first application AND refreshes), then |cffffff00/jac inspect maintlog off|r and |cffffff00/reload|r.")
 end
@@ -4540,7 +4689,15 @@ function DebugCommands.PickLog(addon, arg)
         return
     end
     lastPickPayload = nil
-    pickLogTicker = C_Timer.NewTicker(0.2, function() pcall(PickLogSample) end)
+    if pickLogTicker then addon:Print("picklog: already ON"); return end
+    pickLogTicker = C_Timer.NewTicker(0.2, function()
+        local ok, err = pcall(PickLogSample)
+        if not ok then
+            pickLogTicker:Cancel()
+            pickLogTicker = nil
+            addon:Print("picklog: stopped after sample error: " .. SafeSecret(err))
+        end
+    end)
     addon:Print("picklog: |cff00ff00ON|r - fight normally (single target AND packs), then")
     addon:Print("|cffffff00/jac inspect picklog off|r, |cffffff00/reload|r, and run tools/audit_assisted_combat.py --decode")
 end
@@ -6297,6 +6454,10 @@ local function ProbeLogEmit(msg)
     if #log > PROBE_LOG_MAX then
         local keep, half = {}, math.floor(PROBE_LOG_MAX / 2)
         for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
+        local dropped = #log - #keep
+        _G.JustACGlobal.probeLogDropped = (_G.JustACGlobal.probeLogDropped or 0) + dropped
+        local session = DebugCommands._diagnosticSession
+        if session then session.dropped = (session.dropped or 0) + dropped end
         _G.JustACGlobal.probeLog = keep
     end
 end
@@ -8605,16 +8766,404 @@ local PROBE_BATTERY = { "DurationProbe", "AuraInstanceIdsProbe", "CooldownFields
                         "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe",
                         "ForeverProbe", "ForeverAuraProbe" }
 
+function DebugCommands.DiagnosticReport(addon)
+    local s = DebugCommands._diagnosticSession or DebugCommands._lastDiagnosticSession
+        or (_G.JustACGlobal and _G.JustACGlobal.diagnosticSummary)
+    if not s then
+        addon:Print("diagnostics: no session summary captured")
+        if _G.JustACGlobal and _G.JustACGlobal.probeLog and #_G.JustACGlobal.probeLog > 0 then
+            addon:Print("  Detailed probeLog entries exist; older captures did not persist report summaries.")
+        end
+        return
+    end
+    addon:Print(string.format("diagnostics: %d samples, %d changes, %d combat entries, %d probe failures",
+        s.samples, s.changes, s.pulls, s.failures))
+    addon:Print("  session=" .. s.id .. "; context is recorded at baseline, combat edges and context events.")
+    addon:Print("  rolling log entries discarded during session: " .. tostring(s.dropped or 0)
+        .. "; initial baseline is stored separately when available.")
+    if s.sampleMs then
+        addon:Print(string.format("  sampler ms: total=%.2f mean=%.3f max=%.3f; audit ms: total=%.2f count=%d max=%.3f",
+            s.sampleMs, s.sampleMs / math.max(s.samples, 1), s.sampleMaxMs,
+            s.batteryMs or 0, s.batteries or 0, s.batteryMaxMs or 0))
+    else
+        addon:Print("  timing: unavailable")
+    end
+    for _, key in ipairs({"build", "class", "level", "spec", "instanceType", "mapID", "powerType",
+        "healthThreshold", "healthBelow", "healthSource", "healUrgencyBelow50",
+        "powerBelow50", "recoveryHealthThreshold", "recoveryHealthBelow",
+        "recoveryManaThreshold", "recoveryManaBelow", "leadMode",
+        "efficiencyMode", "efficiencyManaThreshold", "efficiencyRecoverySeconds",
+        "efficiencyReason", "efficiencyID", "efficiencyRecovery", "efficiencyCandidates",
+        "efficiencyManaBelow", "efficiencyEnemies"}) do
+        addon:Print("  " .. key .. "=" .. (s.last[key] or "untested"))
+    end
+    addon:Print("  Observations only: passing gates do not prove correct offers. Missing/secret reads are not absence.")
+    addon:Print("  powerBelow50 tests current resource; recoveryManaBelow explicitly tests mana. Recovery offers are OOC-only.")
+    addon:Print("  Summary and detailed log persist in JustACGlobal; /reload or logout flushes current changes to disk.")
+end
+
+function DebugCommands.DiagnosticStatus(addon)
+    local s = DebugCommands._diagnosticSession
+    addon:Print("diagnostics: " .. (s and "ON" or "OFF"))
+    addon:Print("  audit=" .. tostring(DebugCommands._probeSession ~= nil)
+        .. " errors=" .. tostring(DebugCommands._errorCapture ~= nil))
+    if s then
+        addon:Print("  owned audit=" .. tostring(s.ownsAudit) .. " errors=" .. tostring(s.ownsErrors))
+    end
+    DebugCommands.DiagnosticReport(addon)
+end
+
+function DebugCommands.StopDiagnostics(addon)
+    local s = DebugCommands._diagnosticSession
+    if not s then addon:Print("diagnostics: already OFF"); return end
+    DebugCommands._diagnosticSession = nil
+    s.frame:UnregisterAllEvents()
+    s.frame:SetScript("OnEvent", nil)
+    s.ticker:Cancel()
+    if s.ownsAudit and DebugCommands._probeSession == s.audit then DebugCommands.ProbeSession(addon, "off") end
+    if s.ownsErrors and DebugCommands._errorCapture == s.errors then DebugCommands.ErrorCapture(addon, "off") end
+    ProbeLogEmit(string.format("DIAGNOSTICS STOP session=%s samples=%d changes=%d pulls=%d failures=%d",
+        s.id, s.samples, s.changes, s.pulls, s.failures))
+    if s.sampleMs then
+        ProbeLogEmit(string.format("DIAGNOSTICS TIMING session=%s samplerMs=%.3f samplerMaxMs=%.3f auditMs=%.3f auditCount=%d auditMaxMs=%.3f",
+            s.id, s.sampleMs, s.sampleMaxMs, s.batteryMs or 0, s.batteries or 0, s.batteryMaxMs or 0))
+    end
+    DebugCommands._lastDiagnosticSession = s
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local summary = {last={}}
+    for _, key in ipairs({"id", "samples", "changes", "pulls", "failures", "sampleMs",
+        "sampleMaxMs", "batteryMs", "batteries", "batteryMaxMs", "dropped"}) do
+        summary[key] = s[key]
+    end
+    for key, value in pairs(s.last) do summary.last[key] = value end
+    _G.JustACGlobal.diagnosticSummary = summary
+    addon:Print("diagnostics: OFF")
+    DebugCommands.DiagnosticReport(addon)
+end
+
+function DebugCommands.StartDiagnostics(addon, arg)
+    if arg and arg ~= "" then
+        addon:Print("Usage: /jac inspect start (shared health, power, pet, queue, audit and error capture)")
+        return
+    end
+    if DebugCommands._diagnosticSession then addon:Print("diagnostics: already ON"); return end
+    DebugCommands._diagnosticSerial = (DebugCommands._diagnosticSerial or 0) + 1
+    local s = { samples=0, changes=0, pulls=0, failures=0, last={}, started=GetTime(),
+        id=date("%Y%m%d-%H%M%S") .. "-" .. DebugCommands._diagnosticSerial,
+        ownsAudit=DebugCommands._probeSession == nil, ownsErrors=not DebugCommands._errorCapture }
+    DebugCommands._diagnosticSession = s
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        local DE = LibStub("JustAC-DefensiveEngine", true)
+        local RF = LibStub("JustAC-RedundancyFilter", true)
+        local PE = LibStub("JustAC-PrecombatEngine", true)
+        local SDB = LibStub("JustAC-SpellDB", true)
+        local SQ = LibStub("JustAC-SpellQueue", true)
+        local profile, pre
+        local function rendered(icon)
+            return icon:IsShown() and icon:GetAlpha() > 0
+                and icon.iconTexture and icon.iconTexture:IsShown()
+        end
+        local function listContext(list)
+            if not list then return nil end
+            local ids = {}
+            for i, id in ipairs(list) do ids[i] = SafeSecret(id) end
+            return table.concat(ids, ",")
+        end
+        local reads = {
+            combat=function() return UnitAffectingCombat("player") end,
+            build=function() local v,b = GetBuildInfo(); return tostring(v) .. "." .. tostring(b) end,
+            interface=function() return select(4, GetBuildInfo()) end,
+            project=function() return WOW_PROJECT_ID end,
+            forever=function() return B and B.IsForever and B.IsForever() end,
+            addonVersion=function() return C_AddOns and C_AddOns.GetAddOnMetadata("JustAC", "Version") end,
+            class=function() return select(2, UnitClass("player")) end,
+            level=function() return UnitLevel("player") end,
+            spec=function() return SDB and SDB.GetSpecKey and SDB.GetSpecKey() end,
+            form=function() return GetShapeshiftForm() end,
+            resting=function() return IsResting() end,
+            dead=function() return UnitIsDeadOrGhost("player") end,
+            mounted=function() return IsMounted() end,
+            vehicle=function() return UnitInVehicle("player") end,
+            groupSize=function() return GetNumGroupMembers() end,
+            instanceType=function() return select(2, GetInstanceInfo()) end,
+            difficulty=function() return select(3, GetInstanceInfo()) end,
+            instanceID=function() return select(8, GetInstanceInfo()) end,
+            mapID=function() return C_Map and C_Map.GetBestMapForUnit("player") end,
+            targetExists=function() return UnitExists("target") end,
+            targetHostile=function() return UnitCanAttack("player", "target") end,
+            targetDead=function() return UnitIsDeadOrGhost("target") end,
+            targetFriendly=function() return UnitIsFriend("player", "target") end,
+            manualMode=function() return profile and profile.isManualMode end,
+            leadMode=function() return SQ and SQ.LeadMode and SQ.LeadMode(profile) end,
+            efficiencyMode=function() return profile and (profile.efficiencyMode or "off") end,
+            efficiencyManaThreshold=function() return profile and (profile.efficiencyManaThreshold or 40) end,
+            efficiencyRecoverySeconds=function() return profile and (profile.efficiencyRecoverySeconds or 10) end,
+            efficiencyRecovery=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                if not ctx then return nil end
+                return string.format("decision=%s source=%s combatSeconds=%s baseSeconds=%s reach=%s",
+                    SafeSecret(ctx.efficiencyResourceDecision), SafeSecret(ctx.efficiencyRecoverySource),
+                    SafeSecret(ctx.efficiencyFullSeconds), SafeSecret(ctx.efficiencyBaseFullSeconds),
+                    SafeSecret(ctx.efficiencyRange))
+            end,
+            efficiencyCandidates=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                return ctx and ctx.efficiencyCandidates
+            end,
+            efficiencyManaBelow=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                if ctx then return ctx.efficiencyManaBelow end
+            end,
+            efficiencyEnemies=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                return ctx and ctx.enemies
+            end,
+            efficiencyReason=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                return ctx and ctx.efficiencyReason
+            end,
+            efficiencyID=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                return ctx and ctx.efficiencyID
+            end,
+            maxIcons=function() return SQ and SQ.GetEffectiveMaxIcons and SQ.GetEffectiveMaxIcons(profile) end,
+            defensivesEnabled=function() return profile and profile.defensives and profile.defensives.enabled end,
+            defensiveDisplayMode=function() return profile and profile.defensives and profile.defensives.displayMode end,
+            defensiveGlowMode=function() return profile and profile.defensives and profile.defensives.glowMode end,
+            petRecoveryList=function() return DE and listContext(DE.GetClassSpellList(addon, "petRezSpells")) end,
+            defensiveList=function() return DE and listContext(DE.GetClassSpellList(addon, "defensiveSpells")) end,
+            customList=function()
+                local spec = SDB and SDB.GetSpecKey and SDB.GetSpecKey()
+                local cq = spec and profile and profile.customQueue and profile.customQueue[spec]
+                if cq then return tostring(cq.enabled) .. ":" .. (listContext(cq.spells) or "absent") end
+            end,
+            blacklist=function()
+                if not profile or not profile.blacklistedSpells then return nil end
+                local spec = SDB and SDB.GetSpecKey and SDB.GetSpecKey()
+                local blacklist = spec and profile.blacklistedSpells[spec]
+                if not blacklist then return nil end
+                local entries = {}
+                for id, flags in pairs(blacklist) do
+                    local value = SafeSecret(flags)
+                    if type(flags) == "table" then
+                        value = "fixedQueue=" .. SafeSecret(flags.fixedQueue)
+                    end
+                    entries[#entries+1] = SafeSecret(id) .. ":" .. value
+                end
+                table.sort(entries)
+                return table.concat(entries, ",")
+            end,
+            aurasSecret=function() return B and B.AreAurasSecret() end,
+            cooldownsSecret=function() return B and B.AreCooldownsSecret() end,
+            healthThreshold=function() return pre and pre.topoffThreshold end,
+            topoffEnabled=function() return pre and pre.topoffHeal end,
+            healthBelow=function()
+                if B and pre and pre.topoffThreshold then
+                    return B.IsUnitHealthBelow("player", pre.topoffThreshold)
+                end
+            end,
+            healthSource=function()
+                if B and pre and pre.topoffThreshold then
+                    return select(2, B.IsUnitHealthBelow("player", pre.topoffThreshold))
+                end
+            end,
+            powerType=function() return UnitPowerType("player") end,
+            powerBelow50=function() return B and B.IsUnitPowerBelow("player", 50) end,
+            healUrgencyBelow50=function() return B and B.IsUnitHealthBelow("player", 50) end,
+            healUrgencySource=function()
+                if B then return select(2, B.IsUnitHealthBelow("player", 50)) end
+            end,
+            recoveryHealthThreshold=function()
+                return PE and PE.GetRecoveryThresholds and PE.GetRecoveryThresholds()
+            end,
+            recoveryManaThreshold=function()
+                if PE and PE.GetRecoveryThresholds then return select(2, PE.GetRecoveryThresholds()) end
+            end,
+            recoveryHealthBelow=function()
+                if B and PE and PE.GetRecoveryThresholds and B.IsForever() then
+                    local pct = PE.GetRecoveryThresholds()
+                    return B.IsUnitHealthBelow("player", pct)
+                end
+            end,
+            recoveryManaBelow=function()
+                if B and PE and PE.GetRecoveryThresholds and B.IsForever() then
+                    local mana = Enum.PowerType.Mana
+                    local maximum = UnitPowerMax("player", mana)
+                    if IsSecret(maximum) then return "unknown mana capacity" end
+                    if not maximum or maximum <= 0 then return "not applicable: no mana" end
+                    local _, pct = PE.GetRecoveryThresholds()
+                    return B.IsUnitPowerBelow("player", pct, mana)
+                end
+            end,
+            pet=function() return B and B.GetPetStatus() end,
+            topoffOffer=function() return PE and PE.offeredTopoffHeal end,
+            healthBand=function() return DE and DE.GetHealthBandInfo and DE.GetHealthBandInfo() end,
+            healthBandSource=function()
+                if DE and DE.GetHealthBandInfo then return select(2, DE.GetHealthBandInfo()) end
+            end,
+            petReminder=function()
+                if DE and DE.GetPetReminderState then
+                    local eligible, reason = DE.GetPetReminderState(addon)
+                    return tostring(eligible) .. ":" .. tostring(reason)
+                end
+            end,
+            auraComplete=function() local c = RF and RF.GetAuraCache(); return c and c.complete end,
+            displayed=function()
+                local ids = {}
+                for surface, icons in ipairs({addon.spellIcons or {}, addon.defensiveIcons or {}}) do
+                    for position, icon in ipairs(icons) do
+                        if rendered(icon) then
+                            local label = "main"
+                            if surface == 2 then label = "defensive" end
+                            local identity = SafeSecret(icon.currentSpellID or icon.spellID or icon.currentID)
+                            if icon.isItem then
+                                identity = "item:" .. SafeSecret(icon.itemID or icon.currentID)
+                            elseif icon.isWaitingSpell or icon.isWaiting then
+                                identity = "wait:" .. identity
+                            elseif identity == "nil" then
+                                identity = "unidentified"
+                            end
+                            ids[#ids+1] = label .. "[" .. position .. "]="
+                                .. identity
+                        end
+                    end
+                end
+                return table.concat(ids, ",")
+            end,
+            defensiveGlow=function()
+                local states = {}
+                for position, icon in ipairs(addon.defensiveIcons or {}) do
+                    if rendered(icon) then
+                        states[#states+1] = string.format("[%d] id=%s mode=%s primary=%s waiting=%s applied=%s reason=%s",
+                            position, SafeSecret(icon.currentID), SafeSecret(icon.defGlowMode),
+                            SafeSecret(icon.defShowGlow), SafeSecret(icon.isWaiting),
+                            SafeSecret(icon.appliedDefGlowState), SafeSecret(icon.defGlowReason))
+                    end
+                end
+                return table.concat(states, ";")
+            end,
+        }
+        local keys = {}
+        for key in pairs(reads) do keys[#keys+1] = key end
+        table.sort(keys)
+    local immutable = {build=true, interface=true, project=true, forever=true, addonVersion=true, class=true}
+    local metadata = {}
+    local function observe(tag)
+        s.samples = s.samples + 1
+        profile = addon:GetProfile()
+        pre = profile and profile.precombatBuffs
+        local emitted = false
+        for _, key in ipairs(keys) do
+            local cell = metadata[key]
+            local status
+            if not cell then
+                local text
+                status, text = ProbeRead(reads[key])
+                cell = status .. ":" .. text
+                if immutable[key] and status ~= "err" then metadata[key] = cell end
+            end
+            local changed = s.last[key] ~= cell
+            if changed or tag ~= "SAMPLE" then
+                if changed then
+                    s.changes = s.changes + 1
+                    if status == "err" then s.failures = s.failures + 1 end
+                end
+                if not emitted then
+                    ProbeLogEmit(string.format("DIAG session=%s sample=%d elapsed=%.2f %s pull=%d",
+                        s.id, s.samples, GetTime() - s.started, tag, s.pulls))
+                    emitted = true
+                end
+                ProbeLogEmit("  " .. key .. "=" .. cell)
+                s.last[key] = cell
+            end
+        end
+        if tag == "BASELINE" then
+            if not _G.JustACGlobal then _G.JustACGlobal = {} end
+            local baseline = {id=s.id, last={}}
+            for key, value in pairs(s.last) do baseline.last[key] = value end
+            _G.JustACGlobal.diagnosticBaseline = baseline
+        end
+    end
+    local function sample(tag)
+        local started = debugprofilestop and debugprofilestop()
+        local ok, err = pcall(observe, tag)
+        if started then
+            local elapsed = debugprofilestop() - started
+            s.sampleMs = (s.sampleMs or 0) + elapsed
+            s.sampleMaxMs = math.max(s.sampleMaxMs or 0, elapsed)
+        end
+        if not ok then
+            s.failures = s.failures + 1
+            ProbeLogEmit("DIAGNOSTICS ERROR: " .. SafeSecret(err))
+            addon:Print("diagnostics: sampler failed: " .. SafeSecret(err))
+            DebugCommands.StopDiagnostics(addon)
+        end
+    end
+    s.frame = CreateFrame("Frame")
+    s.frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    s.frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    for _, event in ipairs({"PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE",
+        "PLAYER_TARGET_CHANGED", "UPDATE_SHAPESHIFT_FORM", "UNIT_PET", "PLAYER_LEVEL_UP"}) do
+        s.frame:RegisterEvent(event)
+    end
+    s.frame:SetScript("OnEvent", function(_, event, unit)
+        if DebugCommands._diagnosticSession ~= s then return end
+        if event == "UNIT_PET" and unit ~= "player" then return end
+        if event == "PLAYER_REGEN_DISABLED" then s.pulls = s.pulls + 1 end
+        sample(event)
+    end)
+    s.ticker = C_Timer.NewTicker(0.25, function()
+        if DebugCommands._diagnosticSession ~= s then return end
+        sample("SAMPLE")
+        if GetTime() - s.started >= 600 and DebugCommands._diagnosticSession == s then
+            addon:Print("diagnostics: ten-minute sampling limit reached")
+            DebugCommands.StopDiagnostics(addon)
+        end
+    end)
+    if s.ownsErrors then DebugCommands.ErrorCapture(addon, "on") end
+    if s.ownsAudit then DebugCommands.ProbeSession(addon, "on") end
+    s.audit, s.errors = DebugCommands._probeSession, DebugCommands._errorCapture
+    sample("BASELINE")
+    if DebugCommands._diagnosticSession == s then
+        addon:Print("diagnostics: ON - play normally; /jac inspect stop, then /reload to save")
+        addon:Print("  Power check: current resource below 50%; untested until you spend/recover across it.")
+    end
+end
+
 local function RunProbeBattery(addon, tag, includeStatic)
+    local started = debugprofilestop and debugprofilestop()
+    local activeSession = DebugCommands._diagnosticSession
+    if activeSession then
+        tag = tag .. " session=" .. activeSession.id .. " pull=" .. activeSession.pulls
+    end
     ProbeLogEmit(string.format("===== %s @ %.1f combat=%s hp-context: dead=%s =====",
         tag, GetTime(), tostring(UnitAffectingCombat("player")), tostring(UnitIsDeadOrGhost("player"))))
     local proxy = LogProxy(addon)
-    if includeStatic then pcall(DebugCommands.SecrecyMapProbe, proxy) end
-    for _, m in ipairs(PROBE_BATTERY) do
-        pcall(DebugCommands[m], proxy)
+    local failures = 0
+    local function run(method)
+        local ok, err = pcall(DebugCommands[method], proxy)
+        if not ok then
+            failures = failures + 1
+            ProbeLogEmit("PROBE ERROR " .. method .. ": " .. SafeSecret(err))
+        end
     end
-    addon:Print(string.format("audit: |cff00ff00%s|r snapshot captured (%d log lines held).",
-        tag, #ProbeLogStore()))
+    if includeStatic then run("SecrecyMapProbe") end
+    run("ValidateAssumptions")
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local forever = BAPI and BAPI.IsForever and BAPI.IsForever()
+    for _, m in ipairs(PROBE_BATTERY) do
+        if (m ~= "ForeverProbe" and m ~= "ForeverAuraProbe") or forever then run(m) end
+    end
+    local session = DebugCommands._diagnosticSession
+    if session then session.failures = session.failures + failures end
+    if session and started then
+        local elapsed = debugprofilestop() - started
+        session.batteries = (session.batteries or 0) + 1
+        session.batteryMs = (session.batteryMs or 0) + elapsed
+        session.batteryMaxMs = math.max(session.batteryMaxMs or 0, elapsed)
+    end
+    addon:Print(string.format("audit: %s snapshot captured (%d failures, %d log lines held).",
+        tag, failures, #ProbeLogStore()))
 end
 
 --------------------------------------------------------------------------------
@@ -8700,6 +9249,7 @@ function DebugCommands.ErrorCapture(addon, arg)
         return
     end
 
+    if DebugCommands._errorCapture then addon:Print("errors: already ON"); return end
     DebugCommands._errorCaptureOn = true
 
     -- Chain the Lua error handler once per session; the flag gates recording so
@@ -8733,10 +9283,125 @@ function DebugCommands.ErrorCapture(addon, arg)
     addon:Print("|cff888888Repeats are collapsed into a count, so a flood shows as one line xN.|r")
 end
 
+function DebugCommands.CurseDiagnostics(addon)
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    local function read(fn, ...)
+        if not fn then return "unavailable" end
+        local ok, value = pcall(fn, ...)
+        if not ok then return "denied:" .. SafeSecret(value) end
+        if IsSecret(value) then return "secret" end
+        if value == nil then return "unknown" end
+        return SafeSecret(value), value
+    end
+    local function metadata(info)
+        if IsSecret(info) then return "secret" end
+        if type(info) ~= "table" then return "unknown" end
+        local fields = {}
+        for _, key in ipairs({ "spellID", "overrideSpellID", "overrideTooltipSpellID",
+            "category", "flags", "selfAura", "hasAura", "isKnown" }) do
+            fields[#fields + 1] = key .. "=" .. read(function() return info[key] end)
+        end
+        fields[#fields + 1] = "linkedSpellIDs=" .. read(function()
+            local ids = info.linkedSpellIDs
+            if IsSecret(ids) then return ids end
+            if type(ids) ~= "table" then return nil end
+            local out = {}
+            for i = 1, math.min(#ids, 32) do out[i] = read(function() return ids[i] end) end
+            if #ids > 32 then out[#out + 1] = "truncated" end
+            return table.concat(out, ",")
+        end)
+        return table.concat(fields, " ")
+    end
+    addon:Print("CURSE context combat=" .. read(UnitAffectingCombat, "player")
+        .. " target=" .. read(UnitExists, "target")
+        .. " hostile=" .. read(UnitCanAttack, "player", "target"))
+    local viewers = { "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+    local wanted = {}
+    for _, name in ipairs(viewers) do
+        local viewer = _G[name]
+        addon:Print("CURSE viewer=" .. name .. " shown=" .. read(viewer and viewer.IsShown, viewer))
+    end
+    for _, id in ipairs({ 702, 980, 1714, 1490, 603, 704, 17862, 18223 }) do
+        local active = read(MT and MT.IsTrackedAuraActive, id)
+        local mapped = {}
+        local entry = { cast = id, aura = id, stateKey = "tracked:" .. id }
+        if MT and MT.ResolveCooldownIDs then
+            local ok, ids = pcall(MT.ResolveCooldownIDs, entry)
+            if not ok then
+                mapped[1] = "denied:" .. SafeSecret(ids)
+            elseif IsSecret(ids) then
+                mapped[1] = "secret"
+            elseif type(ids) == "table" then
+                for cid, category in pairs(ids) do
+                    mapped[#mapped + 1] = SafeSecret(cid) .. ":" .. SafeSecret(category)
+                    if not IsSecret(cid) and type(cid) == "number" then wanted[cid] = true end
+                end
+                table.sort(mapped)
+            else
+                mapped[1] = "unknown"
+            end
+        else
+            mapped[1] = "unavailable"
+        end
+        addon:Print(string.format("CURSE spell=%d tracked=%s mappings=%s",
+            id, active, #mapped > 0 and table.concat(mapped, ",") or "none"))
+    end
+    local matched = {}
+    local catalog = {}
+    for cid in pairs(wanted) do
+        local status, info = read(C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo, cid)
+        if type(info) == "table" then status = metadata(info) end
+        catalog[#catalog + 1] = "CURSE catalog cid=" .. cid .. " " .. status
+    end
+    table.sort(catalog)
+    for _, row in ipairs(catalog) do addon:Print(row) end
+    for _, name in ipairs(viewers) do
+        local viewer = _G[name]
+        local pool = viewer and viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            local rows = {}
+            local matchCount = 0
+            local ok, err = pcall(function()
+                for item in pool:EnumerateActive() do
+                    local cid = read(item.GetCooldownID, item)
+                    local number = tonumber(cid)
+                    if number and wanted[number] then
+                        matched[number] = true
+                        matchCount = matchCount + 1
+                        rows[#rows + 1] = string.format(
+                            "CURSE item viewer=%s cid=%s shown=%s active=%s spell=%s linked=%s auraUnit=%s activeSpell=%s",
+                            name, cid, read(item.IsShown, item),
+                            read(function() return item.isActive end),
+                            read(item.GetSpellID, item), read(item.GetLinkedSpell, item),
+                            read(item.GetAuraDataUnit, item),
+                            read(function() return item.isActiveSpell end))
+                    end
+                end
+            end)
+            table.sort(rows)
+            for _, row in ipairs(rows) do addon:Print(row) end
+            if not ok then addon:Print("CURSE items viewer=" .. name .. " denied:" .. SafeSecret(err)) end
+            addon:Print("CURSE items viewer=" .. name .. " matches=" .. matchCount)
+        else
+            addon:Print("CURSE items viewer=" .. name .. " pool=unavailable")
+        end
+    end
+    local missing = {}
+    for cid in pairs(wanted) do
+        if not matched[cid] then missing[#missing + 1] = tostring(cid) end
+    end
+    table.sort(missing)
+    addon:Print("CURSE unmatched=" .. (#missing > 0 and table.concat(missing, ",") or "none"))
+end
+
+--------------------------------------------------------------------------------
 function DebugCommands.ProbeSession(addon, arg)
     arg = arg and arg:lower() or nil
     if arg == "clear" then
-        if _G.JustACGlobal then _G.JustACGlobal.probeLog = nil end
+        if _G.JustACGlobal then
+            _G.JustACGlobal.probeLog = nil
+            _G.JustACGlobal.probeLogDropped = nil
+        end
         addon:Print("audit: |cffffff00log cleared|r")
         return
     end
@@ -8751,22 +9416,38 @@ function DebugCommands.ProbeSession(addon, arg)
             DebugCommands._probeTicker = nil
         end
         -- Disarm the event captures we armed (they toggle).
-        if DebugCommands._locWatch then DebugCommands.LossOfControlWatch(LogProxy(addon)) end
-        if DebugCommands._selfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
+        if f and f.ownsLoc and DebugCommands._locWatch == f.loc then
+            DebugCommands.LossOfControlWatch(LogProxy(addon))
+        end
+        if f and f.ownsSelfCast and DebugCommands._selfCast == f.selfCast then
+            DebugCommands.SelfCastProbe(LogProxy(addon))
+        end
         addon:Print(string.format("audit: |cffff6600OFF|r - %d log lines held.", #ProbeLogStore()))
         addon:Print("|cff888888/reload to flush to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua (JustACGlobal.probeLog)|r")
         return
     end
 
+    if DebugCommands._probeSession then addon:Print("audit: already ON"); return end
     local f = CreateFrame("Frame")
     DebugCommands._probeSession = f
     local cycles = 0
+    local curseTargetEpoch = 0
     f:RegisterEvent("PLAYER_REGEN_DISABLED")
     f:RegisterEvent("PLAYER_REGEN_ENABLED")
     f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     f:RegisterEvent("PLAYER_ENTERING_WORLD") -- instanced content (delves) loads via this, not ZONE_CHANGED
-    f:SetScript("OnEvent", function(_, event)
-        if event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_ENTERING_WORLD" then
+    f:RegisterEvent("PLAYER_TARGET_CHANGED")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    f:SetScript("OnEvent", function(_, event, unit, _, spellID)
+        if event == "PLAYER_TARGET_CHANGED" then
+            curseTargetEpoch = curseTargetEpoch + 1
+            ProbeLogEmit(string.format("CURSE target-change @ %.1f epoch=%d", GetTime(), curseTargetEpoch))
+        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            if unit == "player" then
+                ProbeLogEmit(string.format("CURSE cast @ %.1f epoch=%d spell=%s",
+                    GetTime(), curseTargetEpoch, SafeSecret(spellID)))
+            end
+        elseif event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_ENTERING_WORLD" then
             -- Restricted-map baseline: SecretOnRestrictedMaps applies OOC too,
             -- so entering a delve/dungeon deserves its own out-of-combat snapshot.
             if not UnitAffectingCombat("player") then
@@ -8774,6 +9455,7 @@ function DebugCommands.ProbeSession(addon, arg)
             end
         elseif event == "PLAYER_REGEN_DISABLED" then
             cycles = cycles + 1
+            local cycle = cycles
             -- No battery at entry: measured 2026-07-24 that secrecy latches
             -- mid-combat, so at-entry reads look plain and prove nothing.
             ProbeLogEmit(string.format("===== COMBAT-ENTER#%d @ %.1f (marker only) =====", cycles, GetTime()))
@@ -8782,8 +9464,9 @@ function DebugCommands.ProbeSession(addon, arg)
             -- restrictions had latched, so an early read cannot mislead.
             for _, delay in ipairs({ 4, 10 }) do
                 C_Timer.After(delay, function()
-                    if DebugCommands._probeSession and UnitAffectingCombat("player") then
-                        RunProbeBattery(addon, "COMBAT+" .. delay .. "s#" .. cycles)
+                    if DebugCommands._probeSession == f and cycles == cycle
+                        and UnitAffectingCombat("player") then
+                        RunProbeBattery(addon, "COMBAT+" .. delay .. "s#" .. cycle)
                     end
                 end)
             end
@@ -8853,10 +9536,8 @@ function DebugCommands.ProbeSession(addon, arg)
             end,
         }
         for key, fn in pairs(reads) do
-            local ok, v = pcall(fn)
-            if not ok then v = false end
-            -- numbers and strings (speedBand) compare as-is; everything else -> boolean
-            if type(v) ~= "number" and type(v) ~= "string" then v = (v == true) end
+            local status, text = ProbeRead(fn)
+            local v = status .. ":" .. text
             if edgeState[key] ~= nil and edgeState[key] ~= v then
                 ProbeLogEmit(string.format("EDGE %.1f %s: %s -> %s combat=%s",
                     GetTime(), key, tostring(edgeState[key]), tostring(v),
@@ -8877,7 +9558,11 @@ function DebugCommands.ProbeSession(addon, arg)
         if not (DT and DT.DebugState) then return end
         -- Tracking is current-target only and is wiped on a swap, so a verdict means
         -- nothing without knowing which target it was about.
-        local guid = UnitGUID and UnitGUID("target") or nil
+        local guid
+        if UnitGUID then
+            local ok, value = pcall(UnitGUID, "target")
+            if ok and not IsSecret(value) and type(value) == "string" then guid = value end
+        end
         if guid ~= lastTarget then
             ProbeLogEmit(string.format("DOT %.1f target -> %s", GetTime(),
                 guid and guid:sub(-12) or "none"))
@@ -9011,24 +9696,55 @@ function DebugCommands.ProbeSession(addon, arg)
         end
     end
 
+    local curseLast, curseEpoch = {}, nil
+    local function curseSample()
+        local rows = {}
+        DebugCommands.CurseDiagnostics({ Print = function(_, line) rows[#rows + 1] = line end })
+        local current, changed, removed = {}, {}, {}
+        for _, line in ipairs(rows) do
+            current[line] = true
+            if not curseLast[line] then changed[#changed + 1] = line end
+        end
+        for line in pairs(curseLast) do
+            if not current[line] then removed[#removed + 1] = line end
+        end
+        if #changed == 0 and #removed == 0 and curseEpoch == curseTargetEpoch then return end
+        ProbeLogEmit(string.format("CURSE snapshot @ %.1f epoch=%d", GetTime(), curseTargetEpoch))
+        table.sort(removed)
+        for _, line in ipairs(removed) do ProbeLogEmit("CURSE removed: " .. line) end
+        for _, line in ipairs(changed) do ProbeLogEmit(line) end
+        curseLast, curseEpoch = current, curseTargetEpoch
+    end
+    local samples = { edgeSample, dotSample, auraRouteSample, curseSample }
     DebugCommands._probeTicker = C_Timer.NewTicker(1.0, function()
-        pcall(edgeSample)
-        pcall(dotSample)
-        pcall(auraRouteSample)
+        for _, sample in ipairs(samples) do
+            local ok, err = pcall(sample)
+            if not ok then
+                ProbeLogEmit("AUDIT SAMPLE ERROR: " .. SafeSecret(err))
+                DebugCommands.ProbeSession(addon, "off")
+                break
+            end
+        end
     end)
 
     ProbeLogEmit(string.format("========== AUDIT SESSION ARMED %s (build %s) ==========",
         date("%Y-%m-%d %H:%M:%S"), (GetBuildInfo())))
     RunProbeBattery(addon, "BASELINE", true)
+    curseSample()
     -- Arm the event captures with output into the log.
-    if not DebugCommands._locWatch then DebugCommands.LossOfControlWatch(LogProxy(addon)) end
-    if not DebugCommands._selfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
+    f.ownsLoc = DebugCommands._locWatch == nil
+    f.ownsSelfCast = DebugCommands._selfCast == nil
+    if f.ownsLoc then DebugCommands.LossOfControlWatch(LogProxy(addon)) end
+    if f.ownsSelfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
+    f.loc, f.selfCast = DebugCommands._locWatch, DebugCommands._selfCast
     addon:Print("|cff00ff00=== audit ARMED ===|r Baseline captured. Now just fight: enter/exit combat a few times,")
     addon:Print("get CC'd/dazed if you can, cast + channel, get hurt, cap a resource. Snapshots are automatic.")
     addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
     addon:Print("|cff888888  For the DoT leg: keep several bleeds rolling on one target, refresh them early,|r")
     addon:Print("|cff888888  and swap targets at least once so the tracker has to start over.|r")
     addon:Print("|cff888888  Apply a bleed OUT of combat too - the out-of-combat line is the control.|r")
+    addon:Print("|cff888888  For curses: track their AURA entries in Cooldown Manager Tracked Buffs; cast, replace,|r")
+    addon:Print("|cff888888  let expire, and swap targets. CURSE snapshots record true/false/unknown plus viewer/category evidence.|r")
     addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
 end
 
@@ -10157,6 +10873,7 @@ function DebugCommands.TopoffWatch(addon, arg)
         DebugCommands._topoffWatch:SetScript("OnUpdate", nil)
         DebugCommands._topoffWatch = nil
         addon:Print("topoff watch: OFF")
+        addon:Print("/reload to flush transitions to JustACGlobal.probeLog")
         if arg == "off" then return end
     elseif arg == "off" then
         addon:Print("topoff watch: not running")
@@ -10170,7 +10887,7 @@ function DebugCommands.TopoffWatch(addon, arg)
     local f = CreateFrame("Frame")
     DebugCommands._topoffWatch = f
     local last, t = nil, 0
-    f:SetScript("OnUpdate", function(_, e)
+    local function sample(e)
         t = t + e
         if t < 0.25 then return end
         t = 0
@@ -10203,6 +10920,15 @@ function DebugCommands.TopoffWatch(addon, arg)
         if state ~= last then
             last = state
             addon:Print(string.format("|cff888888[%.1f]|r %s", GetTime() % 1000, state))
+            ProbeLogEmit(string.format("%.2f TOPOFF %s", GetTime(), state))
+        end
+    end
+    f:SetScript("OnUpdate", function(_, e)
+        local ok, err = pcall(sample, e)
+        if not ok then
+            ProbeLogEmit("TOPOFF ERROR: " .. SafeSecret(err))
+            DebugCommands.TopoffWatch(addon, "off")
+            addon:Print("topoff watch: sample failed: " .. SafeSecret(err))
         end
     end)
     addon:Print("|cff00ff00topoff watch: ON|r - stand damaged out of combat and watch which value flips with the icon. /jac inspect topoff off")
