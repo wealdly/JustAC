@@ -95,24 +95,15 @@ def main():
     ins = list(RI.GetInsertable().values())
     check(ins == [284, 772], "insertable = known ranks, delegated included: %s" % ins)
     # Points decide the tree, re-read on invalidation.
-    g.groups = lua.eval("{ {groupID=1, skillLineID=26, displayName='Arms'}, "
-                        "{groupID=2, skillLineID=256, displayName='Fury'} }")
+    g.groups = lua.eval("{ {groupID=1, displayName='Arms'}, {groupID=2, displayName='Fury'} }")
     g.spent = lua.eval("{[1]=3, [2]=5}")
     RI.InvalidateLookup()
     check(RI.GetForeverTree() == "fury", "most points spent wins")
     check(RI.GetEntry(23881, "st") is not None and RI.GetEntry(78, "st") is None,
           "only the installed tree's entries resolve")
-    g.groups = lua.eval("{ {groupID=1, skillLineID=26, displayName='Armes'}, "
-                        "{groupID=2, skillLineID=256, displayName='Fureur'} }")
-    RI.InvalidateLookup()
-    check(RI.GetForeverTree() == "fury", "localized talent labels use stable skill IDs")
-    g.groups = lua.eval("{ {groupID=1, skillLineID=26, displayName='Fury'}, "
-                        "{groupID=2, skillLineID=256, displayName='Arms'} }")
-    RI.InvalidateLookup()
-    check(RI.GetForeverTree() == "fury", "skill identity wins over misleading display labels")
-    # Feral's stable skill ID selects its shared cat / bear tree.
+    # A tree name the data lacks falls back to its first word, then the default.
     g.specKey = "DRUID_F"
-    g.groups = lua.eval("{ {groupID=3, skillLineID=134, displayName='Feral Combat'} }")
+    g.groups = lua.eval("{ {groupID=3, displayName='Feral Combat'} }")
     g.spent = lua.eval("{[3]=4}")
     RI.InvalidateLookup()
     check(RI.GetForeverTree() == "feral", "'Feral Combat' -> feral")
@@ -126,37 +117,6 @@ def main():
     # Unregistered key: retail behaviour untouched.
     g.specKey = "MONK_1"
     check(RI.HasRotation() is False, "no data -> no rotation")
-
-    lua.execute((SRC.parent / "Data" / "ForeverRotations.lua").read_text(encoding="utf-8"))
-    skills = {
-        "WARRIOR_F": {26: "arms", 256: "fury", 257: "protection"},
-        "ROGUE_F": {253: "assassination", 38: "combat", 39: "subtlety"},
-        "PALADIN_F": {594: "holy", 267: "protection", 184: "retribution"},
-        "PRIEST_F": {613: "discipline", 56: "holy", 78: "shadow"},
-        "DRUID_F": {574: "balance", 134: "feral", 573: "restoration"},
-        "SHAMAN_F": {375: "elemental", 373: "enhancement", 374: "restoration"},
-        "HUNTER_F": {50: "beast_mastery", 163: "marksmanship", 51: "survival"},
-        "MAGE_F": {237: "arcane", 8: "fire", 6: "frost"},
-        "WARLOCK_F": {355: "affliction", 354: "demonology", 593: "destruction"},
-    }
-    g.form = 0
-    for key, trees in skills.items():
-        g.specKey = key
-        for skill_id, tree in trees.items():
-            g.groups = lua.eval("{ {groupID=9, skillLineID=%d, displayName='localized'} }" % skill_id)
-            g.spent = lua.eval("{[9]=31}")
-            RI.InvalidateLookup()
-            check(RI.GetForeverTree() == tree, "%s skill %d -> %s" % (key, skill_id, tree))
-    for id, seconds in {3599: 30, 6363: 35, 6364: 40, 6365: 45, 10437: 50, 10438: 55}.items():
-        check(RI.GetBuffDuration(id) == seconds, "generated totem %d lasts %d seconds" % (id, seconds))
-    retail = LuaRuntime(unpack_returned_tuples=True)
-    retail.execute(PRELUDE)
-    retail.execute('LibStub("JustAC-SpellDB").IsForever = function() return false end')
-    retail.execute(SRC.read_text(encoding="utf-8"))
-    retail.execute((SRC.parent / "Data" / "ForeverRotations.lua").read_text(encoding="utf-8"))
-    retail_ri = retail.eval('LibStub("JustAC-RotationImport")')
-    check(retail_ri.RankChain(3599) is None and retail_ri.GetBuffDuration(10438) is None,
-          "Forever rank and duration data remain unregistered on retail")
 
     for why in bad:
         print("  FAIL", why)

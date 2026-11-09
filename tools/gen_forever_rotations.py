@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # tools/gen_forever_rotations.py
 #
-# WoW Forever priority lists for every class and talent tree -> Data/ForeverRotations.lua.
+# WoW Forever priority lists for every class and talent tree -> Data/Forever/Rotations.lua.
 #
 # Source 1: the wowsims-format rotation files vendored in tools/forever-apl-src/ (from
 # github.com/ElliotWood/Forever, MIT; commit in UPSTREAM_COMMIT). Forever spell ids, level
@@ -23,9 +23,7 @@ import json, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "tools", "forever-apl-src")
 PINS = os.path.join(ROOT, "tools", "simc-apl-forever")
-OUT = os.path.join(ROOT, "Data", "ForeverRotations.lua")
-# The pinned bear list names a Primal Bite rank removed from launch acquisition data.
-RETIRED_SOURCE_RANKS = {1238073: 407995}
+OUT = os.path.join(ROOT, "Data", "Forever", "Rotations.lua")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import check_forever_apl as cfa  # noqa: E402  (shared learnability + rank chains)
 import gen_simc_rotations as gsr  # noqa: E402  (the SimC condition parser, for hand pins)
@@ -76,7 +74,8 @@ AOE_LEAD_TIERS = ["cleave", "aoe"]
 # Abilities the level-60 sims leave out but levelling play needs (tools/forever-guides, and the
 # missing-abilities audit of 2026-10-07), by ability name; the build exits on one the class
 # cannot learn. trees: which talent trees (None = all). tiers: which target-count lists (None
-# = all). at: "front" (after the own-buff leads; listed order kept), "end", or "after:<name>".
+# = all). at: "front" (after the own-buff leads; listed order kept), "end", "after:<name>" or
+# "before:<name>".
 # gates: "dot" = keep-it-up on the target (sinks while it runs, never on a dying target),
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
 # move: the ability is already on the sim list - take that entry, with its own conditions, to
@@ -90,12 +89,21 @@ EXTRA = {
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front")],
+    # Backstab is absent from the selected upstream APLs; keep it last among builders for when
+    # its rear-position requirement is met. Sinister Strike backs up the talent builders
+    # (Mutilate, Hemorrhage) a levelling character does not have yet.
     "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
-              dict(spell="garrote", at="front", gates=["stealth", "dot"])],
+              dict(spell="garrote", at="front", gates=["stealth", "dot"]),
+              dict(spell="backstab", trees=["combat"], at="after:sinister_strike"),
+              dict(spell="sinister_strike", trees=["subtlety"], at="after:hemorrhage"),
+              dict(spell="backstab", trees=["subtlety"], at="after:sinister_strike"),
+              dict(spell="sinister_strike", trees=["assassination"], at="after:mutilate"),
+              dict(spell="backstab", trees=["assassination"], at="after:sinister_strike")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
-              dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front")],
+              dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
+              dict(spell="wrath", trees=["balance"], at="end")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate")],
-    "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front"),
+    "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
              dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end")],
     "priest": [dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
@@ -149,6 +157,11 @@ def add_extras(cls, tree, entries, chains, unresolved):
             continue
         mine = next((e for e in entries if e["id"] == sid), None)
         if mine and x.get("move") and x.get("at") == "front":
+            if x.get("tiers"):
+                mine["tiers"] = list(x["tiers"])
+                count = min(k for name, k in TIERS if name in x["tiers"])
+                mine["gates"] = [g for g in mine["gates"] if g["t"] != "targets"]
+                mine["gates"].append({"t": "targets", "op": ">=", "n": count})
             entries.remove(mine)
             fronts.append(mine)
             continue
@@ -162,10 +175,14 @@ def add_extras(cls, tree, entries, chains, unresolved):
         at = x.get("at", "end")
         if at == "front":
             fronts.append(e)
-        elif at.startswith("after:"):
-            anchor = r1_of(at[6:])
+        elif at.startswith(("after:", "before:")):
+            where, name = at.split(":", 1)
+            anchor = r1_of(name)
             i = next((n for n, y in enumerate(entries) if y["id"] == anchor), None)
-            entries.insert(len(entries) if i is None else i + 1, e)
+            if i is None:
+                entries.append(e)
+            else:
+                entries.insert(i + 1 if where == "after" else i, e)
         else:
             entries.append(e)
     entries[0:0] = fronts
@@ -173,8 +190,8 @@ def add_extras(cls, tree, entries, chains, unresolved):
 
 def keeps_own_buff(e):
     g = e["gates"]
-    return (len(g) == 1 and g[0].get("t") == "buff" and g[0].get("id") == e["id"]
-            and g[0].get("neg") and g[0].get("dur"))
+    return (bool(g) and all(x.get("t") == "buff" and x.get("neg") and x.get("dur") for x in g)
+            and any(x.get("id") == e["id"] for x in g))
 TIERS = [("st", 1), ("cleave", 2), ("aoe", 3)]
 OPS = {"OpLt": "<", "OpLe": "<=", "OpGt": ">", "OpGe": ">=", "OpEq": "=", "OpNe": "!="}
 FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "=": "=", "!=": "!="}
@@ -281,28 +298,20 @@ class Conv:
         if g == UNK:
             return UNK
         t = g["t"]
-        if t in ("buff", "cd", "known", "stealth"):
+        if t in ("buff", "cd", "known", "stealth", "totem"):
             return dict(g, neg=not g.get("neg", False))
-        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick") and g.get("op") in NOT_OP:
+        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick", "targets") and g.get("op") in NOT_OP:
             return dict(g, op=NOT_OP[g["op"]])
         if t in ("any", "all"):
             members = [self.negate(m) for m in g["g"]]
             if UNK in members:
                 return UNK
             return {"t": "all" if t == "any" else "any", "g": members}
-        # A dot gate has no sense to flip: it means "this DoT is being maintained". So
-        # "not my own DoT up" (Rend, Flame Shock) is exactly that gate. "Not my OTHER debuff
-        # up" (Bane of Agony unless Bane of Doom) holds while that one is unknown: a low-level
-        # character casts the line; one who has learned it lets that one own the slot.
-        # "Not another class's debuff up" (Sunder unless Expose Armor) holds solo, where
-        # nobody else applies it.
-        # ponytail: in a group the other class's debuff is invisible here; Sunder still shows.
+        # Another spell being learned is not evidence its debuff is active.
         if t == "dot":
             if g.get("id") == self.self_id:
                 return g
-            if g.get("id") in self.by_id:
-                return {"t": "known", "id": g["id"], "neg": True}
-            return TRUE
+            return UNK
         return UNK
 
     def conv(self, node):
@@ -348,7 +357,7 @@ class Conv:
             aid = self.rank1(sid_of(val.get("auraId")))
             if not aid:
                 return UNK
-            if val.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(val, aid):
                 return {"t": "dot", "id": aid}
             return self.buff(aid)
         if key == "dotIsActive":
@@ -374,13 +383,11 @@ class Conv:
             # dot / buff gate on Forever (timed from the cast). Someone else's: given up.
             if aid != self.self_id:
                 self.lose(node)
-            if val.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(val, aid):
                 return {"t": "dot", "id": aid}
             return self.buff(aid, True)
         if key == "frontOfTarget":
-            # Solo levelling, the mob faces you: Claw (front) yes, Shred (behind) no.
-            # ponytail: a tank-held mob turns its back; a group-aware check needs facing data.
-            return TRUE
+            return UNK
         return UNK
 
     def cmp(self, val):
@@ -390,9 +397,9 @@ class Conv:
         if name in ("auraRemainingTime", "dotRemainingTime"):
             return self.remaining(op, name, side, val)
         if n is None and "remainingTime" in json.dumps(val):
-            # Mana paced against fight length (Lightning Bolt: mana >= time left * 35): the
-            # fight length is unknowable, so no pacing - as remainingTime vs a constant above.
-            return TRUE
+            # No fight-duration signal: keep this branch unconfirmed, rather than
+            # erasing it and turning a conditional mana spender into a filler.
+            return {"t": "unconfirmed"}
         if name == "math":
             # Resource pooling arithmetic (Ferocious Bite: energy + regen vs its cost + Shred's):
             # the button's own cost decides whether it can be pressed.
@@ -404,11 +411,10 @@ class Conv:
             # Point-blank AoE (Arcane Explosion, Hellfire, Blast Wave) only with the target close.
             return {"t": "near", "n": n}
         if name == "totemRemainingTime" and op in ("<", "<=") and n <= 1:
-            # "This element's totem is down": my own totem, timed from its cast like a buff.
-            # ponytail: a totem killed early or replaced by another of its element reads up.
-            return self.buff(self.self_id, True) if self.self_id else UNK
+            slot = {"Fire": 1, "Earth": 2, "Water": 3, "Air": 4}.get(side.get("totemType"))
+            return {"t": "totem", "slot": slot, "neg": True} if slot else UNK
         if name == "numberTargets":
-            return TRUE                     # decided by the tier split
+            return {"t": "targets", "op": op, "n": n}
         if name == "remainingTime":
             # Fight length is unknowable; assume the fight goes on (steady state).
             # ponytail: end-of-fight dumps never fire; a real time-to-die needs secret health.
@@ -436,7 +442,7 @@ class Conv:
             if not aid:
                 return UNK
             g = {"t": "stack", "id": aid, "op": op, "n": n}
-            if side.get("sourceUnit", {}).get("type") == "CurrentTarget":
+            if aura_on_target(side, aid):
                 g["tgt"] = True
             return g
         if name == "autoTimeToNext":
@@ -445,7 +451,7 @@ class Conv:
                 g["ranged"] = True
             return g
         if name == "timeToNextEnergyTick":
-            return {"t": "tick", "op": op, "n": n}
+            return UNK
         return UNK
 
 
@@ -455,7 +461,7 @@ class Conv:
         sid = self.rank1(raw)
         if not sid:
             return UNK
-        target = name == "dotRemainingTime" or side.get("sourceUnit", {}).get("type") == "CurrentTarget"
+        target = name == "dotRemainingTime" or aura_on_target(side, raw)
         # "My own DoT about to run out" (Immolate if its time left <= its cast time) IS the dot
         # gate on Forever: an early recast overwrites the ticks left, so it is refreshed as it
         # drops (DotTracker times it from the cast; no secret read, nothing delegated).
@@ -477,12 +483,9 @@ class Conv:
 
 
 def actions_of(action):
-    """(spellID, extra gate) for every cast an action makes; sequences expand in order."""
+    """Independent suggestions only; strict sequences need state we do not model."""
     if "strictSequence" in action:
-        out = []
-        for a in action["strictSequence"].get("actions", []):
-            out += actions_of(a)
-        return out
+        return []
     for key in ("castSpell", "channelSpell"):
         if key in action:
             sid = sid_of(action[key].get("spellId"))
@@ -503,9 +506,6 @@ def convert_sim(stem, by_id, dropped):
         action = e.get("action", {})
         cond = action.get("condition")
         for sid, extra in actions_of(action):
-            replacement = RETIRED_SOURCE_RANKS.get(sid)
-            if sid not in by_id and replacement in by_id:
-                sid = replacement
             if sid not in by_id:
                 dropped.add(sid)
                 continue
@@ -519,7 +519,9 @@ def convert_sim(stem, by_id, dropped):
                 c.lose(cond)
             if extra == "dot":
                 gates.append({"t": "dot", "id": rid})
-            tiers = [name for name, k in TIERS if c.tier(cond, k) is not False]
+            tiers = [name for name, k in TIERS
+                     if (any(c.tier(cond, count) is not False for count in range(3, 41))
+                         if name == "aoe" else c.tier(cond, k) is not False)]
             e = {"id": rid, "gates": gates, "delegated": c.delegated, "tiers": tiers}
             if e not in entries:             # a sim list repeats a line per talent variant
                 entries.append(e)
@@ -559,11 +561,48 @@ def lua(v):
     return "{" + ",".join(f"{k}={lua(x)}" for k, x in v.items()) + "}"
 
 
+def generalize_entries(cls, tree, entries, chains):
+    """Adapt specialized execution into stable defaults before selecting each context."""
+    if cls == "paladin" and tree == "retribution":
+        seals = [rank1(chains[n]) for n in ("seal_of_command", "seal_of_righteousness")]
+        seen = set()
+        out = []
+        for e in entries:
+            if e["id"] in seals:
+                if e["id"] in seen:
+                    continue
+                seen.add(e["id"])
+                e = dict(e, gates=[Conv({}, e["id"]).buff(sid, True) for sid in seals],
+                         delegated=False, tiers=[t for t, _ in TIERS])
+            out.append(e)
+        entries[:] = out
+    if cls == "druid" and tree == "feral":
+        bite = rank1(chains["ferocious_bite"])
+        for e in entries:
+            if e["id"] == bite:
+                e["gates"] = [dict(g, op=">=") if g["t"] == "resource" and g.get("res") == "combo_points"
+                              and g.get("op") == "=" and g.get("n") == 5
+                              else g for g in e["gates"]]
+
+
 def tier_lists(entries):
     lists = {t: [] for t, _ in TIERS}
     for e in entries:
         for t in e["tiers"]:
             lists[t].append(e)
+    for t, lines in lists.items():
+        selected = {}
+        for e in lines:
+            previous = selected.get(e["id"])
+            if previous is None or not e["gates"]:
+                selected[e["id"]] = e
+            elif len(previous["gates"]) == len(e["gates"]) == 1:
+                old, new = previous["gates"][0], e["gates"][0]
+                if old["t"] == new["t"] == "targets" and old.get("op") == new.get("op") == ">=" \
+                        and new["n"] < old["n"]:
+                    selected[e["id"]] = e
+        # A general fallback keeps its own position, never the special branch's earlier rank.
+        lists[t] = [e for e in lines if selected[e["id"]] is e]
     out = {"st": lists["st"]}
     if lists["aoe"] != lists["st"]:
         out["aoe"] = lists["aoe"]
@@ -611,6 +650,17 @@ def on_self(sid):
     return any(eff == APPLY_AURA and targets & SELF_TARGETS for eff, _, _, targets, _ in effects_of(sid))
 
 
+def on_enemy(sid):
+    """Infer omitted source-unit annotations only for exclusively enemy-applied auras."""
+    return not on_self(sid) and any(eff == APPLY_AURA and targets & ENEMY_TARGETS
+                                   for eff, _, _, targets, _ in effects_of(sid))
+
+
+def aura_on_target(node, sid):
+    source = node.get("sourceUnit", {}).get("type")
+    return source == "CurrentTarget" or (not source and on_enemy(sid))
+
+
 def deals_damage(sid, depth=0):
     for eff, aura, trig, targets, _ in effects_of(sid):
         if eff in DMG_EFFECTS or aura in DMG_AURAS or (eff == AREA_TRIGGER and targets & ENEMY_TARGETS):
@@ -635,6 +685,74 @@ def combat_buff(sid):
                for eff, _, _, targets, _ in effects)
 
 
+# The DPS queue holds damage presses only. A bar spell no list names still joins as a filler
+# (Backstab, Holy Wrath, a wand or bow shot, a damage spell whose slow or root is a side effect),
+# but not when its job is something other than damage, even if it hits too:
+#   an interrupt on a cooldown longer than INTERRUPT_DPS_CD (Kick, Pummel, Shield Bash are kept
+#   for the interrupt slot; Earth Shock at 6s stays a damage press);
+#   crowd control or a taunt (Gouge, Scatter Shot, Pounce, Mind Control, Death Coil, Mocking Blow);
+#   a movement, stealth or mount buff that deals no damage (Sprint, Dash, Stealth, Divine Steed);
+#   NOT_DPS: what the data cannot tell from a combat buff or a damage spell.
+# List entries are never filtered: a list that names one meant it.
+INTERRUPT, TAUNT_EFFECT = 68, 114
+TAUNT_AURA, STEALTH_AURA, SPEED_AURA, MOUNT_AURA = 11, 16, 31, 78
+INTERRUPT_DPS_CD = 8
+# SpellMechanic: charm, disoriented, fleeing, asleep, stunned, incapacitated, polymorphed,
+# banished, shackled, turned, horrified, sapped
+HARD_CC = {1, 2, 5, 10, 12, 14, 17, 18, 20, 23, 24, 30}
+MOUNT_MECHANIC = 21
+NOT_DPS = {
+    "paladin": ["seal_of_justice", "seal_of_light", "seal_of_wisdom"],
+    "rogue":   ["redirect"],
+    "hunter":  ["flare", "enchanted_flare", "freezing_trap", "frost_trap"],
+    "druid":   ["entangling_roots", "natures_grasp"],
+    "warlock": ["health_funnel", "fel_domination"],
+    "warrior": ["berserker_rage"],
+    "priest":  ["focused_casting", "dark_sacrifice"],
+}
+NOT_DPS_ALL = ["grovel"]
+_mechanic = _cooldown = None
+
+
+def spell_meta(sid):
+    """(SpellCategories mechanic, cooldown seconds) of sid."""
+    global _mechanic, _cooldown
+    if _mechanic is None:
+        _mechanic = {r["SpellID"]: int(r["Mechanic"] or 0) for r in cfa.rows("SpellCategories")}
+        _cooldown = {}
+        for r in cfa.rows("SpellCooldowns"):
+            ms = max(int(r["RecoveryTime"] or 0), int(r["CategoryRecoveryTime"] or 0))
+            _cooldown[r["SpellID"]] = max(_cooldown.get(r["SpellID"], 0), ms / 1000)
+    return _mechanic.get(str(sid), 0), _cooldown.get(str(sid), 0)
+
+
+_effect_mechanics = None
+
+
+def not_dps(sid, damage):
+    """Why sid is no DPS press (see above), or None."""
+    global _effect_mechanics
+    if _effect_mechanics is None:
+        _effect_mechanics = {}
+        for r in cfa.rows("SpellEffect"):
+            m = int(r["EffectMechanic"] or 0)
+            if m:
+                _effect_mechanics.setdefault(r["SpellID"], set()).add(m)
+    effects = effects_of(sid)
+    mech, cd = spell_meta(sid)
+    mechanics = {mech} | _effect_mechanics.get(str(sid), set())
+    if any(eff == INTERRUPT for eff, *_ in effects) and cd > INTERRUPT_DPS_CD:
+        return "interrupt"
+    if mechanics & HARD_CC:
+        return "cc"
+    if any(eff == TAUNT_EFFECT or (eff == APPLY_AURA and aura == TAUNT_AURA) for eff, aura, *_ in effects):
+        return "taunt"
+    if not damage and (MOUNT_MECHANIC in mechanics or any(
+            eff == APPLY_AURA and aura in (STEALTH_AURA, SPEED_AURA, MOUNT_AURA) for eff, aura, *_ in effects)):
+        return "movement"
+    return None
+
+
 def entry_lua(e, names):
     parts = [f"id={e['id']}", "gates=" + lua(e["gates"])]
     if e["delegated"]:
@@ -653,12 +771,6 @@ def main():
             DURATION[int(r["SpellID"])] = round(d, 1)
     commit = open(os.path.join(SRC, "UPSTREAM_COMMIT")).read().strip()
     body, chains_out, report, unresolved, abilities = [], {}, [], [], {}
-    buff_ids = set()
-    def collect_buffs(gates):
-        for gate in gates:
-            if gate["t"] == "buff" and gate.get("dur"):
-                buff_ids.add(gate["id"])
-            collect_buffs(gate.get("g", []))
     for cls in sorted(TREES):
         default, trees = TREES[cls]
         chains, by_id = cfa.class_chains(cfa.CLASS_MASK[cls])
@@ -668,14 +780,24 @@ def main():
         for chain in chains.values():
             if len(chain) > 1:
                 chains_out[rank1(chain)] = [int(i) for i, _ in chain]
-        # The class's combat abilities (rank 1): what a bar spell must be to join the pool, so
-        # tracking, travel, profession or utility spells on the bars never reach the queue.
+        # Broad bar eligibility (rank 1), not final offensive admission. The curated
+        # ABILITY_ROLES in Forever defaults route protection/utility out at runtime,
+        # retaining eligibility for custom entries and Always Show overrides.
         # Abilities that deal damage or are combat buffs (deals_damage, combat_buff), the
         # curated burst cooldowns and damage racials (cfa.RACIAL_ROLES); list entries join below.
         # Racials join by that role only: Escape Artist passes as a short self buff, but it is
         # defensive, and an unclassified one (Rapid Regeneration) belongs to no combat queue.
-        pool = {rank1(chain) for chain in chains.values()
-                if any(deals_damage(i) for i, _ in chain) or combat_buff(rank1(chain))}
+        pool = set()
+        for chain in chains.values():
+            sid = rank1(chain)
+            damage = any(deals_damage(i) for i, _ in chain)
+            if (damage or combat_buff(sid)) and not_dps(sid, damage) is None:
+                pool.add(sid)
+        for name in NOT_DPS.get(cls, []) + NOT_DPS_ALL:
+            if name in chains:
+                pool.discard(rank1(chains[name]))
+            else:
+                unresolved.append(f"{cls}: NOT_DPS {name} is not learnable")
         pool -= {i for ids in cfa.racials().values() for i in ids}
         pool |= {rank1(chains[n]) for n in gfd.BURST.get(cls, []) if n in chains}
         pool |= set(cfa.racial_ids("offensive"))
@@ -693,8 +815,7 @@ def main():
                                     "gates": [{"t": "buff", "id": sid, "dur": DURATION.get(sid), "neg": True}]})
             add_extras(cls, tree, entries, chains, unresolved)
             regate(cls, entries, chains)
-            for entry in entries:
-                collect_buffs(entry["gates"])
+            generalize_entries(cls, tree, entries, chains)
             for sid in reversed(AOE_LEAD.get(cls, [])):
                 if not any(e["id"] == sid for e in entries):
                     entries.insert(0, {"id": sid, "delegated": False, "tiers": list(AOE_LEAD_TIERS), "gates": []})
@@ -722,8 +843,6 @@ def main():
         abilities[cls] = sorted(pool)
 
     rank_lines = [f"  [{k}] = {lua(v)}," for k, v in sorted(chains_out.items())]
-    buff_duration_ids = {rank for base in buff_ids for rank in chains_out.get(base, [base])}
-    duration_lines = [f"  [{id}] = {DURATION[id]:g}," for id in sorted(buff_duration_ids) if id in DURATION]
     # tools/ is not packaged (.pkgmeta), so the MIT notice must travel inside this file.
     mit = ["--   " + l.rstrip() if l.strip() else "--" for l in
            open(os.path.join(SRC, "LICENSE"), encoding="utf-8").read().strip().splitlines()]
@@ -753,14 +872,13 @@ def main():
         *rank_lines,
         "}, {",
         *[f'  ["{c.upper()}_F"] = {lua(v)},' for c, v in sorted(abilities.items())],
-        "}, {",
-        *duration_lines,
         "})",
         "",
     ])
     if "--print" in sys.argv:
         print(text)
     else:
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
         with open(OUT, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         print("wrote", OUT)

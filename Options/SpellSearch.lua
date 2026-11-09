@@ -35,9 +35,9 @@ function SpellSearch.BuildSpellbookCache()
     local function CacheSlot(slotIndex, bank)
         local spellInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex, bank)
         if not spellInfo then return end
-        if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
-            local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
-            if not isPassive then
+        if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID
+            and not spellInfo.isOffSpec and spellInfo.isPassive ~= true then
+            if BlizzardAPI and BlizzardAPI.IsSpellAvailable(spellInfo.spellID) then
                 local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
                 if fullInfo and fullInfo.name then
                     -- Pre-compute search strings to avoid per-keystroke allocations

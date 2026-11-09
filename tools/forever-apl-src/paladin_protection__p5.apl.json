@@ -11,6 +11,7 @@
 		{"action":{"condition":{"auraIsActive":{"auraId":{"spellId":20293,"rank":8}}},"castSpell":{"spellId":{"spellId":20271}}}},
 		{"action":{"condition":{"cmp":{"op":"OpLe","lhs":{"auraRemainingTime":{"auraId":{"spellId":20293,"rank":8}}},"rhs":{"const":{"val":"1.5s"}}}},"castSpell":{"spellId":{"spellId":20293,"rank":8}}}},
 		{"action":{"castSpell":{"spellId":{"spellId":24239,"rank":3}}}},
+		{"action":{"condition":{"cmp":{"op":"OpGe","lhs":{"numberTargets":{}},"rhs":{"const":{"val":"2"}}}},"castSpell":{"spellId":{"spellId":407632}}}},
 		{"action":{"castSpell":{"spellId":{"spellId":10333,"rank":8}}}},
 		{"action":{"castSpell":{"spellId":{"spellId":20928,"rank":3}}}}
 	]

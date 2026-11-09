@@ -18,10 +18,28 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **DoT awareness** - a damage-over-time effect already on your target steps back until it's time to refresh. When the game keeps recommending one that's already up, an arrow on the first slot suggests spreading it to another enemy.
 - **Burst-ready cue** - your major cooldown glows purple when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
 - **Gap-closers** - melee specs get a movement ability suggested when the target is out of range (DPS Queue → Gap-Closers).
+- **Mana Conservation** (both clients, off by default; tune Forever first) - under DPS Queue → General → Queue Content, choose Solo Only or Always (PvE). With one detected normal enemy and safe player health, an available free attack can lead ahead of a mana-costing single-target attack, including the game's recommendation, when mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context block conservation. Prefers confirmed reach; unknown/out-of-range attacks can still lead, leaving positioning to you. No level cutoff; custom/exact lists, procs and utility picks remain unchanged.
 - **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
 - Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
 
 ### Priority
+
+**Mana Conservation** offers only Off, Solo Only and Always (PvE), with no
+percentage or recovery-time tuning controls. Existing saved tuning is preserved.
+The option greys out when
+the player is confirmed to have no mana pool. Hybrid forms are checked against
+explicit mana capacity, not their current energy/rage bar. Saved settings are
+preserved; unreadable capacity is not treated as absence. This is a mana policy,
+not a reserve rule for energy, focus, rage, runic power or discrete resources.
+
+Mana Conservation displays **WAIT** instead of another auto-attack prompt when the
+attack is confirmed running and in range, unless another eligible in-range free
+attack needs starting. Unknown running state or reach keeps the attack prompt.
+Shoot requires a wand equipped; other ranged auto-attacks likewise require a
+compatible weapon. Swapping equipment refreshes the available attacks.
+Before pulling, automatic queues without a native game pick keep a ready attack
+ahead of DPS buffs even when out of range, as a cue to move closer. Combat
+range ordering and custom/exact lists are unchanged.
 
 - **Three orders, one queue** - tabs show the game's order, the theorycraft order and your own list, one line per ability with what it waits for. Looking at a tab never changes the queue; **Use This Order** does, and a green dot marks the one in use.
 - **Your own list** (per spec) - start from **Export to My List** or **Merge** from another tab, then drag rows to reorder. Click a row for its settings, right-click to open it on the Overrides tab, and undo the last ten changes. If the game's rotation changes later, **Merge Changes** brings your list up to date without reordering it.
@@ -43,6 +61,7 @@ The slot ahead of the damage queue, for anything that stops what the enemy is do
 ### Defensives
 
 - **Your defensive list** - self-heals and major cooldowns in one list with per-spec defaults, arranged the same way as the damage priority. Pet rez/summon and pet heal have lists of their own.
+- Pet summon and revive reminders appear on the pre-combat queue without duplicating damage suggestions. Beast Mastery Hunters and Demonology Warlocks can also receive reminders during combat.
 - **Help Your Group** - party-wide buttons (Rallying Cry, Darkness, Anti-Magic Zone, Vampiric Embrace and the like) in a list of their own, offered when your group could use the help or your own health is low.
 - **Emergency heals held until you need them** *(on by default)* - immunity bubbles, big instant heals and health potions wait at the end of the queue with a WAIT tag while you're healthy. Damage-reduction cooldowns stay live, since a wall is meant to be pressed before the hit lands.
 - The order follows how much trouble you're in: damage reduction first while you're taking damage, big heals after a real hit, bubbles only when you're close to dying.
@@ -77,20 +96,27 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 ### Keybinds and filtering
 
 - Finds your keybind for every suggestion across all action bars, including macros with conditions (`[mod]`, `[form]`, `[spec]`, `[stealth]`, `[combat]`) and transformed spells. Gamepad button icons for Xbox, PlayStation and generic controllers.
+- Ability search filters out unlearned, off-spec and passive spells, and refreshes pet abilities when your pet changes.
 - Right-click an icon to set your own hotkey label; icons flash when you press their key.
 - Buffs you already have, your current form and a pet that's already out aren't suggested. Abilities that stack keep being suggested while you build stacks.
 - **Overrides** tab - hide a spell (or Shift+Right-click it in the queue), change its queue settings, or **take it off your action bars** so the game's assist stops suggesting it too. **Put Back** restores it to the same buttons; macros are never touched.
 - Light on your CPU: event-driven, with other players' events filtered out before they reach the addon.
 
-## WoW Forever (preliminary)
+## WoW Forever
 
-JustAC also runs on WoW Forever, from the same download. This is an early build for the Forever beta, and some suggestions are still being checked in game.
+JustAC 6.1 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
-WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus the abilities on your action bars.
+WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
+
+These are general-purpose priorities, intended to be useful in most ordinary fights, not optimal in every situation. Specialized simulator sequences and seal twisting are not part of the defaults. Conditions use the client signals JustAC can reliably check; unavailable information is not guessed. Your custom priority list and explicit settings remain your choice.
 
 What works differently on Forever:
 
 - **Spell ranks** - the queue shows the rank you have on your bars, with its keybind, and finds any rank in your lists.
+- **WAIT** - with Unavailable Last and ranked ordering, the timer icon leads when every DPS ability is unavailable. The waiting abilities stay behind it, and an eligible suggestion replaces it. Out of combat this requires a live enemy you can attack; no-target previews are unchanged.
+- **Between ranged shots** - while the enemy is confirmed beyond melee reach, an otherwise eligible Throw or ranged weapon filler keeps its first slot and cooldown swipe instead of alternating with WAIT. Any ready alternative takes precedence; blocked or unknown shot range still falls back to WAIT.
+- **Rear-required attacks** - Backstab, Shred and similar attacks step back when you are out of stealth and the enemy is targeting you. Stealth openers and enemies targeting your tank retain priority. This is a targeting heuristic, not a facing check; unreadable targeting information leaves the order unchanged.
+- **Tiered damage finishers** - on normal enemies, aim for 3 combo points, 2 below half health, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
 - **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
 - **Auto Shot and Attack** trade places as you move in and out of melee range.
 - **Damage over time** is timed from your own casts, including your opener: it steps back while it ticks, comes back as it runs out, and isn't suggested on a target about to die. Tracking it in the Cooldown Manager makes this exact.
@@ -99,7 +125,9 @@ What works differently on Forever:
 - **Between pulls** - food, drink or a bandage when you need them, and the flasks, elixirs and scrolls you carry (Defensive Queue → Pre-Combat Buffs).
 - Options that only apply to Assisted Combat are greyed out.
 
-Still being checked in game: the crowd-control escape and interrupt cues, and lists past the beta's level cap.
+Interrupt cues require an attackable target, so friendly players' casts do not trigger them.
+
+Still being checked in game: the rear-attack targeting heuristic, WAIT transitions, crowd-control escape and interrupt cues, and lists past the beta's level cap.
 
 ## Installation
 
@@ -156,7 +184,22 @@ Button skinning library that allows JustAC icons to match your UI's button theme
 
 ### WoW Forever priority lists
 
-The WoW Forever priorities derive from the rotation files of the [WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the wowsims project, used under its MIT license (the notice travels with the data).
+The WoW Forever priorities derive from the rotation files of ElliotWood's
+[WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the
+wowsims project, used under its MIT license (the notice travels with the data).
+The original repository is currently unavailable; JustAC retains its pinned
+snapshot and local healer damage-filler lists rather than silently replacing
+the source. Source revisions and adaptations are documented in
+[CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review).
+
+### Retail priority lists
+
+Retail's alternate priorities derive from the
+[SimulationCraft project and its contributors](https://github.com/simulationcraft/simc),
+under GPL-3.0. JustAC adapts those lists to its supported combat-safe conditions
+and retains local healer damage-filler lists. Source revisions and refresh
+procedures are documented in
+[DEV_TOOLING.md](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh).
 
 ### Blizzard Entertainment
 
@@ -170,7 +213,7 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **Midnight compliant, currently live on 12.1.0** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
+- **Midnight compliant, targeting Retail 12.1.5** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
 - **Taint is fatal around secrets** - Tainted execution cannot read a secret at all, so writing any Lua field on a frame that reads secrets (Blizzard's Cooldown Manager viewers) breaks *Blizzard's* code, not just ours. Reads and widget C methods are safe; mixin methods that store state are not. See [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
 - **Threshold gates** - The engine evaluates a curve the addon authors against a secret value and returns a secret result; the addon reads only whether that result is *zero*. Nothing is compared, ordered or read in Lua, but the answer to "is this below N" is an ordinary branchable boolean. Health, power and aura/cooldown remaining time all go through the same path, which is what makes graded defensive bands and stack-aware ordering possible in combat. Deliberately scoped to answering *questions*, never recovering values

@@ -263,16 +263,19 @@ local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
 
 --- Array of AuraData for unit/filter, or nil if auras can't be enumerated at all.
 --- Falls back to the index loop when the batch call throws.
+--- Second return is true only when the entire list was enumerated.
 function BlizzardAPI.GetAuras(unit, filter)
-    if not unit then return nil end
+    if not unit then return nil, false end
     if GetUnitAuras then
         local ok, list = pcall(GetUnitAuras, unit, filter)
-        if ok and type(list) == "table" then return list end
+        if ok and not BlizzardAPI.IsSecretValue(list) and type(list) == "table" then
+            return list, true
+        end
         -- Fall through to the index loop: a throw here means this unit/filter
         -- combination is rejected, not that the API is missing.
     end
     local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
-    if not byIndex then return nil end
+    if not byIndex then return nil, false end
     local list = {}
     for i = 1, 40 do
         local ok, data = pcall(byIndex, unit, i, filter)
@@ -284,12 +287,13 @@ function BlizzardAPI.GetAuras(unit, filter)
             -- and every counter reads as a confident "no such auras" - turning this
             -- function's whole fail-open contract into its opposite. Nil means
             -- "could not tell", which is what the callers are written against.
-            return i > 1 and list or nil
+            return i > 1 and list or nil, false
         end
-        if not data then break end
+        if BlizzardAPI.IsSecretValue(data) then return list, false end
+        if data == nil then return list, true end
         list[i] = data
     end
-    return list
+    return list, false
 end
 
 --------------------------------------------------------------------------------
@@ -364,5 +368,4 @@ function BlizzardAPI.HasBigDefensive(unit)
     if n == nil then return nil end
     return n > 0
 end
-
 

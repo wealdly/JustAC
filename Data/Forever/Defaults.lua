@@ -12,11 +12,11 @@ if not (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) then return end
 
 local DEFENSIVE = {
     WARRIOR = {12975, 871, 402927, 20594, 1299026},
-    PALADIN = {642, 498, 1022, 633, 19750, 635, 20594, 1299026},
+    PALADIN = {642, 498, 1022, 1311015, 633, 19750, 635, 20594, 1299026},
     HUNTER = {19263, 5384, 20594, 1299026},
     ROGUE = {5277, 1856, 20594, 1299026},
-    PRIEST = {17, 13908, 139, 2061, 20594, 1299026},
-    SHAMAN = {8004, 331, 20594, 1299026},
+    PRIEST = {17, 13908, 2651, 139, 2061, 20594, 1299026},
+    SHAMAN = {8004, 331, 8071, 20594, 1299026},
     MAGE = {11958, 11426, 1463, 20594, 1299026},
     WARLOCK = {6789, 6229, 689, 20594, 1299026},
     DRUID = {22812, 22842, 774, 8936, 5185, 20594, 1299026},
@@ -30,6 +30,8 @@ local PET_REZ = {
     WARLOCK = {688, 697, 712, 691},
 }
 local GROUP_HELP = {
+    WARRIOR = {},
+    MAGE = {},
     SHAMAN = {5394},
 }
 local GROUP_HEAL = {
@@ -53,19 +55,121 @@ local BURST = {
     PRIEST = {10060, 401977},
 }
 local TOPOFF = {
+    ROGUE = {},
     PRIEST = {139, 2050},
     PALADIN = {19750, 635},
     DRUID = {774, 8936},
     SHAMAN = {8004, 331},
 }
+local PREVIOUS_DEFENSIVE = {
+    PALADIN = {642, 498, 1022, 633, 19750, 635, 20594, 1299026},
+    PRIEST = {17, 13908, 139, 2061, 20594, 1299026},
+    SHAMAN = {8004, 331, 20594, 1299026},
+}
+local ABILITY_ROLES = {
+    [17] = "protection",  -- Power Word: Shield
+    [126] = "utility",  -- Eye of Kilrogg
+    [130] = "utility",  -- Slow Fall
+    [139] = "healing",  -- Renew
+    [331] = "healing",  -- Healing Wave
+    [498] = "protection",  -- Divine Protection
+    [543] = "protection",  -- Fire Ward
+    [586] = "utility",  -- Fade
+    [633] = "healing",  -- Lay on Hands
+    [635] = "healing",  -- Holy Light
+    [642] = "protection",  -- Divine Shield
+    [689] = "mixed",  -- Drain Life
+    [774] = "healing",  -- Rejuvenation
+    [871] = "protection",  -- Shield Wall
+    [1002] = "utility",  -- Eyes of the Beast
+    [1022] = "protection",  -- Blessing of Protection
+    [1463] = "protection",  -- Mana Shield
+    [1515] = "utility",  -- Tame Beast
+    [1706] = "utility",  -- Levitate
+    [1856] = "protection",  -- Vanish
+    [1953] = "utility",  -- Blink
+    [2061] = "healing",  -- Flash Heal
+    [2096] = "utility",  -- Mind Vision
+    [2484] = "utility",  -- Earthbind Totem
+    [2565] = "mitigation",  -- Shield Block
+    [2651] = "protection",  -- Elune's Grace
+    [5185] = "healing",  -- Healing Touch
+    [5277] = "protection",  -- Evasion
+    [5384] = "protection",  -- Feign Death
+    [5394] = "healing",  -- Healing Stream Totem
+    [5675] = "resource",  -- Mana Spring Totem
+    [5730] = "protection",  -- Stoneclaw Totem
+    [6143] = "protection",  -- Frost Ward
+    [6196] = "utility",  -- Far Sight
+    [6197] = "utility",  -- Eagle Eye
+    [6229] = "protection",  -- Shadow Ward
+    [6495] = "utility",  -- Sentry Totem
+    [6789] = "mixed",  -- Death Coil
+    [7744] = "protection",  -- Will of the Forsaken
+    [8004] = "healing",  -- Lesser Healing Wave
+    [8071] = "protection",  -- Stoneskin Totem
+    [8143] = "protection",  -- Tremor Totem
+    [8166] = "protection",  -- Poison Cleansing Totem
+    [8170] = "protection",  -- Disease Cleansing Totem
+    [8177] = "protection",  -- Grounding Totem
+    [8181] = "protection",  -- Frost Resistance Totem
+    [8184] = "protection",  -- Fire Resistance Totem
+    [8936] = "healing",  -- Regrowth
+    [10595] = "protection",  -- Nature Resistance Totem
+    [11426] = "protection",  -- Ice Barrier
+    [11958] = "protection",  -- Ice Block
+    [12975] = "protection",  -- Last Stand
+    [13908] = "healing",  -- Desperate Prayer
+    [15107] = "protection",  -- Windwall Totem
+    [15237] = "mixed",  -- Holy Nova
+    [16190] = "resource",  -- Mana Tide Totem
+    [18265] = "mixed",  -- Siphon Life
+    [19263] = "protection",  -- Deterrence
+    [19750] = "healing",  -- Flash of Light
+    [20230] = "mixed",  -- Retaliation
+    [20589] = "protection",  -- Escape Artist
+    [20594] = "protection",  -- Stoneform
+    [20925] = "mixed",  -- Holy Shield
+    [22812] = "protection",  -- Barkskin
+    [22842] = "healing",  -- Frenzied Regeneration
+    [402927] = "mixed",  -- Victory Rush
+    [1259718] = "protection",  -- Will to Survive
+    [1299026] = "protection",  -- Shatter Curse
+    [1311015] = "protection",  -- Templar's Bulwark
+    [1311606] = "mixed",  -- Holy Shock
+}
+local TOTEM_SLOTS = {
+    [3599] = 1,  -- Searing Totem
+    [8190] = 1,  -- Magma Totem
+    [8227] = 1,  -- Flametongue Totem
+    [8181] = 1,  -- Frost Resistance Totem
+    [8071] = 2,  -- Stoneskin Totem
+    [8075] = 2,  -- Strength of Earth Totem
+    [5730] = 2,  -- Stoneclaw Totem
+    [2484] = 2,  -- Earthbind Totem
+    [8143] = 2,  -- Tremor Totem
+    [5394] = 3,  -- Healing Stream Totem
+    [5675] = 3,  -- Mana Spring Totem
+    [16190] = 3,  -- Mana Tide Totem
+    [8166] = 3,  -- Poison Cleansing Totem
+    [8170] = 3,  -- Disease Cleansing Totem
+    [8184] = 3,  -- Fire Resistance Totem
+    [8512] = 4,  -- Windfury Totem
+    [8835] = 4,  -- Grace of Air Totem
+    [8177] = 4,  -- Grounding Totem
+    [15107] = 4,  -- Windwall Totem
+    [10595] = 4,  -- Nature Resistance Totem
+    [6495] = 4,  -- Sentry Totem
+}
+local MAINTAINED_PROTECTION = { [8071] = true }
 local MAINTAINED = {
-    PRIEST = { { group = {1243}, default = 1243, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938} }, { group = {588}, default = 588, auraIDs = {588, 7128, 602, 1006, 10951, 10952} } },
-    MAGE = { { group = {1459}, default = 1459, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157} }, { group = {168, 7302, 6117}, default = 168, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
-    DRUID = { { group = {1126}, default = 1126, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885} } },
-    WARLOCK = { { group = {687, 706}, default = 687, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
-    SHAMAN = { { group = {324, 408510}, default = 324, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
-    PALADIN = { { group = {465, 7294, 19746}, default = 465, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} } },
-    HUNTER = { { group = {13165, 13163}, default = 13165, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163} } },
+    PRIEST = { { group = {1243}, default = 1243, memberAuraIDs = { [1243] = {1243, 1244, 1245, 2791, 10937, 10938} }, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938} }, { group = {588}, default = 588, memberAuraIDs = { [588] = {588, 7128, 602, 1006, 10951, 10952} }, auraIDs = {588, 7128, 602, 1006, 10951, 10952} } },
+    MAGE = { { group = {1459}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
+    DRUID = { { group = {1126}, default = 1126, memberAuraIDs = { [1126] = {1126, 5232, 6756, 5234, 8907, 9884, 9885} }, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885} } },
+    WARLOCK = { { group = {687, 706}, default = 687, memberAuraIDs = { [687] = {687, 696}, [706] = {706, 1086, 11733, 11734, 11735} }, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
+    SHAMAN = { { group = {324, 408510}, default = 324, memberAuraIDs = { [324] = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363}, [408510] = {408510} }, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
+    PALADIN = { { group = {465, 7294, 19746}, default = 465, memberAuraIDs = { [465] = {465, 10290, 643, 10291, 1032, 10292, 10293}, [7294] = {7294, 10298, 10299, 10300, 10301}, [19746] = {19746} }, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} } },
+    HUNTER = { { group = {13165, 13163}, default = 13165, memberAuraIDs = { [13165] = {13165, 14318, 14319, 14320, 14321, 14322, 25296}, [13163] = {13163} }, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163} } },
 }
 local IMBUES = {8232, 8024, 8017}
 local IMBUE_CASTS = {8232, 8235, 10486, 16362, 8024, 8027, 8030, 16339, 16341, 16342, 8017, 8018, 8019, 10399, 16314, 16315, 16316, 8033, 8038, 10456, 16355, 16356}
@@ -117,7 +221,42 @@ local TIERS = {
     [5277] = 4,  -- Evasion
     [19263] = 4,  -- Deterrence
 }
-local CATEGORIES = { defensive = { [17] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1463] = true, [1856] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [19503] = true, [19577] = true, [20549] = true } }
+local CATEGORIES = { defensive = { [17] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1463] = true, [1856] = true, [2651] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [8071] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true, [1311015] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [19503] = true, [19577] = true, [20549] = true } }
+CATEGORIES.defensive[17] = true
+CATEGORIES.defensive[498] = true
+CATEGORIES.defensive[543] = true
+CATEGORIES.defensive[642] = true
+CATEGORIES.defensive[871] = true
+CATEGORIES.defensive[1022] = true
+CATEGORIES.defensive[1463] = true
+CATEGORIES.defensive[1856] = true
+CATEGORIES.defensive[2565] = true
+CATEGORIES.defensive[2651] = true
+CATEGORIES.defensive[5277] = true
+CATEGORIES.defensive[5384] = true
+CATEGORIES.defensive[5730] = true
+CATEGORIES.defensive[6143] = true
+CATEGORIES.defensive[6229] = true
+CATEGORIES.defensive[7744] = true
+CATEGORIES.defensive[8071] = true
+CATEGORIES.defensive[8143] = true
+CATEGORIES.defensive[8166] = true
+CATEGORIES.defensive[8170] = true
+CATEGORIES.defensive[8177] = true
+CATEGORIES.defensive[8181] = true
+CATEGORIES.defensive[8184] = true
+CATEGORIES.defensive[10595] = true
+CATEGORIES.defensive[11426] = true
+CATEGORIES.defensive[11958] = true
+CATEGORIES.defensive[12975] = true
+CATEGORIES.defensive[15107] = true
+CATEGORIES.defensive[19263] = true
+CATEGORIES.defensive[20589] = true
+CATEGORIES.defensive[20594] = true
+CATEGORIES.defensive[22812] = true
+CATEGORIES.defensive[1259718] = true
+CATEGORIES.defensive[1299026] = true
+CATEGORIES.defensive[1311015] = true
 local CHANNELED = {
     [10] = true,  -- Blizzard
     [126] = true,  -- Eye of Kilrogg
@@ -221,14 +360,14 @@ local FRONTAL_DOTS = {
     [348] = true,  -- Immolate (35% upfront)
     [707] = true,  -- Immolate (36% upfront)
     [1094] = true,  -- Immolate (35% upfront)
-    [1822] = true,  -- Rake (32% upfront)
+    [1822] = true,  -- Rake (31% upfront)
     [1823] = true,  -- Rake (33% upfront)
     [1824] = true,  -- Rake (37% upfront)
     [2941] = true,  -- Immolate (37% upfront)
     [3140] = true,  -- Fireball (87% upfront)
-    [8050] = true,  -- Flame Shock (42% upfront)
-    [8052] = true,  -- Flame Shock (51% upfront)
-    [8053] = true,  -- Flame Shock (43% upfront)
+    [8050] = true,  -- Flame Shock (47% upfront)
+    [8052] = true,  -- Flame Shock (52% upfront)
+    [8053] = true,  -- Flame Shock (50% upfront)
     [8400] = true,  -- Fireball (88% upfront)
     [8401] = true,  -- Fireball (86% upfront)
     [8402] = true,  -- Fireball (89% upfront)
@@ -242,13 +381,13 @@ local FRONTAL_DOTS = {
     [9833] = true,  -- Moonfire (37% upfront)
     [9834] = true,  -- Moonfire (36% upfront)
     [9835] = true,  -- Moonfire (36% upfront)
-    [9904] = true,  -- Rake (37% upfront)
+    [9904] = true,  -- Rake (38% upfront)
     [10148] = true,  -- Fireball (88% upfront)
     [10149] = true,  -- Fireball (88% upfront)
     [10150] = true,  -- Fireball (89% upfront)
     [10151] = true,  -- Fireball (89% upfront)
     [10447] = true,  -- Flame Shock (49% upfront)
-    [10448] = true,  -- Flame Shock (48% upfront)
+    [10448] = true,  -- Flame Shock (49% upfront)
     [11366] = true,  -- Pyroblast (71% upfront)
     [11665] = true,  -- Immolate (37% upfront)
     [11667] = true,  -- Immolate (36% upfront)
@@ -270,7 +409,7 @@ local FRONTAL_DOTS = {
     [18809] = true,  -- Pyroblast (73% upfront)
     [25306] = true,  -- Fireball (89% upfront)
     [25309] = true,  -- Immolate (36% upfront)
-    [29228] = true,  -- Flame Shock (49% upfront)
+    [29228] = true,  -- Flame Shock (48% upfront)
     [401502] = true,  -- Frostfire Bolt (79% upfront)
     [1237312] = true,  -- Frostfire Bolt (82% upfront)
     [1237313] = true,  -- Frostfire Bolt (84% upfront)
@@ -306,7 +445,7 @@ local NEXT_SWING = {
     [9880] = true,  -- Maul (druid)
     [9881] = true,  -- Maul (druid)
 }
-local COMBAT_BUFFS = {
+local SHORT_BUFFS = {
     10,  -- Blizzard (8s)
     126,  -- Eye of Kilrogg (45s)
     130,  -- Slow Fall (30s)
@@ -343,7 +482,7 @@ local COMBAT_BUFFS = {
     6197,  -- Eagle Eye (60s)
     6229,  -- Shadow Ward (30s)
     6495,  -- Sentry Totem (300s)
-    6673,  -- Battle Shout (combat buff)
+    6673,  -- Battle Shout (180s)
     7267,  -- Grovel (3s)
     7744,  -- Will of the Forsaken (0.1s)
     11426,  -- Ice Barrier (60s)
@@ -358,7 +497,7 @@ local COMBAT_BUFFS = {
     13896,  -- Feedback (15s)
     14183,  -- Premeditation (20s)
     14278,  -- Ghostly Strike (7s)
-    16166,  -- Elemental Mastery (15s)
+    16166,  -- Lightning Mastery (15s)
     16689,  -- Nature's Grasp (45s)
     16914,  -- Hurricane (10s)
     18288,  -- Amplify Curse (30s)
@@ -395,10 +534,10 @@ local COMBAT_BUFFS = {
     1277324,  -- Dark Sacrifice (15s)
     1299026,  -- Shatter Curse (8s)
     1310687,  -- Sniper Shot (10s)
-    1310703,  -- Venom (6s)
     1311015,  -- Templar's Bulwark (8s)
     1311649,  -- Seal of Fury (30s)
     1317257,  -- Strider Kick (3s)
+    1329555,  -- Reckless Swings (8s)
 }
 local DOTS = {
     [772] = 9,  -- Rend
@@ -449,6 +588,10 @@ local DOTS = {
     [11275] = 6,  -- Rupture
     [11289] = 18,  -- Garrote
     [11290] = 18,  -- Garrote
+    [1316709] = 6,  -- Death Mark
+    [1325756] = 6,  -- Death Mark
+    [1325757] = 6,  -- Death Mark
+    [1325758] = 6,  -- Death Mark
     [589] = 18,  -- Shadow Word: Pain
     [594] = 18,  -- Shadow Word: Pain
     [970] = 18,  -- Shadow Word: Pain
@@ -567,6 +710,10 @@ local function Put(tbl, lists, byClass)
     end
 end
 Put(SpellDB.CLASS_DEFENSIVE_DEFAULTS, DEFENSIVE)
+SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE
+SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES
+SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS
+SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION
 Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)
 Put(SpellDB.CLASS_PET_REZ_DEFAULTS, PET_REZ, true)
 Put(SpellDB.CLASS_GROUP_HELP_DEFAULTS, GROUP_HELP)
@@ -579,7 +726,7 @@ Put(SpellDB.CLASS_TOPOFF_HEALS, TOPOFF, true)
 -- retail behaviour.
 wipe(SpellDB.CLASS_MAINTAINED_BUFFS)
 for class, groups in pairs(MAINTAINED) do SpellDB.CLASS_MAINTAINED_BUFFS[class] = groups end
-for _, id in ipairs(COMBAT_BUFFS) do
+for _, id in ipairs(SHORT_BUFFS) do
     SpellDB.RAID_BUFF_SPELLS[id], SpellDB.UNIQUE_AURA_SPELLS[id] = nil, nil
 end
 if SpellDB.IndexMaintainedBuffs then SpellDB.IndexMaintainedBuffs() end

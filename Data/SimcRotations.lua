@@ -196,292 +196,205 @@ RotationImport.RegisterGated({
   ["DEMONHUNTER_2"] = {
     st = {
       {id=189110,gates={}},  -- infernal_strike
-      {id=232893,gates={},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
-      {id=442294,gates={{t="buff",id=442294}},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
-      {id=247454,gates={{t="power",res="fury",op=">",n=75}},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},b={{k="hero",id=35}}},  -- immolation_aura
-      {id=212084,gates={{t="power",res="fury",op=">=",n=85}},b={{k="hero",id=35}}},  -- fel_devastation
       {id=204596,gates={},b={{k="hero",id=35}}},  -- sigil_of_flame
-      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
-      {id=207407,gates={},b={{k="hero",id=35}}},  -- soul_carver
-      {id=198793,gates={{t="cd",id=232893,neg=true}},b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
+      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
+      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
       {id=228477,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_cleave
-      {id=204157,gates={},b={{k="hero",id=35}}},  -- throw_glaive
+      {id=442294,gates={},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
       {id=263642,gates={},delegated=true,b={{k="hero",id=35}}},  -- fracture
+      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
       {id=204021,gates={},delegated=true,b={{k="hero",id=35}}},  -- fiery_brand
       {id=390163,gates={{t="buff",id=442294,neg=true}},delegated=true,b={{k="hero",id=35}}},  -- sigil_of_spite
-      {id=247454,gates={},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
       {id=212084,gates={{t="power",res="fury",op=">",n=85}},delegated=true,b={{k="hero",id=35}}},  -- fel_devastation
       {id=207407,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_carver
-      {id=232893,gates={{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=198793,gates={{t="cd",id=232893,neg=true},{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
       {id=263642,gates={},b={{k="hero",id=35}}},  -- fracture
       {id=212084,gates={},b={{k="hero",id=35}}},  -- fel_devastation
+      {id=228477,gates={{t="prev",id=247454,gcd=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=204021,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fiery_brand
-      {id=232893,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=30},{t="power",res="fury",op="<",n=45}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=263642,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=45},{t="power",res="fury",op="<",n=75}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=228477,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=247454,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
       {id=232893,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=258920,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=207407,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_carver
-      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
       {id=390163,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=258920,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=204596,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
       {id=232893,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
-      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=390163,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=263642,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=204157,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- throw_glaive
+      {id=204596,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
+      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=187827,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- metamorphosis
-      {id=390163,gates={{t="cd",id=247454},{t="cd",id=187827}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
+      {id=390163,gates={{t="cd",id=390163,neg=true}},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=247454,gates={{t="power",res="fury",op=">=",n=60}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
-      {id=212084,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
-      {id=228477,gates={{t="cd",id=187827,neg=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
+      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
     },
     cleave = {
       {id=189110,gates={}},  -- infernal_strike
-      {id=232893,gates={},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
-      {id=442294,gates={{t="buff",id=442294}},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
-      {id=247454,gates={{t="power",res="fury",op=">",n=75}},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},b={{k="hero",id=35}}},  -- immolation_aura
-      {id=212084,gates={{t="power",res="fury",op=">=",n=85}},b={{k="hero",id=35}}},  -- fel_devastation
       {id=204596,gates={},b={{k="hero",id=35}}},  -- sigil_of_flame
-      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
-      {id=207407,gates={},b={{k="hero",id=35}}},  -- soul_carver
-      {id=198793,gates={{t="cd",id=232893,neg=true}},b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
+      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
+      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
       {id=228477,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_cleave
-      {id=204157,gates={},b={{k="hero",id=35}}},  -- throw_glaive
+      {id=442294,gates={},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
       {id=263642,gates={},delegated=true,b={{k="hero",id=35}}},  -- fracture
+      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
       {id=204021,gates={},delegated=true,b={{k="hero",id=35}}},  -- fiery_brand
       {id=390163,gates={{t="buff",id=442294,neg=true}},delegated=true,b={{k="hero",id=35}}},  -- sigil_of_spite
-      {id=247454,gates={},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
       {id=212084,gates={{t="power",res="fury",op=">",n=85}},delegated=true,b={{k="hero",id=35}}},  -- fel_devastation
       {id=207407,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_carver
-      {id=232893,gates={{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=198793,gates={{t="cd",id=232893,neg=true},{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
       {id=263642,gates={},b={{k="hero",id=35}}},  -- fracture
       {id=212084,gates={},b={{k="hero",id=35}}},  -- fel_devastation
+      {id=228477,gates={{t="prev",id=247454,gcd=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=204021,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fiery_brand
-      {id=232893,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=30},{t="power",res="fury",op="<",n=45}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=263642,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=45},{t="power",res="fury",op="<",n=75}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=228477,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=247454,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
       {id=232893,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=258920,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=207407,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_carver
-      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
       {id=390163,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=258920,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=204596,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
       {id=232893,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
-      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=390163,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=263642,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=204157,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- throw_glaive
+      {id=204596,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
+      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=187827,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- metamorphosis
-      {id=390163,gates={{t="cd",id=247454},{t="cd",id=187827}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
+      {id=390163,gates={{t="cd",id=390163,neg=true}},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=247454,gates={{t="power",res="fury",op=">=",n=60}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
-      {id=212084,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
-      {id=228477,gates={{t="cd",id=187827,neg=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
+      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
     },
     aoe = {
       {id=189110,gates={}},  -- infernal_strike
-      {id=232893,gates={},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
-      {id=442294,gates={{t="buff",id=442294}},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
-      {id=247454,gates={{t="power",res="fury",op=">",n=75}},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},b={{k="hero",id=35}}},  -- immolation_aura
-      {id=212084,gates={{t="power",res="fury",op=">=",n=85}},b={{k="hero",id=35}}},  -- fel_devastation
       {id=204596,gates={},b={{k="hero",id=35}}},  -- sigil_of_flame
-      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
-      {id=207407,gates={},b={{k="hero",id=35}}},  -- soul_carver
-      {id=198793,gates={{t="cd",id=232893,neg=true}},b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
+      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
+      {id=187827,gates={},delegated=true,b={{k="hero",id=35}}},  -- metamorphosis
       {id=228477,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_cleave
-      {id=204157,gates={},b={{k="hero",id=35}}},  -- throw_glaive
+      {id=442294,gates={},delegated=true,b={{k="hero",id=35}}},  -- reavers_glaive
       {id=263642,gates={},delegated=true,b={{k="hero",id=35}}},  -- fracture
+      {id=232893,gates={},b={{k="hero",id=35}}},  -- felblade
       {id=204021,gates={},delegated=true,b={{k="hero",id=35}}},  -- fiery_brand
       {id=390163,gates={{t="buff",id=442294,neg=true}},delegated=true,b={{k="hero",id=35}}},  -- sigil_of_spite
       {id=247454,gates={},delegated=true,b={{k="hero",id=35}}},  -- spirit_bomb
-      {id=258920,gates={},delegated=true,b={{k="hero",id=35}}},  -- immolation_aura
       {id=212084,gates={{t="power",res="fury",op=">",n=85}},delegated=true,b={{k="hero",id=35}}},  -- fel_devastation
       {id=207407,gates={},delegated=true,b={{k="hero",id=35}}},  -- soul_carver
-      {id=232893,gates={{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35}}},  -- felblade
-      {id=198793,gates={{t="cd",id=232893,neg=true},{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=35},{k="talent",id=444931}}},  -- vengeful_retreat
-      {id=204596,gates={},delegated=true,b={{k="hero",id=35}}},  -- sigil_of_flame
       {id=263642,gates={},b={{k="hero",id=35}}},  -- fracture
       {id=212084,gates={},b={{k="hero",id=35}}},  -- fel_devastation
+      {id=228477,gates={{t="prev",id=247454,gcd=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=204021,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fiery_brand
-      {id=232893,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=30},{t="power",res="fury",op="<",n=45}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=263642,gates={{t="cd",id=247454},{t="power",res="fury",op=">=",n=45},{t="power",res="fury",op="<",n=75}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=228477,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
       {id=247454,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
       {id=232893,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
       {id=258920,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=207407,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_carver
-      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
       {id=390163,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=258920,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- immolation_aura
       {id=204596,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
       {id=232893,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- felblade
-      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=390163,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=263642,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=204157,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- throw_glaive
+      {id=204596,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_flame
+      {id=263642,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fracture
       {id=187827,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- metamorphosis
-      {id=390163,gates={{t="cd",id=247454},{t="cd",id=187827}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
+      {id=390163,gates={{t="cd",id=390163,neg=true}},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- sigil_of_spite
       {id=247454,gates={{t="power",res="fury",op=">=",n=60}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- spirit_bomb
-      {id=212084,gates={},b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
-      {id=228477,gates={{t="cd",id=187827,neg=true}},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- soul_cleave
+      {id=212084,gates={},delegated=true,b={{k="hero",id=35,neg=true},{k="hero",id=124}}},  -- fel_devastation
     },
   },
   ["DEMONHUNTER_3"] = {
     burst = {191427},  -- metamorphosis
     st = {
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- metamorphosis
-      {id=1217610,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=1221150,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- collapsing_star
-      {id=370965,gates={{t="buff",id=191427}},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=1239123,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- hungering_slash
-      {id=1245470,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- reapers_toll
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}},{k="talent",id=1240201}}},  -- vengeful_retreat
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}},{k="talent",id=1240201}}},  -- reapers_toll
-      {id=1245412,gates={{t="buff",id=191427}},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- voidblade
-      {id=1245412,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- voidblade
-      {id=1225826,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- reap
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- void_ray
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=191427,gates={},b={{k="hero",id=124}}},  -- metamorphosis
+      {id=1225826,gates={}},  -- eradicate
+      {id=1245453,gates={}},  -- cull
+      {id=1226019,gates={}},  -- reap
       {id=1217610,gates={},delegated=true,b={{k="hero",id=124}}},  -- devour
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124}}},  -- consume
-      {id=1225826,gates={},b={{k="hero",id=124}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124}}},  -- reap
-      {id=1221150,gates={},b={{k="hero",id=124}}},  -- collapsing_star
+      {id=370965,gates={},b={{k="hero",id=124},{k="talent",id=1240201}}},  -- the_hunt
+      {id=1245412,gates={},b={{k="hero",id=124},{k="talent",id=1240201}}},  -- voidblade
+      {id=1225826,gates={},delegated=true,b={{k="hero",id=124}}},  -- eradicate
+      {id=1221150,gates={},delegated=true,b={{k="hero",id=124}}},  -- collapsing_star
+      {id=1217610,gates={{t="buff",id=1225826,dur=2},{t="power",res="fury",op="<=",n=70,deficit=true}},delegated=true,b={{k="hero",id=124}}},  -- devour
       {id=473728,gates={},delegated=true,b={{k="hero",id=124}}},  -- void_ray
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124}}},  -- soul_immolation
+      {id=1245453,gates={},delegated=true,b={{k="hero",id=124},{k="talent",id=1226033}}},  -- cull
+      {id=1241937,gates={{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=124}}},  -- soul_immolation
       {id=1217610,gates={},b={{k="hero",id=124}}},  -- devour
+      {id=1245412,gates={},delegated=true,b={{k="hero",id=124},{k="talent",id=1240201}}},  -- voidblade
+      {id=191427,gates={},b={{k="hero",id=124}}},  -- metamorphosis
+      {id=473662,gates={},delegated=true,b={{k="hero",id=124}}},  -- consume
+      {id=473728,gates={},b={{k="hero",id=124}}},  -- void_ray
+      {id=1241937,gates={},delegated=true,b={{k="hero",id=124}}},  -- soul_immolation
       {id=473662,gates={},b={{k="hero",id=124}}},  -- consume
-      {id=1245412,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true},{k="talent",id=1240201}}},  -- voidblade
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- metamorphosis
-      {id=1217610,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- devour
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- consume
-      {id=1221150,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- collapsing_star
-      {id=1225826,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- reap
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- void_ray
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- vengeful_retreat
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- reapers_toll
-      {id=1245483,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- pierce_the_veil
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- devour
-      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- consume
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- soul_immolation
-      {id=1217610,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=1245412,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- voidblade
-      {id=198793,gates={{t="cd",id=370965},{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- vengeful_retreat
+      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- vengeful_retreat
+      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- void_ray
+      {id=1225826,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- eradicate
+      {id=1259431,gates={{t="buff",id=1221150}},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- predators_wake
+      {id=1245470,gates={{t="buff",id=1221150}},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",id=1272422}}},  -- reapers_toll
+      {id=1245483,gates={{t="buff",id=1221150}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",id=1272422}}},  -- pierce_the_veil
+      {id=1221150,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- collapsing_star
+      {id=1217610,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- devour
+      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- soul_immolation
+      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- reapers_toll
+      {id=1245483,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- pierce_the_veil
+      {id=1259431,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- predators_wake
+      {id=473728,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- void_ray
+      {id=1217610,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- devour
+      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- consume
+      {id=1245412,gates={{t="cd",id=370965}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- voidblade
+      {id=198793,gates={{t="cd",id=370965}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- vengeful_retreat
       {id=370965,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=191427,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- metamorphosis
-      {id=370965,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=1239123,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- hungering_slash
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- reapers_toll
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- vengeful_retreat
-      {id=1245483,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- pierce_the_veil
-      {id=1225826,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- reap
-      {id=1259431,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- predators_wake
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- void_ray
-      {id=1241937,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=1225826,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- eradicate
-      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}},{k="talent",id=1226033}}},  -- void_ray
-      {id=1245483,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- pierce_the_veil
-      {id=1259431,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- predators_wake
-      {id=1245453,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- cull
-      {id=473728,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- void_ray
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- metamorphosis
-      {id=370965,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=1226019,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- reap
-      {id=1245412,gates={{t="prev",id=473728,gcd=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- voidblade
+      {id=1245412,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- voidblade
+      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- metamorphosis
+      {id=1239123,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- hungering_slash
+      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- consume
+      {id=1221150,gates={{t="prev",id=473728,gcd=true}},b={{k="hero",id=124}}},  -- collapsing_star
     },
     aoe = {
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- metamorphosis
-      {id=1217610,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124},{k="talent",ids={370965,1246167}},{k="talent",id=1226033}}},  -- void_ray
-      {id=370965,gates={{t="buff",id=191427}},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=1239123,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- hungering_slash
-      {id=1245470,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- reapers_toll
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}},{k="talent",id=1240201}}},  -- vengeful_retreat
-      {id=1239123,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- hungering_slash
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}},{k="talent",id=1240201}}},  -- reapers_toll
-      {id=1245412,gates={{t="buff",id=191427}},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- voidblade
-      {id=1245412,gates={{t="buff",id=191427,neg=true}},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- voidblade
-      {id=1225826,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- reap
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- void_ray
-      {id=1221150,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- collapsing_star
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=473662,gates={},b={{k="hero",id=124},{k="talent",ids={370965,1246167}}}},  -- consume
+      {id=1225826,gates={}},  -- eradicate
+      {id=1245453,gates={}},  -- cull
+      {id=1226019,gates={}},  -- reap
+      {id=370965,gates={},b={{k="hero",id=124},{k="talent",id=1240201}}},  -- the_hunt
+      {id=1245412,gates={},b={{k="hero",id=124},{k="talent",id=1240201}}},  -- voidblade
+      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124},{k="talent",id=1226033}}},  -- void_ray
+      {id=1225826,gates={},delegated=true,b={{k="hero",id=124}}},  -- eradicate
+      {id=1221150,gates={},delegated=true,b={{k="hero",id=124}}},  -- collapsing_star
+      {id=1217610,gates={{t="buff",id=1225826,dur=2},{t="power",res="fury",op="<=",n=70,deficit=true}},delegated=true,b={{k="hero",id=124}}},  -- devour
+      {id=473728,gates={},delegated=true,b={{k="hero",id=124}}},  -- void_ray
+      {id=1245453,gates={},delegated=true,b={{k="hero",id=124},{k="talent",id=1226033}}},  -- cull
+      {id=1241937,gates={{t="power",res="fury",op="<",n=40}},delegated=true,b={{k="hero",id=124}}},  -- soul_immolation
+      {id=1217610,gates={},b={{k="hero",id=124}}},  -- devour
+      {id=1245412,gates={},delegated=true,b={{k="hero",id=124},{k="talent",id=1240201}}},  -- voidblade
+      {id=473728,gates={{t="power",res="fury",op=">=",n=100}},delegated=true,b={{k="hero",id=124},{k="talent",id=1226033}}},  -- void_ray
       {id=191427,gates={},b={{k="hero",id=124}}},  -- metamorphosis
       {id=473662,gates={},delegated=true,b={{k="hero",id=124}}},  -- consume
-      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124},{k="talent",id=1226033}}},  -- void_ray
-      {id=1221150,gates={},delegated=true,b={{k="hero",id=124}}},  -- collapsing_star
-      {id=1225826,gates={},b={{k="hero",id=124}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124}}},  -- reap
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124}}},  -- void_ray
+      {id=473728,gates={},b={{k="hero",id=124}}},  -- void_ray
       {id=1241937,gates={},delegated=true,b={{k="hero",id=124}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124}}},  -- devour
       {id=473662,gates={},b={{k="hero",id=124}}},  -- consume
-      {id=1245412,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true},{k="talent",id=1240201}}},  -- voidblade
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- metamorphosis
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- consume
-      {id=1225826,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- eradicate
-      {id=1245453,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- cull
-      {id=1226019,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- reap
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- void_ray
-      {id=1221150,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- collapsing_star
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- vengeful_retreat
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- reapers_toll
-      {id=1245483,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- pierce_the_veil
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- soul_immolation
-      {id=1217610,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- devour
-      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167},neg=true}}},  -- consume
-      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- soul_immolation
-      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- vengeful_retreat
-      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}},{k="talent",id=1226033,neg=true}}},  -- void_ray
-      {id=1225826,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- eradicate
-      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}},{k="talent",id=1226033}}},  -- void_ray
-      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- reapers_toll
-      {id=1217610,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- devour
-      {id=1245483,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- pierce_the_veil
-      {id=1259431,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- predators_wake
-      {id=1245453,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- cull
-      {id=473728,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- void_ray
-      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- metamorphosis
-      {id=370965,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- the_hunt
-      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=1239123,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- hungering_slash
-      {id=1226019,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- reap
-      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- consume
-      {id=1245412,gates={{t="prev",id=473728,gcd=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",ids={370965,1246167}}}},  -- voidblade
+      {id=198793,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- vengeful_retreat
+      {id=473728,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- void_ray
+      {id=1225826,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- eradicate
+      {id=473728,gates={{t="buff",id=1225826,dur=2,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",id=1226033}}},  -- void_ray
+      {id=1245470,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- reapers_toll
+      {id=1259431,gates={{t="buff",id=1221150}},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- predators_wake
+      {id=1245470,gates={{t="buff",id=1221150}},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",id=1272422}}},  -- reapers_toll
+      {id=1245483,gates={{t="buff",id=1221150}},b={{k="hero",id=124,neg=true},{k="hero",id=126},{k="talent",id=1272422}}},  -- pierce_the_veil
+      {id=1221150,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- collapsing_star
+      {id=1217610,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- devour
+      {id=1245483,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- pierce_the_veil
+      {id=1259431,gates={{t="buff",id=1239123,dur=1,neg=true}},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- predators_wake
+      {id=473728,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- void_ray
+      {id=1241937,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- soul_immolation
+      {id=1217610,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- devour
+      {id=473662,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- consume
+      {id=1245412,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- voidblade
+      {id=191427,gates={},delegated=true,b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- metamorphosis
+      {id=1239123,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- hungering_slash
+      {id=473662,gates={},b={{k="hero",id=124,neg=true},{k="hero",id=126}}},  -- consume
+      {id=1221150,gates={{t="prev",id=473728,gcd=true}},b={{k="hero",id=124}}},  -- collapsing_star
     },
   },
   ["DRUID_1"] = {
@@ -958,9 +871,9 @@ RotationImport.RegisterGated({
       {id=217200,gates={{t="dot",id=217200}},b={{k="talent",ids={466930,466932}}}},  -- barbed_shot
       {id=217200,gates={{t="dot",id=217200}},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
       {id=19574,gates={},b={{k="talent",ids={466930,466932},neg=true}}},  -- bestial_wrath
+      {id=217200,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
       {id=34026,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- kill_command
       {id=193455,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- cobra_shot
-      {id=217200,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
     },
     cleave = {
       {id=217200,gates={{t="dot",id=217200}},delegated=true,b={{k="talent",ids={466930,466932}}}},  -- barbed_shot
@@ -979,9 +892,9 @@ RotationImport.RegisterGated({
       {id=217200,gates={{t="dot",id=217200}},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
       {id=19574,gates={},b={{k="talent",ids={466930,466932},neg=true}}},  -- bestial_wrath
       {id=1264359,gates={},b={{k="talent",ids={466930,466932},neg=true}}},  -- wild_thrash
+      {id=217200,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
       {id=34026,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- kill_command
       {id=193455,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- cobra_shot
-      {id=217200,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- barbed_shot
       {id=1264359,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true},{k="talent",id=115939}}},  -- wild_thrash
       {id=19574,gates={},delegated=true,b={{k="talent",ids={466930,466932},neg=true}}},  -- bestial_wrath
     },
@@ -1012,6 +925,7 @@ RotationImport.RegisterGated({
       {id=260243,gates={},b={{k="hero",id=44}}},  -- volley
       {id=19434,gates={},delegated=true,b={{k="hero",id=44}}},  -- aimed_shot
       {id=288613,gates={},delegated=true,b={{k="hero",id=44}}},  -- trueshot
+      {id=19434,gates={{t="buff",id=260243,dur=6}},delegated=true,b={{k="hero",id=44},{k="talent",id=470945}}},  -- aimed_shot
       {id=257044,gates={},b={{k="hero",id=44}}},  -- rapid_fire
       {id=354831,gates={},b={{k="hero",id=44}}},  -- wailing_arrow
       {id=185358,gates={},delegated=true,b={{k="hero",id=44}}},  -- arcane_shot
@@ -1022,8 +936,8 @@ RotationImport.RegisterGated({
       {id=260243,gates={},b={{k="hero",id=42}}},  -- volley
       {id=288613,gates={},delegated=true,b={{k="hero",id=42}}},  -- trueshot
       {id=1264949,gates={},delegated=true,b={{k="hero",id=42}}},  -- moonlight_chakram
+      {id=19434,gates={{t="buff",id=288613,dur=15}},delegated=true,b={{k="hero",id=42}}},  -- aimed_shot
       {id=257044,gates={},delegated=true,b={{k="hero",id=42}}},  -- rapid_fire
-      {id=257044,gates={},b={{k="hero",id=42}}},  -- rapid_fire
       {id=53351,gates={},delegated=true,b={{k="hero",id=42}}},  -- kill_shot
       {id=185358,gates={},delegated=true,b={{k="hero",id=42}}},  -- arcane_shot
       {id=19434,gates={},b={{k="hero",id=42}}},  -- aimed_shot
@@ -1037,6 +951,7 @@ RotationImport.RegisterGated({
       {id=260243,gates={},b={{k="hero",id=44}}},  -- volley
       {id=19434,gates={},delegated=true,b={{k="hero",id=44}}},  -- aimed_shot
       {id=288613,gates={},delegated=true,b={{k="hero",id=44}}},  -- trueshot
+      {id=19434,gates={{t="buff",id=260243,dur=6}},delegated=true,b={{k="hero",id=44},{k="talent",id=470945}}},  -- aimed_shot
       {id=257044,gates={},b={{k="hero",id=44}}},  -- rapid_fire
       {id=354831,gates={},b={{k="hero",id=44}}},  -- wailing_arrow
       {id=257620,gates={},delegated=true,b={{k="hero",id=44},{k="talent",id=470945}}},  -- multishot
@@ -1051,7 +966,6 @@ RotationImport.RegisterGated({
       {id=1264949,gates={},delegated=true,b={{k="hero",id=42}}},  -- moonlight_chakram
       {id=19434,gates={},delegated=true,b={{k="hero",id=42}}},  -- aimed_shot
       {id=257044,gates={},delegated=true,b={{k="hero",id=42}}},  -- rapid_fire
-      {id=257044,gates={},b={{k="hero",id=42}}},  -- rapid_fire
       {id=53351,gates={},delegated=true,b={{k="hero",id=42}}},  -- kill_shot
       {id=257620,gates={},delegated=true,b={{k="hero",id=42},{k="talent",id=470945}}},  -- multishot
       {id=185358,gates={},delegated=true,b={{k="hero",id=42}}},  -- arcane_shot
@@ -1078,7 +992,6 @@ RotationImport.RegisterGated({
       {id=1264949,gates={},delegated=true,b={{k="talent",id=257621},{k="hero",id=42}}},  -- moonlight_chakram
       {id=257620,gates={},delegated=true,b={{k="talent",id=257621},{k="hero",id=42}}},  -- multishot
       {id=19434,gates={},delegated=true,b={{k="talent",id=257621},{k="hero",id=42}}},  -- aimed_shot
-      {id=257044,gates={},b={{k="talent",id=257621},{k="hero",id=42},{k="talent",id=1277548}}},  -- rapid_fire
       {id=257044,gates={},b={{k="talent",id=257621},{k="hero",id=42}}},  -- rapid_fire
       {id=1264949,gates={},b={{k="talent",id=257621},{k="hero",id=42}}},  -- moonlight_chakram
       {id=56641,gates={},b={{k="talent",id=257621},{k="hero",id=42}}},  -- steady_shot
@@ -1088,6 +1001,7 @@ RotationImport.RegisterGated({
       {id=260243,gates={},b={{k="hero",id=44}}},  -- volley
       {id=19434,gates={},delegated=true,b={{k="hero",id=44}}},  -- aimed_shot
       {id=288613,gates={},delegated=true,b={{k="hero",id=44}}},  -- trueshot
+      {id=19434,gates={{t="buff",id=260243,dur=6}},delegated=true,b={{k="hero",id=44},{k="talent",id=470945}}},  -- aimed_shot
       {id=257044,gates={},b={{k="hero",id=44}}},  -- rapid_fire
       {id=354831,gates={},b={{k="hero",id=44}}},  -- wailing_arrow
       {id=257620,gates={},delegated=true,b={{k="hero",id=44},{k="talent",id=470945}}},  -- multishot
@@ -1101,8 +1015,8 @@ RotationImport.RegisterGated({
       {id=288613,gates={},delegated=true,b={{k="hero",id=42}}},  -- trueshot
       {id=1264949,gates={},delegated=true,b={{k="hero",id=42}}},  -- moonlight_chakram
       {id=19434,gates={},delegated=true,b={{k="hero",id=42}}},  -- aimed_shot
+      {id=19434,gates={{t="buff",id=260243,dur=6}},delegated=true,b={{k="hero",id=42},{k="talent",id=470945}}},  -- aimed_shot
       {id=257044,gates={},delegated=true,b={{k="hero",id=42}}},  -- rapid_fire
-      {id=257044,gates={},b={{k="hero",id=42}}},  -- rapid_fire
       {id=53351,gates={},delegated=true,b={{k="hero",id=42}}},  -- kill_shot
       {id=257620,gates={},delegated=true,b={{k="hero",id=42},{k="talent",id=470945}}},  -- multishot
       {id=185358,gates={},delegated=true,b={{k="hero",id=42}}},  -- arcane_shot
@@ -1123,7 +1037,7 @@ RotationImport.RegisterGated({
       {id=34026,gates={{t="cd",id=1250646,neg=true}},b={{k="talent",id=471876}}},  -- kill_command
       {id=1250646,gates={},b={{k="talent",id=471876}}},  -- takedown
       {id=34026,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- kill_command
-      {id=1261193,gates={},b={{k="talent",id=471876,neg=true}}},  -- boomstick
+      {id=1261193,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- boomstick
       {id=259495,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- wildfire_bomb
       {id=1250646,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- takedown
       {id=1264949,gates={},b={{k="talent",id=471876,neg=true}}},  -- moonlight_chakram
@@ -1142,7 +1056,7 @@ RotationImport.RegisterGated({
       {id=34026,gates={{t="cd",id=1250646,neg=true}},b={{k="talent",id=471876}}},  -- kill_command
       {id=1250646,gates={},b={{k="talent",id=471876}}},  -- takedown
       {id=34026,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- kill_command
-      {id=1261193,gates={},b={{k="talent",id=471876,neg=true}}},  -- boomstick
+      {id=1261193,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- boomstick
       {id=259495,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- wildfire_bomb
       {id=1250646,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- takedown
       {id=1264949,gates={},b={{k="talent",id=471876,neg=true}}},  -- moonlight_chakram
@@ -1163,6 +1077,7 @@ RotationImport.RegisterGated({
       {id=1250646,gates={},b={{k="talent",id=471876}}},  -- takedown
       {id=34026,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- kill_command
       {id=1261193,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- boomstick
+      {id=34026,gates={{t="cd",id=1250646,neg=true},{t="power",res="focus",op="<",n=100}},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- kill_command
       {id=259495,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- wildfire_bomb
       {id=1250646,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- takedown
       {id=1264949,gates={},delegated=true,b={{k="talent",id=471876,neg=true}}},  -- moonlight_chakram
@@ -1699,25 +1614,7 @@ RotationImport.RegisterGated({
       {id=441776,gates={}},  -- coup_de_grace
       {id=2098,gates={}},  -- dispatch
       {id=8676,gates={},delegated=true,b={{k="talent",id=383281}}},  -- ambush
-      {id=185763,gates={},delegated=true,b={{k="talent",id=381845},{k="talent",id=383281}}},  -- pistol_shot
-      {id=185763,gates={},delegated=true,b={{k="talent",id=381846}}},  -- pistol_shot
-      {id=185763,gates={},delegated=true,b={{k="talent",id=381846,neg=true}}},  -- pistol_shot
-      {id=8676,gates={},b={{k="talent",id=383281}}},  -- ambush
-      {id=193315,gates={}},  -- sinister_strike
-    },
-    cleave = {
-      {id=13750,gates={{t="buff",id=13750,dur=15,neg=true}}},  -- adrenaline_rush
-      {id=13877,gates={},delegated=true},  -- blade_flurry
-      {id=1277933,gates={},delegated=true},  -- preparation
-      {id=381989,gates={},delegated=true},  -- keep_it_rolling
-      {id=1214909,gates={},delegated=true},  -- roll_the_bones
-      {id=271877,gates={},delegated=true},  -- blade_rush
-      {id=1856,gates={},delegated=true,b={{k="talent",id=383281}}},  -- vanish
-      {id=315341,gates={},delegated=true},  -- between_the_eyes
-      {id=51690,gates={},delegated=true},  -- killing_spree
-      {id=441776,gates={}},  -- coup_de_grace
-      {id=2098,gates={}},  -- dispatch
-      {id=8676,gates={},delegated=true,b={{k="talent",id=383281}}},  -- ambush
+      {id=13877,gates={},delegated=true,b={{k="talent",id=381878}}},  -- blade_flurry
       {id=185763,gates={},delegated=true,b={{k="talent",id=381845},{k="talent",id=383281}}},  -- pistol_shot
       {id=185763,gates={},delegated=true,b={{k="talent",id=381846}}},  -- pistol_shot
       {id=185763,gates={},delegated=true,b={{k="talent",id=381846,neg=true}}},  -- pistol_shot
@@ -1737,7 +1634,6 @@ RotationImport.RegisterGated({
       {id=441776,gates={}},  -- coup_de_grace
       {id=2098,gates={}},  -- dispatch
       {id=8676,gates={},delegated=true,b={{k="talent",id=383281}}},  -- ambush
-      {id=13877,gates={},b={{k="talent",id=381878}}},  -- blade_flurry
       {id=185763,gates={},delegated=true,b={{k="talent",id=381845},{k="talent",id=383281}}},  -- pistol_shot
       {id=185763,gates={},delegated=true,b={{k="talent",id=381846}}},  -- pistol_shot
       {id=185763,gates={},delegated=true,b={{k="talent",id=381846,neg=true}}},  -- pistol_shot
@@ -1882,13 +1778,12 @@ RotationImport.RegisterGated({
       {id=1218090,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- primordial_storm
       {id=470057,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- voltaic_blaze
       {id=470411,gates={{t="dot",id=470411}},b={{k="talent",id=455630,neg=true}}},  -- flame_shock
-      {id=60103,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- lava_lash
       {id=197214,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- sundering
       {id=384352,gates={},b={{k="talent",id=455630,neg=true}}},  -- doom_winds
-      {id=470057,gates={},b={{k="talent",id=455630,neg=true}}},  -- voltaic_blaze
       {id=187874,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- crash_lightning
+      {id=60103,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- lava_lash
       {id=115356,gates={},delegated=true,b={{k="talent",id=455630,neg=true},{k="talent",id=384444}}},  -- windstrike
-      {id=114051,gates={},b={{k="talent",id=455630,neg=true}}},  -- ascendance
+      {id=114051,gates={{t="buff",id=384352,neg=true}},b={{k="talent",id=455630,neg=true}}},  -- ascendance
       {id=17364,gates={{t="buff",id=384352}},b={{k="talent",id=455630,neg=true},{k="talent",id=384444}}},  -- stormstrike
       {id=187874,gates={{t="buff",id=384352}},b={{k="talent",id=455630,neg=true},{k="talent",id=384444}}},  -- crash_lightning
       {id=452201,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- tempest
@@ -1896,26 +1791,29 @@ RotationImport.RegisterGated({
       {id=17364,gates={},delegated=true,b={{k="talent",id=455630,neg=true}}},  -- stormstrike
       {id=60103,gates={},b={{k="talent",id=455630,neg=true},{k="talent",id=334046}}},  -- lava_lash
       {id=17364,gates={},b={{k="talent",id=455630,neg=true}}},  -- stormstrike
+      {id=470057,gates={},b={{k="talent",id=455630,neg=true}}},  -- voltaic_blaze
       {id=197214,gates={},b={{k="talent",id=455630,neg=true}}},  -- sundering
       {id=60103,gates={},b={{k="talent",id=455630,neg=true}}},  -- lava_lash
       {id=187874,gates={},b={{k="talent",id=455630,neg=true}}},  -- crash_lightning
       {id=470411,gates={},b={{k="talent",id=455630,neg=true}}},  -- flame_shock
-      {id=470057,gates={},delegated=true,b={{k="talent",id=455630}}},  -- voltaic_blaze
-      {id=470411,gates={{t="dot",id=470411}},b={{k="talent",id=455630}}},  -- flame_shock
       {id=444995,gates={},b={{k="talent",id=455630}}},  -- surging_totem
+      {id=187874,gates={{t="dot",id=470411}},delegated=true,b={{k="talent",id=455630}}},  -- crash_lightning
+      {id=470057,gates={{t="dot",id=470411}},b={{k="talent",id=455630}}},  -- voltaic_blaze
+      {id=470411,gates={{t="dot",id=470411}},b={{k="talent",id=455630}}},  -- flame_shock
       {id=197214,gates={},delegated=true,b={{k="talent",id=455630}}},  -- sundering
       {id=60103,gates={},delegated=true,b={{k="talent",id=455630}}},  -- lava_lash
+      {id=470057,gates={},delegated=true,b={{k="talent",id=455630}}},  -- voltaic_blaze
+      {id=1218090,gates={{t="buff",id=2825,dur=40}},delegated=true,b={{k="talent",id=455630}}},  -- primordial_storm
       {id=384352,gates={},b={{k="talent",id=455630}}},  -- doom_winds
-      {id=470057,gates={},b={{k="talent",id=455630}}},  -- voltaic_blaze
       {id=187874,gates={},delegated=true,b={{k="talent",id=455630}}},  -- crash_lightning
-      {id=1218090,gates={},delegated=true,b={{k="talent",id=455630}}},  -- primordial_storm
       {id=115356,gates={{t="buff",id=114051,dur=15}},b={{k="talent",id=455630},{k="talent",id=384444}}},  -- windstrike
       {id=114051,gates={},delegated=true,b={{k="talent",id=455630}}},  -- ascendance
+      {id=1218090,gates={},delegated=true,b={{k="talent",id=455630}}},  -- primordial_storm
       {id=17364,gates={{t="buff",id=384352}},b={{k="talent",id=455630},{k="talent",id=384444}}},  -- stormstrike
       {id=188196,gates={},delegated=true,b={{k="talent",id=455630},{k="talent",id=1250364}}},  -- lightning_bolt
-      {id=187874,gates={{t="buff",id=187874,neg=true}},b={{k="talent",id=455630}}},  -- crash_lightning
       {id=60103,gates={},b={{k="talent",id=455630}}},  -- lava_lash
       {id=17364,gates={},b={{k="talent",id=455630}}},  -- stormstrike
+      {id=470057,gates={},b={{k="talent",id=455630}}},  -- voltaic_blaze
       {id=187874,gates={},b={{k="talent",id=455630}}},  -- crash_lightning
       {id=188196,gates={},delegated=true,b={{k="talent",id=455630}}},  -- lightning_bolt
       {id=470411,gates={},b={{k="talent",id=455630}}},  -- flame_shock

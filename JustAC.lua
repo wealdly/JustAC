@@ -81,6 +81,9 @@ local defaults = {
         orderProcsFirst = true,           -- Surface procced abilities ahead of source order
         contextOrder = "simc",            -- "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft priority; falls back to "ac" without spec data)
         orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
+        efficiencyMode = "off",           -- off | solo (open world) | always (PvE)
+        efficiencyManaThreshold = 40,
+        efficiencyRecoverySeconds = 10,
         includeHiddenAbilities = true,    -- Let the pick name abilities with no visible bar button
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
@@ -786,6 +789,7 @@ function JustAC:OnEnable()
     self:RegisterEvent("ACTIONBAR_PAGE_CHANGED", "OnActionBarChanged")
     self:RegisterEvent("UPDATE_BONUS_ACTIONBAR", "OnSpecialBarChanged")
     self:RegisterEvent("UPDATE_BINDINGS", "OnBindingsUpdated")
+    self:RegisterEvent("UPDATE_MACROS", "OnMacrosUpdated")
     self:RegisterEvent("GAME_PAD_CONNECTED", "OnGamePadChanged")
     self:RegisterEvent("GAME_PAD_DISCONNECTED", "OnGamePadChanged")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "OnCooldownUpdate")
@@ -1340,7 +1344,7 @@ end
 function JustAC:ToggleSpellBlacklist(spellID)
     if SpellQueue and SpellQueue.ToggleSpellBlacklist then
         SpellQueue.ToggleSpellBlacklist(spellID)
-        self:ForceUpdate()
+        self:ForceUpdateAll()
     end
 end
 
@@ -1741,6 +1745,13 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     end
 end
 
+-- A macro edit changes what its slot casts without firing ACTIONBAR_SLOT_CHANGED, so the
+-- per-slot parse (including a cached "this macro does not cast X") must be dropped here.
+function JustAC:OnMacrosUpdated()
+    self:InvalidateCaches({macros = true, hotkeys = true})
+    self:ForceUpdate()
+end
+
 function JustAC:OnActionBarChanged(event, slot)
     local inCombat = UnitAffectingCombat("player")
     if not inCombat then
@@ -1995,6 +2006,8 @@ end
 
 function JustAC:OnPetChanged(event, unit)
     if unit ~= "player" then return end
+    if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then BlizzardAPI.ClearAvailabilityCache() end
+    if SpellSearch and SpellSearch.InvalidateSpellbookCache then SpellSearch.InvalidateSpellbookCache() end
     -- Pet summoned/dismissed/died - update pet health bar visibility and defensive queue
     if UIHealthBar and UIHealthBar.UpdatePetVisibility then
         UIHealthBar.UpdatePetVisibility(self)
@@ -2020,6 +2033,9 @@ function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
     if BlizzardAPI and BlizzardAPI.RefreshItemSpellCache then
         BlizzardAPI.RefreshItemSpellCache()
     end
+    if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then BlizzardAPI.ClearAvailabilityCache() end
+    if SpellQueue and SpellQueue.InvalidateRotationCache then SpellQueue.InvalidateRotationCache() end
+    if SpellSearch and SpellSearch.InvalidateSpellbookCache then SpellSearch.InvalidateSpellbookCache() end
     -- Equipment can change defensive item availability (trinkets/belt/gloves),
     -- so refresh both queues immediately instead of waiting for defensive cadence.
     self:ForceUpdateAll()

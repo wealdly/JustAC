@@ -609,9 +609,28 @@ local UTILITY_SPELLS = {
     [213644] = true,  -- Cleanse Toxins (Paladin - dispel)
 }
 
+-- Forever Spell descriptions, build 1.60.1.70245: "Must be ... behind the target".
+-- StaticLookup covers the rank chains. Retail positional rules are not inferred here.
+local FOREVER_REAR_ATTACKS = {
+    [53] = {},                         -- Backstab
+    [703] = { talent = 14082 },         -- Garrote: Dirty Deeds removes the requirement
+    [5221] = { aura = 1213171 },         -- Shred: legacy Feral set-bonus exemption
+    [6785] = {},                        -- Ravage
+    [8676] = {},                        -- Ambush
+    [9005] = {},                        -- Pounce
+}
+
 SpellDB.RegisterCategories({
     defensive = DEFENSIVE_SPELLS,
     healing   = HEALING_SPELLS,
     cc        = CROWD_CONTROL_SPELLS,
     utility   = UTILITY_SPELLS,
+    foreverRear = FOREVER_REAR_ATTACKS,
+    foreverPull = {
+        [403] = { spec = "SHAMAN_F", waive = { t = "stack", id = 408505, op = ">=", n = 5 } },
+    },
+    foreverRanged = {
+        [75] = true, [2480] = true, [2764] = true, [5019] = true,
+        [7918] = true, [7919] = true,
+    },
 })

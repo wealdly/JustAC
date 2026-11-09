@@ -10,6 +10,15 @@ local W = LibStub("JustAC-OptionsWidgets")
 
 local fullyDisabled = W.fullyDisabled
 
+local function manaConservationDisabled(addon)
+    if fullyDisabled(addon) then return true end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not BlizzardAPI or not UnitPowerMax then return false end
+    local ok, maximum = pcall(UnitPowerMax, "player", Enum.PowerType.Mana)
+    return ok and not BlizzardAPI.IsSecretValue(maximum)
+        and type(maximum) == "number" and maximum == 0
+end
+
 -- Offensive queue CONTENT (what abilities the rotation surfaces). Cross-surface (affects the
 -- standard queue and the nameplate overlay alike), so it lives with the other offensive
 -- content tools here rather than a per-surface display panel. Moved out of the General tab.
@@ -35,6 +44,13 @@ local function queueContentGroup(addon)
                 order = 2, width = "normal", default = true,
                 onSet = function() addon:ForceUpdate() end,
                 disabled = fullyDisabled,
+            }),
+            efficiencyMode = W.select(addon, "efficiencyMode", {
+                name = L["Efficiency Mode"], desc = L["Efficiency Mode desc"],
+                order = 4, width = "normal", default = "off",
+                values = {off = L["Efficiency Off"], solo = L["Efficiency Solo"], always = L["Efficiency Always"]},
+                onSet = function() addon:ForceUpdate() end,
+                disabled = manaConservationDisabled,
             }),
             hideItemAbilities = {
                 type = "toggle",
@@ -160,4 +176,3 @@ function Offensive.CreateTabArgs(addon)
     }
     return tab
 end
-

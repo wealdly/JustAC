@@ -69,7 +69,7 @@ UNEVALUATED = {"dot"}
 # probes have not yet shown is measurable. Until then it answers "no opinion" and never
 # blocks, the documented fail-open direction - listed so it is a decision, not drift.
 PENDING = {"tick"}
-DATA = ("SimcRotations.lua", "ForeverRotations.lua")
+DATA = (Path("SimcRotations.lua"), Path("Forever") / "Rotations.lua")
 
 
 def check_coverage():
@@ -88,8 +88,57 @@ def check_coverage():
 def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
+    lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
     run = lua.eval("function(src) return assert(load(src))() end")
+    lua.execute("""
+        enemies, occupied = 0, nil
+        BlizzardAPI.GetEngagedEnemyCount = function() return enemies end
+        BlizzardAPI.IsTotemSlotOccupied = function() return occupied end
+    """)
+    signal_cases = 0
+    for count in (0, 1, 2, 3, 4, 5):
+        lua.globals().enemies = count
+        assert run('return GateVerdict({t="targets",op=">=",n=4}, ctx)') == (count >= 4)
+        assert run('return GateVerdict({t="any",g={{t="targets",op=">=",n=3},{t="unconfirmed"}}}, ctx)') == (count >= 3)
+        signal_cases += 2
+    for occupied, expected in ((None, False), (True, False), (False, True)):
+        lua.globals().occupied = occupied
+        assert run('return GateVerdict({t="totem",slot=2,neg=true}, ctx)') == expected
+        signal_cases += 1
+    for strict in (True, False):
+        lua.globals().ctx.strict = strict
+        assert run('return GateVerdict({t="unconfirmed"}, ctx)') is False
+        signal_cases += 1
+    lua.globals().ctx.strict = False
+    print(f"Forever signal gates: {signal_cases} cases passed")
+    lua.execute("gateCtx={}; BlizzardAPI.IsForever=function() return not hasPick end")
+    lua.execute(extract("SimcGateBlocks", SRC.read_text(encoding="utf-8")))
+    preference = '{{t="resource",res="combo_points",op=">=",n=5}}'
+    both = "function(...) local a, b = SimcGateBlocks(...); return {a, b} end"
+    blocks = lua.eval(both)
+    gates = lua.eval(f"function() return {preference} end")()
+    upper = lua.eval('function() return {{t="resource",res="combo_points",op="<=",n=1}} end')()
+    for pick in (False, True):
+        lua.globals().hasPick = pick
+        # The imported preference holds in both clients and names points as the shortfall.
+        assert list(blocks(gates, 2, "combo_points", 5, False).values()) == [True, True]
+        assert list(blocks(gates, 5, "combo_points", 5, False).values()) == [False, False]
+        # An explicit hold replaces it; an unknown count never blocks.
+        assert list(blocks(gates, 2, "combo_points", 5, True).values()) == [False, False]
+        assert list(blocks(gates, None, "combo_points", 5, False).values()) == [False, False]
+        # A point cap lowers "at least N": 0 leaves the minimum cost the queue checks
+        # separately, a positive cap becomes the new target.
+        assert list(blocks(gates, 2, "combo_points", 5, False, 0).values()) == [False, False]
+        assert list(blocks(gates, 2, "combo_points", 5, False, 3).values()) == [True, True]
+        assert list(blocks(gates, 3, "combo_points", 5, False, 3).values()) == [False, False]
+        # An upper bound is not a pooling preference: blocks, but is not a points shortfall.
+        assert list(blocks(upper, 3, "combo_points", 5, False, 0).values()) == [True, False]
+    lua.execute("hasPick=false; enemies=2")
+    assert run('return (SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false))') is True
+    lua.execute("enemies=3")
+    assert run('return (SimcGateBlocks({{t="targets",op=">=",n=3}},nil,nil,nil,false))') is False
+    print("Resource pooling policy: 18 checks passed")
 
     ON = '{t="stealth"}'            # holds only while stealthed
     OFF = '{t="stealth",neg=true}'  # holds only while NOT stealthed

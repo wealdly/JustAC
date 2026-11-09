@@ -23,6 +23,7 @@ local pcall          = pcall
 local UnitHealth     = UnitHealth
 local UnitHealthMax  = UnitHealthMax
 local UnitExists     = UnitExists
+local UnitCanAttack  = UnitCanAttack
 local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
@@ -33,6 +34,39 @@ local wipe          = wipe
 local BOSS_UNITS = { "boss1", "boss2", "boss3", "boss4", "boss5" }
 local GetNumShapeshiftForms = GetNumShapeshiftForms
 local GetShapeshiftFormInfo = GetShapeshiftFormInfo
+
+--- Weapon enhancement state: Forever separates imbues from temporary enchants.
+--- Returns presence and milliseconds remaining; nil presence means the read failed.
+--- @return boolean|nil active
+--- @return number|nil remaining
+function BlizzardAPI.GetWeaponEnhancementInfo(weaponSlot, imbue)
+    if BlizzardAPI.IsForever() then
+        local ok, enchants = pcall(C_Item.GetWeaponEnchantInfo, weaponSlot)
+        if not ok then
+            geterrorhandler()(enchants)
+            return nil
+        end
+        local wanted = Enum.ItemEnchantType.Temporary
+        if imbue then wanted = Enum.ItemEnchantType.Imbue end
+        local remaining, active = nil, false
+        for _, enchant in pairs(enchants) do
+            if enchant.hasEnchant and enchant.enchantType == wanted then
+                active = true
+                local timeLeft = enchant.timeLeft
+                if IsSecretValue(timeLeft) or type(timeLeft) ~= "number" then return true end
+                if not remaining or timeLeft > remaining then remaining = timeLeft end
+            end
+        end
+        return active, remaining
+    end
+    local ok, mh, mhTime, _, _, oh, ohTime = pcall(GetWeaponEnchantInfo)
+    if not ok then
+        geterrorhandler()(mh)
+        return nil
+    end
+    if weaponSlot == 1 then return oh, ohTime end
+    return mh, mhTime
+end
 
 --------------------------------------------------------------------------------
 -- Engaged-enemy count (secret-safe, AC-independent AoE signal)
@@ -207,6 +241,12 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
         return false, false, false
     end
 
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local totemSlot = SpellDB and SpellDB.GetForeverTotemSlot and SpellDB.GetForeverTotemSlot(spellID)
+    if totemSlot and BlizzardAPI.IsTotemSlotOccupied(totemSlot) ~= false then
+        return false, true, false
+    end
+
     -- A user may add a display-override id whose castable base differs (e.g.
     -- Recuperate 1231411 surfaces as Frenzied Regeneration 22842 for druids). The
     -- override id may not be independently "known", so resolve to the base and
@@ -369,19 +409,24 @@ local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 --- (a wasted press is cheap for a kick, expensive for a placed cooldown).
 local nextSwingSpells   -- SpellDB.NEXT_SWING_SPELLS, resolved on first use (false = none)
 
-function BlizzardAPI.SpellInRange(spellID, unit)
-    if not spellID then return nil end
-    -- A next-swing ability (Heroic Strike, Cleave, Raptor Strike, Maul) lands on the next melee
-    -- swing, and on WoW Forever its spell range always reads "in range" (measured) - so a
-    -- Raptor Strike led the queue at bow range. Its range IS the melee swing range. The table
-    -- is empty on retail.
+function BlizzardAPI.IsMeleeSwingSpell(spellID)
+    if not BlizzardAPI.IsForever() then return false end
+    if spellID == 6603 then return true end
     if nextSwingSpells == nil then
         local sdb = LibStub("JustAC-SpellDB", true)
         nextSwingSpells = sdb and sdb.NEXT_SWING_SPELLS or false
     end
-    if nextSwingSpells and nextSwingSpells[spellID] and (unit == nil or unit == "target") then
-        local swing = BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
-        if swing ~= nil then return swing end
+    return (nextSwingSpells and nextSwingSpells[spellID]) and true or false
+end
+
+function BlizzardAPI.SpellInRange(spellID, unit)
+    if not spellID then return nil end
+    -- Attack and next-swing abilities can read "in range" at any distance on Forever.
+    -- Use current melee evidence instead; unknown must not fall back to that raw true.
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then
+        local sdb = LibStub("JustAC-SpellDB", true)
+        if sdb and sdb.IsTargetWithin then return sdb.IsTargetWithin(5) end
+        return BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
     end
     if not C_Spell_IsSpellInRange then return nil end
     local r = C_Spell_IsSpellInRange(spellID, unit or "target")
@@ -400,6 +445,7 @@ end
 function BlizzardAPI.AbilityInRange(spellID, unit)
     local r = BlizzardAPI.SpellInRange(spellID, unit)
     if r ~= false then return r end
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then return false end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
     if slot and C_ActionBar and C_ActionBar.IsActionInRange then
@@ -780,7 +826,15 @@ function BlizzardAPI.HiddenInContent(hideIn)
 end
 
 function BlizzardAPI.IsUnitHealthBelow(unit, pct)
-    return CachedBelow(unit, pct, false, nil)
+    local below = CachedBelow(unit, pct, false, nil)
+    if below ~= nil then return below, "gate" end
+    -- The player vignette is a coarse last resort, never evidence for a lower
+    -- threshold, another unit, or healthy state when the warning is absent.
+    if unit == "player" and type(pct) == "number" and pct >= 35 and pct <= 100
+        and not UnitIsDeadOrGhost("player") and BlizzardAPI.GetLowHealthState() == true then
+        return true, "vignette"
+    end
+    return nil, "unknown"
 end
 
 --- Is this unit's power below `pct` percent? Same engine-side comparison as the
@@ -793,6 +847,40 @@ end
 --- @param powerType number|nil Enum.PowerType; nil = the unit's current type
 function BlizzardAPI.IsUnitPowerBelow(unit, pct, powerType)
     return CachedBelow(unit, pct, true, powerType)
+end
+
+local function PlainRecoveryNumber(value)
+    return not BlizzardAPI.IsSecretValue(value) and type(value) == "number"
+        and value == value and value >= 0 and value < math.huge
+end
+
+-- Steady-rate estimates only: no inferred casting lockout, hidden-resource
+-- reconstruction or cached out-of-combat values carried into combat.
+function BlizzardAPI.GetManaRecoveryEstimate()
+    if not (UnitPower and UnitPowerMax and GetManaRegen) then return nil, "unavailable" end
+    local okMax, maximum = pcall(UnitPowerMax, "player", Enum.PowerType.Mana)
+    if not okMax then return nil, "maximum denied" end
+    if not PlainRecoveryNumber(maximum) then return nil, "maximum unreadable" end
+    if maximum == 0 then return nil, "no mana" end
+    local okPower, current = pcall(UnitPower, "player", Enum.PowerType.Mana)
+    if not okPower then return nil, "current denied" end
+    if not PlainRecoveryNumber(current) or current > maximum then return nil, "current unreadable" end
+    local okRegen, base, casting = pcall(GetManaRegen)
+    if not okRegen then return nil, "regeneration denied" end
+    if not PlainRecoveryNumber(casting) then
+        return nil, "regeneration unreadable"
+    end
+    local missing = maximum - current
+    if missing == 0 then return 0, "readable", 0 end
+    local baseFull, castingFull
+    if PlainRecoveryNumber(base) and base > 0 then baseFull = missing / base end
+    if casting > 0 then castingFull = missing / casting end
+    if (baseFull and not PlainRecoveryNumber(baseFull))
+       or (castingFull and not PlainRecoveryNumber(castingFull)) then
+        return nil, "estimate invalid"
+    end
+    if casting == 0 then return nil, "no combat regeneration", baseFull end
+    return castingFull, "readable", baseFull
 end
 
 --- Which band does this unit's health fall in? `boundaries` is an ASCENDING
@@ -927,7 +1015,7 @@ function BlizzardAPI.UnitHasAbsorb(unit)
 end
 
 --- Is this aura at or above `threshold` stacks? The engine renders the count
---- ONLY at/above the threshold (nil or empty below it), so the nil-vs-string answer is
+--- ONLY at/above the threshold (nil below it), so the nil-vs-string answer is
 --- itself the boolean - the count is never read, and `~= nil` on a secret
 --- string is a type-mismatch short-circuit (field-proven safe, no compare).
 function BlizzardAPI.AuraStacksAtLeast(unit, auraInstanceID, threshold)
@@ -935,7 +1023,6 @@ function BlizzardAPI.AuraStacksAtLeast(unit, auraInstanceID, threshold)
     if not (fn and unit and auraInstanceID and threshold) then return nil end
     local ok, text = pcall(fn, unit, auraInstanceID, threshold)
     if not ok then return nil end
-    if type(text) == "string" and not IsSecretValue(text) then return text ~= "" end
     return text ~= nil
 end
 
@@ -943,41 +1030,29 @@ end
 --- speaks. The spellID -> auraInstanceID hop is the one IsBuffWindowActive has used
 --- in production since the buff-window gates shipped.
 --- @return boolean|nil true / false / nil when the answer cannot be trusted
-local stackRotationImport
 function BlizzardAPI.GetAuraStackAtLeast(unit, spellID, threshold)
     if not (unit and spellID and threshold and C_UnitAuras
             and BlizzardAPI.AuraStacksAtLeast) then return nil end
     if threshold <= 0 then return true end          -- "at least zero" is always true
-    local lookup
+    local ok, aura
     if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
-        lookup = C_UnitAuras.GetPlayerAuraBySpellID
+        ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
     elseif C_UnitAuras.GetUnitAuraBySpellID then
-        lookup = C_UnitAuras.GetUnitAuraBySpellID
+        ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
     else
         return nil
     end
-    if stackRotationImport == nil then
-        stackRotationImport = LibStub("JustAC-RotationImport", true) or false
+    if not ok then return nil end
+    local instId = aura and aura.auraInstanceID
+    if not instId then
+        -- Nothing came back. That means ZERO STACKS only where the lookup can be
+        -- trusted: these queries are RequiresNonSecretAura, so under aura secrecy a
+        -- PRESENT aura also returns nothing and absent-vs-hidden is undecidable.
+        -- Answer only in the clear; otherwise say nothing and let callers fail open.
+        if BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret() then return nil end
+        return false
     end
-    local chain = stackRotationImport and stackRotationImport.RankChain(spellID)
-    for i = 1, chain and #chain or 1 do
-        local id = chain and chain[i] or spellID
-        local ok, aura
-        if lookup == C_UnitAuras.GetPlayerAuraBySpellID then
-            ok, aura = pcall(lookup, id)
-        else
-            ok, aura = pcall(lookup, unit, id)
-        end
-        if not ok or IsSecretValue(aura) then return nil end
-        if aura then
-            local instId = aura.auraInstanceID
-            if IsSecretValue(instId) then return nil end
-            if instId then return BlizzardAPI.AuraStacksAtLeast(unit, instId, threshold) end
-        end
-    end
-    -- RequiresNonSecretAura: absent and hidden are indistinguishable in combat.
-    if BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret() then return nil end
-    return false
+    return BlizzardAPI.AuraStacksAtLeast(unit, instId, threshold)
 end
 
 --------------------------------------------------------------------------------
@@ -1590,6 +1665,12 @@ end
 ---
 --- Design: fail-open.  If anything errors, assume target IS worth interrupting.
 function BlizzardAPI.IsTargetInterruptWorthy()
+    local ok, canAttack = pcall(UnitCanAttack, "player", "target")
+    if not ok then
+        geterrorhandler()(canAttack)
+        return false
+    end
+    if IsSecretValue(canAttack) or canAttack ~= true then return false end
     -- "minus" mobs are trivial adds (e.g. Explosive affix, swarm adds).
     -- Not worth a 15-24s kick cooldown.
     if UnitClassification("target") == "minus" then return false end
@@ -1652,20 +1733,19 @@ function BlizzardAPI.GetPetHealthPercent()
     return (health / maxHealth) * 100
 end
 
--- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
+-- Returns pet status string: "dead", "missing", "alive", or nil (unknown).
 -- UnitExists and UnitIsDead are NOT secret - reliable in combat
 -- Pet health IS secret in combat - use GetPetHealthPercent() for best-effort health
 function BlizzardAPI.GetPetStatus()
     local ok, exists = pcall(UnitExists, "pet")
-    if not ok or not exists then
-        return "missing"
-    end
+    if not ok then geterrorhandler()(exists); return nil end
+    if IsSecretValue(exists) or exists == nil then return nil end
+    if not exists then return "missing" end
 
     local ok2, isDead = pcall(UnitIsDead, "pet")
-    if ok2 and isDead and not IsSecretValue(isDead) then
-        return "dead"
-    end
-
+    if not ok2 then geterrorhandler()(isDead); return nil end
+    if IsSecretValue(isDead) or isDead == nil then return nil end
+    if isDead then return "dead" end
     return "alive"
 end
 
@@ -1675,10 +1755,28 @@ local PETLESS_BY_CHOICE_AURAS = {
     155228,  -- Lone Wolf (Marksmanship Hunter running without a pet)
     196099,  -- Demonic Power (Warlock with pet sacrificed for a damage buff)
 }
+-- Verified against Forever's Spell/SpellEffect data: player sacrifice buffs and
+-- Lone Wolf's ability/active no-pet buff, not its engraving or pet penalty.
+local FOREVER_PETLESS_BY_CHOICE_AURAS = {
+    18789,  -- Burning Shadow
+    18790,  -- Fel Stamina
+    18791,  -- Touch of Fire
+    18792,  -- Fel Energy
+    415370, -- Lone Wolf
+    1310684, -- Lone Wolf: no-pet damage buff
+}
+--- True for a confirmed petless buff, false for confirmed absence, nil when unknown.
 function BlizzardAPI.IsPetlessByChoice()
-    for _, auraID in ipairs(PETLESS_BY_CHOICE_AURAS) do
-        if BlizzardAPI.IsAuraActive("player", auraID) then return true end
+    local auras = PETLESS_BY_CHOICE_AURAS
+    if BlizzardAPI.IsForever() then auras = FOREVER_PETLESS_BY_CHOICE_AURAS end
+    local RedundancyFilter = GetRedundancyFilter()
+    local cache = RedundancyFilter and RedundancyFilter.GetAuraCache
+        and RedundancyFilter.GetAuraCache()
+    for _, auraID in ipairs(auras) do
+        if cache and cache.byID and cache.byID[auraID] == true then return true end
     end
+    -- A pre-combat snapshot or partial scan can confirm presence, not absence.
+    if BlizzardAPI.AreAurasSecret() or not cache or cache.complete ~= true then return nil end
     return false
 end
 
