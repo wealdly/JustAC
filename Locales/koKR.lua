@@ -372,6 +372,7 @@ L["Hide Utility"] = "보조 재사용 대기시간 숨기기"
 L["Hide Tracked Buffs"] = "추적된 버프 숨기기"
 L["Hide Tracked Bars"] = "추적된 바 숨기기"
 L["Cooldown Manager combat warning"] = "전투 중에는 블리자드 매니저 설정을 변경할 수 없습니다. 전투가 완전히 종료된 후 다시 시도해 주세요."
+L["Cooldown Manager enable failed"] = "게임에서 재사용 대기시간 관리자의 설정을 변경하지 못했습니다 (%s). 게임 설정에서 변경한 후 다시 시도해 주세요."
 
 L["Health Top-off Threshold"] = "비전투 만피 치유 기준 체력"
 L["Health Top-off Threshold desc"] = "전투가 끝난 후 내 체력이 몇 % 이하로 떨어져 있을 때 자가 치유 기술을 대기열 맨 앞에 띄워 상기시킬지 설정합니다. (체력이 위험 수위인 빈사 상태일 때의 초비상 생존기 알림은 이 설정과 무관하게 상시 작동합니다.)"

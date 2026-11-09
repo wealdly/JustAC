@@ -471,8 +471,9 @@ local PET_REVIVE_SPELL_IDS = {
     [55709] = true,  -- Heart of the Phoenix
 }
 local function IsPetReviveSpell(spellID)
-    return PET_REVIVE_SPELL_IDS[spellID] ~= nil
+    return StaticLookup(PET_REVIVE_SPELL_IDS, spellID) ~= nil
 end
+RedundancyFilter.IsPetReviveSpell = IsPetReviveSpell
 
 local STEALTH_SPELL_IDS = {
     [1784]  = true,  -- Stealth (Rogue)
@@ -693,6 +694,7 @@ RefreshAuraCache = function()
         cachedAuras.byName = {}
         cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
     end
+    cachedAuras.complete = false
     
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
     
@@ -726,10 +728,16 @@ RefreshAuraCache = function()
         -- are plain even in combat; only the fields below are secret, so the
         -- per-aura secret handling is unchanged. GetAuras absorbs the throw risk
         -- (compound tokens, hotfixes) and falls back to the index loop itself.
-        local playerAuras = BlizzardAPI.GetAuras("player", "HELPFUL") or {}
+        local playerAuras, complete = BlizzardAPI.GetAuras("player", "HELPFUL")
+        cachedAuras.complete = complete == true
+        playerAuras = playerAuras or {}
         for i = 1, #playerAuras do
             local auraData = playerAuras[i]
 
+            if BlizzardAPI.IsSecretValue(auraData) or type(auraData) ~= "table" then
+                unresolvedSecrets = unresolvedSecrets + 1
+                auraData = {}
+            end
             -- Secret since 12.1.0 - see OnUnitAuraUpdate. nil here just drops the
             -- instance-map path; the whitelist and trusted-cache paths still run.
             local instanceID = BlizzardAPI.Unsecret(auraData.auraInstanceID)
@@ -805,6 +813,8 @@ RefreshAuraCache = function()
                             instanceToNameMap[instanceID] = auraData.name
                         end
                     end
+                else
+                    cachedAuras.complete = false
                 end
                 if auraData.name then
                     cachedAuras.byName[auraData.name] = auraData.spellId or true
@@ -818,11 +828,12 @@ RefreshAuraCache = function()
     if unresolvedSecrets > 0 then
         cachedAuras.hasSecrets = true
     end
+    if cachedAuras.hasSecrets then cachedAuras.complete = false end
     
     lastAuraCheck = now
     
     -- If out of combat and we got clean data (no secrets), save as trusted cache
-    if not inCombat and not cachedAuras.hasSecrets then
+    if not inCombat and cachedAuras.complete then
         wipe(trustedOutOfCombatCache)
         trustedOutOfCombatCache.byID = {}
         trustedOutOfCombatCache.byName = {}
@@ -868,7 +879,7 @@ RefreshAuraCache = function()
     end
     
     -- In combat with unresolved secrets: merge trustedOutOfCombatCache as fallback
-    if inCombat and cachedAuras.hasSecrets and trustedOutOfCombatCache.byID then
+    if inCombat and not cachedAuras.complete and trustedOutOfCombatCache.byID then
         MergeTrustedCacheFallback(GetTime())
     end
     
@@ -1177,15 +1188,15 @@ end
 -- Check if main-hand weapon has enchant with sufficient time remaining
 -- Returns true if main-hand has active enchant, false otherwise
 local function HasActiveWeaponEnchant()
-    if not GetWeaponEnchantInfo then return false end
-    
-    local hasMainHand, mainHandExpiration = GetWeaponEnchantInfo()
+    local hasMainHand, mainHandExpiration = BlizzardAPI.GetWeaponEnhancementInfo(0, true)
+    if hasMainHand == nil then return true end
     
     -- Main-hand enchant required. "Expiring soon" is the checklist's own refresh window
     -- (milliseconds remaining vs seconds): one number, so the queue stops hiding the
     -- recast at the same moment the checklist starts offering it.
     if not hasMainHand then return false end
-    if mainHandExpiration and (mainHandExpiration / 1000) < RefreshWindow() then return false end
+    if mainHandExpiration and not BlizzardAPI.IsSecretValue(mainHandExpiration)
+       and (mainHandExpiration / 1000) <= RefreshWindow() then return false end
     
     return true
 end
@@ -1233,6 +1244,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- No ranged reading yet: melee reach alone, the old rule.
     if spellID == AUTO_ATTACK_SPELL or spellID == AUTO_SHOT_SPELL then
         local ranged, melee = BlizzardAPI.IsTargetInSwingRange(2), BlizzardAPI.IsTargetInSwingRange(0)
+        if BlizzardAPI.IsForever() then melee = BlizzardAPI.SpellInRange(AUTO_ATTACK_SPELL, "target") end
         if spellID == AUTO_ATTACK_SPELL then
             local canShoot = ranged == true or (ranged == nil and melee == false)
             if canShoot and IsPlayerSpell(AUTO_SHOT_SPELL) then

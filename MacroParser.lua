@@ -132,6 +132,41 @@ local function SafeGetMacroInfo(macroName)
     return nil, nil, nil
 end
 
+-- The macro on an action slot, as {name, body} candidates. GetMacroInfo(name) returns the
+-- FIRST macro with that name, and account macros come first, so a character macro sharing
+-- an account macro's name ("M1") resolves to the wrong body. The slot's own macro index is
+-- used when the client reports one (a macro showing a spell reports the spell id instead);
+-- otherwise every same-named macro is a candidate and the caller keeps the one that casts
+-- the spell it is looking for.
+local function MacroCandidates(slot, actionText)
+    local out = {}
+    local okA, aType, id, subType = pcall(GetActionInfo, slot)
+    if okA and aType == "macro" and type(id) == "number" and subType ~= "spell" then
+        local name, _, body = SafeGetMacroInfo(id)
+        if name == actionText and body and body ~= "" then
+            out[1] = { name = name, body = body }
+            return out
+        end
+    end
+    local okN, numAccount, numChar = pcall(GetNumMacros)
+    if okN and numAccount then
+        local charBase = MAX_ACCOUNT_MACROS or 120
+        local function Try(i)
+            local name, _, body = SafeGetMacroInfo(i)
+            if name == actionText and body and body ~= "" then
+                out[#out + 1] = { name = name, body = body }
+            end
+        end
+        for i = 1, numAccount do Try(i) end
+        for i = charBase + 1, charBase + (numChar or 0) do Try(i) end
+    end
+    if #out == 0 then
+        local name, _, body = SafeGetMacroInfo(actionText)
+        if name and body and body ~= "" then out[1] = { name = name, body = body } end
+    end
+    return out
+end
+
 function MacroParser.InvalidateMacroCache()
     wipe(parsedMacroCache)
     wipe(spellOverrideCache)
@@ -610,14 +645,15 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
     local actionText = SafeGetActionText(slot)
     if not actionText or actionText == "" then return nil end
 
-    local name, _, body = SafeGetMacroInfo(actionText)
-    if not name or not body or body == "" then
-        parsedMacroCache[cacheKey] = false
-        return nil
+    local name, body, modifiers
+    for _, c in ipairs(MacroCandidates(slot, actionText)) do
+        local ok, mods = MacroParser.ParseMacroForSpell(c.body, targetSpellID, targetSpellName)
+        if ok then
+            name, body, modifiers = c.name, c.body, mods
+            break
+        end
     end
-
-    local found, modifiers = MacroParser.ParseMacroForSpell(body, targetSpellID, targetSpellName)
-    if not found then
+    if not name then
         parsedMacroCache[cacheKey] = false
         return nil
     end

@@ -210,23 +210,30 @@ function General.CreateTabArgs(addon)
                         end,
                         disabled = function() return fullyDisabled(addon) end,
                     },
-                    cooldownManagerEnable = W.toggle(addon, "cooldownManagerEnable", {
+                    cooldownManagerEnable = {
+                        type = "toggle",
                         name = L["Enable Cooldown Manager"],
                         desc = L["Enable Cooldown Manager desc"],
-                        order = 19.51, width = "double", default = false,
-                        onSet = function(a)
+                        order = 19.51, width = "double",
+                        get = function() return GetCVarBool("cooldownViewerEnabled") end,
+                        set = function(_, on)
                             local MT = LibStub("JustAC-MaintenanceTracker", true)
+                            local applied, reason = false, "unavailable"
                             if MT and MT.SetCooldownManagerEnabled then
-                                local on = a.db.profile.cooldownManagerEnable and true or false
-                                if not MT.SetCooldownManagerEnabled(on) then
-                                    a:Print(L["Cooldown Manager combat warning"])
-                                end
-                                -- Opting in also warns about any panel left on Edit Mode's
-                                -- "Hidden", which otherwise reads to us as the system being off.
-                                if on and MT.ApplyViewerVisibility then
-                                    MT.ApplyViewerVisibility(a.db.profile)
-                                end
+                                applied, reason = MT.SetCooldownManagerEnabled(on)
                             end
+                            if not applied then
+                                if reason == "combat" then
+                                    addon:Print(L["Cooldown Manager combat warning"])
+                                else
+                                    addon:Print(L["Cooldown Manager enable failed"]:format(tostring(reason)))
+                                end
+                                W.NotifyChange()
+                                return
+                            end
+                            addon.db.profile.cooldownManagerEnable = on
+                            if MT.ApplyViewerVisibility then MT.ApplyViewerVisibility(addon.db.profile) end
+                            W.NotifyChange()
                         end,
                         -- Deliberately NOT gated on having a maintenance buff. It used to be,
                         -- back when this lived in a tank-branded defensive section - but it
@@ -235,7 +242,7 @@ function General.CreateTabArgs(addon)
                         -- the hide-panel toggles below down with it (they are gated on this
                         -- being on). Any spec may legitimately want Blizzard's panels on, or on
                         -- and hidden; only the extra precision it buys is tank-specific.
-                    }),
+                    },
                     -- Cosmetic only, per panel. Each stays SHOWN - that is what keeps its aura
                     -- data live and readable - and merely becomes invisible and click-through.
                     -- We never enable a panel the player disabled; this only tidies visible ones.
@@ -298,7 +305,8 @@ function General.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             local CA = LibStub("JustAC-CdmAdvisor", true)
-                            local state, can = CA and CA.Status()
+                            if not CA then return true end
+                            local state, can = CA.Status()
                             return (state ~= "ok" and state ~= "nolayout") or #can == 0
                         end,
                         hidden = NotForever,
@@ -315,8 +323,9 @@ function General.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             local CA = LibStub("JustAC-CdmAdvisor", true)
-                            local state, _, _, added = CA and CA.Status()
-                            return state ~= "ok" or (added or 0) == 0
+                            if not CA then return true end
+                            local state, _, _, added = CA.Status()
+                            return state ~= "ok" or added == 0
                         end,
                         hidden = NotForever,
                     },

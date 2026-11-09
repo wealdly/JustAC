@@ -94,16 +94,35 @@
     {
       "action": {
         "condition": {
-          "cmp": {
-            "op": "OpGe",
-            "lhs": {
-              "currentRage": {}
-            },
-            "rhs": {
-              "const": {
-                "val": "45"
+          "and": {
+            "vals": [
+              {
+                "cmp": {
+                  "op": "OpEq",
+                  "lhs": {
+                    "numberTargets": {}
+                  },
+                  "rhs": {
+                    "const": {
+                      "val": "1"
+                    }
+                  }
+                }
+              },
+              {
+                "cmp": {
+                  "op": "OpGe",
+                  "lhs": {
+                    "currentRage": {}
+                  },
+                  "rhs": {
+                    "const": {
+                      "val": "45"
+                    }
+                  }
+                }
               }
-            }
+            ]
           }
         },
         "castSpell": {
@@ -111,6 +130,49 @@
             "spellId": 25286,
             "tag": 1,
             "rank": 8
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "condition": {
+          "and": {
+            "vals": [
+              {
+                "cmp": {
+                  "op": "OpGt",
+                  "lhs": {
+                    "numberTargets": {}
+                  },
+                  "rhs": {
+                    "const": {
+                      "val": "1"
+                    }
+                  }
+                }
+              },
+              {
+                "cmp": {
+                  "op": "OpGe",
+                  "lhs": {
+                    "currentRage": {}
+                  },
+                  "rhs": {
+                    "const": {
+                      "val": "45"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "castSpell": {
+          "spellId": {
+            "spellId": 20569,
+            "tag": 1,
+            "rank": 5
           }
         }
       }

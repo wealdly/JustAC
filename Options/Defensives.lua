@@ -669,7 +669,7 @@ function Defensives.CreateTabArgs(addon)
                     },
                     -- WoW Forever: Off / Auto only - Auto there picks by the class's stats, and
                     -- retail's secondary stats (haste, crit, ...) do not exist. Elixirs share
-                    -- the flask slot (Data/ForeverConsumables.lua).
+                    -- the flask slot (Data/Forever/Consumables.lua).
                     flask = forever and pbOnOffSelect(addon, "flask", L["Flask / Elixir"], 10, false)
                         or pbStatSelect(addon, "flask", L["Flask"], 10, true),
                     food = forever and pbOnOffSelect(addon, "food", L["Food"], 11, false)

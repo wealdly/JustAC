@@ -4,14 +4,27 @@ WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua +
 
 ## Client version
 
-12.x only: `JustAC.toc` pins `## Interface: 120100` and there are NO version
-conditionals in the code. A client API that is missing on the pinned version is a bug
-to fix, not a branch to keep; `C_Secrets` predicates, duration-object cooldowns and
-the aura container are all assumed present.
+Support both Retail and WoW Forever. `JustAC.toc` currently declares
+`## Interface: 120100, 16001`; read the TOC for the current supported versions.
+
+- Maintain cross-client compatibility on every change, including shared queue
+  ordering, resource gates, UI, options, saved profiles, generated data and packaging.
+- Prefer shared, capability-based logic and existing helpers. Use `SpellDB.IsForever()`
+  or `BlizzardAPI.IsForever()` only for a verified client-specific difference; do not
+  scatter build-number checks or add spell/class exceptions to generic behavior.
+- Do not assume Retail APIs, Assisted Combat picks, resource representations or
+  secrecy rules apply to Forever. Verify each affected client's signals against
+  source documentation or saved in-game probes. See `Documentation/CLIENT_COMPAT.md`.
+- Builder/consumer logic must work for every supported resource context with
+  confirmed signals, not just the spell or class that exposed a bug. Unknown reads
+  remain unknown; do not infer hidden resources or change player overrides.
+- Test affected shared behavior for both clients, including custom lists and
+  explicit settings. A client-specific fix must preserve the other client's
+  intended behavior unless a cross-client change was explicitly approved.
 
 ## Critical Workflow
 
-1. **NEVER guess WoW API behavior** - Verify with `/script` commands in-game or check the local source mirrors in `R:\WOW\00-SOURCE\` (`wow-ui-source\Interface\AddOns` incl. `Blizzard_APIDocumentationGenerated`, and `WowPacketParser\WowPacketParser\Enums`; refresh both with `R:\WOW\00-SOURCE\update-sources.ps1`)
+1. **NEVER guess WoW API behavior** - Verify with `/script` commands in-game or check the matching client source under `D:\.src\WOW\WOW\00-SOURCE\`: `wow-ui-source` for Retail, `wow-ui-source-forever` for Forever, generated docs under `Interface\AddOns\Blizzard_APIDocumentationGenerated`, and `WowPacketParser\WowPacketParser\Enums` for enums. `update-sources.ps1` refreshes these plus the Retail `simc` mirror, using fast-forward only. See the two-client workflow below.
 2. **Propose before implementing** - Describe changes, ask "Should I proceed?"
 3. **Test with debug commands** - Use `/jac inspect modules`, `/jac find`, `/jac inspect cooldown` to validate changes
 4. **DO NOT auto-increment versions** - Track changes in `UNRELEASED.md`, only bump version on explicit instruction
@@ -232,7 +245,21 @@ Also manages `CLASS_PETHEAL_DEFAULTS` and `CLASS_PET_REZ_DEFAULTS`.
 
 ## Data Pipeline (tools/)
 
-Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Documentation/wow_spell_csv/` (gitignored). Rules:
+### Required two-client update workflow
+
+- **Licensing and source attribution are adoption requirements.** Before adopting any preferred external source for either client, verify reuse and redistribution terms and compatibility with JustAC's license. Preserve required notices and license files, and document the upstream project/authors, URL, license, pinned revision and local adaptations in the source documentation and relevant README credits. Public availability is not permission; unresolved licensing blocks adoption.
+
+- **Every update-check session covers both clients.** Follow [the two-client refresh workflow](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh) before claiming sources or data are current. Compare installed builds, published builds, CSV builds, source revisions and both deployed addon copies; a version label alone is not a content check.
+- **Source root:** `D:\.src\WOW\WOW\00-SOURCE\`. Inspect and refresh its four mirrors with `update-sources.ps1` (fetch plus fast-forward only): Retail UI `live`, Forever UI `forever`, packet-parser enums `master`, Retail SimC `midnight`. Stop on dirty/conflicting mirrors; never reset them.
+- **Separate CSV folders:** Retail uses `Documentation\wow_spell_csv`; Forever uses `Documentation\wow_spell_csv_forever`. Each must contain one complete build.
+- **Stage new-build downloads.** The updater writes into its input folder and a failure leaves mixed builds. Refresh a separate copy with `--skip-gen`, verify completeness, then replace the live snapshot and regenerate explicitly. Keep the previous snapshot until validation succeeds; never generate from a failed download.
+- **Forever refresh:** discover the latest `wowf` build, then use `python tools\update_data.py <build> --dir Documentation\wow_spell_csv_forever --skip-gen`. `--product wowf` is not supported; `--dir` does not retarget every generator. Run the three Forever generators explicitly as documented. A failed/incomplete download means no refresh, not success.
+- **Rotation freshness is separate from CSV freshness.** Refresh Retail SimC pins with `tools\update_simc_apl.py`; inspect Forever vendored rotations and JustAC custom pins separately. Forever has no native Assisted Combat priority feed. Follow [Forever source review](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review) to discover and assess alternatives; a recent repository or simulation result is not proof of a reliable, importable priority list.
+- **Keep testing copies identical.** Use one combined source and version, validate affected behavior for both clients, and verify deployed file contents and TOC dependencies after an authorized sync. Do not build, publish, push, tag, or reconcile release branches as a side effect of an update check.
+
+### Generator ownership and refresh rules
+
+Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Documentation/wow_spell_csv/` (Retail) and `Documentation/wow_spell_csv_forever/` (Forever), both gitignored. Rules:
 
 - **One build per folder.** Generators join across tables and resolve files by glob; a mixed-build folder silently joins across builds.
 - **Refresh flow:** `python tools/update_data.py [--product wow|wowt]` pulls the latest build for every tracked table, prints a per-table row diff, swaps the folder atomically, reruns all generators, and shows `git diff --stat Data/`. It is rate-limited - be gentle with wago.tools; never script tight request loops against it.

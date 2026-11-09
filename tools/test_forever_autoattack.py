@@ -22,6 +22,7 @@ B.IsForever = function() return forever end
 inRange, attacking, shooting, knowsAutoShot = nil, false, false, true
 rangedIn, within10 = nil, nil   -- the ranged check (8-35 yd) and the 10-yard probe
 B.IsTargetInSwingRange = function(t) if t == 2 then return rangedIn end return inRange end
+B.SpellInRange = function() return inRange end
 LibStub:NewLibrary("JustAC-SpellDB").IsTargetWithin = function() return within10 end
 C_Spell = {
     IsCurrentSpell = function() return attacking end,

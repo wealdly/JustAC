@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 wealdly
-# The real SpellDB.lua + Data/ForeverDefaults.lua, loaded outside the game, on BOTH clients:
+# The real SpellDB.lua + Data/Forever/Defaults.lua, loaded outside the game, on BOTH clients:
 # Forever gets its "<CLASS>_F" lists (and the class key where readers index by class), the
 # rank-aware static lookup finds any rank, and retail - no WOW_PROJECT_CAMELOT - is left
 # exactly as it was. Whether each id is LEARNABLE is checked when the data is generated
@@ -34,11 +34,11 @@ def load(forever):
         # Rank chains as RotationImport would hold them (Holy Strike 679 -> 678 rank 2).
         lua.execute("""LibStub:NewLibrary("JustAC-RotationImport").RankBase =
             function(id) if id == 678 then return 679 end return id end""")
-    files = ["SpellDB.lua", "Data/ChanneledSpells.lua", "Data/ForeverDefaults.lua", "Data/CCBreakers.lua"]
+    files = ["SpellDB.lua", "Data/ChanneledSpells.lua", "Data/Forever/Defaults.lua", "Data/CCBreakers.lua"]
     if not forever:
         # Retail also loads the real RotationImport and the Forever lists (the TOC lists them
         # for both clients): nothing in them may register there.
-        files[1:1] = ["RotationImport.lua", "Data/ForeverRotations.lua"]
+        files[1:1] = ["RotationImport.lua", "Data/Forever/Rotations.lua"]
     for f in files:
         lua.execute((ROOT / f).read_text(encoding="utf-8"))
     return lua
@@ -53,6 +53,16 @@ def main():
 
     fe = load(True)
     sdb = fe.eval('LibStub("JustAC-SpellDB")')
+    check(sdb.IsDefensiveSpell(8071) is True and sdb.IsOffensiveSpell(8071) is False,
+          "Stoneskin is defensive, not an offensive short-lived summon")
+    check(8071 in list(sdb.CLASS_DEFENSIVE_DEFAULTS.SHAMAN_F.values()),
+          "Stoneskin is in editable Shaman defensive defaults")
+    check(1311015 in list(sdb.CLASS_DEFENSIVE_DEFAULTS.PALADIN_F.values()),
+          "Templar's Bulwark is in Paladin defensive defaults")
+    check(2651 in list(sdb.CLASS_DEFENSIVE_DEFAULTS.PRIEST_F.values()),
+          "Elune's Grace is in Priest defensive defaults")
+    check(sdb.GetForeverAbilityRole(402927) == "mixed",
+          "Victory Rush keeps its offensive and defensive roles")
     check(sdb.IsForever() is True, "Forever client detected")
     check(sdb.GetSpecKey()[0] == "WARRIOR_F", "spec key on Forever is CLASS_F")
     gap = sdb.ResolveDefaults(sdb.CLASS_GAPCLOSER_DEFAULTS)
@@ -86,6 +96,7 @@ def main():
 
     rt = load(False)
     r = rt.eval('LibStub("JustAC-SpellDB")')
+    check(r.IsDefensiveSpell(8071) is False, "Forever Stoneskin category does not leak to retail")
     check(r.IsForever() is False, "retail client detected")
     check(r.GetSpecKey()[0] == "WARRIOR_1", "retail spec key unchanged")
     check(r.CLASS_GAPCLOSER_DEFAULTS.WARRIOR_F is None, "no Forever keys on retail")

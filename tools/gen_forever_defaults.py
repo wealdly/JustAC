@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # tools/gen_forever_defaults.py
 #
-# WoW Forever entries for JustAC's curated default lists -> Data/ForeverDefaults.lua.
+# WoW Forever entries for JustAC's curated default lists -> Data/Forever/Defaults.lua.
 #
 # The lists below are curated BY ABILITY NAME (the slug of the client's spell name) per
 # class. Every name must resolve to an ability that class can actually LEARN on Forever
@@ -21,7 +21,7 @@
 import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "Data", "ForeverDefaults.lua")
+OUT = os.path.join(ROOT, "Data", "Forever", "Defaults.lua")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import check_forever_apl as cfa  # noqa: E402
 
@@ -31,21 +31,55 @@ CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", 
 # Personal defensives: instants first, cast-time heals last (the retail table's rule).
 DEFENSIVE = {
     "warrior": ["last_stand", "shield_wall", "victory_rush"],
-    "paladin": ["divine_shield", "divine_protection", "blessing_of_protection", "lay_on_hands",
+    "paladin": ["divine_shield", "divine_protection", "blessing_of_protection", "templars_bulwark", "lay_on_hands",
                 "flash_of_light", "holy_light"],
     "hunter":  ["deterrence", "feign_death"],
     "rogue":   ["evasion", "vanish"],
-    "priest":  ["power_word_shield", "desperate_prayer", "renew", "flash_heal"],
-    "shaman":  ["lesser_healing_wave", "healing_wave"],
+    "priest":  ["power_word_shield", "desperate_prayer", "elunes_grace", "renew", "flash_heal"],
+    "shaman":  ["lesser_healing_wave", "healing_wave", "stoneskin_totem"],
     "mage":    ["ice_block", "ice_barrier", "mana_shield"],
     "warlock": ["death_coil", "shadow_ward", "drain_life"],
     "druid":   ["barkskin", "frenzied_regeneration", "rejuvenation", "regrowth", "healing_touch"],
+}
+PREVIOUS_DEFENSIVE = {
+    "paladin": ["divine_shield", "divine_protection", "blessing_of_protection", "lay_on_hands",
+                "flash_of_light", "holy_light"],
+    "priest": ["power_word_shield", "desperate_prayer", "renew", "flash_heal"],
+    "shaman": ["lesser_healing_wave", "healing_wave"],
+}
+# Roles describe routing, not whether an effect can ever cause damage. Ward reflection
+# remains protection; damage/heal and tank-rotation buttons keep their offensive role.
+ABILITY_ROLES = {
+    "warrior": {"shield_block": "mitigation", "retaliation": "mixed", "victory_rush": "mixed"},
+    "paladin": {"templars_bulwark": "protection", "holy_shield": "mixed", "holy_shock": "mixed"},
+    "priest": {"elunes_grace": "protection", "holy_nova": "mixed",
+               "fade": "utility", "mind_vision": "utility", "levitate": "utility"},
+    "shaman": {**{name: "protection" for name in
+                 ("stoneskin_totem", "windwall_totem", "grounding_totem", "tremor_totem",
+                  "frost_resistance_totem", "fire_resistance_totem", "nature_resistance_totem",
+                  "poison_cleansing_totem", "disease_cleansing_totem")},
+               "mana_spring_totem": "resource", "mana_tide_totem": "resource",
+               "sentry_totem": "utility", "far_sight": "utility", "earthbind_totem": "utility",
+               "stoneclaw_totem": "protection"},
+    "mage": {"fire_ward": "protection", "frost_ward": "protection",
+             "blink": "utility", "slow_fall": "utility"},
+    "hunter": {"eyes_of_the_beast": "utility", "eagle_eye": "utility", "tame_beast": "utility"},
+    "warlock": {"drain_life": "mixed", "death_coil": "mixed", "siphon_life": "mixed",
+                "eye_of_kilrogg": "utility"},
+}
+TOTEM_SLOTS = {
+    1: ("searing_totem", "magma_totem", "flametongue_totem", "frost_resistance_totem"),
+    2: ("stoneskin_totem", "strength_of_earth_totem", "stoneclaw_totem", "earthbind_totem", "tremor_totem"),
+    3: ("healing_stream_totem", "mana_spring_totem", "mana_tide_totem", "poison_cleansing_totem",
+        "disease_cleansing_totem", "fire_resistance_totem"),
+    4: ("windfury_totem", "grace_of_air_totem", "grounding_totem", "windwall_totem",
+        "nature_resistance_totem", "sentry_totem"),
 }
 PET_HEAL = {"hunter": ["mend_pet"], "warlock": ["health_funnel"]}
 PET_REZ = {"hunter": ["revive_pet", "call_pet"],
            "warlock": ["summon_imp", "summon_voidwalker", "summon_succubus", "summon_felhunter"]}
 # Party-wide, press-and-done relief for non-healers (retail's "group help" rule).
-GROUP_HELP = {"shaman": ["healing_stream_totem"]}
+GROUP_HELP = {"warrior": [], "mage": [], "shaman": ["healing_stream_totem"]}
 # Group heals and the emergency ladder: opt-in healing features.
 GROUP_HEAL = {"priest": ["prayer_of_healing"], "shaman": ["chain_heal"], "druid": ["tranquility"]}
 EMERGENCY = {"druid": ["tranquility"]}
@@ -61,12 +95,13 @@ BURST = {
     "priest":  ["power_infusion", "shadowfiend"],
 }
 # Cheap between-pull heals (read by class).
-TOPOFF = {"priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
+TOPOFF = {"rogue": [], "priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
           "druid": ["rejuvenation", "regrowth"], "shaman": ["lesser_healing_wave", "healing_wave"]}
 # Maintained buffs (read by class): (group names, default name, raidWide).
 # ponytail: rogue poisons left out until a rogue probe shows whether they apply an aura or a
 # weapon enchant on Forever (the wrong path nags forever).
-# Only long buffs belong here: buffs shorter than SHORT_BUFF_SECS are combat buffs.
+# Only long buffs belong here: one shorter than SHORT_BUFF_SECS (Battle Shout, 3 min) is a
+# combat buff the rotation list keeps up, and the build refuses it (see SHORT_BUFFS below).
 MAINTAINED = {
     "priest":  [(["power_word_fortitude"], "power_word_fortitude", True),
                 (["inner_fire"], "inner_fire", False)],
@@ -78,8 +113,6 @@ MAINTAINED = {
     "paladin": [(["devotion_aura", "retribution_aura", "concentration_aura"], "devotion_aura", False)],
     "hunter":  [(["aspect_of_the_hawk", "aspect_of_the_monkey"], "aspect_of_the_hawk", False)],
 }
-# Battle Shout's launch target type is 56, outside the short self/party-buff scan below.
-COMBAT_BUFFS = {"warrior": ["battle_shout"]}
 # Shaman weapon imbues: first KNOWN wins as the default (the table's rule).
 IMBUES = ["windfury_weapon", "flametongue_weapon", "rockbiter_weapon"]
 IMBUE_ALL = IMBUES + ["frostbrand_weapon"]
@@ -139,7 +172,7 @@ NUKE_SHARE, FRONTAL_SHARE = 0.5, 0.25
 # rotation list, never offered as between-pull upkeep, never treated as an hour-long party
 # buff. Longer than the 5 min upkeep window with room to spare.
 SHORT_BUFF_SECS = 600
-BUFF_TARGETS = {"1", "20"}   # the caster; the caster's party (Battle Shout)
+BUFF_TARGETS = {"1", "20", "56"}   # caster, caster-area party, caster-area raid
 
 
 class Resolver:
@@ -175,11 +208,14 @@ def lua(v):
         return '"' + v + '"'
     if isinstance(v, list):
         return "{" + ", ".join(lua(x) for x in v) + "}"
-    return "{ " + ", ".join(f"{k} = {lua(x)}" for k, x in v.items()) + " }"
+    return "{ " + ", ".join(
+        (f"[{k}] = " if isinstance(k, int) else f"{k} = ") + lua(x)
+        for k, x in v.items()
+    ) + " }"
 
 
 def class_block(var, table):
-    return [f"local {var} = {{"] + [f"    {c.upper()} = {lua(v)}," for c, v in table.items() if v] + ["}"]
+    return [f"local {var} = {{"] + [f"    {c.upper()} = {lua(v)}," for c, v in table.items()] + ["}"]
 
 
 def main():
@@ -191,13 +227,46 @@ def main():
     lines = []
     for var, src in [("DEFENSIVE", DEFENSIVE), ("PET_HEAL", PET_HEAL), ("PET_REZ", PET_REZ),
                      ("GROUP_HELP", GROUP_HELP), ("GROUP_HEAL", GROUP_HEAL), ("EMERGENCY", EMERGENCY),
-                     ("GAP_CLOSER", GAP_CLOSER), ("BURST", BURST), ("TOPOFF", TOPOFF)]:
+                     ("GAP_CLOSER", GAP_CLOSER), ("BURST", BURST), ("TOPOFF", TOPOFF),
+                     ("PREVIOUS_DEFENSIVE", PREVIOUS_DEFENSIVE)]:
         table = {c: ids(res, c, n) for c, n in src.items()}
-        if var == "DEFENSIVE":
+        if var in ("DEFENSIVE", "PREVIOUS_DEFENSIVE"):
             # Defensive racials close every class's list; the engine shows only the ones this
             # character knows (its race's).
             table = {c: v + cfa.racial_ids("defensive") for c, v in table.items()}
         lines += class_block(var, table)
+
+    roles = {}
+    for cls, nlist in DEFENSIVE.items():
+        for name in nlist:
+            sid = res.r1(cls, name)
+            if sid:
+                roles[sid] = "healing" if name in HEALS else "protection"
+    for role in ("defensive", "ccbreak"):
+        roles.update({sid: "protection" for sid in cfa.racial_ids(role)})
+    for cls, entries in ABILITY_ROLES.items():
+        for name, role in entries.items():
+            sid = res.r1(cls, name)
+            if sid:
+                roles[sid] = role
+    for cls, entries in GROUP_HELP.items():
+        for name in entries:
+            sid = res.r1(cls, name)
+            if sid:
+                roles[sid] = "healing"
+    lines.append("local ABILITY_ROLES = {")
+    for sid, role in sorted(roles.items()):
+        lines.append(f'    [{sid}] = "{role}",  -- {names.get(str(sid), "?")}')
+    lines.append("}")
+    lines.append("local TOTEM_SLOTS = {")
+    for slot, entries in TOTEM_SLOTS.items():
+        for name in entries:
+            sid = res.r1("shaman", name)
+            if sid:
+                lines.append(f'    [{sid}] = {slot},  -- {names.get(str(sid), "?")}')
+    lines.append("}")
+    stoneskin = res.r1("shaman", "stoneskin_totem")
+    lines.append(f"local MAINTAINED_PROTECTION = {{ [{stoneskin}] = true }}")
 
     secs = {r["ID"]: int(r["Duration"] or 0) / 1000 for r in cfa.rows("SpellDuration")}
 
@@ -217,7 +286,11 @@ def main():
             if 0 < duration(d) < SHORT_BUFF_SECS:
                 res.missing.append(f"{cls}: {default} lasts {duration(d):g}s - a combat buff, not upkeep")
                 continue
-            e = {"group": g, "default": d}
+            member_auras = {
+                res.r1(cls, name): res.ranks(cls, name)
+                for name in group if res.r1(cls, name)
+            }
+            e = {"group": g, "default": d, "memberAuraIDs": member_auras}
             if raid:
                 e["raidWide"] = True
             e["auraIDs"] = auras          # every rank's aura: a rank-3 cast applies the rank-3 buff
@@ -272,6 +345,9 @@ def main():
     lines.append("local CATEGORIES = { defensive = " + lua({f"[{i}]": True for i in sorted(defensive)})
                  .replace('"', "") + ", healing = " + lua({f"[{i}]": True for i in sorted(healing)})
                  .replace('"', "") + ", cc = " + lua({f"[{i}]": True for i in sorted(cc)}).replace('"', "") + " }")
+    for sid, role in sorted(roles.items()):
+        if role in ("protection", "mitigation"):
+            lines.append(f"CATEGORIES.defensive[{sid}] = true")
 
     # Channeled spells: every learnable class ability whose SpellMisc flags it channeled.
     channeled = set()
@@ -293,8 +369,8 @@ def main():
     # Plus every debuff the rotation lists keep up on the target (a "dot" gate: Faerie Fire,
     # Demoralizing Shout, Hunter's Mark, curses) - tracked the same way, or they were suggested
     # again and again. Every rank of each. Not summons (totems are not on the target).
-    # Reads Data/ForeverRotations.lua: run gen_forever_rotations.py first.
-    rot = open(os.path.join(ROOT, "Data", "ForeverRotations.lua"), encoding="utf-8").read()
+    # Reads Data/Forever/Rotations.lua: run gen_forever_rotations.py first.
+    rot = open(os.path.join(ROOT, "Data", "Forever", "Rotations.lua"), encoding="utf-8").read()
     summons = {r["SpellID"] for r in cfa.rows("SpellEffect") if r["Effect"] in SUMMON_EFFECTS}
     for gid in {int(x) for x in re.findall(r't="dot",id=(\d+)', rot)}:
         for cls in CLASSES:
@@ -339,18 +415,15 @@ def main():
                 lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({cls})")
     lines.append("}")
 
-    # Combat buffs (rank 1): off retail's party-buff and unique-aura lists, which hide their
-    # members in combat when buffs cannot be read.
+    # Short buffs (rank 1): kept up in combat, so off retail's party-buff and unique-aura
+    # lists, which hide their members in combat when buffs cannot be read.
     buff_ids = {r["SpellID"] for r in cfa.rows("SpellEffect")
                 if r["Effect"] == DOT_EFFECT and r["ImplicitTarget_0"] in BUFF_TARGETS}
     short = {int(ch[0][0]) for cls in CLASSES for ch in res.by_class[cls][0].values()
              if ch[0][0] in buff_ids and 0 < duration(ch[0][0]) < SHORT_BUFF_SECS}
-    combat_buffs = short | {sid for cls, spell_names in COMBAT_BUFFS.items()
-                            for sid in ids(res, cls, spell_names)}
-    lines.append("local COMBAT_BUFFS = {")
-    for sid in sorted(combat_buffs):
-        desc = (f"{duration(sid):g}s" if sid in short else "combat buff")
-        lines.append(f"    {sid},  -- {names.get(str(sid), '?')} ({desc})")
+    lines.append("local SHORT_BUFFS = {")
+    for sid in sorted(short):
+        lines.append(f"    {sid},  -- {names.get(str(sid), '?')} ({duration(sid):g}s)")
     lines.append("}")
 
     lines.append("local DOTS = {")
@@ -391,6 +464,10 @@ def main():
         "    end",
         "end",
         "Put(SpellDB.CLASS_DEFENSIVE_DEFAULTS, DEFENSIVE)",
+        "SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE",
+        "SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES",
+        "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
+        "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",
         "Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)",
         "Put(SpellDB.CLASS_PET_REZ_DEFAULTS, PET_REZ, true)",
         "Put(SpellDB.CLASS_GROUP_HELP_DEFAULTS, GROUP_HELP)",
@@ -403,7 +480,7 @@ def main():
         "-- retail behaviour.",
         "wipe(SpellDB.CLASS_MAINTAINED_BUFFS)",
         "for class, groups in pairs(MAINTAINED) do SpellDB.CLASS_MAINTAINED_BUFFS[class] = groups end",
-        "for _, id in ipairs(COMBAT_BUFFS) do",
+        "for _, id in ipairs(SHORT_BUFFS) do",
         "    SpellDB.RAID_BUFF_SPELLS[id], SpellDB.UNIQUE_AURA_SPELLS[id] = nil, nil",
         "end",
         "if SpellDB.IndexMaintainedBuffs then SpellDB.IndexMaintainedBuffs() end",
@@ -429,6 +506,7 @@ def main():
     if "--print" in sys.argv:
         print(text)
     else:
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
         with open(OUT, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         print("wrote", OUT, f"({len(channeled)} channeled, {len(defensive)} defensive, {len(healing)} heal ids)")

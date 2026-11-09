@@ -4,6 +4,7 @@ dist/
 # Python bytecode caches (from tools/*.py generators)
 __pycache__/
 *.pyc
+.venv/
 
 # Development files
 .luarc.json

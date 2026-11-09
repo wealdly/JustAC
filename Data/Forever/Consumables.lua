@@ -52,6 +52,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 217398, buff = 439959, stat = "spellpower" },  -- Lesser Arcane Elixir
         { id = 8949, buff = 11328, stat = "agility" },  -- Elixir of Agility
         { id = 3825, buff = 3593, stat = "stamina" },  -- Elixir of Lesser Fortitude
+        { id = 289082, buff = 1327736, stat = "intellect" },  -- Elixir of Endless Intellect
         { id = 3391, buff = 3164, stat = "strength" },  -- Elixir of Ogre Strength
         { id = 6373, buff = 7844, stat = "spellpower" },  -- Elixir of Fire Power
         { id = 3390, buff = 3160, stat = "agility" },  -- Elixir of Lesser Agility
@@ -582,6 +583,7 @@ SpellDB.RegisterHealingItems({
     1710,  -- Greater Healing Potion
     223914,  -- Greater Healing Potion
     287977,  -- Greater Healing Potion
+    288896,  -- Superior Healing Potion
     247240,  -- Discolored Healing Potion
     929,  -- Healing Potion
     5511,  -- Lesser Healthstone
@@ -598,7 +600,6 @@ SpellDB.RegisterHealingItems({
     5512,  -- Minor Healthstone
     19004,  -- Minor Healthstone
     19005,  -- Minor Healthstone
-    288896,  -- Superior Healing Potion
     118,  -- Minor Healing Potion
     287966,  -- Minor Healing Potion
     268881,  -- Perishable Minor Healing Potion

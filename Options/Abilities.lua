@@ -596,7 +596,7 @@ local function CardPanels(addon, id)
                         if val == "normal" then bl[id] = nil
                         elseif val == "queueOnly" then bl[id] = { fixedQueue = true }
                         else bl[id] = true end
-                        addon:ForceUpdate()
+                        addon:ForceUpdateAll()
                         refresh()
                     end,
                     disabled = function() return not specKey end,

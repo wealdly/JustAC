@@ -689,7 +689,9 @@ local VS_WAITING = 8
 --- @return boolean isOutOfRange
 local function CheckSpellRange(icon, spellID, directSlot)
     local inRange
-    if directSlot and C_ActionBar_IsActionInRange then
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) then
+        inRange = BlizzardAPI.SpellInRange(spellID)
+    elseif directSlot and C_ActionBar_IsActionInRange then
         inRange = C_ActionBar_IsActionInRange(directSlot, "target")
         if inRange ~= nil and BlizzardAPI.IsSecretValue(inRange) then inRange = nil end
     elseif BlizzardAPI.SpellInRange then
@@ -1058,7 +1060,31 @@ local function WakeWhenReady(icon, spellID)
 end
 
 -- The one glow-priority rule, computed from icon state both paths maintain.
+local function IsUrgentPlayerHeal(icon)
+    if not icon.defShowGlow or icon.isItem or icon.isPrecombatBuff then return false end
+    local id = icon.currentID or icon.spellID
+    if not id or not SpellDB or not SpellDB.IsHealingSpell(id) then return false end
+    local below, healthSource = BlizzardAPI.IsUnitHealthBelow("player", 50)
+    local source = "low-health"
+    if healthSource == "vignette" then source = "low-health-fallback" end
+    if below ~= true then return false end
+    local DE = LibStub("JustAC-DefensiveEngine", true)
+    local addon = BlizzardAPI.GetAddon()
+    local list = DE and addon and DE.GetClassSpellList(addon, "defensiveSpells")
+    local personal = false
+    for _, spellID in ipairs(list or {}) do
+        if spellID == id or BlizzardAPI.GetDisplaySpellID(spellID) == id then
+            personal = true
+            break
+        end
+    end
+    if not personal or not BlizzardAPI.IsSpellReady(id) then return false end
+    if BlizzardAPI.IsSpellUsable(id, false) == true then return source end
+    return false
+end
+
 local function ComputeDefensiveGlowState(icon, isProc)
+    icon.defGlowReason = "none"
     if icon.isWaiting then return "none" end
     local mode = icon.defGlowMode or "all"
     if isProc and (mode == "all" or mode == "procOnly") then
@@ -1074,6 +1100,14 @@ local function ComputeDefensiveGlowState(icon, isProc)
             and BlizzardAPI.IsHealingUnneeded and BlizzardAPI.IsHealingUnneeded() then
             -- fall through: the icon keeps precombat/marching eligibility
         else
+            icon.defGlowReason = "proc"
+            return "proc"
+        end
+    end
+    if mode == "all" or mode == "primaryOnly" then
+        local urgent = IsUrgentPlayerHeal(icon)
+        if urgent then
+            icon.defGlowReason = urgent
             return "proc"
         end
     end
@@ -1085,9 +1119,13 @@ local function ComputeDefensiveGlowState(icon, isProc)
             WakeWhenReady(icon, icon.spellID)
             return "none"
         end
+        icon.defGlowReason = "precombat"
         return "precombat"
     end
-    if icon.defShowGlow and (mode == "all" or mode == "primaryOnly") then return "marching" end
+    if icon.defShowGlow and (mode == "all" or mode == "primaryOnly") then
+        icon.defGlowReason = "primary"
+        return "marching"
+    end
     return "none"
 end
 
@@ -2417,7 +2455,7 @@ local function ItemIconInfo(itemID)
 end
 
 --- Render slot 1 as the assist's WAIT state (sentinel path - GetNextCastSpell answered
---- nil in combat while the assist was available; see SpellQueue._StagePrimary). Same
+--- nil in combat while the assist was available, or Forever has only sunk entries). Same
 --- presentation as the placeholder-spell wait the engine hands us directly (timer icon
 --- 134377 + the WAIT label), so the two shapes are indistinguishable on screen.
 local function RenderWaitSlot(icon, i, ctx)

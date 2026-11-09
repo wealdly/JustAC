@@ -18,7 +18,21 @@
 				"castSpell": { "spellId": { "spellId": 25295 } }
 			}
 		},
+		{
+			"action": {
+				"condition": {
+					"and": {
+						"vals": [
+							{ "cmp": { "op": "OpGe", "lhs": { "numberTargets": {} }, "rhs": { "const": { "val": "2" } } } },
+							{ "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } }
+						]
+					}
+				},
+				"castSpell": { "spellId": { "spellId": 14317 } }
+			}
+		},
 		{ "action": { "condition": { "cmp": { "op": "OpGe", "lhs": { "currentManaPercent": {} }, "rhs": { "const": { "val": "30%" } } } }, "castSpell": { "spellId": { "spellId": 14305 } } } },
+		{ "action": { "condition": { "cmp": { "op": "OpGe", "lhs": { "numberTargets": {} }, "rhs": { "const": { "val": "2" } } } }, "castSpell": { "spellId": { "spellId": 14295 } } } },
 		{ "action": { "castSpell": { "spellId": { "spellId": 14266, "tag": 3 } } } }
 	]
 }

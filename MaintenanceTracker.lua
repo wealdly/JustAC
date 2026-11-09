@@ -523,11 +523,21 @@ end
 --- from an explicit opt-in toggle, never implicitly. Out of combat only: CVar writes can be
 --- refused mid-combat, and a silent failure there would be worse than not trying.
 --- @return boolean applied
+--- @return string|nil reason
 function MaintenanceTracker.SetCooldownManagerEnabled(on)
-    if InCombatLockdown and InCombatLockdown() then return false end
-    if not (C_CVar and C_CVar.SetCVar) then return false end
-    local ok = pcall(C_CVar.SetCVar, "cooldownViewerEnabled", on and "1" or "0")
-    return ok and true or false
+    if InCombatLockdown and InCombatLockdown() then return false, "combat" end
+    if not (C_CVar and C_CVar.SetCVar and C_CVar.GetCVarBool) then return false, "unavailable" end
+    local ok, result
+    if Settings and Settings.GetSetting and Settings.GetSetting("cooldownViewerEnabled") then
+        ok, result = pcall(Settings.SetValue, "cooldownViewerEnabled", on, true)
+    else
+        ok, result = pcall(C_CVar.SetCVar, "cooldownViewerEnabled", on and "1" or "0")
+    end
+    if not ok then return false, tostring(result) end
+    local readOK, enabled = pcall(C_CVar.GetCVarBool, "cooldownViewerEnabled")
+    if not readOK then return false, tostring(enabled) end
+    if enabled ~= on then return false, "refused" end
+    return true
 end
 
 --- A panel whose Edit Mode visibility is "Hidden" is genuinely HIDDEN, and a hidden viewer
@@ -1370,4 +1380,3 @@ function MaintenanceTracker.IsSlotActive(profile)
     if not entry then return false, nil end
     return true, entry
 end
-

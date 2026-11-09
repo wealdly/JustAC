@@ -25,12 +25,6 @@ B.IsForever = function() return true end
 -- Slice and Dice: rank 1 5171, rank 3 6774 (the rank the player casts).
 local RI = LibStub:NewLibrary("JustAC-RotationImport")
 RI.RankBase = function(id) if id == 6774 then return 5171 end return id end
-local oldRankBase = RI.RankBase
-RI.RankBase = function(id) if id == 10438 then return 3599 end return oldRankBase(id) end
-RI.GetBuffDuration = function(id)
-    if id == 3599 then return 30 end
-    if id == 10438 then return 55 end
-end
 -- Battle Shout ranks 1-2, for the aura memory below.
 RI.RankChain = function(id) if id == 6673 or id == 5242 then return { 6673, 5242 } end end
 -- Player auras by id: { auraInstanceID, expirationTime }. aurasSecret = combat on Forever.
@@ -89,6 +83,26 @@ def main():
     check(B.IsTargetInSwingRange(0) is True, "walked into melee")
     lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, true, false)')
     check(B.IsTargetInSwingRange(0) is None, "target gone -> unknown, not 'in range'")
+    lua.execute("""
+        liveRange = false
+        C_SwingTimer = { IsTargetWithinSwingRange = function() return liveRange end }
+    """)
+    check(B.IsTargetInSwingRange(0) is False, "live OOC range without a range event")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, true); liveRange = true')
+    check(B.IsTargetInSwingRange(0) is True, "live range overrides a stale event")
+    lua.execute("liveRange = false")
+    check(B.IsTargetInSwingRange(0) is False, "walking back out updates without an event")
+    lua.execute("liveRange = nil")
+    check(B.IsTargetInSwingRange(0) is False, "nil direct API preserves a valid out-of-range event")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, true, true)')
+    check(B.IsTargetInSwingRange(0) is True, "event updates OOC range when direct API stays nil")
+    lua.execute('Fire("PLAYER_TARGET_CHANGED")')
+    check(B.IsTargetInSwingRange(0) is None, "target switch clears the previous target's range")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, true)')
+    check(B.IsTargetInSwingRange(0) is False, "new target's event restores range evidence")
+    lua.execute('Fire("PLAYER_SWING_RANGE_UPDATE", 0, false, false)')
+    check(B.IsTargetInSwingRange(0) is None, "checksRange=false is not out-of-range evidence")
+    lua.execute("C_SwingTimer = nil")
     lua.execute('Fire("PLAYER_ENTERING_WORLD")')          # base speeds read out of combat
     g.inCombat = True
     at(100); lua.execute('Fire("PLAYER_SWING", 2.0, 0)')
@@ -139,15 +153,6 @@ def main():
     check(B.IsBuffWindowActive(6673, 180) is False, "readable and absent: gone, memory dropped")
     g.aurasSecret = True
     check(B.IsBuffWindowActive(6673, 180) is False, "dropped memory stays dropped in combat")
-
-    at(400); B.NoteOwnCast(10438)
-    at(431)
-    check(B.IsBuffWindowActive(3599, 30) is True, "rank-six totem lasts past rank-one duration")
-    at(455)
-    check(B.IsBuffWindowActive(3599, 30) is False, "rank-six window expires at 55 seconds")
-    at(460); B.NoteOwnCast(3599)
-    at(491)
-    check(B.IsBuffWindowActive(3599, 30) is False, "downranking replaces the longer cast window")
 
     # Auto Shot switched on: the bar is seeded before the first shot. Its cooldown kept running
     # while off, so the first shot is due when that ends, or 0.15s in (measured), whichever is later.

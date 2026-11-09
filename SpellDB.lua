@@ -4,6 +4,31 @@
 local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 20)
 if not SpellDB then return end
 
+local pcall = pcall
+local geterrorhandler = geterrorhandler
+local issecretvalue = issecretvalue
+local GetTime = GetTime
+local type = type
+local ipairs = ipairs
+
+local AURA_ERROR_THROTTLE = 30
+local auraErrorReportedAt = {}
+local function ReportAuraReadError(apiName, err)
+    local now = GetTime()
+    local last = auraErrorReportedAt[apiName]
+    if last and now - last < AURA_ERROR_THROTTLE then return end
+    auraErrorReportedAt[apiName] = now
+    if not geterrorhandler then return end
+    local ok, handler = pcall(geterrorhandler)
+    if ok and type(handler) == "function" then
+        pcall(handler, "JustAC SpellDB: " .. apiName .. " failed: " .. tostring(err))
+    end
+end
+
+local function IsSecret(value)
+    return (issecretvalue and issecretvalue(value)) or type(value) == "secret"
+end
+
 --- The WoW Forever client (game type camelot). A property of the CLIENT, fixed at load:
 --- WOW_PROJECT_CAMELOT only exists on that client. Lives here because SpellDB loads first
 --- (the Data files consult it); BlizzardAPI.IsForever is this same function.
@@ -24,6 +49,9 @@ local DEFENSIVE_SPELLS = {}
 local HEALING_SPELLS = {}
 local CROWD_CONTROL_SPELLS = {}
 local UTILITY_SPELLS = {}
+local FOREVER_REAR_ATTACKS = {}
+local FOREVER_PULLS = {}
+local FOREVER_RANGED_FILLERS = {}
 -- Curated interrupt/CC ability data lives in Data/InterruptAbilities.lua (registered below).
 -- Flat [spellID] = {kind, mech, reach, radius, pri}; see that file for the field contract.
 local INTERRUPT_ABILITIES = {}
@@ -47,6 +75,15 @@ function SpellDB.RegisterCategories(t)
     if t.healing   then for id in pairs(t.healing)   do HEALING_SPELLS[id] = true end end
     if t.cc        then for id in pairs(t.cc)        do CROWD_CONTROL_SPELLS[id] = true end end
     if t.utility   then for id in pairs(t.utility)   do UTILITY_SPELLS[id] = true end end
+    if t.foreverRear then
+        for id, requirement in pairs(t.foreverRear) do FOREVER_REAR_ATTACKS[id] = requirement end
+    end
+    if t.foreverPull then
+        for id, policy in pairs(t.foreverPull) do FOREVER_PULLS[id] = policy end
+    end
+    if t.foreverRanged then
+        for id in pairs(t.foreverRanged) do FOREVER_RANGED_FILLERS[id] = true end
+    end
 end
 
 --- Populate the interrupt/CC ability list from Data/InterruptAbilities.lua. Merges into
@@ -228,6 +265,33 @@ local function StaticLookup(t, spellID)
     return nil
 end
 SpellDB.StaticLookup = StaticLookup   -- shared with RedundancyFilter's own tables
+
+function SpellDB.GetForeverRearRequirement(spellID)
+    if not SpellDB.IsForever() then return nil end
+    return StaticLookup(FOREVER_REAR_ATTACKS, spellID)
+end
+
+function SpellDB.GetForeverPullPolicy(spellID)
+    if not SpellDB.IsForever() then return nil end
+    return StaticLookup(FOREVER_PULLS, spellID)
+end
+
+function SpellDB.IsForeverRangedFiller(spellID)
+    return SpellDB.IsForever() and StaticLookup(FOREVER_RANGED_FILLERS, spellID) == true
+end
+
+function SpellDB.GetForeverAbilityRole(spellID)
+    return SpellDB.FOREVER_ABILITY_ROLES and StaticLookup(SpellDB.FOREVER_ABILITY_ROLES, spellID) or nil
+end
+
+function SpellDB.GetForeverTotemSlot(spellID)
+    return SpellDB.FOREVER_TOTEM_SLOTS and StaticLookup(SpellDB.FOREVER_TOTEM_SLOTS, spellID) or nil
+end
+
+function SpellDB.IsMaintainedProtection(spellID)
+    return SpellDB.FOREVER_MAINTAINED_PROTECTION ~= nil
+        and StaticLookup(SpellDB.FOREVER_MAINTAINED_PROTECTION, spellID) == true
+end
 
 -- Distinct base spell of a talent-override variant, or nil when there is none
 -- (self is its own base, or C_Spell.GetBaseSpell is unavailable). Shares
@@ -422,7 +486,7 @@ end
 --- 12.0.7: some aura spellIds are secret even OUT of combat (secret table keys throw),
 --- so those auras are skipped - their identity is unknowable here. Memoized briefly -
 --- called per render frame while a food suggestion is displayed.
-local eatCache, eatCacheAt = nil, 0
+local eatCache, eatCacheAt, eatCacheKnown = nil, -1, false
 -- SpellDB loads BEFORE BlizzardAPI in the TOC, so the reference is resolved lazily at
 -- call time (once) rather than as a file-scope upvalue, which would always be nil.
 local cachedBlizzardAPI
@@ -432,23 +496,66 @@ local function GetBlizzardAPI()
 end
 
 function SpellDB.GetActiveEatingAura()
-    if UnitAffectingCombat("player") then return nil end
+    if UnitAffectingCombat("player") then return nil, true end
     local api = GetBlizzardAPI()
-    if not (api and api.GetAuras) then return nil end
+    if not api then return nil, false end
+    if api.AreAurasSecret and api.AreAurasSecret() then return nil, false end
     local now = GetTime()
-    if now - eatCacheAt < 0.2 then return eatCache end
+    if now - eatCacheAt < 0.2 then return eatCache, eatCacheKnown end
     eatCacheAt = now
     eatCache = nil
-    local auras = api.GetAuras("player", "HELPFUL")
-    for i = 1, (auras and #auras or 0) do
-        local a = auras[i]
-        if a.spellId and not (issecretvalue and issecretvalue(a.spellId))
-           and EATING_AURAS[a.spellId] then
-            eatCache = a
-            break
+    eatCacheKnown = false
+    local getAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
+    local auras
+    if getAuras then
+        local ok, result = pcall(getAuras, "player", "HELPFUL")
+        if not ok then
+            ReportAuraReadError("GetUnitAuras", result)
+            return nil, false
+        end
+        auras = result
+    else
+        local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+        if not byIndex then return nil, false end
+        auras = {}
+        for i = 1, 40 do
+            local ok, aura = pcall(byIndex, "player", i, "HELPFUL")
+            if not ok then
+                ReportAuraReadError("GetAuraDataByIndex", aura)
+                return nil, false
+            end
+            if not aura then break end
+            auras[#auras + 1] = aura
         end
     end
-    return eatCache
+    if IsSecret(auras) or type(auras) ~= "table" then return nil, false end
+    local ok, found, unknown = pcall(function()
+        local unsure
+        for i = 1, #auras do
+            local aura = auras[i]
+            if IsSecret(aura) then
+                unsure = true
+            else
+                local spellId = aura and aura.spellId
+                if spellId == nil or IsSecret(spellId) then
+                    unsure = true
+                elseif EATING_AURAS[spellId] then
+                    return aura, false
+                end
+            end
+        end
+        return nil, unsure
+    end)
+    if not ok then
+        ReportAuraReadError("HELPFUL aura fields", found)
+        return nil, false
+    end
+    if found then
+        eatCache, eatCacheKnown = found, true
+    elseif not unknown then
+        eatCacheKnown = true
+    end
+    return eatCache, eatCacheKnown
 end
 
 --- Well Fed lands after ~10s of eating, not at the end of the ~20s food aura. Past that
@@ -458,9 +565,14 @@ end
 --- eaten for). Callers: the mid-application wait/disarm and the queue grey-out.
 local WELL_FED_SECONDS = 10
 function SpellDB.IsEatingForBuff()
-    local a = SpellDB.GetActiveEatingAura()
+    local a, known = SpellDB.GetActiveEatingAura()
+    if not known then return true end
     if not a then return false end
-    local dur, exp = a.duration, a.expirationTime
+    local ok, dur, exp = pcall(function() return a.duration, a.expirationTime end)
+    if not ok then
+        ReportAuraReadError("HELPFUL aura timing", dur)
+        return true
+    end
     -- Secret timing (aura-restricted contexts): elapsed is unmeasurable, so hold the
     -- conservative answer - the whole meal counts, exactly as before.
     if issecretvalue and (issecretvalue(dur) or issecretvalue(exp)) then return true end
@@ -542,7 +654,7 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
 -- every maintained-buff member across all classes, flat (PrecombatEngine's applied-latch
 -- keys off it). auraIDs count as members too - a ranked buff (WoW Forever) is cast as any
 -- rank. Rebuilt IN PLACE (readers hold the tables) whenever the source changes:
--- Data/ForeverDefaults.lua swaps in Forever's groups.
+-- Data/Forever/Defaults.lua swaps in Forever's groups.
 SpellDB.ROGUE_POISON_CAST_IDS = {}
 SpellDB.MAINTAINED_BUFF_MEMBERS = {}
 function SpellDB.IndexMaintainedBuffs()
@@ -640,12 +752,17 @@ local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
 -- Does the player have this buff entry available to use right now? Source-aware:
 -- bag item (GetItemCount), toy (PlayerHasToy), or known spell (IsPlayerSpell).
 local function OwnsBuffEntry(e)
-    if e.source == "toy" then
+    local source = e.source or "item"
+    if source == "toy" then
         return PlayerHasToy and PlayerHasToy(e.id)
-    elseif e.source == "spell" then
+    elseif source == "spell" then
         return IsPlayerSpell and IsPlayerSpell(e.id)
     end
-    return (C_Item.GetItemCount(e.id) or 0) > 0
+    if source ~= "item" or (C_Item.GetItemCount(e.id) or 0) <= 0
+       or not C_Item.IsUsableItem then
+        return false
+    end
+    return C_Item.IsUsableItem(e.id) == true
 end
 
 -- Caster specs (intellect primary) want weapon oils; physical specs want stones/whetstones.
@@ -660,7 +777,7 @@ local function PlayerPrefersOil()
     return select(6, C_SpecializationInfo.GetSpecializationInfo(spec)) == 4  -- 4 = Intellect -> caster -> oil
 end
 
--- WoW Forever: the stats each class gets something from (Data/ForeverConsumables.lua tags
+-- WoW Forever: the stats each class gets something from (Data/Forever/Consumables.lua tags
 -- each buff with one). Druids use them all, so they are left out (no filter).
 local FOREVER_CLASS_STATS = {}
 for class, stats in pairs({
@@ -679,7 +796,7 @@ for class, stats in pairs({
 end
 
 -- Out-of-combat recovery items (WoW Forever: food, drink, bandages): kind -> list, the most
--- restored per use first. Filled by Data/ForeverConsumables.lua; empty on retail.
+-- restored per use first. Filled by Data/Forever/Consumables.lua; empty on retail.
 local RECOVERY = {}
 function SpellDB.RegisterRecoveryItems(t)
     if type(t) ~= "table" then return end
@@ -1697,7 +1814,8 @@ function SpellDB.GetMaintenanceDefensive()
     return list and list[1] or nil
 end
 
--- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)
+-- Pet rez/summon spells (precombat checklist for pet classes; in combat for Beast Mastery
+-- Hunter and Demonology Warlock, which rely on the pet for their rotation).
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     -- Heart of the Phoenix (55709) removed: no acquisition route at 12.1.
     HUNTER = {982, 883},                             -- Revive Pet, Call Pet 1
