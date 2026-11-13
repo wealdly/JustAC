@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 18)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 20)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -160,7 +160,7 @@ local function HideProcGlow(icon)
     end
 end
 
--- Colored proc glow constants (burst purple lives in GLOW_CONFIG.BURST).
+-- Shared semantic palette. Native proc gold and assisted-combat blue stay untinted.
 --
 -- SATURATION: ShowColoredProcGlow desaturates the flipbook to greyscale and then multiplies
 -- by these values, so EVERY pixel ends up at the tint's full chroma - which is why fully
@@ -171,11 +171,19 @@ end
 -- channels turns it pink and pink does not read as "danger".
 -- Do NOT try to fix this with partial SetDesaturation instead: keeping the gold base means
 -- cool tints multiply into muddy olive, which is worse for the cyan and blue cues.
-local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05  -- Red
 -- Soothe is CYAN, not green: it is armed over the SAME slot as the red interrupt glow, so
 -- colour is the only thing telling "kick this" from "soothe this". Red vs green is the most
 -- common colour-vision deficiency, which is why green was rejected for this cue.
-local SOOTHE_PROC_R,    SOOTHE_PROC_G,    SOOTHE_PROC_B    = 0.55, 0.90, 1.00  -- Cyan
+local GLOW_COLORS = {
+    DEFENSIVE   = { r = 0.60, g = 1.00, b = 0.60 }, -- green: protection/healing
+    MOVEMENT    = { r = 0.40, g = 0.75, b = 1.00 }, -- azure: movement/escape
+    BURST       = { r = 1.00, g = 0.60, b = 0.25 }, -- orange: offensive cooldown window
+    EXECUTE     = { r = 1.00, g = 0.45, b = 0.10 }, -- deeper orange: finishing damage
+    MAINTENANCE = { r = 0.55, g = 0.78, b = 1.00 }, -- blue: mitigation upkeep
+    PREPARATION = { r = 0.80, g = 0.55, b = 1.00 }, -- violet: buff/enchantment preparation
+    INTERRUPT   = { r = 1.00, g = 0.25, b = 0.05 }, -- red: stop the enemy cast
+    SOOTHE      = { r = 0.55, g = 0.90, b = 1.00 }, -- cyan: cleanse enemy enrage
+}
 
 -- Shared helper: show a desaturated+tinted proc glow on a named frame key.
 -- Set alpha on the frame itself; the internal Alpha animation forces the
@@ -187,8 +195,8 @@ local function ShowColoredProcGlow(icon, frameKey, r, g, b)
     if not procFrame then
         procFrame = CreateProcGlowFrame(icon, frameKey)
         procFrame.ProcLoopFlipbook:SetDesaturated(true)
-        procFrame.ProcLoopFlipbook:SetVertexColor(r, g, b, 1)
     end
+    procFrame.ProcLoopFlipbook:SetVertexColor(r, g, b, 1)
     local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
     procFrame:SetAlpha(1.0)
@@ -207,8 +215,22 @@ local function HideColoredProcGlow(icon, frameKey)
     end
 end
 
+local function ShowPreparationGlow(icon)
+    if not icon then return end
+    local color = GLOW_COLORS.PREPARATION
+    ShowColoredProcGlow(icon, "PreparationProcGlowFrame", color.r, color.g, color.b)
+    icon.hasPreparationGlow = true
+end
+
+local function HidePreparationGlow(icon)
+    if not icon then return end
+    HideColoredProcGlow(icon, "PreparationProcGlowFrame")
+    icon.hasPreparationGlow = false
+end
+
 local function ShowInterruptProcGlow(icon)
-    ShowColoredProcGlow(icon, "InterruptProcGlowFrame", INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B)
+    local color = GLOW_COLORS.INTERRUPT
+    ShowColoredProcGlow(icon, "InterruptProcGlowFrame", color.r, color.g, color.b)
 end
 
 local function HideInterruptProcGlow(icon)
@@ -246,19 +268,13 @@ end
 -- ── Consolidated Marching Ants Glow Engine ─────────────────────────────────
 -- Every marching-ants glow (assisted, defensive, gap-closer, burst, maintenance, precombat)
 -- shares one flipbook animation with different parameters (GLOW_CONFIG below is the
--- source of truth; the table shows the first three):
---
--- | Type        | Frame Key                  | Color (R,G,B) | Desat | Scale  | Pause OOC | Flag Field        | Clears Proc |
--- |-------------|----------------------------|---------------|-------|--------|-----------|-------------------|-------------|
--- | Assisted    | JustACAssistedGlow         | 1, 1, 1       | no    | ×1.02  | yes       | hasAssistedGlow   | yes         |
--- | Defensive   | DefensiveHighlightFrame    | 0.3, 1.0, 0.3 | no    | ×1.0   | yes       | hasDefensiveGlow  | yes         |
--- | Gap-closer  | GapCloserHighlightFrame    | 1.0, 0.35, 0.8| yes   | ×1.0   | no        | hasGapCloserGlow  | no          |
+-- source of truth for animation behavior; GLOW_COLORS owns the palette).
 
 -- Per-type configuration tables (avoid allocations on hot path)
 local GLOW_CONFIG = {
     ASSISTED = {
         frameKey    = "JustACAssistedGlow",  -- NOT "AssistedCombatHighlightFrame" - Masque auto-detects that key
-        r = 1, g = 1, b = 1,                -- White/no tint (appears blue in-game from atlas)
+        color       = { r = 1, g = 1, b = 1 }, -- Native assisted-combat blue
         desaturate  = false,
         scaleMul    = 1.02,
         pauseOOC    = true,                  -- Pause animation out of combat
@@ -268,8 +284,8 @@ local GLOW_CONFIG = {
     },
     DEFENSIVE = {
         frameKey    = "DefensiveHighlightFrame",
-        r = 0.60, g = 1.00, b = 0.60,       -- Green for defensive queue
-        desaturate  = false,
+        color       = GLOW_COLORS.DEFENSIVE,
+        desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = true,
         flagField   = "hasDefensiveGlow",
@@ -278,11 +294,7 @@ local GLOW_CONFIG = {
     },
     GAP_CLOSER = {
         frameKey    = "GapCloserHighlightFrame",
-        -- Magenta, not gold: gold is the native proc glow, and a pale-gold ring next to it
-        -- read as the same cue. Magenta is the furthest hue from gold that the offensive row
-        -- has left, and it stays legible with red-green colour deficiency (the red interrupt
-        -- glow shares this row, which is why lime was rejected).
-        r = 1.00, g = 0.35, b = 0.80,       -- Magenta (desaturated atlas → grey → magenta tint)
+        color       = GLOW_COLORS.MOVEMENT,
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
@@ -292,7 +304,7 @@ local GLOW_CONFIG = {
     },
     BURST = {
         frameKey    = "BurstHighlightFrame",
-        r = 0.80, g = 0.55, b = 1.00,       -- Purple for burst injection
+        color       = GLOW_COLORS.BURST,
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
@@ -302,9 +314,7 @@ local GLOW_CONFIG = {
     },
     MAINTENANCE = {
         frameKey    = "MaintenanceHighlightFrame",
-        -- Same blue as the maintenance proc burst it escalates into, so the two stages
-        -- read as one cue getting louder rather than as two unrelated signals.
-        r = 0.55, g = 0.78, b = 1.00,       -- Blue (matches MAINTENANCE_GLOW in UIRenderer)
+        color       = GLOW_COLORS.MAINTENANCE,
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- The warning is only ever raised in combat
@@ -314,9 +324,8 @@ local GLOW_CONFIG = {
     },
     PRECOMBAT = {
         frameKey    = "PrecombatHighlightFrame",
-        -- Magenta, not green: these render inside the DEFENSIVE cluster next to the green glow.
-        r = 1.00, g = 0.65, b = 0.88,       -- Magenta for inserted pre-combat buffs
-        desaturate  = false,
+        color       = GLOW_COLORS.PREPARATION,
+        desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate: these are the OOC call to action
         flagField   = "hasPrecombatGlow",
@@ -341,7 +350,8 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
     if needsInit or not highlightFrame:IsShown() then
         local width = icon.cachedIconSize or icon:GetWidth()
         highlightFrame:SetScale((width / 45) * config.scaleMul)
-        TintMarchingAnts(highlightFrame, config.r, config.g, config.b, config.desaturate)
+        local color = config.color
+        TintMarchingAnts(highlightFrame, color.r, color.g, color.b, config.desaturate)
         if config.scaleMul ~= 1.0 then
             highlightFrame.Flipbook:SetAlpha(1)
         end
@@ -496,7 +506,7 @@ local function PauseIconGlows(icon)
             icon.ProcGlowFrame.ProcLoop:Pause()
         end
     end
-    -- Gap-closer/Interrupt/Burst glows deliberately excluded:
+    -- Gap-closer/Interrupt/Burst/Preparation glows deliberately excluded:
     -- they always animate (even OOC) for emphasis.
 end
 
@@ -518,14 +528,14 @@ local function PauseAllGlows(addon)
     end
     -- Defensive icons: RESET the proc glow instead of freezing it mid-frame -
     -- a paused flipbook reads as stuck. The combat-exit rebuild re-renders
-    -- immediately and re-establishes the correct glow (green pre-combat buff,
-    -- static proc glow, or marching ants).
+    -- immediately and re-establishes the correct preparation, proc or defensive glow.
     for _, key in ipairs(DEF_ICON_LISTS) do
         local list = addon[key]
         for i = 1, list and #list or 0 do
             local icon = list[i]
             PauseIconGlows(icon)
             HideProcGlow(icon)
+            HidePreparationGlow(icon)
             -- Reset the renderer's glow arbiter so the combat-exit rebuild
             -- re-applies from a clean, known state.
             icon.appliedDefGlowState = nil
@@ -559,6 +569,9 @@ local function ResumeIconGlows(icon)
         if icon.ProcGlowFrame.ProcLoop and not icon.ProcGlowFrame.ProcLoop:IsPlaying() then
             icon.ProcGlowFrame.ProcLoop:Play()
         end
+    end
+    if icon.hasPreparationGlow then
+        ShowPreparationGlow(icon)
     end
 end
 
@@ -938,6 +951,7 @@ local function StopAllGlows(icon)
     if icon.hasPrecombatGlow then StopPrecombatGlow(icon) end
     if icon.hasMaintenanceGlow then StopMaintenanceGlow(icon) end
     if icon.hasProcGlow      then HideProcGlow(icon)      end
+    HidePreparationGlow(icon)
     icon.hasAssistedGlow  = false
     icon.hasDefensiveGlow = false
     icon.hasGapCloserGlow = false
@@ -969,6 +983,8 @@ UIAnimations.StartPrecombatGlow = StartPrecombatGlow
 UIAnimations.StopPrecombatGlow = StopPrecombatGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
+UIAnimations.ShowPreparationGlow = ShowPreparationGlow
+UIAnimations.HidePreparationGlow = HidePreparationGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
 -- Exported for the maintenance slot, which picks its own tint rather than using one of the
 -- fixed wrappers. frameKey scopes the glow so it cannot collide on a pooled icon.
@@ -978,7 +994,8 @@ UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
 UIAnimations.CreateUndrivenProcGlow = CreateUndrivenProcGlow
 -- The cyan is exported, not duplicated: the cue's dispel-type curve applies it instead of
 -- SetVertexColor, and a drifted copy would make ring and burst two different blues.
-UIAnimations.SOOTHE_PROC_COLOR = { r = SOOTHE_PROC_R, g = SOOTHE_PROC_G, b = SOOTHE_PROC_B }
+UIAnimations.SOOTHE_PROC_COLOR = GLOW_COLORS.SOOTHE
+UIAnimations.GLOW_COLORS = GLOW_COLORS
 UIAnimations.StartFlash = StartFlash
 UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows

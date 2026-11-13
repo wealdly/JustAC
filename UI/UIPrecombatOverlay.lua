@@ -18,12 +18,13 @@
 -- disabled. Out of combat the panel's own icons aren't draggable (the grab tab moves the
 -- frame), so the overlay has nothing else to forward.
 
-local PrecombatOverlay = LibStub:NewLibrary("JustAC-PrecombatOverlay", 3)
+local PrecombatOverlay = LibStub:NewLibrary("JustAC-PrecombatOverlay", 4)
 if not PrecombatOverlay then return end
 
 local InCombatLockdown = InCombatLockdown
 local CreateFrame = CreateFrame
 local C_Timer = C_Timer
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 local POOL_SIZE = 8    -- defensive queue only (<=7) + headroom; the DPS row is keybind-only
 local container
@@ -32,6 +33,50 @@ local placedCount = 0   -- layers currently seated over an icon (layers[1..place
 local eventFrame
 local updateScheduled = false
 local ownerAddon
+local bagRevision = 0
+local ArmLayer
+
+local function IsBusyApplying()
+    local PE = LibStub("JustAC-PrecombatEngine", true)
+    return PE and PE.IsBusyApplying and PE.IsBusyApplying() or false
+end
+
+local function FindUnlockedItemSlot(itemID)
+    local ok, bag, slot = pcall(function()
+        if CursorHasItem and CursorHasItem() then return nil, nil end
+        -- Bag-slot use becomes a sale/deposit while these interactions are open.
+        if (MerchantFrame and MerchantFrame:IsShown())
+            or (BankFrame and BankFrame:IsShown()) or (GuildBankFrame and GuildBankFrame:IsShown()) then
+            return nil, nil
+        end
+        local interaction = C_PlayerInteractionManager
+        local types = Enum and Enum.PlayerInteractionType
+        if interaction and interaction.IsInteractingWithNpcOfType and types then
+            for _, name in ipairs({"Merchant", "Banker", "AccountBanker", "GuildBanker"}) do
+                if types[name] and interaction.IsInteractingWithNpcOfType(types[name]) then
+                    return nil, nil
+                end
+            end
+        end
+        for bagID = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4 do
+            for slotID = 1, C_Container.GetContainerNumSlots(bagID) do
+                local info = C_Container.GetContainerItemInfo(bagID, slotID)
+                if not BlizzardAPI.IsSecretValue(info) and type(info) == "table"
+                    and not BlizzardAPI.IsSecretValue(info.itemID) and info.itemID == itemID
+                    and not BlizzardAPI.IsSecretValue(info.isLocked) and info.isLocked == false
+                    and not BlizzardAPI.IsSecretValue(info.stackCount)
+                    and type(info.stackCount) == "number" and info.stackCount > 0 then
+                    return bagID, slotID
+                end
+            end
+        end
+    end)
+    if not ok then
+        geterrorhandler()("JustAC item slot lookup failed: " .. tostring(bag))
+        return nil, nil
+    end
+    return bag, slot
+end
 
 local function EnsurePool()
     if container then return true end
@@ -43,6 +88,12 @@ local function EnsurePool()
         local b = CreateFrame("Button", "JustACClickLayer" .. i, container,
             "SecureActionButtonTemplate")
         b:RegisterForClicks("AnyDown", "AnyUp")  -- fire regardless of key-down/up cast CVar
+        b:SetScript("PreClick", function(self, mouseButton)
+            if mouseButton == "LeftButton" and not InCombatLockdown() and self.icon then
+                -- Sorting can move/lock a stack between rendering and this hardware event.
+                ArmLayer(self, self.icon, IsBusyApplying())
+            end
+        end)
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         -- Forward hover to the icon below so its rich tooltip still shows through the layer.
         b:SetScript("OnEnter", function(self)
@@ -88,7 +139,7 @@ local function EnsurePool()
 end
 
 -- Bind the secure action for `icon` onto `layer` (out of combat only) using the item/spell
--- attributes by ID - the proven path. The action type is bound to "type1" so only left-click
+--- attributes by spell ID or an unlocked bag slot. The action type is bound to "type1" so only left-click
 -- resolves a secure action (a left-click-only macro turned out not to activate reliably);
 -- right-click falls through to the PostClick forwarder above. The data attributes stay
 -- unsuffixed - secure lookup falls back from "spell1"/"item1" to "spell"/"item".
@@ -97,11 +148,14 @@ end
 -- the queue rotating a new ability into a slot that hasn't moved, and rebinding that needs
 -- nothing from the layout - so it can happen on the spot instead of waiting for the deferred
 -- pass, leaving no window where the layer is still armed with the previous suggestion.
-local function ArmLayer(layer, icon, busy)
+ArmLayer = function(layer, icon, busy)
     layer.icon = icon
     -- What this layer is armed with, so a later pass can tell when it has gone stale.
     layer.armedID = icon.isItem and icon.itemID or icon.spellID
     layer.isWeaponEnchant = nil  -- pooled: clear before the branches below re-decide
+    layer.busy = busy or false
+    local itemUnavailable = false
+    if icon.isItem then layer.armedBagRevision = bagRevision else layer.armedBagRevision = nil end
     local SDB = LibStub("JustAC-SpellDB", true)
     local recupName
     if icon.spellID and SDB and icon.spellID == SDB.RECUPERATE and C_Spell.GetSpellInfo then
@@ -109,6 +163,8 @@ local function ArmLayer(layer, icon, busy)
         recupName = info and info.name
     end
     if icon.isItem and icon.itemID then
+        local bag, slot = FindUnlockedItemSlot(icon.itemID)
+        itemUnavailable = bag == nil
         -- Weapon enhancements (oil / whetstone / weightstone) are a two-step use: the item
         -- only ARMS an "apply to which item?" cursor - the enchant lands when a weapon slot
         -- is used while that cursor is held. A plain "item" action performs step one and
@@ -120,12 +176,14 @@ local function ArmLayer(layer, icon, busy)
         -- ponytail: off-hand would need the detection side to grow an off-hand check first.
         layer.isWeaponEnchant = SDB and SDB.GetPrecombatBuffCategory
             and SDB.GetPrecombatBuffCategory(icon.itemID) == "weaponEnchant" or nil
-        if layer.isWeaponEnchant then
+        if itemUnavailable then
+            layer:SetAttribute("type1", nil)
+        elseif layer.isWeaponEnchant then
             layer:SetAttribute("type1", "macro")
-            layer:SetAttribute("macrotext", "/use item:" .. icon.itemID .. "\n/use 16")
+            layer:SetAttribute("macrotext", "/use " .. bag .. " " .. slot .. "\n/use 16")
         else
             layer:SetAttribute("type1", "item")
-            layer:SetAttribute("item", "item:" .. icon.itemID)
+            layer:SetAttribute("item", bag .. " " .. slot)
         end
     elseif recupName then
         -- Recuperate: a damage tick interrupts the heal-over-time while the 30s
@@ -151,8 +209,8 @@ local function ArmLayer(layer, icon, busy)
     -- you're waiting on, but no secure action is bound, so the click resolves nothing.
     -- Attributes are only ever set out of combat (this function is OOC-only), so clearing
     -- them is safe.
-    layer.disarmed = busy or nil
-    if busy then
+    layer.disarmed = (busy or itemUnavailable) or nil
+    if layer.disarmed then
         layer:SetAttribute("type1", nil)
         layer:SetAttribute("macrotext", nil)
         layer:SetAttribute("item", nil)
@@ -161,7 +219,7 @@ local function ArmLayer(layer, icon, busy)
     if layer.clickHint then
         -- Mid-application, clicking anything breaks it, so the hint says "wait".
         if icon.isPrecombatBuff == true then
-            layer.clickHint:SetText(busy and "wait" or "click")
+            layer.clickHint:SetText(layer.disarmed and "wait" or "click")
             -- Anchored to the ICON, not the layer: the layer is absolutely placed
             -- (see SeatLayer) and only re-seated once the layout settles, so while
             -- the frame is being dragged the clickable region lags behind - fine
@@ -218,15 +276,6 @@ local function CoverageEnabled(addon)
     local p = addon and addon.GetProfile and addon:GetProfile()
     if p and p.clickToCastOOC == false then return false end
     return not (p and p.panelInteraction == "clickthrough")
-end
-
--- Mid-application (eating, or casting/channelling a poison, imbue, oil): the suggestions stay
--- on screen - you are still out of combat, and the icon is what tells you what you're waiting
--- on - but nothing may be clickable, because ANY click cancels the application. One shared
--- answer with the engine that decides what to suggest, so the two can't disagree.
-local function IsBusyApplying()
-    local PE = LibStub("JustAC-PrecombatEngine", true)
-    return PE and PE.IsBusyApplying and PE.IsBusyApplying() or false
 end
 
 --- Which icons a layer may cover. Kept in one place so the full pass and the in-place
@@ -301,7 +350,8 @@ local function ResyncInPlace(addon)
                 return false  -- the slot moved: only a re-seat can follow it
             end
             local id = icon.isItem and icon.itemID or icon.spellID
-            if id ~= layer.armedID or busy ~= (layer.disarmed or false) then
+            if id ~= layer.armedID or busy ~= layer.busy
+                or (icon.isItem and layer.armedBagRevision ~= bagRevision) then
                 if not ArmLayer(layer, icon, busy) then return false end
             end
         end
@@ -340,9 +390,18 @@ function PrecombatOverlay.Init(addon)
     ownerAddon = addon
     if not eventFrame then
         eventFrame = CreateFrame("Frame")
-        eventFrame:SetScript("OnEvent", ScheduleUpdate)
+        eventFrame:SetScript("OnEvent", function()
+            bagRevision = bagRevision + 1
+            if not InCombatLockdown() then ScheduleUpdate() end
+        end)
         eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+        eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+        eventFrame:RegisterEvent("ITEM_LOCK_CHANGED")
+        eventFrame:RegisterEvent("MERCHANT_SHOW")
+        eventFrame:RegisterEvent("MERCHANT_CLOSED")
+        eventFrame:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
+        eventFrame:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
     end
     EnsurePool()
     PrecombatOverlay.OverlayClickLayers(addon)

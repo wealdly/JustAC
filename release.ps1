@@ -53,7 +53,7 @@ if (-not $inserted) {
 Set-Content "CHANGELOG.md" $out
 
 # 4. Reset UNRELEASED.md to the empty skeleton.
-Set-Content "UNRELEASED.md" "## [Unreleased]`n"
+Set-Content "UNRELEASED.md" "## [Unreleased]"
 
 Write-Host "Promoted UNRELEASED -> CHANGELOG [$Version] and bumped JustAC.toc." -ForegroundColor Green
 Write-Host "Review the diff, then cut the release:" -ForegroundColor Cyan

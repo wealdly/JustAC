@@ -3,7 +3,7 @@
 -- DefensiveEngine.lua - Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
-local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 4)
+local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 5)
 if not DefensiveEngine then return end
 
 -- Hot path cache
@@ -1341,8 +1341,34 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     if not inCombat and not overrides
         and PrecombatEngine and PrecombatEngine.IsOfferingNow
         and PrecombatEngine.IsOfferingNow(profile) then
+        local classBuffs
+        if PrecombatEngine.GetMissingClassBuffs then
+            classBuffs = PrecombatEngine.GetMissingClassBuffs(
+                profile.precombatBuffs.topoffHeal == true,
+                profile.precombatBuffs.topoffThreshold,
+                profile.precombatBuffs.stealth ~= false,
+                profile.precombatBuffs.categories)
+        end
+        -- Combat preparation must fit before optional consumables can fill the bar.
+        local preparation = SpellDB and SpellDB.PREPARATION_BUFF_MEMBERS
+        local enchants = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS
+        for _, spellID in ipairs(classBuffs or {}) do
+            if #results >= maxIcons then break end
+            -- The DPS exclusion set may still contain this offer from the previous
+            -- pass. This destination owns the tie, so it must not wait for DPS to yield.
+            if (preparation and preparation[spellID]) or (enchants and enchants[spellID]) then
+                PushEntry(results, spellID, false, false, nil, nil, true)
+                alreadyAdded[spellID] = true
+            end
+        end
+        local topoffHeal = PrecombatEngine.offeredTopoffHeal
+        if topoffHeal and #results < maxIcons then
+            PushEntry(results, topoffHeal, false, false, nil, nil, true, true)
+            alreadyAdded[topoffHeal] = true
+        end
         if PrecombatEngine.GetMissingBuffItems then
-            for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(profile.precombatBuffs.categories)) do
+            for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(
+                    profile.precombatBuffs.categories, profile.precombatBuffs.recoveryManaThreshold)) do
                 if #results >= maxIcons then break end
                 if not alreadyAdded[itemID] then
                     PushEntry(results, itemID, true, false, nil, nil, true)
@@ -1360,22 +1386,16 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         -- on this bar - honoring the exclusion would hide it from the only cluster that can
         -- act on it. The offensive queue drops its own copy in the same pass (RedundancyFilter
         -- asks IsOfferedNow), so the ability appears once, here.
-        -- GetMissingClassBuffs returns distinct spells, so no in-loop dedupe is needed; mark
-        -- alreadyAdded so the later proc/defensive passes don't re-add them.
-        if PrecombatEngine.GetMissingClassBuffs then
-            local offerTopoff = profile.precombatBuffs.topoffHeal == true
-            local topoffPct = profile.precombatBuffs.topoffThreshold
-            local offerStealth = profile.precombatBuffs.stealth ~= false
-            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerStealth)) do
+        -- Skip preparation already placed ahead of consumables, then mark the remaining
+        -- class buffs so later proc/defensive passes do not re-add them.
+        if classBuffs then
+            for _, spellID in ipairs(classBuffs) do
                 if #results >= maxIcons then break end
-                -- topoff: the health top-off heal specifically, not the poisons/imbues beside
-                -- it. Flagged because the renderer drives ITS alpha from a health curve - out
-                -- of combat in the open world health is secret, so the arming signal ("regen
-                -- is running") can only prove below FULL, not below the configured threshold.
-                -- Without this the reminder nags at 99%.
-                PushEntry(results, spellID, false, false, nil, nil,
-                    true, (spellID == PrecombatEngine.offeredTopoffHeal) or nil)
-                alreadyAdded[spellID] = true
+                if spellID ~= topoffHeal
+                   and not ((preparation and preparation[spellID]) or (enchants and enchants[spellID])) then
+                    PushEntry(results, spellID, false, false, nil, nil, true)
+                    alreadyAdded[spellID] = true
+                end
             end
         end
     end

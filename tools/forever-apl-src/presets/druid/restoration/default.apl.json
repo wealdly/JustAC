@@ -1,0 +1,161 @@
+{
+  "type": "TypeAPL",
+  "priorityList": [
+    {
+      "action": {
+        "autocastOtherCooldowns": {}
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 25297
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "auraIsActive": {
+            "auraId": {
+              "spellId": 17116
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 29166
+          }
+        },
+        "condition": {
+          "cmp": {
+            "lhs": {
+              "currentManaPercent": {}
+            },
+            "op": "OpLe",
+            "rhs": {
+              "const": {
+                "val": "40%"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 17116
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 9863
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 1238215
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 18562
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "auraIsActive": {
+            "auraId": {
+              "spellId": 25299
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 25299
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "not": {
+            "val": {
+              "auraIsActive": {
+                "auraId": {
+                  "spellId": 25299
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 9858
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "not": {
+            "val": {
+              "auraIsActive": {
+                "auraId": {
+                  "spellId": 9858
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 25297
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      }
+    }
+  ]
+}

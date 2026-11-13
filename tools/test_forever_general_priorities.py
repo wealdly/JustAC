@@ -93,7 +93,7 @@ def main():
 
     for cls, tree, sid in (
         ("DRUID_F", "balance", 16914),
-        ("WARLOCK_F", "affliction", 5740),
+        ("WARLOCK_F", "affliction", 1949),
         ("WARLOCK_F", "demonology", 5740),
         ("WARLOCK_F", "destruction", 5740),
     ):
@@ -111,10 +111,11 @@ def main():
 
     lua.globals().Defaults("PRIEST_F", "discipline", "st")
     penance = lua.globals().RotationImport.RankBase(1316995)
-    lua.execute(f"pool={{14914,{penance},589,585}}; cooldown[14914]=true")
+    lua.execute("pool={14914,589,585}; cooldown[14914]=true")
     queue = list(lua.globals().Build().values())
-    assert queue.index(penance) < queue.index(585)
+    assert lua.globals().RotationImport.GetEntry(penance) is None
     assert queue.index(589) < queue.index(585)
+    assert queue.index(585) < queue.index(14914)
     assert 14751 not in [e.id for e in lua.globals().entries.values()]
     for cls, tree, sid in (("DRUID_F", "feral_bear", 779), ("MAGE_F", "frost", 120)):
         lua.globals().Defaults(cls, tree, "cleave")
@@ -123,22 +124,25 @@ def main():
     lua.execute("filtered[2912]=true")
     assert 5176 in list(lua.globals().Build().values()), "Wrath remains when Starfire is unavailable"
     lua.globals().Defaults("MAGE_F", "arcane", "st")
-    assert len(lua.globals().RotationImport.GetEntry(116).gates) == 0
-    assert lua.globals().RotationImport.GetEntry(116).rank > lua.globals().RotationImport.GetEntry(1239700).rank
-    lua.globals().Defaults("WARRIOR_F", "arms", "st")
-    lua.execute("talents[23881]=false")
-    assert lua.globals().Gate(1680, 1) is True, "Whirlwind's single-target fallback survives an unlearned Bloodthirst"
+    assert len(lua.globals().RotationImport.GetEntry(400574).gates) == 0
+    assert len(lua.globals().RotationImport.GetEntry(116).gates) > 0
+    lua.globals().Defaults("WARRIOR_F", "arms", "aoe")
+    lua.globals().enemyCount = 3
+    assert lua.globals().Gate(1680, 1) is True
+    lua.globals().enemyCount = 2
+    assert lua.globals().Gate(1680, 1) is False
     lua.globals().Defaults("WARRIOR_F", "fury", "st")
     lua.execute("cooldown[23881]=true")
-    assert lua.globals().Gate(1680, 1) is True
+    assert len(lua.globals().RotationImport.GetEntry(1680).gates) == 0
     lua.globals().Defaults("WARRIOR_F", "fury", "aoe")
     lua.globals().enemyCount = 2
-    assert lua.globals().Gate(1680, 1) is True
+    assert len(lua.globals().RotationImport.GetEntry(1680).gates) == 0
     lua.globals().Defaults("PALADIN_F", "retribution", "st")
     lua.execute("buffs[20154]=true")
-    assert lua.globals().Gate(20375, 2) is False, "Active Righteousness is not displaced for Command"
-    lua.execute("buffs={}; talents[20375]=false; filtered[20375]=true")
-    assert 20154 in list(lua.globals().Build().values()), "Righteousness backs up an unlearned Command"
+    assert lua.globals().Gate(20154, 1) is False, "An active seal is not reapplied"
+    assert lua.eval("SpellQueue._GateVerdict(RotationImport.GetEntry(20271).gates[2],{strict=true})") is True
+    lua.execute("buffs={}")
+    assert 20154 in list(lua.globals().Build().values()), "Righteousness remains available without a seal"
     lua.globals().Defaults("DRUID_F", "feral", "st")
     bite = lua.globals().RotationImport.GetEntry(1328618).gates
     assert bite[1].op == ">="
@@ -152,8 +156,8 @@ def main():
     """)
     assert list(lua.globals().Build().values())[0] == 1328618
     lua.globals().Defaults("PRIEST_F", "holy", "st")
-    lua.execute(f"pool={{{penance},585}}; b.maxIcons=1")
-    assert list(lua.globals().Build().values()) == [penance]
+    lua.execute("pool={14914,585}; cooldown[14914]=true; b.maxIcons=1")
+    assert list(lua.globals().Build().values()) == [585]
     # No adaptation is applied to custom source ordering by this data generator.
     lua.globals().Defaults("DRUID_F", "feral", "st")
     lua.execute("SpellQueue._rotationIsCustom=true; b.contextOrder='off'; pool={1082,1328618}")

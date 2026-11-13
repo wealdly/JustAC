@@ -41,7 +41,10 @@ end
 C_UnitAuras = {}
 -- The Cooldown Manager's answer for a tracked spell: true / false / nil (not tracked).
 tracked = nil
-LibStub:NewLibrary("JustAC-MaintenanceTracker").IsTrackedAuraActive = function() return tracked end
+LibStub:NewLibrary("JustAC-MaintenanceTracker").IsTrackedAuraActive = function(_, diagnostic)
+    if diagnostic then diagnostic.reason = trackedReason end
+    return tracked
+end
 """
 
 
@@ -126,16 +129,84 @@ def main():
     check(D.IsDotActiveOnCurrentTarget(6343) is False, "Thunder Clap's icon showing must not sink it as a DoT")
     g.tracked = None
 
+    # Provenance uses the same decision path, including pre-cast CDM reads.
+    D.Reset()
+    for tracked, expected, source in (
+        (True, True, "cooldown-manager"),
+        (False, False, "cooldown-manager"),
+        (None, False, "untracked"),
+    ):
+        g.tracked = tracked
+        g.trackedReason = "test-cdm-reason"
+        state = D.DebugState(lua.table_from([772, 772]))
+        check(len(state.entries) == 1, "precast candidates are deduplicated")
+        entry = state.entries[1]
+        check(entry.active is expected and entry.source == source, "exact decision provenance")
+        check(entry.cooldownManager is tracked, "CDM tri-state preserved")
+        check(entry.cooldownManagerReason == "test-cdm-reason", "CDM reason preserved")
+        check(entry.confirmed is False and entry.expiresIn is None, "no invented cast or binding")
+    D.OnCastSucceeded(772)
+    entry = D.DebugState().entries[1]
+    check(entry.source == "cast-estimate", "post-cast estimate is labeled")
+    check(entry.active is D.IsDotActiveOnCurrentTarget(772), "diagnostic and queue agree")
+
     lua, D = tracker(False)
     lua.globals().now = 0; D.OnCastSucceeded(772)
     lua.globals().now = 6.5
     check(D.IsDotActiveOnCurrentTarget(772) is False, "retail: un-sinks inside the 30% refresh window")
+    check(D.GetTargetAuraState(772, True) is None,
+          "retail: a pandemic refresh verdict is not absence evidence for Forever prerequisites")
+    check(D.DebugState().entries[1].source == "estimated-refresh", "retail refresh estimate labeled")
+    check(D.DebugState().entries[1].cooldownManagerReason == "not-consulted",
+          "retail does not add a CDM read to the gameplay path")
     check(lua.eval("handlers.UNIT_COMBAT") is None,
           "retail: no hit check (UNIT_COMBAT has no source there; a party member's parry would wipe timers)")
     lua.globals().now = 10; D.OnCastSucceeded(772)
     lua.globals().targetGUID = "Player-B"; D.OnTargetChanged()
     lua.globals().targetGUID = "Creature-A"; D.OnTargetChanged()
     check(D.IsDotActiveOnCurrentTarget(772) is False, "retail: a swap starts fresh, even with plain GUIDs")
+
+    for forever in (True, False):
+        lua, D = tracker(forever)
+        lua.execute('LibStub("JustAC-SpellDB").IsTrackedTargetAura=function(id) return id == 6343 end')
+        D.OnCastSucceeded(6343)
+        D.OnCastSucceeded(999)
+        entries = D.DebugState().entries
+        check(len(entries) == 1 and entries[1].spellID == 6343,
+              "only eligible maintenance casts start observations")
+        check(D.IsDotActiveOnCurrentTarget(6343) is False,
+              "observing a maintenance cast does not enable unconditional DoT suppression")
+        expected = True if forever else None
+        check(D.GetTargetAuraState(6343, True) is expected,
+              "maintenance estimates stay scoped to the Forever observation policy")
+        lua.globals().tracked = True
+        check(D.IsDotActiveOnCurrentTarget(6343) is False,
+              "CDM presence does not turn an observation-only spell into a DoT")
+        check(D.GetTargetAuraState(999, True) is None,
+              "untracked spells do not acquire CDM presence through the observation path")
+        lua.globals().tracked = None
+        D.Reset()
+        lua.execute('LibStub("JustAC-SpellDB").GetTargetDotDuration=function() return nil end')
+        lua.globals().now = 0
+        D.OnCastSucceeded(772)
+        lua.globals().now = 11.9
+        check(D.IsDotActiveOnCurrentTarget(772) is True, "unknown duration: estimate lasts until 12s")
+        lua.globals().now = 12
+        check(D.IsDotActiveOnCurrentTarget(772) is False, "unknown duration: estimate expires at 12s")
+        if forever:
+            lua.globals().tracked = True
+            check(D.IsDotActiveOnCurrentTarget(772) is True, "live CDM presence outlasts the fallback")
+            lua.globals().tracked = False
+            check(D.IsDotActiveOnCurrentTarget(772) is False, "live CDM absence overrides the estimate")
+        lua.globals().tracked = None
+        lua.execute('LibStub("JustAC-SpellDB").GetTargetDotDuration=function() return 60 end')
+        D.Reset()
+        lua.globals().now = 0
+        D.OnCastSucceeded(772)
+        lua.globals().now = 35
+        check(D.IsDotActiveOnCurrentTarget(772) is True, "known duration is not capped by fallback")
+        lua.globals().now = 60 if forever else 42
+        check(D.IsDotActiveOnCurrentTarget(772) is False, "known duration retains client refresh policy")
 
     for why in bad:
         print("  FAIL", why)

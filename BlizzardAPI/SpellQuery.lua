@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Info, Usability, Rotation API, Item Detection, Availability
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SecretValues.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SpellQuery", 2
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SpellQuery", 3
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -11,8 +11,10 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
 local GetTime    = GetTime
 local pcall      = pcall
 local type       = type
+local tostring   = tostring
 local wipe       = wipe
 local ipairs     = ipairs
+local geterrorhandler = geterrorhandler
 local IsSpellKnown  = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 local C_Spell_IsSpellPassive            = C_Spell and C_Spell.IsSpellPassive
@@ -515,26 +517,44 @@ end
 -- 12.0: Falls back to action bar state when secret.
 -- failOpen (default true): return true when usability can't be determined.
 -- Pass false for gap closers where suggesting an unusable spell is worse than skipping.
+-- Unknown power remains nil; the third return identifies evidence versus policy.
+local usabilityErrorsReported = {}
 function BlizzardAPI.IsSpellUsable(spellID, failOpen)
     if failOpen == nil then failOpen = true end
-    if not spellID or spellID == 0 then return false, false end
-    if BlizzardAPI.HasRequiredAttackWeapon(spellID) ~= true then return false, false end
+    if not spellID or spellID == 0 then return false, false, "invalid spell" end
+    if BlizzardAPI.HasRequiredAttackWeapon(spellID) ~= true then return false, false, "required weapon" end
 
+    local isUsable, notEnoughResources
+    local source = "spell API unavailable"
     if C_Spell_IsSpellUsable then
-        local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
+        local success
+        success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
         if success then
-            if IsSecretValue(isUsable) or IsSecretValue(notEnoughResources) then
-                local actionUsable, actionNotEnoughMana = BlizzardAPI.GetActionBarUsability(spellID)
-                if actionUsable ~= nil then
-                    return actionUsable or false, actionNotEnoughMana or false
-                end
-                return failOpen, false
+            if IsSecretValue(isUsable) or type(isUsable) ~= "boolean" then isUsable = nil end
+            if IsSecretValue(notEnoughResources) or type(notEnoughResources) ~= "boolean" then
+                notEnoughResources = nil
             end
-            return isUsable, notEnoughResources
+            source = "spell"
+            if isUsable ~= nil and notEnoughResources ~= nil then
+                return isUsable, notEnoughResources, source
+            end
+        else
+            if not usabilityErrorsReported[spellID] then
+                usabilityErrorsReported[spellID] = true
+                geterrorhandler()(isUsable)
+            end
+            isUsable, notEnoughResources = nil, nil
+            source = "spell query failed"
         end
     end
 
-    return failOpen, false
+    local actionUsable, actionNoPower, actionSource = BlizzardAPI.GetActionBarUsability(spellID)
+    if isUsable == nil then isUsable = actionUsable end
+    if notEnoughResources == nil then notEnoughResources = actionNoPower end
+    source = source .. "/" .. (actionSource or "action")
+    if notEnoughResources == true then return false, true, source end
+    if isUsable == nil then return failOpen, notEnoughResources, "policy:" .. source end
+    return isUsable, notEnoughResources, source
 end
 
 --------------------------------------------------------------------------------
@@ -545,6 +565,16 @@ end
 local procResultCache = {}
 local procCacheTime = 0
 local PROC_CACHE_DURATION = 0.05  -- 50ms - cleared on each update cycle
+local procOverlayErrorsReported = {}
+
+local function ReportProcOverlayError(spellID, err)
+    if procOverlayErrorsReported[spellID] then return end
+    procOverlayErrorsReported[spellID] = true
+    if geterrorhandler then
+        geterrorhandler()("JustAC: spell overlay query failed for spell "
+            .. tostring(spellID) .. ": " .. tostring(err))
+    end
+end
 
 -- Override spell cache - spell morphs change infrequently (Metamorphosis, etc.)
 -- Valid for one frame: ClearProcCache wipes it per queue build too, but the defensive and
@@ -575,7 +605,16 @@ function BlizzardAPI.IsSpellProcced(spellID)
         return cached
     end
 
-    local result = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
+    local result
+    if C_SpellActivationOverlay_IsSpellOverlayed then
+        local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
+        if not ok then
+            ReportProcOverlayError(spellID, overlayed)
+            procResultCache[spellID] = false
+            return false
+        end
+        result = overlayed
+    end
 
     if IsSecretValue(result) then
         procResultCache[spellID] = false
@@ -589,7 +628,16 @@ function BlizzardAPI.IsSpellProcced(spellID)
 
     local overrideID = BlizzardAPI.GetDisplaySpellID(spellID)
     if overrideID and overrideID ~= spellID then
-        local overrideResult = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(overrideID)
+        local overrideResult
+        if C_SpellActivationOverlay_IsSpellOverlayed then
+            local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, overrideID)
+            if not ok then
+                ReportProcOverlayError(spellID, overlayed)
+                procResultCache[spellID] = false
+                return false
+            end
+            overrideResult = overlayed
+        end
         if IsSecretValue(overrideResult) then
             procResultCache[spellID] = false
             return false

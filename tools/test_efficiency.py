@@ -240,6 +240,125 @@ def check_recovery():
     print(f"efficiency: {len(cases)} actual mana recovery cases (combat/base units, zero, secret, denial and invalid reads)")
 
 
+def check_eligibility_binding():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        BlizzardAPI={}
+        ActionBarScanner={}
+        secret={}
+        errors={}
+        function geterrorhandler() return function(e) errors[#errors+1]=e end end
+        function wipe(t) for k in pairs(t) do t[k]=nil end end
+        function IsSecretValue(v) return rawequal(v,secret) end
+        BlizzardAPI.IsSecretValue=IsSecretValue
+        function LibStub(name)
+            if name=='JustAC-ActionBarScanner' then return ActionBarScanner end
+        end
+        clock=0
+        function GetTime() return clock end
+        slots={[7]={'macro',1},[8]={'spell',679},[9]={'spell',678},[10]={'item',100}}
+        BlizzardAPI.GetActionInfo=function(slot)
+            local action=slots[slot]
+            if action then return action[1],action[2] end
+        end
+        BlizzardAPI.GetBarSpells=function()
+            return {{slot=8,id=679},{slot=9,id=678}}
+        end
+        BlizzardAPI.HasRequiredAttackWeapon=function() return true end
+        BlizzardAPI.GetDisplaySpellID=function(id) return id end
+        ActionBarScanner.GetSlotForSpell=function() return 7 end
+        overrides={}
+        function C_Spell_GetOverrideSpell(id,spec,onlyKnown)
+            assert(spec==0 and onlyKnown==false, 'dynamic transforms need explicit override scope')
+            return overrides[id]
+        end
+        function GetItemSpell() return 'item spell',999 end
+        directSpellSlotCache={}
+        itemSlotCache={[100]=10}
+        C_ActionBar={IsUsableAction=function() return false,false end}
+        function C_Spell_IsSpellUsable() return true,false end
+    """)
+    scanner = (ROOT / "ActionBarScanner.lua").read_text(encoding="utf-8")
+    start = scanner.index("local function DirectSpellSlotMatches(")
+    end = scanner.index("-- Returns action slot for an item", start)
+    lua.execute(scanner[start:end])
+    root = (ROOT / "BlizzardAPI.lua").read_text(encoding="utf-8")
+    lua.execute(root[root.index("local slotUsabilityCache = {}"):])
+    query = (ROOT / "BlizzardAPI" / "SpellQuery.lua").read_text(encoding="utf-8")
+    start = query.index("local usabilityErrorsReported = {}")
+    end = query.index("\n--------------------------------------------------------------------------------", start)
+    usabilitySource = query[start:end]
+    lua.execute(usabilitySource)
+    queue = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
+    for name in ("IsBarGreyedOut", "IsUnusableNonResource"):
+        start = queue.index(f"local function {name}(")
+        end = queue.index("\nend", start) + 4
+        lua.execute(queue[start:end].replace(f"local function {name}", f"function {name}", 1))
+    lua.execute("function IsRearAttackBlocked() return false end")
+    for client in ("retail", "forever"):
+        lua.execute(usabilitySource)
+        lua.execute("""
+            wipe(directSpellSlotCache)
+            ActionBarScanner.GetSlotForSpell=function() return 7 end
+            assert(ActionBarScanner.GetDirectSlotForSpell(679)==8, 'macro must not mask direct slot')
+            assert(ActionBarScanner.GetDirectSlotForSpell(678)==9, 'explicit rank needs its own slot')
+            BlizzardAPI.OnActionUsableChanged({{slot=7,usable=false,noMana=false},
+                {slot=8,usable=true,noMana=false}})
+            local u,n,source,slot=BlizzardAPI.GetActionBarUsability(679)
+            assert(u==true and n==false and source=='direct event' and slot==8)
+            assert(IsUnusableNonResource(679)==false, 'other macro branch must not sink this spell')
+            overrides[679]=680
+            assert(ActionBarScanner.GetDirectSlotForSpell(680)==8)
+            slots[8]={'spell',680}
+            assert(ActionBarScanner.GetDirectSlotForSpell(679)==8, 'current reverse override remains bound')
+            overrides[679]=nil
+            slots[8]={'spell',123}
+            assert(ActionBarScanner.GetDirectSlotForSpell(679)==nil, 'cached identity must be rechecked')
+            slots[8]={'spell',679}
+            assert(ActionBarScanner.GetDirectSlotForSpell(999)==10, 'macro cannot mask direct item')
+            ActionBarScanner.GetSlotForSpell=function(id) if id==999 then return 10 end return 7 end
+            assert(ActionBarScanner.GetDirectSlotForSpell(999)==10, 'item abilities remain supported')
+            local direct=ActionBarScanner.GetDirectSlotForSpell
+            ActionBarScanner.GetDirectSlotForSpell=function() return nil end
+            assert(BlizzardAPI.GetActionBarUsability(679)==nil, 'unbound macro is not spell evidence')
+            C_Spell_IsSpellUsable=function() return secret,true end
+            local usable,noPower,why=BlizzardAPI.IsSpellUsable(679,true)
+            assert(usable==false and noPower==true and not why:find('policy:',1,true))
+            C_Spell_IsSpellUsable=function() return false,secret end
+            usable,noPower=BlizzardAPI.IsSpellUsable(679,true)
+            assert(usable==false and noPower==nil)
+            assert(IsUnusableNonResource(679)==false, 'unknown resource reason is not structural failure')
+            C_Spell_IsSpellUsable=function() return secret,secret end
+            usable,noPower,why=BlizzardAPI.IsSpellUsable(679,true)
+            assert(usable==true and noPower==nil and why:find('policy:',1,true)==1)
+            usable,noPower=BlizzardAPI.IsSpellUsable(679,false)
+            assert(usable==false and noPower==nil, 'strict caller still fails closed')
+            ActionBarScanner.GetDirectSlotForSpell=direct
+            BlizzardAPI.OnActionUsableChanged({{slot=8,usable=secret,noMana=true}})
+            usable,noPower=BlizzardAPI.IsSpellUsable(679,true)
+            assert(usable==false and noPower==true, 'independent action power evidence survives')
+            BlizzardAPI.InvalidateSlotUsabilityCache()
+            C_ActionBar.IsUsableAction=function() return true,false end
+            usable,noPower=BlizzardAPI.IsSpellUsable(679,true)
+            assert(usable==true and noPower==false)
+            local count=#errors
+            C_Spell_IsSpellUsable=function() error('spell denied') end
+            BlizzardAPI.IsSpellUsable(679,true)
+            BlizzardAPI.IsSpellUsable(679,true)
+            assert(#errors==count+1, 'spell denial must be reported once per spell')
+            C_Spell_IsSpellUsable=function() return true,false end
+            C_ActionBar.IsUsableAction=function() error('action denied') end
+            count=#errors
+            local a,b,c=BlizzardAPI.GetActionBarUsability(679)
+            assert(a==nil and b==nil and c=='action query failed')
+            BlizzardAPI.GetActionBarUsability(679)
+            assert(#errors==count+1, 'action denial must be reported once per slot')
+            C_ActionBar.IsUsableAction=function() return false,false end
+            BlizzardAPI.InvalidateSlotUsabilityCache()
+        """)
+    print("eligibility: direct/macro identity, explicit ranks, overrides, items, unknown power and denial passed")
+
+
 def main():
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -599,6 +718,7 @@ def main():
     )
     check_options()
     check_attack_equipment()
+    check_eligibility_binding()
     check_recovery()
     print(f"efficiency: {len(blocked)} fail-closed cases and {len(allowed)} promotions per client, denied API and Lua 5.1 compile passed")
     print("efficiency: real options builders preserve defaults, stored overrides, off and ForceUpdate")

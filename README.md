@@ -16,11 +16,32 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - The **first slot** is the game's own Assisted Combat pick, with your keybind. A spell you've hidden is replaced by the next one the game would suggest.
 - The **queue** after it is ordered by the **Priority** you choose - the game's order, the theorycraft (SimulationCraft) order, or your own list - and re-ranked for the fight in front of you: area abilities rise for a pack, abilities you can't use right now (out of range, wrong form, not in stealth, missing their proc) drop to the back, and procs come first.
 - **DoT awareness** - a damage-over-time effect already on your target steps back until it's time to refresh. When the game keeps recommending one that's already up, an arrow on the first slot suggests spreading it to another enemy.
-- **Burst-ready cue** - your major cooldown glows purple when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
-- **Gap-closers** - melee specs get a movement ability suggested when the target is out of range (DPS Queue → Gap-Closers).
+- **Burst-ready cue** - your major cooldown glows orange when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
+- **Gap-closers** - melee specs get a blue movement cue when the target is out of range (DPS Queue → Gap-Closers).
 - **Mana Conservation** (both clients, off by default; tune Forever first) - under DPS Queue → General → Queue Content, choose Solo Only or Always (PvE). With one detected normal enemy and safe player health, an available free attack can lead ahead of a mana-costing single-target attack, including the game's recommendation, when mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context block conservation. Prefers confirmed reach; unknown/out-of-range attacks can still lead, leaving positioning to you. No level cutoff; custom/exact lists, procs and utility picks remain unchanged.
 - **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
 - Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
+
+### Glow colors
+
+Native proc and Assisted Combat art stay unchanged. Custom tints use WoW-like
+activity colors, rather than class or spell-school colors:
+
+| Color | Meaning |
+|---|---|
+| Native gold | Proc or emergency-ready cast |
+| Native blue-white | Primary Assisted Combat recommendation |
+| Green | Defensive/healing recommendation |
+| Azure blue | Movement/gap-closer or crowd-control escape |
+| Soft blue | Tank mitigation upkeep |
+| Red | Interrupt/stop an enemy cast |
+| Cyan | Cleanse an enemy enrage |
+| Orange | Offensive burst window or execute |
+| Violet | Buff/enchantment preparation |
+
+Preparation and mitigation keep the same hue when their reminder ring escalates
+to a proc-style glow. Existing glow controls and recommendation priorities still
+apply; color alone is not a claim that a spell has procced.
 
 ### Priority
 
@@ -55,7 +76,7 @@ The slot ahead of the damage queue, for anything that stops what the enemy is do
 
 - **Interrupts** when your target is casting, optionally only for casts the game marks as important. Hidden on casts that can't be interrupted.
 - **Crowd control** on unimportant casts, saving your interrupt for dangerous ones. Knows which crowd control works on which creature type, and which targets are immune.
-- **Enrage cleanses** - when an enemy enrages and you carry a dispel for it (Soothe, Tranquilizing Shot, Shiv and the like), it shows here with a green glow.
+- **Enrage cleanses** - when an enemy enrages and you carry a dispel for it (Soothe, Tranquilizing Shot, Shiv and the like), it shows here with a cyan glow.
 - Works with the default nameplates and with nameplate addons that keep a compatible cast bar.
 
 ### Defensives
@@ -86,11 +107,27 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 - **Caster mode** *(per spec, opt-in)* - no melee-range or form-shift suggestions for healers who stay at range.
 - **Group heal suggestions** - area heals when several allies are hurt, and your biggest save (Tranquility, Aura Mastery, Healing Tide, Divine Hymn, Restoral, Rewind) when the group is in serious trouble.
 
-### Pre-combat buffs
+### Preparation
+
+The Preparation tab groups Between-pull Recovery, Buffs & Enhancements, and
+class-appropriate Combat Readiness. Health Recovery Below controls self-heal spells, not
+recovery food. Food Buff chooses food for its buff. Health Recovery defaults to
+Auto: below 70% health it prefers a ready, usable short-cooldown self-heal, then
+food or a bandage. Choose a learned heal to prefer it, or Food / Bandage for
+item recovery. Mana Recovery Items stays independent; both selectors inherit the old
+Recovery setting until explicitly changed. Combined food/drink qualifies for
+either enabled need and appears once, including when also suggested for its buff.
 
 - Out of combat, the defensive queue shows buffs you're **missing but own** - flask, food, augment rune, weapon enchant, poisons, shields, imbues and the group buffs - as icons you can click to use.
+- On Forever, a missing Paladin seal also appears in pre-combat preparation. Out of combat, timed preparation buffs refresh during their final 25%, capped at 10 seconds, only with readable timing and a ready, usable cooldown-free spell. Refresh preserves the active buff choice; permanent effects, forms and unreadable timers stay quiet. Combat remains missing-only.
+- Preparation and recovery heals appear before consumables on the pre-combat bar, without duplicating DPS slot 1. Hidden or disabled preparation leaves the DPS fallback available.
+- Missing critical preparation and safe OOC refreshes get animated violet emphasis with a live hostile targeted, including in Proc Only mode. Genuine gold procs retain precedence.
+- Forever also prepares Protection's Righteous Fury, Shadowform, Balance's Moonkin Form and Battle Shout when usable; missing stances follow the installed tree, and Survival Hunters default to Aspect of the Beast when no aspect is active. Retail includes specialization-appropriate Druid forms, Shadowform and Paladin weapon rites.
+- Form reminders never replace an active form or ask you to shift while mounted. Existing weapon enchants satisfy rite preparation without being overwritten.
 - Group buffs are offered again when a party member is missing one, so one cast covers everyone.
 - **Recuperate** *(opt-in)* - offered when you're below your top-off level out of combat.
+- The top-off slider offers 50% through 90% in 10% steps. The reminder requires confirmed health below your selected threshold; an unreadable threshold stays quiet instead of treating any missing health as sufficient. Critical-health reminders remain separate.
+- **Forever mana recovery** - with Mana Recovery Items on Auto, offers your best owned, usable drink below 80% mana by default. Adjust Mana Recovery Below from 50% to 90% in 10% steps. Requires confirmed low mana and stops while eating or drinking. Health Recovery saves food and bandages when a suitable self-heal is usable or already healing you.
 - Covers every expansion's consumables, so leveling characters are covered too, and weapon enchants match the weapon you have equipped.
 
 ### Keybinds and filtering
@@ -104,7 +141,7 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 
 ## WoW Forever
 
-JustAC 6.1 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
+JustAC 6.2 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
 WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
 
@@ -114,6 +151,7 @@ What works differently on Forever:
 
 - **Spell ranks** - the queue shows the rank you have on your bars, with its keybind, and finds any rank in your lists.
 - **WAIT** - with Unavailable Last and ranked ordering, the timer icon leads when every DPS ability is unavailable. The waiting abilities stay behind it, and an eligible suggestion replaces it. Out of combat this requires a live enemy you can attack; no-target previews are unchanged.
+- **Save burst for worthwhile fights** - automatic priorities reserve confirmed self-buffs with a base cooldown of at least two minutes until an elite, boss or multiple engaged enemies are confirmed. The reservation persists before and after combat and through missing encounter information; unknown spell classification or cooldown does not qualify a spell for reservation. Custom lists, Always Show, explicit Hold Until settings and custom burst triggers retain control. With no other eligible ability, WAIT leads instead of spending the cooldown.
 - **Between ranged shots** - while the enemy is confirmed beyond melee reach, an otherwise eligible Throw or ranged weapon filler keeps its first slot and cooldown swipe instead of alternating with WAIT. Any ready alternative takes precedence; blocked or unknown shot range still falls back to WAIT.
 - **Rear-required attacks** - Backstab, Shred and similar attacks step back when you are out of stealth and the enemy is targeting you. Stealth openers and enemies targeting your tank retain priority. This is a targeting heuristic, not a facing check; unreadable targeting information leaves the order unchanged.
 - **Tiered damage finishers** - on normal enemies, aim for 3 combo points, 2 below half health, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
@@ -184,12 +222,14 @@ Button skinning library that allows JustAC icons to match your UI's button theme
 
 ### WoW Forever priority lists
 
-The WoW Forever priorities derive from the rotation files of ElliotWood's
-[WoW Forever simulator](https://github.com/ElliotWood/Forever), a fork of the
-wowsims project, used under its MIT license (the notice travels with the data).
-The original repository is currently unavailable; JustAC retains its pinned
-snapshot and local healer damage-filler lists rather than silently replacing
-the source. Source revisions and adaptations are documented in
+The WoW Forever priorities adapt the MIT-licensed presets from the
+[MythicSim Forever engine](https://github.com/sage3648/mythicsim-forever-engine),
+pinned to the revision recorded in `tools/forever-apl-src/UPSTREAM_COMMIT`.
+The mirror's `presets/catalog.json` records its application-data source revision.
+JustAC maps the lists to supported secret-safe gates, filters spells by Forever
+learnability, and retains local healer damage-filler pins. The original MIT
+license and notice are vendored; generated rotations include the full MIT license.
+Source revisions and adaptations are documented in
 [CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review).
 
 ### Retail priority lists

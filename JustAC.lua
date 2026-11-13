@@ -211,7 +211,8 @@ local defaults = {
             -- wants it, and the below-full signal is a proxy in secret zones (see
             -- PrecombatEngine hurt detection).
             topoffHeal = false,
-            topoffThreshold = 90,   -- Health % below which the top-off nudge shows (emergency band below 35% is fixed)
+            topoffThreshold = 80,   -- Health % below which the top-off nudge shows (emergency band below 35% is fixed)
+            recoveryManaThreshold = 80,
             stealth = true,         -- Offer Stealth/Prowl while not stealthed (glows once off cooldown)
             -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
             -- Speed is a food preference (stat="speed"), not its own category. XP is a utility
@@ -1721,9 +1722,13 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     -- OOC the pre-combat suggestions and their click layers are AURA-driven (the eating aura,
     -- Well Fed, flask, poison...), so a player aura change has to rebuild the defensive queue
     -- too. Without this the mid-eat click disarm waits for the idle cycle, leaving exactly
-    -- the spam-click window that restarts the eat. OOC-gated: aura churn in combat is heavy and
-    -- the pre-combat system is inactive there anyway.
-    if not UnitAffectingCombat("player") then defensiveQueueDirty = true end
+    -- the spam-click window that restarts the eat. Only rebuild the checklist OOC,
+    -- but invalidate cached preparation evidence in combat too for the DPS cue.
+    if not UnitAffectingCombat("player") then
+        defensiveQueueDirty = true
+    end
+    local precombatEngine = LibStub("JustAC-PrecombatEngine", true)
+    if precombatEngine and precombatEngine.ClearCache then precombatEngine.ClearCache() end
 
     -- 12.0: Pass updateInfo to RedundancyFilter for incremental instance map updates
     -- This captures addedAuras (new aura identity) and removedAuraInstanceIDs (cleanup)
@@ -2427,6 +2432,16 @@ local function OnUpdateTick(_, elapsed)
     -- sub-millisecond, so the visible-idle cost is noise.
     local queueSurfaceShown = not mainHidden or not npHidden
     local shouldUpdateSpellQueue = inCombat or spellQueueDirty or hostileTarget or queueSurfaceShown
+    -- OOC preparation owns shared offers. Render its destination before rebuilding
+    -- DPS, including on periodic refreshes. If throttled, defer the handoff together.
+    local defensiveInterval = inCombat and COMBAT_DEFENSIVE_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
+    local updateDefensives = defensiveQueueDirty or (now - lastFullUpdate) > defensiveInterval
+    if not inCombat and updateDefensives then
+        if JustAC:OnHealthChanged(nil, "player") == false then return end
+        defensiveQueueDirty = false
+        lastFullUpdate = now
+        spellQueueDirty = true
+    end
     if shouldUpdateSpellQueue then
         -- When dirty OUT of combat, bypass SpellQueue's internal throttle so rare
         -- event-driven updates render immediately. In combat, let the internal
@@ -2441,8 +2456,7 @@ local function OnUpdateTick(_, elapsed)
     end
 
     -- Only update defensive cooldowns if dirty or periodic check
-    local defensiveInterval = inCombat and COMBAT_DEFENSIVE_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
-    if defensiveQueueDirty or (now - lastFullUpdate) > defensiveInterval then
+    if inCombat and updateDefensives then
         -- Full queue rebuild (not just cooldown swipes) so "always" and "combatOnly"
         -- modes surface new icons promptly when cooldowns expire. Clear the dirty
         -- flag only when the rebuild actually ran: DefensiveEngine's 0.1s throttle

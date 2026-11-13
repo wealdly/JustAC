@@ -20,6 +20,7 @@ ignore:
     - build.ps1
     - release.ps1
     - tools
+    - Debug/Research
 
 # Library provenance. We VENDOR (commit) every library rather than fetch at build time,
 # so a git clone is self-contained and a release is reproducible; the failures that

@@ -1,9 +1,9 @@
 # JustAC Style Guide - Developer Reference
 
-**Version:** 2.6  
-**Format:** Structured for quick parsing and rule extraction  
-**Addon:** WoW Assisted Combat Enhancement (JustAC)  
-**Last Updated:** 2026-05-10
+Pattern reference, not a current module/API inventory. Start with
+[contributor rules](../AGENTS.md); use the TOC and relevant implementation for
+current registration versions, constants, exports and cache invalidation.
+Read only the section needed for the task.
 
 ---
 
@@ -47,7 +47,8 @@
 ```
 ✓ MAY prefix private functions with local
 ✓ MAY use boolean prefixes (is/has/should/can)
-✓ MAY use ternary-style and/or expressions for simple cases
+MAY use and/or selection only when the middle value cannot be nil or false.
+Otherwise use an explicit if/else.
 ```
 
 ---
@@ -68,7 +69,8 @@ if not SpellQueue then return end
 **Version Numbers:**
 - Increment on breaking changes
 - Used by LibStub to prevent loading old versions
-- Current versions: BlizzardAPI=35, SpellQueue=40, ActionBarScanner=37, MacroParser=23, FormCache=11, RedundancyFilter=42, SpellDB=9, UIRenderer=23, UIFrameFactory=15, UIAnimations=15, UIHealthBar=8, UINameplateOverlay=10, GapCloserEngine=6, BurstInjectionEngine=5, DefensiveEngine=1, DebugCommands=19, KeyPressDetector=2, TargetFrameAnchor=1, Options=32
+- Read `LibStub:NewLibrary` in the relevant module for its actual version.
+  Example values in this guide are illustrative, not versions to copy.
 
 ### Module Dependencies
 ```lua
@@ -760,26 +762,9 @@ end
 
 ## Constants Reference
 
-### Timing Constants
-```lua
-0.03  -- Combat queue throttle (30fps)
-0.08  -- Out-of-combat queue throttle (12.5fps)
-0.1   -- Form cache validation interval
-0.2   -- Keybind change debounce
-30    -- Macro/spell override cache flush
-```
-
-### Slot Constants
-```lua
-MAX_ACTION_SLOTS = 200
-NUM_ACTIONBAR_BUTTONS = 12
-```
-
-### User Limits
-```lua
-maxIcons: 1-7      -- Spell icons displayed
-iconSize: 20-64    -- Icon size in pixels
-```
+Read timing, slot and cache constants in the module being changed. Read UI ranges
+in the owning options panel and defaults in `JustAC.lua`. Do not copy a numeric
+snapshot from this guide into code; the implementation is authoritative.
 
 ---
 

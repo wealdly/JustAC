@@ -59,8 +59,11 @@ def main():
     lua.execute(extract(SRC.read_text(encoding="utf-8").replace("\r\n", "\n")))
     run = lua.eval("function(src) return assert(load(src))() end")
     bad = []
+    cases = 0
 
     def check(want, src, why):
+        nonlocal cases
+        cases += 1
         got = run(src)
         if want != got:
             bad.append("  FAIL %-58s got %r, want %r" % (why, got, want))
@@ -146,9 +149,71 @@ def main():
     check(False, "return waits(def, entry{ spellID = 10, isProcced = true }, false)", "a proc never waits")
     check(False, "return waits(def, entry{ spellID = 10, precombat = true }, false)", "a pre-combat buff never waits")
 
+    # Use the production defaults and lookup, including Forever rank resolution.
+    spellDB = (SRC.parent / "SpellDB.lua").read_text(encoding="utf-8")
+    lookupStart = spellDB.index("local RotationImport_")
+    lookupEnd = spellDB.index("\nSpellDB.StaticLookup =", lookupStart)
+    defaultsStart = spellDB.index("local CAST_TIME_HEALS = {")
+    defaultsEnd = spellDB.index("\nend\n", spellDB.index("function SpellDB.GetDefaultWaitBelow(", defaultsStart))
+    run("""
+        function LibStub()
+            return { RankBase = function(id)
+                if id == 900635 then return 635 end
+                if id == 9002061 then return 2061 end
+                return id
+            end }
+        end
+        SpellDB.GetSpecKey = function() return "PALADIN_1" end
+    """)
+    lua.execute(spellDB[lookupStart:lookupEnd] + "\n"
+                + spellDB[defaultsStart:defaultsEnd + len("\nend\n")])
+    castHealIDs = (331, 596, 635, 1064, 2060, 2061, 5185, 8004, 8936, 19750,
+                   32546, 50464, 77472, 82326, 116670, 124682, 186263, 194509,
+                   265202, 399491, 900635, 9002061)
+    for sid in castHealIDs:
+        check(60, f"return SpellDB.GetDefaultWaitBelow({sid})",
+              f"cast-time heal {sid}: shared default is 60%")
+        run("def = { hideEmergencyUntilLow = true, spellSettings = {} }; exact = nil")
+        for pct, expected in ((100, True), (60, True), (59, False)):
+            run(f"health = function(threshold) return {pct} < threshold end")
+            check(expected, f"return waits(def, entry{{ spellID = {sid} }}, false)",
+                  f"cast-time heal {sid}: {pct}% health")
+        run("health = function(threshold) return 100 < threshold end")
+        check(False, f"return waits(def, entry{{ spellID = {sid}, isProcced = true }}, false)",
+              f"cast-time heal {sid}: proc handling preserved")
+        check(False, f"return waits(def, entry{{ spellID = {sid}, precombat = true }}, false)",
+              f"cast-time heal {sid}: precombat handling preserved")
+        run("health = nil")
+        check(False, f"return waits(def, entry{{ spellID = {sid} }}, false)",
+              f"cast-time heal {sid}: unknown health")
+        run("health = function(threshold) return 100 < threshold end")
+        run(f"def.spellSettings[{sid}] = {{ waitBelow = 'off' }}")
+        check(False, f"return waits(def, entry{{ spellID = {sid} }}, false)",
+              f"cast-time heal {sid}: explicit off wins")
+        run(f"def.spellSettings[{sid}] = {{ waitBelow = 80 }}")
+        run("health = function(threshold) return 70 < threshold end")
+        check(False, f"return waits(def, entry{{ spellID = {sid} }}, false)",
+              f"cast-time heal {sid}: explicit 80% wins")
+        run("def.spellSettings = {}; def.hideEmergencyUntilLow = false")
+        run("health = function(threshold) return 100 < threshold end")
+        check(False, f"return waits(def, entry{{ spellID = {sid} }}, false)",
+              f"cast-time heal {sid}: list-wide switch respected")
+
+    for sid, expected in ((774, 90), (85673, 80), (633, 25), (370960, 50),
+                          (234153, 60), (53563, None), (116680, None),
+                          (198898, None), (6603, None), (999999, None)):
+        check(expected, f"return SpellDB.GetDefaultWaitBelow({sid})",
+              f"non-cast-heal {sid}: existing default preserved")
+    run('SpellDB.GetSpecKey = function() return "DEATHKNIGHT_1" end')
+    check(None, "return SpellDB.GetDefaultWaitBelow(49998)",
+          "Blood Death Strike keeps its no-threshold override")
+    run('SpellDB.GetSpecKey = function() return "PALADIN_2" end')
+    check(25, "return SpellDB.GetDefaultWaitBelow(642)",
+          "Protection Divine Shield keeps its emergency override")
+
     for line in bad:
         print(line)
-    print("defensive wait: 28 case(s), %d failure(s)" % len(bad))
+    print("defensive wait: %d case(s), %d failure(s)" % (cases, len(bad)))
     return 1 if bad else 0
 
 

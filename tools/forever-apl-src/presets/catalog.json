@@ -1,0 +1,1027 @@
+{
+  "source": {
+    "repository": "sage3648/mythicsim",
+    "path": "api/data/forever_rotations.json",
+    "commit": "4bf15417001a5e86ebc99cae159a09f91ff0be4b"
+  },
+  "referencePin": "a667dce8492bd9fb94269a9f864289cb74006775",
+  "specs": {
+    "Affliction Warlock": {
+      "default": "warlock/dps/affliction",
+      "choices": [
+        {
+          "id": "warlock/dps/affliction",
+          "label": "Affliction",
+          "file": "warlock/dps/affliction.apl.json"
+        },
+        {
+          "id": "warlock/dps/demonic_pact",
+          "label": "Demonic Pact",
+          "file": "warlock/dps/demonic_pact.apl.json"
+        },
+        {
+          "id": "warlock/dps/ds_ruin",
+          "label": "DS/Ruin",
+          "file": "warlock/dps/ds_ruin.apl.json"
+        },
+        {
+          "id": "warlock/dps/destruction_conflag",
+          "label": "Shadow and Flame",
+          "file": "warlock/dps/destruction_conflag.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatShadowDamage",
+          "StatFireDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatSpellPiercing",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Arcane Mage": {
+      "default": "mage/dps/arcane",
+      "choices": [
+        {
+          "id": "mage/dps/arcane",
+          "label": "Arcane",
+          "file": "mage/dps/arcane.apl.json"
+        },
+        {
+          "id": "mage/dps/fire",
+          "label": "Fire",
+          "file": "mage/dps/fire.apl.json"
+        },
+        {
+          "id": "mage/dps/fire_lowrank",
+          "label": "Fire (low rank)",
+          "file": "mage/dps/fire_lowrank.apl.json"
+        },
+        {
+          "id": "mage/dps/frost",
+          "label": "Frost",
+          "file": "mage/dps/frost.apl.json"
+        },
+        {
+          "id": "mage/dps/frostfire",
+          "label": "Frostfire hybrid (experimental)",
+          "file": "mage/dps/frostfire.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatSpellDamage",
+          "StatArcaneDamage",
+          "StatFrostDamage",
+          "StatFireDamage",
+          "StatSpellPiercing",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMana",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Assassination Rogue": {
+      "default": "rogue/dps/forever_mutilate",
+      "choices": [
+        {
+          "id": "rogue/dps/forever_mutilate",
+          "label": "Mutilate",
+          "file": "rogue/dps/forever_mutilate.apl.json"
+        },
+        {
+          "id": "rogue/dps/forever_hemorrhage",
+          "label": "Hemorrhage",
+          "file": "rogue/dps/forever_hemorrhage.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_sinister_strike",
+          "label": "Sinister Strike",
+          "file": "rogue/dps/combat_sinister_strike.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_backstab",
+          "label": "Backstab",
+          "file": "rogue/dps/combat_backstab.apl.json"
+        },
+        {
+          "id": "rogue/dps/venom",
+          "label": "Venom (Ambiwar)",
+          "file": "rogue/dps/venom.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatAgility",
+          "StatStrength",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatMeleeHitRating",
+          "StatArmorPenetration",
+          "StatExpertiseRating",
+          "StatAttackPower",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAttackPower"
+      }
+    },
+    "Balance Druid": {
+      "default": "druid/balance/launch",
+      "choices": [
+        {
+          "id": "druid/balance/launch",
+          "label": "Launch",
+          "file": "druid/balance/launch.apl.json"
+        },
+        {
+          "id": "druid/balance/default",
+          "label": "Starfire (no Eclipse)",
+          "file": "druid/balance/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatArcaneDamage",
+          "StatNatureDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5",
+          "StatSpirit"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Combat Rogue": {
+      "default": "rogue/dps/combat_sinister_strike",
+      "choices": [
+        {
+          "id": "rogue/dps/combat_sinister_strike",
+          "label": "Sinister Strike",
+          "file": "rogue/dps/combat_sinister_strike.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_sinister_strike_sweaty",
+          "label": "Sinister Strike (Sweaty)",
+          "file": "rogue/dps/combat_sinister_strike_sweaty.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_sinister_strike_iea",
+          "label": "Improved Expose Armor (SS)",
+          "file": "rogue/dps/combat_sinister_strike_iea.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_backstab",
+          "label": "Backstab",
+          "file": "rogue/dps/combat_backstab.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_backstab_sweaty",
+          "label": "Backstab (Sweaty)",
+          "file": "rogue/dps/combat_backstab_sweaty.apl.json"
+        },
+        {
+          "id": "rogue/dps/forever_mutilate",
+          "label": "Mutilate",
+          "file": "rogue/dps/forever_mutilate.apl.json"
+        },
+        {
+          "id": "rogue/dps/forever_hemorrhage",
+          "label": "Hemorrhage",
+          "file": "rogue/dps/forever_hemorrhage.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatAgility",
+          "StatStrength",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatMeleeHitRating",
+          "StatArmorPenetration",
+          "StatExpertiseRating",
+          "StatAttackPower",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAttackPower"
+      }
+    },
+    "Demonology Warlock": {
+      "default": "warlock/dps/demonic_pact",
+      "choices": [
+        {
+          "id": "warlock/dps/demonic_pact",
+          "label": "Demonic Pact",
+          "file": "warlock/dps/demonic_pact.apl.json"
+        },
+        {
+          "id": "warlock/dps/affliction",
+          "label": "Affliction",
+          "file": "warlock/dps/affliction.apl.json"
+        },
+        {
+          "id": "warlock/dps/ds_ruin",
+          "label": "DS/Ruin",
+          "file": "warlock/dps/ds_ruin.apl.json"
+        },
+        {
+          "id": "warlock/dps/destruction_conflag",
+          "label": "Shadow and Flame",
+          "file": "warlock/dps/destruction_conflag.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatShadowDamage",
+          "StatFireDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatSpellPiercing",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Destruction Warlock": {
+      "default": "warlock/dps/destruction_conflag",
+      "choices": [
+        {
+          "id": "warlock/dps/destruction_conflag",
+          "label": "Shadow and Flame",
+          "file": "warlock/dps/destruction_conflag.apl.json"
+        },
+        {
+          "id": "warlock/dps/ds_ruin",
+          "label": "DS/Ruin",
+          "file": "warlock/dps/ds_ruin.apl.json"
+        },
+        {
+          "id": "warlock/dps/affliction",
+          "label": "Affliction",
+          "file": "warlock/dps/affliction.apl.json"
+        },
+        {
+          "id": "warlock/dps/demonic_pact",
+          "label": "Demonic Pact",
+          "file": "warlock/dps/demonic_pact.apl.json"
+        },
+        {
+          "id": "warlock/dps/destruction_fire",
+          "label": "Fire (Incinerate)",
+          "file": "warlock/dps/destruction_fire.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatShadowDamage",
+          "StatFireDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatSpellPiercing",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Discipline Priest": {
+      "default": "priest/healer/default",
+      "choices": [
+        {
+          "id": "priest/healer/default",
+          "label": "Penance, Binding Heal and Renew",
+          "file": "priest/healer/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatHealingPower",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatHealingPower"
+      }
+    },
+    "DPS Warrior": {
+      "default": "warrior/dps/dps_reck",
+      "choices": [
+        {
+          "id": "warrior/dps/dps_reck",
+          "label": "Automatic (Arms or Fury)",
+          "file": "warrior/dps/dps_reck.apl.json"
+        },
+        {
+          "id": "warrior/dps/dps_no_reck",
+          "label": "DPS (No Reck)",
+          "file": "warrior/dps/dps_no_reck.apl.json"
+        },
+        {
+          "id": "warrior/dps/arms",
+          "label": "Arms",
+          "file": "warrior/dps/arms.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStrength",
+          "StatAgility",
+          "StatAttackPower",
+          "StatArmorPenetration",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatExpertiseRating"
+        ],
+        "reference": "StatStrength"
+      }
+    },
+    "Elemental Shaman": {
+      "default": "shaman/elemental/forever",
+      "choices": [
+        {
+          "id": "shaman/elemental/forever",
+          "label": "Default",
+          "file": "shaman/elemental/forever.apl.json"
+        },
+        {
+          "id": "shaman/elemental/elehance",
+          "label": "Elehance melee weave (Experimental)",
+          "file": "shaman/elemental/elehance.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatNatureDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Enhancement Shaman": {
+      "default": "shaman/enhancement/forever",
+      "choices": [
+        {
+          "id": "shaman/enhancement/forever",
+          "label": "Default",
+          "file": "shaman/enhancement/forever.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStrength",
+          "StatAgility",
+          "StatIntellect",
+          "StatAttackPower",
+          "StatMeleeHitRating",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatExpertiseRating",
+          "StatArmorPenetration",
+          "StatSpellDamage",
+          "StatNatureDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating"
+        ],
+        "reference": "StatAttackPower"
+      }
+    },
+    "Feral Bear Druid": {
+      "default": "druid/feralbear/default",
+      "choices": [
+        {
+          "id": "druid/feralbear/default",
+          "label": "Bear",
+          "file": "druid/feralbear/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatAgility",
+          "StatStrength",
+          "StatAttackPower",
+          "StatFeralAttackPower",
+          "StatArmor",
+          "StatBonusArmor",
+          "StatDodgeRating",
+          "StatDefenseRating",
+          "StatMeleeHitRating",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatExpertiseRating",
+          "StatPhysicalDamage",
+          "StatArmorPenetration"
+        ],
+        "reference": "StatAgility"
+      }
+    },
+    "Feral Druid": {
+      "default": "druid/feralcat/default",
+      "choices": [
+        {
+          "id": "druid/feralcat/default",
+          "label": "Feral",
+          "file": "druid/feralcat/default.apl.json"
+        },
+        {
+          "id": "druid/feralcat/simple_vael",
+          "label": "Simple Vaelastrasz",
+          "file": "druid/feralcat/simple_vael.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStrength",
+          "StatAgility",
+          "StatAttackPower",
+          "StatFeralAttackPower",
+          "StatPhysicalDamage",
+          "StatMeleeHitRating",
+          "StatExpertiseRating",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatArmorPenetration"
+        ],
+        "reference": "StatAgility"
+      }
+    },
+    "Fire Mage": {
+      "default": "mage/dps/fire",
+      "choices": [
+        {
+          "id": "mage/dps/fire",
+          "label": "Fire",
+          "file": "mage/dps/fire.apl.json"
+        },
+        {
+          "id": "mage/dps/fire_lowrank",
+          "label": "Fire (low rank)",
+          "file": "mage/dps/fire_lowrank.apl.json"
+        },
+        {
+          "id": "mage/dps/arcane",
+          "label": "Arcane",
+          "file": "mage/dps/arcane.apl.json"
+        },
+        {
+          "id": "mage/dps/frost",
+          "label": "Frost",
+          "file": "mage/dps/frost.apl.json"
+        },
+        {
+          "id": "mage/dps/frostfire",
+          "label": "Frostfire hybrid (experimental)",
+          "file": "mage/dps/frostfire.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatSpellDamage",
+          "StatArcaneDamage",
+          "StatFrostDamage",
+          "StatFireDamage",
+          "StatSpellPiercing",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMana",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Frost Mage": {
+      "default": "mage/dps/frost",
+      "choices": [
+        {
+          "id": "mage/dps/frost",
+          "label": "Frost",
+          "file": "mage/dps/frost.apl.json"
+        },
+        {
+          "id": "mage/dps/arcane",
+          "label": "Arcane",
+          "file": "mage/dps/arcane.apl.json"
+        },
+        {
+          "id": "mage/dps/fire",
+          "label": "Fire",
+          "file": "mage/dps/fire.apl.json"
+        },
+        {
+          "id": "mage/dps/fire_lowrank",
+          "label": "Fire (low rank)",
+          "file": "mage/dps/fire_lowrank.apl.json"
+        },
+        {
+          "id": "mage/dps/frostfire",
+          "label": "Frostfire hybrid (experimental)",
+          "file": "mage/dps/frostfire.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatSpellDamage",
+          "StatArcaneDamage",
+          "StatFrostDamage",
+          "StatFireDamage",
+          "StatSpellPiercing",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMana",
+          "StatMP5"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Holy Paladin": {
+      "default": "paladin/holy/flash_of_light",
+      "choices": [
+        {
+          "id": "paladin/holy/flash_of_light",
+          "label": "Flash of Light",
+          "file": "paladin/holy/flash_of_light.apl.json"
+        },
+        {
+          "id": "paladin/holy/holy_light",
+          "label": "Holy Light",
+          "file": "paladin/holy/holy_light.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatHealingPower",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatHealingPower"
+      }
+    },
+    "Holy Priest": {
+      "default": "priest/healer/default",
+      "choices": [
+        {
+          "id": "priest/healer/default",
+          "label": "Penance, Binding Heal and Renew",
+          "file": "priest/healer/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatHealingPower",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatHealingPower"
+      }
+    },
+    "Hunter": {
+      "default": "hunter/dps/bm",
+      "choices": [
+        {
+          "id": "hunter/dps/bm",
+          "label": "Beast Mastery",
+          "file": "hunter/dps/bm.apl.json"
+        },
+        {
+          "id": "hunter/dps/mm",
+          "label": "Marksmanship",
+          "file": "hunter/dps/mm.apl.json"
+        },
+        {
+          "id": "hunter/dps/sv",
+          "label": "Survival",
+          "file": "hunter/dps/sv.apl.json"
+        },
+        {
+          "id": "hunter/dps/melee_weave",
+          "label": "Melee weave (Experimental)",
+          "file": "hunter/dps/melee_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_weave",
+          "label": "Survival weave, Sanctum (Experimental)",
+          "file": "hunter/dps/survival_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_light_weave",
+          "label": "Survival light weave, Arc (Experimental)",
+          "file": "hunter/dps/survival_light_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/sv_melee",
+          "label": "Survival (melee)",
+          "file": "hunter/dps/sv_melee.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatAgility",
+          "StatStrength",
+          "StatIntellect",
+          "StatMP5",
+          "StatAttackPower",
+          "StatRangedAttackPower",
+          "StatArmorPenetration",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatExpertiseRating",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAgility"
+      }
+    },
+    "Marksmanship Hunter": {
+      "default": "hunter/dps/mm",
+      "choices": [
+        {
+          "id": "hunter/dps/mm",
+          "label": "Marksmanship",
+          "file": "hunter/dps/mm.apl.json"
+        },
+        {
+          "id": "hunter/dps/bm",
+          "label": "Beast Mastery",
+          "file": "hunter/dps/bm.apl.json"
+        },
+        {
+          "id": "hunter/dps/sv",
+          "label": "Survival",
+          "file": "hunter/dps/sv.apl.json"
+        },
+        {
+          "id": "hunter/dps/melee_weave",
+          "label": "Melee weave (Experimental)",
+          "file": "hunter/dps/melee_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_weave",
+          "label": "Survival weave, Sanctum (Experimental)",
+          "file": "hunter/dps/survival_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_light_weave",
+          "label": "Survival light weave, Arc (Experimental)",
+          "file": "hunter/dps/survival_light_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/sv_melee",
+          "label": "Survival (melee)",
+          "file": "hunter/dps/sv_melee.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatAgility",
+          "StatStrength",
+          "StatIntellect",
+          "StatMP5",
+          "StatAttackPower",
+          "StatRangedAttackPower",
+          "StatArmorPenetration",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatExpertiseRating",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAgility"
+      }
+    },
+    "Protection Paladin": {
+      "default": "paladin/protection/p5",
+      "choices": [
+        {
+          "id": "paladin/protection/p5",
+          "label": "P5 Prot",
+          "file": "paladin/protection/p5.apl.json"
+        },
+        {
+          "id": "paladin/protection/default",
+          "label": "Basic Prot",
+          "file": "paladin/protection/default.apl.json"
+        },
+        {
+          "id": "paladin/protection/ret_prot",
+          "label": "Ret-prot hybrid (Experimental)",
+          "file": "paladin/protection/ret_prot.apl.json"
+        },
+        {
+          "id": "paladin/protection/holy_prot",
+          "label": "Holy-prot hybrid (Experimental)",
+          "file": "paladin/protection/holy_prot.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatStrength",
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatAgility",
+          "StatAttackPower",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatArmorPenetration",
+          "StatExpertiseRating",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatDefenseRating",
+          "StatBlockRating",
+          "StatBlockValue",
+          "StatDodgeRating",
+          "StatParryRating",
+          "StatArmor",
+          "StatBonusArmor",
+          "StatExpertiseRating"
+        ],
+        "reference": "StatStrength"
+      }
+    },
+    "Protection Warrior": {
+      "default": "warrior/protection/protection",
+      "choices": [
+        {
+          "id": "warrior/protection/protection",
+          "label": "Protection",
+          "file": "warrior/protection/protection.apl.json"
+        },
+        {
+          "id": "warrior/protection/dps_no_reck",
+          "label": "DPS (No Reck)",
+          "file": "warrior/protection/dps_no_reck.apl.json"
+        },
+        {
+          "id": "warrior/protection/dps_reck",
+          "label": "DPS (With Reck)",
+          "file": "warrior/protection/dps_reck.apl.json"
+        },
+        {
+          "id": "warrior/protection/damage",
+          "label": "Protection damage (Recklessness)",
+          "file": "warrior/protection/damage.apl.json"
+        },
+        {
+          "id": "warrior/protection/fury_prot",
+          "label": "Fury-prot shield (Experimental)",
+          "file": "warrior/protection/fury_prot.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatStrength",
+          "StatAgility",
+          "StatAttackPower",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatArmorPenetration",
+          "StatExpertiseRating",
+          "StatDefenseRating",
+          "StatBlockRating",
+          "StatBlockValue",
+          "StatDodgeRating",
+          "StatParryRating",
+          "StatArmor",
+          "StatBonusArmor"
+        ],
+        "reference": "StatStrength"
+      }
+    },
+    "Restoration Druid": {
+      "default": "druid/restoration/default",
+      "choices": [
+        {
+          "id": "druid/restoration/default",
+          "label": "Rejuvenation and Healing Touch",
+          "file": "druid/restoration/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatHealingPower",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatHealingPower"
+      }
+    },
+    "Restoration Shaman": {
+      "default": "shaman/restoration/default",
+      "choices": [
+        {
+          "id": "shaman/restoration/default",
+          "label": "Chain Heal and Riptide",
+          "file": "shaman/restoration/default.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpirit",
+          "StatHealingPower",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMP5"
+        ],
+        "reference": "StatHealingPower"
+      }
+    },
+    "Retribution Paladin": {
+      "default": "paladin/retribution/default",
+      "choices": [
+        {
+          "id": "paladin/retribution/default",
+          "label": "Basic Ret",
+          "file": "paladin/retribution/default.apl.json"
+        },
+        {
+          "id": "paladin/retribution/shockadin",
+          "label": "Shockadin hybrid (Experimental)",
+          "file": "paladin/retribution/shockadin.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStrength",
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatAgility",
+          "StatAttackPower",
+          "StatArmorPenetration",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatExpertiseRating",
+          "StatMana"
+        ],
+        "reference": "StatStrength"
+      }
+    },
+    "Shadow Priest": {
+      "default": "priest/dps/shadow",
+      "choices": [
+        {
+          "id": "priest/dps/shadow",
+          "label": "Shadow",
+          "file": "priest/dps/shadow.apl.json"
+        },
+        {
+          "id": "priest/dps/smite",
+          "label": "Smite",
+          "file": "priest/dps/smite.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatIntellect",
+          "StatSpellDamage",
+          "StatShadowDamage",
+          "StatHolyDamage",
+          "StatSpellHitRating",
+          "StatSpellCritRating",
+          "StatSpellHasteRating",
+          "StatMana",
+          "StatMP5",
+          "StatSpirit"
+        ],
+        "reference": "StatSpellDamage"
+      }
+    },
+    "Subtlety Rogue": {
+      "default": "rogue/dps/forever_hemorrhage",
+      "choices": [
+        {
+          "id": "rogue/dps/forever_hemorrhage",
+          "label": "Hemorrhage",
+          "file": "rogue/dps/forever_hemorrhage.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_backstab",
+          "label": "Backstab",
+          "file": "rogue/dps/combat_backstab.apl.json"
+        },
+        {
+          "id": "rogue/dps/combat_backstab_sweaty",
+          "label": "Backstab (Sweaty)",
+          "file": "rogue/dps/combat_backstab_sweaty.apl.json"
+        },
+        {
+          "id": "rogue/dps/forever_mutilate",
+          "label": "Mutilate",
+          "file": "rogue/dps/forever_mutilate.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatStamina",
+          "StatAgility",
+          "StatStrength",
+          "StatMeleeCritRating",
+          "StatMeleeHasteRating",
+          "StatMeleeHitRating",
+          "StatArmorPenetration",
+          "StatExpertiseRating",
+          "StatAttackPower",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAttackPower"
+      }
+    },
+    "Survival Hunter": {
+      "default": "hunter/dps/sv_melee",
+      "choices": [
+        {
+          "id": "hunter/dps/sv_melee",
+          "label": "Survival (melee)",
+          "file": "hunter/dps/sv_melee.apl.json"
+        },
+        {
+          "id": "hunter/dps/melee_weave",
+          "label": "Melee weave (Experimental)",
+          "file": "hunter/dps/melee_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_weave",
+          "label": "Survival weave, Sanctum (Experimental)",
+          "file": "hunter/dps/survival_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/survival_light_weave",
+          "label": "Survival light weave, Arc (Experimental)",
+          "file": "hunter/dps/survival_light_weave.apl.json"
+        },
+        {
+          "id": "hunter/dps/sv_melee_weave",
+          "label": "Melee-first weave (Experimental)",
+          "file": "hunter/dps/sv_melee_weave.apl.json"
+        }
+      ],
+      "statWeights": {
+        "stats": [
+          "StatAgility",
+          "StatStrength",
+          "StatIntellect",
+          "StatMP5",
+          "StatAttackPower",
+          "StatRangedAttackPower",
+          "StatArmorPenetration",
+          "StatMeleeHitRating",
+          "StatMeleeHasteRating",
+          "StatMeleeCritRating",
+          "StatExpertiseRating",
+          "StatPhysicalDamage"
+        ],
+        "reference": "StatAgility"
+      }
+    }
+  }
+}

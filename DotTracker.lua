@@ -1,35 +1,20 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: DoT Tracker - sinks maintained enemy DoTs to the back of the queue
--- while their debuff is already live on the current target.
+-- JustAC: Target-aura observations and maintained-DoT suppression.
 --
--- 12.0 combat hides target-debuff identity (spellId/name/isFromPlayerOrPlayerPet
--- are all secret; GetPlayerAuraBySpellID returns nil for secret auras), so we
--- cannot read "is Rake on the target" directly. UnitGUID("target") is ALSO secret
--- for NPCs in combat, so it can't key a table either. Two NeverSecret signals let
--- us reconstruct DoT state without any of that:
---   1. Our own casts. UNIT_SPELLCAST_SUCCEEDED spellID is readable. Casting a
---      tracked DoT arms a suppression window - this alone guarantees the sink.
---   2. The aura-instance bridge (accuracy layer). auraInstanceID reads plain when
---      the UNIT_AURA payload does (12.1.0 can secret the whole list - unwrap first);
---      IsAuraFilteredOutByInstanceID(unit, id, "HARMFUL|PLAYER") is a readable
---      bool that tells us an instance is a harmful aura WE cast. On the target's
---      addedAuras we map the new debuff instance to the cast that produced it;
---      on removedAuraInstanceIDs we drop it, so a DoT that falls off early (drop,
---      dispel, immune, miss) un-sinks immediately. Stack count and duration stay
---      secret in combat, so we never read them - the generated list excludes
---      recast-to-stack DoTs (passively-ramping ones like Agony are included),
---      and duration estimates come from static data.
+-- Own casts start bounded duration estimates. Where available, the aura-instance
+-- bridge handles early removal and engine refresh state. Forever additionally
+-- prefers readable Cooldown Manager aura state and cancels cast estimates on
+-- best-effort target miss matching. None of these requires reading secret aura
+-- identity, stacks or numeric durations.
 --
--- Everything here is scoped to the CURRENT target: UNIT_AURA("target") and the
--- player's cast both implicitly refer to it. Where the target's GUID reads plain in
--- combat (WoW Forever) a target's record is parked on a swap and restored on a swap back;
--- otherwise a swap starts fresh. Tracking is cleared on leaving combat.
+-- Generated tables separate observation eligibility from unconditional DoT
+-- suppression. Explicit entry refreshes may use estimates; aura prerequisites
+-- require evidence. See GetTargetAuraState for that distinction.
 --
--- Safety net: AC's position-1 pick re-surfaces any DoT that actually needs
--- refreshing, so an over-long window or a missed bridge only ever delays an
--- un-sink; it never hides a DoT the player needs to recast.
-local DotTracker = LibStub:NewLibrary("JustAC-DotTracker", 1)
+-- State belongs to the current target. Forever parks records under readable
+-- target GUIDs across swaps; Retail starts fresh. Combat end clears tracking.
+local DotTracker = LibStub:NewLibrary("JustAC-DotTracker", 2)
 if not DotTracker then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -59,12 +44,9 @@ local function baseOf(spellID)
     return r1 ~= spellID and r1 or nil
 end
 
--- Unconfirmed fallback: how long after casting a DoT we assume it's still up when
--- the aura-instance bridge hasn't confirmed it. A generous upper bound on DoT
--- durations; confirmed presence overrides it and AC re-surfaces real refreshes.
--- ponytail: one constant, not per-spell durations (unreadable in combat anyway);
--- add SpellDuration-derived per-spell windows if the flat bound ever feels stale.
-local FALLBACK_WINDOW = 30
+-- Unknown-duration applications yield early rather than risk a long uptime gap.
+-- Known durations and readable aura evidence take precedence.
+local FALLBACK_WINDOW = 12
 -- Max gap between our cast and the debuff showing up in addedAuras.
 local BRIDGE_WINDOW = 2.0
 -- Pandemic lead: stop suppressing this fraction of the estimated duration before
@@ -77,6 +59,15 @@ local PANDEMIC_LEAD = FOREVER and 0 or 0.30
 -- Harmful auras cast by the player - Blizzard evaluates this engine-side from the
 -- NeverSecret instance ID, so it stays readable in combat.
 local PLAYER_DEBUFF_FILTER = "HARMFUL|PLAYER"
+
+local function IsTrackedAura(spellID, includeMaintenance)
+    if not SpellDB then return false end
+    if SpellDB.IsTargetDot and SpellDB.IsTargetDot(spellID) then return true end
+    if includeMaintenance and SpellDB.IsTrackedTargetAura then
+        return SpellDB.IsTrackedTargetAura(spellID)
+    end
+    return false
+end
 
 -- The current target's record. applied[spellID] = { expiry, pandemicPoint, hadInstance,
 -- instances = { [instanceID] = true } }.
@@ -125,20 +116,19 @@ local function PrunePending(now)
     end
 end
 
---- Record a tracked-DoT cast on the current target. Arms the suppression window
---- (guaranteed sink) and queues the cast for the aura-instance bridge.
+--- Record a tracked aura application on the current target. Arms a bounded estimate
+--- and queues the cast for the aura-instance bridge; entry policy decides suppression.
 --- Called from UNIT_SPELLCAST_SUCCEEDED (player): in combat, and on Forever out of combat too (the pull).
 function DotTracker.OnCastSucceeded(spellID)
-    if not spellID or not SpellDB or not SpellDB.IsTargetDot or not SpellDB.IsTargetDot(spellID) then
-        return
-    end
+    if not spellID or not IsTrackedAura(spellID, true) then return end
     if not UnitExists("target") then return end
     local now = GetTime()
 
     -- Refresh (pandemic) point: un-sink this long before the estimated expiry so
     -- the DoT reappears in time to reapply. nil when duration is unknown (rely on
     -- the removal bridge / AC instead of guessing).
-    local dur = SpellDB.GetTargetDotDuration and SpellDB.GetTargetDotDuration(spellID)
+    local getDuration = SpellDB.GetTargetAuraDuration or SpellDB.GetTargetDotDuration
+    local dur = getDuration and getDuration(spellID)
     local pandemicPoint = dur and (now + dur * (1 - PANDEMIC_LEAD)) or nil
 
     -- Key under the cast ID, its display/override ID, and its base spell so the
@@ -151,7 +141,7 @@ function DotTracker.OnCastSucceeded(spellID)
     if base then ids[#ids + 1] = base end
     for _, id in ipairs(ids) do
         local e = GetEntry(id)
-        e.expiry = now + FALLBACK_WINDOW
+        e.expiry = now + (dur or FALLBACK_WINDOW)
         e.pandemicPoint = pandemicPoint
         -- A fresh application after a confirmed drop must trust the window again:
         -- hadInstance means "confirmed since the last cast that found no instance",
@@ -286,28 +276,33 @@ end
 
 --- True when the current target already has this DoT live (so the queue should
 --- sink it). Confirmed instance > early-drop > post-cast window fallback.
-function DotTracker.IsDotActiveOnCurrentTarget(spellID)
-    if not spellID then return false end
+local function EvaluateDot(spellID, diagnostic, observation, readCache)
+    if not spellID then return false, "invalid-spell" end
     -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
     -- This query runs per rotation spell per build, so keeping it free when no DoT
     -- is active matters for non-DoT specs and between-target lulls.
     local e = next(applied) and (applied[spellID] or applied[baseOf(spellID) or false]) or nil
-    if e and e.immune then return true end         -- this target cannot take it
+    if e and e.immune then return true, "immune-policy" end
+    local tracked, trackedReason
     -- WoW Forever: a DoT the player tracks in the Cooldown Manager is read off Blizzard's own
     -- icon for the current target - it sees a dodge, a dispel and an early fall-off that cast
     -- timing cannot. No refresh window there, so it is the whole answer. DoTs only: a tracked
-    -- NON-DoT with a debuff of its own (Thunder Clap's slow) is worth recasting while that
-    -- debuff is up, and reading it as "already ticking" sank it.
-    if PANDEMIC_LEAD == 0 and SpellDB and SpellDB.IsTargetDot and SpellDB.IsTargetDot(spellID) then
+    -- NON-DoT with a debuff of its own can still be worth recasting. Such a spell is
+    -- observed only for an explicit entry condition, never unconditionally suppressed.
+    if FOREVER and IsTrackedAura(spellID, observation) then
         if maintenanceTracker == nil then
             maintenanceTracker = LibStub("JustAC-MaintenanceTracker", true) or false
         end
         -- Not `x and x.f()`: with the module missing that is false, read as "not ticking".
-        local tracked
-        if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID) end
-        if tracked ~= nil then return tracked end
+        if maintenanceTracker then
+            tracked = maintenanceTracker.IsTrackedAuraActive(spellID, diagnostic, readCache)
+            trackedReason = diagnostic and diagnostic.reason
+        else
+            trackedReason = "module-unavailable"
+        end
+        if tracked ~= nil then return tracked, "cooldown-manager", tracked, trackedReason end
     end
-    if not e then return false end
+    if not e then return false, "untracked", tracked, trackedReason end
     local now = GetTime()
     -- ENGINE TRUTH for the pandemic window, wherever we hold a confirmed instance.
     -- This is not merely more precise than the estimate below - it fixes a class of
@@ -324,19 +319,45 @@ function DotTracker.IsDotActiveOnCurrentTarget(spellID)
     -- Inside the window -> report NOT active, which un-sinks the DoT so the player
     -- reapplies. Outside it -> live, keep it sunk.
     local engineBelow = EnginePandemicVerdict(e)
-    if engineBelow ~= nil then return not engineBelow end
+    if engineBelow ~= nil then return not engineBelow, "engine-refresh", tracked, trackedReason, engineBelow end
     -- Inside the pandemic refresh window: un-sink so the player can reapply, even
     -- though the debuff is still technically live. For known durations this also
     -- caps a stale confirmed instance (a DoT that expired between target updates).
-    if e.pandemicPoint and now >= e.pandemicPoint then return false end
+    if e.pandemicPoint and now >= e.pandemicPoint then
+        return false, "estimated-refresh", tracked, trackedReason
+    end
     if next(e.instances) then
         -- Unknown-duration DoTs have no pandemic cap, so fall back to the post-cast
         -- window as a ceiling - a stale instance can't then suppress indefinitely.
-        if not e.pandemicPoint and now >= e.expiry then return false end
-        return true                                -- confirmed live
+        if not e.pandemicPoint and now >= e.expiry then
+            return false, "estimated-expiry", tracked, trackedReason
+        end
+        return true, "aura-instance", tracked, trackedReason
     end
-    if e.hadInstance then return false end         -- was confirmed, now dropped (expiry/cleanse)
-    return now < e.expiry                          -- unconfirmed: trust the window
+    if e.hadInstance then return false, "instance-removed", tracked, trackedReason end
+    return now < e.expiry, "cast-estimate", tracked, trackedReason
+end
+
+function DotTracker.IsDotActiveOnCurrentTarget(spellID, readCache)
+    if not IsTrackedAura(spellID) then return false end
+    local active = EvaluateDot(spellID, nil, nil, readCache)
+    return active
+end
+
+--- Presence prerequisites need evidence, not the absence of an observed cast.
+--- Only refresh policy may use the existing bounded post-cast estimate.
+function DotTracker.GetTargetAuraState(spellID, allowEstimate, readCache)
+    if not FOREVER then return nil end
+    local active, source = EvaluateDot(spellID, nil, true, readCache)
+    if source == "cooldown-manager" or source == "aura-instance"
+       or source == "instance-removed" or source == "engine-refresh" then
+        return active
+    end
+    if allowEstimate and (source == "cast-estimate" or source == "estimated-refresh"
+        or source == "estimated-expiry" or source == "immune-policy") then
+        return active
+    end
+    return nil
 end
 
 --- Drop all tracking. Called on target change (state is current-target only) and
@@ -386,22 +407,31 @@ do
 end
 
 --- Diagnostic snapshot for the current target (/jac inspect dots). Non-secret.
-function DotTracker.DebugState()
+function DotTracker.DebugState(spellIDs)
     local now = GetTime()
     local out = { hasTarget = UnitExists("target"), pending = #pendingCasts, entries = {} }
-    for spellID, e in pairs(applied) do
+    local seen = {}
+    local function capture(spellID, e)
+        if seen[spellID] then return end
+        seen[spellID] = true
+        local diagnostic = {}
+        local active, source, tracked, reason, engineBelow = EvaluateDot(spellID, diagnostic, true)
         out.entries[#out.entries + 1] = {
             spellID = spellID,
-            active = DotTracker.IsDotActiveOnCurrentTarget(spellID),
-            confirmed = next(e.instances) ~= nil,
-            expiresIn = e.expiry - now,
-            pandemicIn = e.pandemicPoint and (e.pandemicPoint - now) or nil,
-            -- Which source actually decided, and what the engine says. The estimate
-            -- and the engine disagree exactly when the estimate is wrong (a
-            -- pandemic-refreshed DoT), so showing only the verdict would hide the
-            -- one case this is here to fix.
-            enginePandemic = EnginePandemicVerdict(e),
+            active = active,
+            source = source,
+            cooldownManager = tracked,
+            cooldownManagerReason = reason or "not-consulted",
+            confirmed = e ~= nil and next(e.instances) ~= nil,
+            expiresIn = e and (e.expiry - now),
+            pandemicIn = e and e.pandemicPoint and (e.pandemicPoint - now),
+            enginePandemic = engineBelow,
         }
+    end
+    for spellID, e in pairs(applied) do capture(spellID, e) end
+    for i = 1, math.min(#(spellIDs or {}), 12) do
+        local id = spellIDs[i]
+        capture(id, applied[id] or applied[baseOf(id) or false])
     end
     return out
 end

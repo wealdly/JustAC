@@ -19,13 +19,14 @@ function InvokeFixture($expectSuccess) {
 
 try {
     New-Item -ItemType Directory -Path $fixture | Out-Null
-    foreach ($dir in @("Data\Forever", "Libs\Test", "temp", "dist")) {
+    foreach ($dir in @("Data\Forever", "Debug\Research", "Libs\Test", "temp", "dist")) {
         New-Item -ItemType Directory -Path (Join-Path $fixture $dir) -Force | Out-Null
     }
     Copy-Item (Join-Path $PSScriptRoot "..\build.ps1") (Join-Path $fixture "build.ps1")
-    $toc = @("## Version: test", "Data\Forever\Rotations.lua", "Libs\Test\lib.lua")
+    $toc = @("## Version: test", "Data\Forever\Rotations.lua", "Debug\Common.lua", "Libs\Test\lib.lua")
     Set-Content (Join-Path $fixture "JustAC.toc") $toc
-    foreach ($file in @("LICENSE", "README.md", "Data\Forever\Rotations.lua", "Libs\Test\lib.lua")) {
+    foreach ($file in @("LICENSE", "README.md", "Bindings.xml", "Data\Forever\Rotations.lua", "Debug\Common.lua",
+        "Debug\Research\Signals.lua", "Libs\Test\lib.lua")) {
         Set-Content (Join-Path $fixture $file) "fixture"
     }
     $env:TEMP = Join-Path $fixture "temp"
@@ -40,6 +41,9 @@ try {
         $names = @($archive.Entries | ForEach-Object { $_.FullName })
         Assert ($names -contains "JustAC/Data/Forever/Rotations.lua") "Forever subdirectory missing."
         Assert ($names -contains "JustAC/Libs/Test/lib.lua") "Library missing."
+        Assert ($names -contains "JustAC/Debug/Common.lua") "Durable diagnostics missing."
+        Assert ($names -contains "JustAC/Bindings.xml") "Implicit bindings manifest missing."
+        Assert (@($names | Where-Object { $_ -match '/Research/' }).Count -eq 0) "Research leaked into package."
         Assert (@($names | Where-Object { $_.Contains('\') }).Count -eq 0) "ZIP paths contain backslashes."
     } finally {
         $archive.Dispose()
@@ -59,8 +63,12 @@ try {
         $archive.Dispose()
     }
     $goodHash = (Get-FileHash $archivePath).Hash
+    Set-Content (Join-Path $fixture "JustAC.toc") ($toc + "Debug\Research\Signals.lua")
+    InvokeFixture $false
+    Assert ((Get-FileHash $archivePath).Hash -eq $goodHash) "Research TOC entry changed the previous archive."
+    Set-Content (Join-Path $fixture "JustAC.toc") $toc
 
-    foreach ($missing in @("Data\Forever\Rotations.lua", "Libs\Test\lib.lua")) {
+    foreach ($missing in @("Bindings.xml", "Data\Forever\Rotations.lua", "Libs\Test\lib.lua")) {
         $path = Join-Path $fixture $missing
         Remove-Item -LiteralPath $path
         InvokeFixture $false

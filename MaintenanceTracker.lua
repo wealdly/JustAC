@@ -400,29 +400,50 @@ local function IsAuraCategory(cat)
     return auraCategories[cat] == true
 end
 
-local function ViewerBuffActive(entry, auraOnly)
+local function ViewerBuffActive(entry, auraOnly, diagnostic)
     local wantIDs = ResolveCooldownIDs(entry)
-    if not (wantIDs and next(wantIDs)) then return nil end
+    if not (wantIDs and next(wantIDs)) then
+        if diagnostic then diagnostic.reason = "no-resolved-entry" end
+        return nil
+    end
+    if diagnostic then diagnostic.reason = "viewer-hidden-or-unavailable" end
     local sawFalse = false
     for v = 1, #BUFF_VIEWER_NAMES do
         local viewer = _G[BUFF_VIEWER_NAMES[v]]
         -- Same rule as the instance path: only a SHOWN viewer keeps updating.
         local pool = viewer and viewer.IsShown and viewer:IsShown() and viewer.itemFramePool
         if pool and pool.EnumerateActive then
+            if diagnostic and diagnostic.reason == "viewer-hidden-or-unavailable" then
+                diagnostic.reason = "no-matching-item"
+            end
             for item in pool:EnumerateActive() do
                 local okC, cid = pcall(item.GetCooldownID, item)
-                if okC and type(cid) == "number" and wantIDs[cid]
+                if diagnostic and not okC then diagnostic.reason = "cooldown-id-denied" end
+                if okC and not IsSecret(cid) and type(cid) == "number" and wantIDs[cid]
                    and (not auraOnly or IsAuraCategory(wantIDs[cid])) then
                     local active = item.isActive
                     if not IsSecret(active) then
-                        if active == true then return true end
+                        if active == true then
+                            if diagnostic then diagnostic.reason = "aura-active" end
+                            return true
+                        end
                         if active == false then sawFalse = true end
+                        if diagnostic then diagnostic.reason = "activity-unavailable" end
+                    elseif diagnostic then
+                        diagnostic.reason = "activity-secret"
                     end
+                elseif diagnostic and okC and not IsSecret(cid)
+                   and type(cid) == "number" and wantIDs[cid]
+                   and diagnostic.reason == "no-matching-item" then
+                    diagnostic.reason = "cooldown-entry-not-aura"
                 end
             end
         end
     end
-    if sawFalse then return false end
+    if sawFalse then
+        if diagnostic then diagnostic.reason = "aura-inactive" end
+        return false
+    end
     return nil
 end
 
@@ -431,10 +452,21 @@ end
 --- or the viewer is hidden. The same route the slot's own buff uses (ViewerBuffActive), and
 --- on WoW Forever the only aura state readable in combat (measured build 70245: Battle Shout,
 --- Rend and Thunder Clap icons showing in combat while every aura API threw).
+--- Optional diagnostic receives a reason without changing the tri-state result.
 local trackedEntries = {}
 local TRACKED_RESCAN = 5   -- seconds before an untracked spell is looked up again
-function MaintenanceTracker.IsTrackedAuraActive(spellID)
+local TRACKED_UNKNOWN = {}
+
+function MaintenanceTracker.IsTrackedAuraActive(spellID, diagnostic, readCache)
     if not spellID then return nil end
+    -- Diagnostics always read live. Gameplay callers may share a pass-scoped cache.
+    local reads
+    if not diagnostic and readCache then reads = readCache.tracked end
+    local cached = reads and reads[spellID]
+    if cached ~= nil then
+        if cached == TRACKED_UNKNOWN then return nil end
+        return cached
+    end
     local e = trackedEntries[spellID]
     if not e then
         e = { cast = spellID, aura = spellID, stateKey = "tracked:" .. spellID }
@@ -447,7 +479,15 @@ function MaintenanceTracker.IsTrackedAuraActive(spellID)
         s.cooldownIDs = nil
     end
     if s.cooldownIDs == nil then e.resolvedAt = GetTime() end
-    return ViewerBuffActive(e, true)
+    local active = ViewerBuffActive(e, true, diagnostic)
+    if reads then
+        if active == nil then
+            reads[spellID] = TRACKED_UNKNOWN
+        else
+            reads[spellID] = active
+        end
+    end
+    return active
 end
 
 --------------------------------------------------------------------------------

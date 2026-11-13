@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 
 # Development files
+# Optional JustAC_Research companion sources, installed separately for local probes.
+/Debug/Research/
 .luarc.json
 memory/
 .vscode/

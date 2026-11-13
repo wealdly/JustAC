@@ -1,0 +1,162 @@
+{
+  "type": "TypeAPL",
+  "priorityList": [
+    {
+      "action": {
+        "autocastOtherCooldowns": {}
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 10310,
+            "rank": 3
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "cmp": {
+            "lhs": {
+              "currentManaPercent": {}
+            },
+            "op": "OpLe",
+            "rhs": {
+              "const": {
+                "val": "5%"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 1328548
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "or": {
+            "vals": [
+              {
+                "not": {
+                  "val": {
+                    "auraIsActive": {
+                      "auraId": {
+                        "spellId": 1328548
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "cmp": {
+                  "lhs": {
+                    "auraRemainingTime": {
+                      "auraId": {
+                        "spellId": 1328548
+                      }
+                    }
+                  },
+                  "op": "OpLe",
+                  "rhs": {
+                    "const": {
+                      "val": "5s"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 20216
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 25903,
+            "rank": 4
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 25292,
+            "rank": 9
+          },
+          "target": {
+            "type": "Self"
+          }
+        },
+        "condition": {
+          "cmp": {
+            "lhs": {
+              "currentManaPercent": {}
+            },
+            "op": "OpGe",
+            "rhs": {
+              "const": {
+                "val": "30%"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": {
+        "castSpell": {
+          "spellId": {
+            "spellId": 19943,
+            "rank": 6
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      }
+    }
+  ],
+  "prepullActions": [
+    {
+      "action": {
+        "castFriendlySpell": {
+          "spellId": {
+            "spellId": 1328548
+          },
+          "target": {
+            "type": "Self"
+          }
+        }
+      },
+      "doAtValue": {
+        "const": {
+          "val": "-3s"
+        }
+      }
+    }
+  ]
+}

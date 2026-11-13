@@ -177,7 +177,8 @@ def test_generated_member_aura_mappings():
         check(sibling not in fresh, f"{cls}: fresh active sibling was offered: {fresh}")
         lua.globals().SetActive(cls, group_index, sibling, aura_id, 20)
         lapsing = seq(lua.globals().Query())
-        check(lapsing == [sibling],
+        expected = [] if group.preparation else [sibling]
+        check(lapsing == expected,
               f"{cls}: lapsing sibling {sibling} was misidentified: {lapsing}")
         tests += 2
 
@@ -190,7 +191,8 @@ def test_generated_member_aura_mappings():
                 continue
             lua.globals().SetActive(cls, group_index, member, rank_id, 20)
             ranked = seq(lua.globals().Query())
-            check(ranked == [member],
+            expected = [] if group.preparation else [member]
+            check(ranked == expected,
                   f"{cls}: ranked aura {rank_id} did not resolve to member {member}: {ranked}")
             tests += 1
             break
@@ -229,6 +231,146 @@ def test_legacy_retail_groups():
     print("support queues: legacy shared single/multi groups retain Retail semantics")
 
 
+def test_health_threshold_detection():
+    source = (ROOT / "BlizzardAPI" / "StateHelpers.lua").read_text(encoding="utf-8")
+    start = source.index("local thresholdCurves, thresholdCurveCount")
+    end = source.index("\n--- Plain true/false", start)
+    lua, _ = new_runtime()
+    lua.execute("""
+        BlizzardAPI = LibStub("JustAC-BlizzardAPI")
+        math_floor, math_max, math_min = math.floor, math.max, math.min
+        Enum = { LuaCurveType = { Linear = 1 } }
+        C_CurveUtil = {
+            CreateCurve = function()
+                local c = { points = {} }
+                function c:SetType(kind) assert(kind == Enum.LuaCurveType.Linear) end
+                function c:AddPoint(x, y) self.points[#self.points+1] = {x,y} end
+                function c:Evaluate(x)
+                    for i = 2, #self.points do
+                        local lo, hi = self.points[i-1], self.points[i]
+                        if x <= hi[1] then
+                            if hi[1] == lo[1] then return hi[2] end
+                            return lo[2]+(hi[2]-lo[2])*(x-lo[1])/(hi[1]-lo[1])
+                        end
+                    end
+                    return self.points[#self.points][2]
+                end
+                return c
+            end,
+        }
+        health, denied = 85, false
+        function UnitHealthPercent(unit, predicted, curve)
+            assert(unit == "player" and predicted == false)
+            if denied then error("health gate unavailable") end
+            return curve:Evaluate(health/100)
+        end
+        function UnitPowerPercent(unit, power, predicted, curve)
+            assert(unit == "player" and power == 0 and predicted == false)
+            if denied then error("mana gate unavailable") end
+            return curve:Evaluate(health/100)
+        end
+        BlizzardAPI.IsSecretZero = function(value) return value < 1 end
+    """)
+    lua.execute(source[start:end] + """
+        function CheckHealth(pct) return CachedBelow("player",pct,false,nil) end
+        function CheckMana(pct) return CachedBelow("player",pct,true,0) end
+    """)
+    g = lua.globals()
+    for threshold in (50, 60, 70, 80, 90, 95):
+        for health, expected in ((threshold - 1, True), (threshold + 1, False)):
+            g.health = health
+            g.now += 1
+            check(g.CheckHealth(threshold) is expected,
+                  f"real threshold evaluator: {health}% vs {threshold}%")
+            check(g.CheckMana(threshold) is expected,
+                  f"real mana evaluator: {health}% vs {threshold}%")
+    g.denied = True
+    g.now += 1
+    check(g.CheckHealth(60) is None, "a denied health evaluation must remain unknown")
+    check(g.CheckMana(60) is None, "a denied mana evaluation must remain unknown")
+    print("health thresholds: real curve builder, self-test and evaluator cover every slider selection")
+
+
+def test_topoff_slider_thresholds():
+    source = (ROOT / "Options" / "Defensives.lua").read_text(encoding="utf-8")
+    slider = source[source.index("                    topoffThreshold = {"):]
+    slider = slider[:slider.index("                    stealthReminder = {")]
+    check("min = 50, max = 90, step = 10" in slider, "topoff slider must use 10% selections")
+    check("topoffThreshold or 80" in slider, "slider fallback must default to 80%")
+    check("pb.topoffThreshold = 80" in source, "reset must restore the 80% default")
+    defaults = (ROOT / "JustAC.lua").read_text(encoding="utf-8")
+    check("topoffThreshold = 80," in defaults, "new profiles must default to 80%")
+    for forever in (True, False):
+        lua, _ = new_runtime(forever, precombat=False)
+        lua.execute("""
+            local B = LibStub("JustAC-BlizzardAPI")
+            local S = LibStub("JustAC-SpellDB")
+            S.CLASS_MAINTAINED_BUFFS = {}
+            S.CLASS_TOPOFF_HEALS.MAGE = {139}
+            S.RECUPERATE, S.RECUPERATE_AURA = 1231411, 1231418
+            known = { [1231411] = true, [139] = true }
+            exact, health, gateUnknown = false, 85, false
+            B.GetPlayerHealthPercentSafe = function()
+                if exact then return health, false end
+                return 100, true
+            end
+            B.IsUnitHealthBelow = function(unit, pct)
+                assert(unit == "player")
+                queriedThreshold = pct
+                if gateUnknown then return nil end
+                return health < pct
+            end
+            B.IsUnitFullHealth = function() return health == 100 end
+            B.IsPartyLowAvailable = function() return true end
+            B.IsUnitLow = function() return true end
+            B.HasSustainedPlayerHealthActivity = function() return true end
+            B.IsInPostCombatDowntime = function() return true end
+        """)
+        lua.execute((ROOT / "PrecombatEngine.lua").read_text(encoding="utf-8"))
+        lua.execute("""
+            P = LibStub("JustAC-PrecombatEngine")
+            function Offer(threshold, enabled)
+                P.ClearCache()
+                return P.GetMissingClassBuffs(enabled ~= false, threshold, false, {healthRecovery=false})
+            end
+        """)
+        g = lua.globals()
+        for exact in (True, False):
+            g.exact = exact
+            for threshold in (50, 60, 70, 80, 90, 95):
+                g.health = threshold + 1
+                check(seq(g.Offer(threshold)) == [], "above selected topoff threshold")
+                g.health = threshold - 1
+                if not exact:
+                    check(seq(g.Offer(threshold)) == [], "threshold gate onset is debounced")
+                    g.now += 3
+                check(seq(g.Offer(threshold)) == [139],
+                      f"{forever=}, {exact=}: below {threshold}% did not offer topoff")
+                g.health = threshold + 1
+                check(seq(g.Offer(threshold)) == [], "above threshold clears topoff immediately")
+        g.exact = False
+        g.health = 75
+        g.Offer(None)
+        g.now += 3
+        check(seq(g.Offer(None)) == [139] and g.queriedThreshold == 80,
+              "unset saved threshold must query the default 80% gate")
+        g.health = 85
+        check(seq(g.Offer(None)) == [], "default 80% gate must not offer at 85%")
+        g.gateUnknown = True
+        g.now += 3
+        check(seq(g.Offer(60)) == [],
+              "below-full/regen/party/postcombat signals cannot substitute for selected 60%")
+        g.gateUnknown = False
+        g.health = 55
+        check(seq(g.Offer(60)) == [], "unknown reads reset the onset, not retain stale arming")
+        g.now += 3
+        check(seq(g.Offer(60)) == [139], "confirmed threshold recovery re-arms normally")
+        g.exact = True
+        g.health = 30
+        check(seq(g.Offer(60, False)) == [139], "emergency floor stays independent of slider")
+    print("topoff slider: 10% selections plus legacy 95%, both clients, exact/gate, default and unknown passed")
+
+
 def test_topoff_threshold_and_protected_aura_paths():
     lua, spell_db = new_runtime()
     lua.execute("""
@@ -246,26 +388,26 @@ def test_topoff_threshold_and_protected_aura_paths():
         S.CLASS_MAINTAINED_BUFFS = {}
         realEatingReader = S.GetActiveEatingAura
         S.GetActiveEatingAura = function() return nil, true end
-        S.GetKnownTopoffHeal = function() return 139 end
+        S.CLASS_TOPOFF_HEALS.MAGE = {139}
         S.RECUPERATE, S.RECUPERATE_AURA = 1231411, 1231418
-        known = { [1231411] = true }
+        known = { [1231411] = true, [139] = true }
         exactPct, denySpell = 85, false
         local P = LibStub("JustAC-PrecombatEngine")
         function Offer(topoff, threshold)
             P.ClearCache()
-            return P.GetMissingClassBuffs(topoff, threshold, false)
+            return P.GetMissingClassBuffs(topoff, threshold, false, {healthRecovery=false})
         end
     """)
     check(seq(lua.globals().Offer(True, 80)) == [],
           "85% health incorrectly triggers an 80% configured topoff")
     check(seq(lua.globals().Offer(True, 95)) == [139],
           "92% health does not trigger a 95% configured topoff")
-    lua.globals().exactPct = 89
+    lua.globals().exactPct = 79
     check(seq(lua.globals().Offer(True, None)) == [139],
-          "nil topoff threshold no longer defaults to 90%")
-    lua.globals().exactPct = 91
+          "nil topoff threshold no longer defaults to 80%")
+    lua.globals().exactPct = 81
     check(seq(lua.globals().Offer(True, None)) == [],
-          "default 90% threshold offers above its line")
+          "default 80% threshold offers above its line")
     lua.globals().exactPct = 30
     check(seq(lua.globals().Offer(False, 95)) == [139],
           "the critical-health emergency floor was disabled with topoff off")
@@ -518,7 +660,74 @@ def test_forever_empty_fallbacks():
     print("support defaults: Forever fallback lists are explicit-empty; Retail defaults remain")
 
 
+def test_recovery_heal_preference():
+    for forever in (True, False):
+        lua, _ = new_runtime(forever, precombat=False)
+        lua.execute("""
+            playerClass="PALADIN";known={[639]=true,[19750]=true,[633]=true}
+            local S=LibStub("JustAC-SpellDB")
+            S.CLASS_MAINTAINED_BUFFS={}
+            S.CLASS_TOPOFF_HEALS.PALADIN={635,19750}
+            S.GetActiveEatingAura=function() return nil,true end
+            S.GetBestRecoveryItem=function(kind) return kind=="drink" and 2001 or 2002 end
+            local RI=LibStub:NewLibrary("JustAC-RotationImport")
+            RI.HighestKnownRank=function(id)
+                if id==635 and known[639] then return 639 end
+                if known[id] then return id end
+            end
+            RI.RankBase=function(id) if id==639 then return 635 end return id end
+            local B=LibStub("JustAC-BlizzardAPI")
+            B.GetPlayerHealthPercentSafe=function() return health,false end
+            B.IsUnitHealthBelow=function(_,pct) return health<pct end
+            B.IsUnitPowerBelow=function() return lowMana end
+            B.IsSpellUsable=function(id,failOpen) assert(failOpen==false);return usableHeals[id] end
+            B.IsSpellReady=function(id) return readyHeals[id] end
+            health=60;lowMana=false
+            Enum={PowerType={Mana=0}}
+            usableHeals={[639]=true,[19750]=true};readyHeals={[639]=true,[19750]=true}
+            P=LibStub("JustAC-PrecombatEngine")
+            settings={healthRecovery=true}
+            function Recover()
+                P.ClearCache()
+                return P.GetMissingClassBuffs(false,80,false,settings)
+            end
+            function Items()
+                local out={};P.AddRecoveryItems(out,80,settings);return out
+            end
+        """)
+        lua.execute((ROOT / "PrecombatEngine.lua").read_text(encoding="utf-8"))
+        lua.execute('P=LibStub("JustAC-PrecombatEngine")')
+        g = lua.globals()
+        check(seq(g.P.GetRecoveryHeals()) == [639, 19750], "learned ranks only; major healing cooldowns are excluded")
+        check(seq(g.Recover()) == ([639] if forever else []), "Auto uses a class heal without requiring Recuperate")
+        check(seq(g.Items()) == [], "a usable cast heal saves health recovery items")
+        lua.execute("settings.healthRecovery=19750")
+        check(seq(g.Recover()) == ([19750] if forever else []), "explicit short-cooldown heal preference")
+        lua.execute("readyHeals[19750]=false")
+        check(seq(g.Recover()) == [], "an unavailable selected heal cannot take priority")
+        check(seq(g.Items()) == ([2002] if forever else []), "health items remain the fallback")
+        lua.execute("settings.healthRecovery=true;readyHeals[639]=false;readyHeals[19750]=true")
+        check(seq(g.Recover()) == ([19750] if forever else []), "Auto considers the next ready class heal")
+        lua.execute("usableHeals[19750]=nil")
+        check(seq(g.Recover()) == [], "unknown usability does not authorize a cast heal")
+        lua.execute("usableHeals[19750]=true;readyHeals[639]=true;settings.healthRecovery='items'")
+        check(seq(g.Recover()) == [], "items-only preserves explicit consumable preference")
+        check(seq(g.Items()) == ([2002] if forever else []), "items-only remains available with learned heals")
+        lua.execute("settings.healthRecovery=true;lowMana=true")
+        check(seq(g.Items()) == ([2001] if forever else []), "self-healing does not suppress independent mana recovery")
+        lua.execute("auraByID[639]={duration=15,expirationTime=now+15};lowMana=false")
+        check(seq(g.Recover()) == [], "an active recovery heal is not recast")
+        check(seq(g.Items()) == [], "ongoing recovery does not consume health items")
+        lua.execute("auraByID={};known={};health=60")
+        check(seq(g.Recover()) == [], "classes without available recovery heals retain item recovery")
+        check(seq(g.Items()) == ([2002] if forever else []), "no class heal leaves food eligible")
+    print("recovery preference: learned ranks, Auto/selected/items-only, readiness, unknown, active healing and independent mana passed")
+
+
 def main():
+    test_recovery_heal_preference()
+    test_health_threshold_detection()
+    test_topoff_slider_thresholds()
     test_generated_member_aura_mappings()
     test_legacy_retail_groups()
     test_topoff_threshold_and_protected_aura_paths()

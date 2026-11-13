@@ -15,6 +15,87 @@ from lupa import LuaRuntime  # type: ignore[import-not-found]
 SRC = Path(__file__).resolve().parent.parent / "Options" / "Core.lua"
 NOTE = "|cffff6600Not used in WoW Forever|r"
 
+def check_preparation_layout():
+    source = (SRC.parent / "Defensives.lua").read_text(encoding="utf-8")
+    helpers = source[:source.index("--- The current spec's maintenance entry")]
+    start = source.index("            precombat = {")
+    end = source.index("\n            },\n        },\n    }\n    -- One reset", start)
+    block = source[start:end] + "\n            }"
+    block = block.replace("precombat = {", "local result = {", 1)
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        local libs = {}
+        local L = setmetatable({}, {__index=function(_, key) return key end})
+        LibStub = setmetatable({
+            NewLibrary=function(_, name) libs[name]={}; return libs[name] end
+        }, {__call=function(_, name) return libs[name] end})
+        libs["AceLocale-3.0"]={GetLocale=function() return L end}
+        libs["JustAC-SpellDB"]={IsForever=function() return forever end}
+        libs["JustAC-PrecombatEngine"]={
+            ClearCache=function() clears=clears+1 end,
+            STEALTH_REMINDER={ROGUE={}},
+        }
+        addon={db={profile={
+            defensives={enabled=true},
+            precombatBuffs={enabled=true,topoffHeal=true,topoffThreshold=70,
+                recoveryManaThreshold=60,categories={food="haste",recovery=false}},
+        }}, ForceUpdateAll=function() updates=updates+1 end}
+        clears,updates=0,0
+        function UnitClass() return "Rogue","ROGUE" end
+        C_SpecializationInfo={GetSpecialization=function() return 1 end}
+    """)
+    engine = (SRC.parent.parent / "PrecombatEngine.lua").read_text(encoding="utf-8")
+    recovery = engine[engine.index("function PrecombatEngine.IsRecoveryEnabled("):]
+    recovery = recovery[:recovery.index("\nfunction PrecombatEngine.AddRecoveryItems")]
+    lua.execute('PrecombatEngine=LibStub("JustAC-PrecombatEngine")\n' + recovery)
+    build = lua.execute(helpers + "\nreturn function(forever)\n" + block + "\nreturn result\nend")
+    for forever in (True, False):
+        lua.globals().forever = forever
+        tab = build(forever)
+        a = tab.args
+        assert tab.name == "Preparation"
+        assert a.pbEnabled.order < a.recoveryGroup.order < a.buffsGroup.order < a.readinessGroup.order
+        for group in (a.recoveryGroup, a.buffsGroup, a.readinessGroup):
+            assert group.type == "group" and group.inline is True
+        r, b = a.recoveryGroup.args, a.buffsGroup.args
+        assert r.topoffHeal.order < r.topoffThreshold.order < r.healthRecovery.order < r.recoveryManaThreshold.order < r.manaRecovery.order
+        for control in (r.topoffHeal, r.topoffThreshold, r.healthRecovery, r.manaRecovery, r.recoveryManaThreshold):
+            assert control.width == "full", "recovery controls must have aligned full-width rows"
+        for _, control in b.items():
+            assert control.width == "double", "buff selectors must use consistent readable widths"
+        assert b.food.name == "Food Buff" and r.manaRecovery.name == "Mana Recovery Items"
+        assert r.topoffThreshold.get() == 70 and r.recoveryManaThreshold.get() == 60
+        assert r.manaRecovery.get() == "off" and r.healthRecovery.get() == "off"
+        assert b.food.get() == ("auto" if forever else "haste")
+        assert lua.eval("addon.db.profile.precombatBuffs.categories.food") == "haste"
+        assert r.manaRecovery.hidden() is (not forever)
+        assert r.healthRecovery.hidden() is (not forever)
+        assert r.recoveryManaThreshold.hidden() is (not forever)
+        assert r.recoveryManaThreshold.disabled() is True
+        r.manaRecovery.set(None, "auto")
+        assert r.recoveryManaThreshold.disabled() is False
+        assert r.healthRecovery.get() == "off", "mana toggle must not change health recovery"
+        r.manaRecovery.set(None, "off")
+        lua.execute("""
+            LibStub("JustAC-PrecombatEngine").GetRecoveryHeals=function() return {635,19750} end
+            C_Spell={GetSpellName=function(id) return "Heal "..id end}
+        """)
+        choices = r.healthRecovery["values"]()
+        assert choices[635] == "Heal 635" and choices[19750] == "Heal 19750"
+        assert choices.auto == "Auto (Heal 635)" and choices[633] is None
+        r.healthRecovery.set(None, 19750)
+        assert r.healthRecovery.get() == 19750
+        r.healthRecovery.set(None, "items")
+        assert r.healthRecovery.get() == "items" and r.manaRecovery.get() == "off"
+        r.healthRecovery.set(None, "auto")
+        assert r.healthRecovery.get() == "auto"
+        r.healthRecovery.set(None, "off")
+        assert not a.readinessGroup.hidden()
+        lua.execute('LibStub("JustAC-PrecombatEngine").STEALTH_REMINDER.ROGUE=nil')
+        assert a.readinessGroup.hidden() is True, "no empty readiness group for unsupported classes"
+        lua.execute('LibStub("JustAC-PrecombatEngine").STEALTH_REMINDER.ROGUE={}')
+    print("preparation layout: both clients, ordering, labels, saved settings and Recovery Off passed")
+
 
 def check_cdm_buttons():
     lua = LuaRuntime()
@@ -123,6 +204,7 @@ addon = { db = { profile = {}, char = {} }, Print = function(_, text) message = 
 
 
 def main():
+    check_preparation_layout()
     src = SRC.read_text(encoding="utf-8")
     block = src[src.index("local FOREVER_UNUSED"):src.index("-- Refresh all dynamic options lists")]
     lua = LuaRuntime(unpack_returned_tuples=True)

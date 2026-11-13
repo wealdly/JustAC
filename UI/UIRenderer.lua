@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 44)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 47)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -1009,7 +1009,8 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     end
     -- From "none" is turning a glow ON: immediate, per the rule above. Debouncing it
     -- cost a second render tick (an idle tick out of combat) on every glow onset.
-    if not immediate and have ~= nil and have ~= "none" and want ~= "proc" then
+    if not immediate and have ~= nil and have ~= "none" and have ~= "preparation"
+       and want ~= "proc" and want ~= "preparation" then
         local now = GetTime()
         if icon.pendingDefGlowState ~= want then
             icon.pendingDefGlowState = want
@@ -1026,11 +1027,14 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StopDefensiveGlow(icon)
     elseif have == "precombat" then
         UIAnimations.StopPrecombatGlow(icon)
+    elseif have == "preparation" then
+        UIAnimations.HidePreparationGlow(icon)
     else
         -- Unknown starting state (fresh icon, combat-transition reset): clear all
         UIAnimations.HideProcGlow(icon)
         UIAnimations.StopDefensiveGlow(icon)
         UIAnimations.StopPrecombatGlow(icon)
+        UIAnimations.HidePreparationGlow(icon)
     end
     if want == "proc" then
         -- Always animated (even OOC): a procced heal is the preferred top-up
@@ -1039,6 +1043,8 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StartDefensiveGlow(icon, isInCombat)
     elseif want == "precombat" then
         UIAnimations.StartPrecombatGlow(icon, isInCombat)
+    elseif want == "preparation" then
+        UIAnimations.ShowPreparationGlow(icon)
     end
     icon.appliedDefGlowState = want
 end
@@ -1060,6 +1066,11 @@ local function WakeWhenReady(icon, spellID)
 end
 
 -- The one glow-priority rule, computed from icon state both paths maintain.
+local function IsUrgentPreparation(spellID)
+    local PE = LibStub("JustAC-PrecombatEngine", true)
+    return PE and PE.ShouldEmphasizePreparation and PE.ShouldEmphasizePreparation(spellID) == true
+end
+
 local function IsUrgentPlayerHeal(icon)
     if not icon.defShowGlow or icon.isItem or icon.isPrecombatBuff then return false end
     local id = icon.currentID or icon.spellID
@@ -1112,6 +1123,11 @@ local function ComputeDefensiveGlowState(icon, isProc)
         end
     end
     if icon.isPrecombatBuff then
+        if (mode == "all" or mode == "primaryOnly" or mode == "procOnly") and not icon.isItem
+           and IsUrgentPreparation(icon.spellID) then
+            icon.defGlowReason = "critical-preparation"
+            return "preparation"
+        end
         -- A "use me" glow on a spell still cooling down is wrong: the swipe says
         -- wait, the glow lights when it is ready (the stealth reminder rides this).
         -- Out of combat only, where cooldowns read plain.
@@ -1354,7 +1370,7 @@ end
 -- Blue: "this mitigation has lapsed, put it back up". The flipbook base is gold and gets
 -- desaturated before tinting, so the value has to be vivid to survive as a recognisable
 -- blue rather than washing out grey.
-local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
+local MAINTENANCE_GLOW = UIAnimations.GLOW_COLORS.MAINTENANCE
 
 -- Orange: "the target is in execute range, this is the button". Health is SECRET in combat, so
 -- this can never be a branch - the glow frame is SHOWN and its alpha handed to the engine via
@@ -1364,7 +1380,7 @@ local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
 -- spell up the queue. SpellQueue's ctxExecute keeps its own branchable inference (AC
 -- recommending an execute-gated spell at position 1) for the ranking job - the two are
 -- deliberately separate, and this one is the direct read the other can only infer.
-local EXECUTE_GLOW = { r = 1.00, g = 0.45, b = 0.10 }
+local EXECUTE_GLOW = UIAnimations.GLOW_COLORS.EXECUTE
 local EXECUTE_GLOW_KEY = "ExecuteGlowFrame"
 
 -- Pet-heal cue threshold, as a 0-1 fraction. User-configurable (Defensives -> Sustain); 50 is
@@ -1436,6 +1452,22 @@ local function ApplyExecuteCue(icon, spellID)
     end
 end
 
+local function ApplyMaintenanceGlow(icon, want, color)
+    if want == icon._maintGlow and (not want or color == icon._maintGlowColor) then return end
+    if icon._maintGlow == "ants" then
+        UIAnimations.StopMaintenanceGlow(icon)
+    elseif icon._maintGlow == "burst" then
+        UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+    end
+    if want == "ants" then
+        UIAnimations.StartMaintenanceGlow(icon, true)
+    elseif want == "burst" then
+        UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow", color.r, color.g, color.b)
+    end
+    icon._maintGlow = want
+    icon._maintGlowColor = want and color or nil
+end
+
 -- Single teardown for the maintenance slot: three call sites (inactive slot, main-panel
 -- cluster hide, nameplate cluster hide) each used to clear a different subset.
 local function ClearMaintenanceSlot(icon)
@@ -1445,6 +1477,7 @@ local function ClearMaintenanceSlot(icon)
     if icon.hasMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
     icon:SetAlpha(0)
     icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, nil, nil, nil
+    icon._maintGlowColor = nil
     icon.maintenanceAuraID = nil
     if icon.chargeText then icon.chargeText:Hide() end
 end
@@ -1556,12 +1589,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         -- Always the burst, never the ants: being held is not an early warning. Stop the ants
         -- first in case the escape claimed a slot that was mid-warning - same escalation rule
         -- as the maintenance path below, and the states share one field.
-        if icon._maintGlow ~= "burst" then
-            if icon._maintGlow == "ants" then UIAnimations.StopMaintenanceGlow(icon) end
-            UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
-                MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-            icon._maintGlow = "burst"
-        end
+        ApplyMaintenanceGlow(icon, "burst", UIAnimations.GLOW_COLORS.MOVEMENT)
         return
     end
 
@@ -1934,23 +1962,13 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     ApplyCueDot(icon,
         MoveCastDotEnabled(profile) and IsMoveCastableNow(displayID, nil),
         profile and profile.showOffGcdDot and IsOffGCDSpell(displayID))
-    if wantGlow ~= icon._maintGlow then
-        -- Stop the outgoing stage before starting the incoming one: refresh -> down runs both
-        -- branches on the same pass, and leaving the ants up under the burst reads as a third,
-        -- muddier cue rather than an escalation.
-        if icon._maintGlow == "ants" then
-            UIAnimations.StopMaintenanceGlow(icon)
-        elseif icon._maintGlow == "burst" then
-            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
-        end
-        if wantGlow == "ants" then
-            UIAnimations.StartMaintenanceGlow(icon, true)
-        elseif wantGlow == "burst" then
-            UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
-                MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-        end
-        icon._maintGlow = wantGlow
+    local glowColor = MAINTENANCE_GLOW
+    if ccSpellID then
+        glowColor = UIAnimations.GLOW_COLORS.MOVEMENT
+    elseif petSpellID or emergencyHealID then
+        glowColor = UIAnimations.GLOW_COLORS.DEFENSIVE
     end
+    ApplyMaintenanceGlow(icon, wantGlow, glowColor)
 end
 
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
@@ -2090,14 +2108,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local procCheckID = isItem and defensiveIcon.itemCastSpellID or id
     local isProc = procCheckID and BlizzardAPI.IsSpellProcced(procCheckID) or false
 
-    -- Inserted pre-combat buffs get their own vivid-green glow (out of combat) so they read
-    -- as distinct, important "use me" icons rather than ordinary defensive suggestions.
-    -- Keyed on entry PROVENANCE (the queue entry's precombat flag), never on spell
-    -- identity: dual-role spells (Regrowth is both a defensive-list entry and an OOC
-    -- top-off offer) must only glow green when suggested BY the pre-combat system.
+    -- Preparation uses its own hue, keyed on entry provenance: a dual-role spell
+    -- such as Regrowth keeps ordinary defensive styling outside the preparation list.
     local isBuff = (not isInCombat and isPrecombatEntry) or false
     defensiveIcon.isPrecombatBuff = isBuff or nil  -- click-overlay reads this for its "click" hint
-    -- Unified glow arbitration (proc > green > marching > none). idChanged
+    -- Shared arbitration for proc/heal, critical preparation and reminder cues. idChanged
     -- applies immediately - a new spell in the slot deserves its correct glow
     -- now; same-spell transitions ride the settle-time debounce.
     ApplyDefensiveGlow(defensiveIcon,
@@ -2421,11 +2436,11 @@ end
 local GLOW_NONE       = 0   -- no glow
 local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
 local GLOW_PROC       = 2   -- gold burst (spell is procced / critically available)
-local GLOW_GAP_CLOSER = 3   -- magenta crawl (gap-closer, target out of melee range)
-local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window active)
+local GLOW_GAP_CLOSER = 3   -- azure crawl (gap-closer, target out of melee range)
+local GLOW_BURST      = 4   -- orange crawl (burst injection, burst window active)
+local GLOW_PREPARATION = 5  -- violet burst (missing preparation or safe OOC refresh)
 
---- Priority: gap-closer > burst > proc > assisted > none.
---- No WoW API calls - all inputs pre-computed by caller.
+--- Priority: gap-closer > burst > proc > critical preparation > assisted > none.
 local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
     local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
@@ -2434,6 +2449,7 @@ local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow
     local isBurstCue = SpellQueue.IsBurstCue and SpellQueue.IsBurstCue(spellID)
     if isBurstCue and showPrimaryGlow then return GLOW_BURST end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
+    if (showPrimaryGlow or showProcGlow) and IsUrgentPreparation(spellID) then return GLOW_PREPARATION end
     if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
     -- A spell displaced to position 2 - by a gap-closer injection, or by the lead setting
     -- taking the slot - keeps its blue glow, so the player knows it is still the game's
@@ -2670,7 +2686,8 @@ local function RenderQueueIcon(icon, i, ctx)
         -- hysteresis so the blue glow appears instantly.
         local isDisplaced = SpellQueue.IsDisplacedPrimary and SpellQueue.IsDisplacedPrimary(spellID)
         if i > 1 then
-            if spellChanged or isDisplaced or not ctx.inCombat then
+            if spellChanged or isDisplaced or not ctx.inCombat
+               or glowState == GLOW_PREPARATION or icon.lastRenderedGlow == GLOW_PREPARATION then
                 -- Spell changed, displaced from pos 1, or out of combat: apply
                 -- immediately. OOC there is no combat proc-flicker to smooth, and
                 -- holding a glow-OFF change here is what left a proc glow stuck at
@@ -2712,11 +2729,18 @@ local function RenderQueueIcon(icon, i, ctx)
             end
         end
 
-        if glowState == GLOW_PROC then
+        if glowState == GLOW_PREPARATION then
+            if icon.hasProcGlow then UIAnimations.HideProcGlow(icon) end
+            if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
+            if icon.hasBurstGlow then UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false end
+            if not icon.hasPreparationGlow then UIAnimations.ShowPreparationGlow(icon) end
+        elseif glowState == GLOW_PROC then
+            UIAnimations.HidePreparationGlow(icon)
             if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
             if icon.hasBurstGlow then UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false end
             if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, ctx.inCombat); icon.hasProcGlow = true end
         else
+            UIAnimations.HidePreparationGlow(icon)
             if icon.hasProcGlow then UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false end
             -- Stale flag guard: re-sync if external code hid the frame without clearing the flag.
             if icon.hasGapCloserGlow and icon.GapCloserHighlightFrame

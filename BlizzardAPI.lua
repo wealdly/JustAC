@@ -10,7 +10,7 @@
 --   SecretValues.lua      → GetAuras, RefreshFeatureAvailability, IsProcFeatureAvailable
 -- (IsSecretValue, Unsecret, AreCooldownsSecret, AreAurasSecret are defined here in the root.)
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 36)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 37)
 if not BlizzardAPI then return end
 
 -- 12.x only (JustAC.toc pins Interface 120100): no version conditionals anywhere in
@@ -78,12 +78,24 @@ end
 -- the effective spell on a slot, ACTION_USABLE_CHANGED re-fires for that slot
 -- with updated usability reflecting the newly-resolved spell.
 local slotUsabilityCache = {}
+local actionUsabilityErrors = {}
 local wipe = wipe
 
 --- Process ACTION_USABLE_CHANGED batched payload.
 --- @param changes table Array of {slot=luaIndex, usable=bool, noMana=bool}
 function BlizzardAPI.OnActionUsableChanged(changes)
+    if BlizzardAPI.IsSecretValue(changes) or type(changes) ~= "table" then
+        wipe(slotUsabilityCache)
+        geterrorhandler()("JustAC: unreadable ACTION_USABLE_CHANGED payload")
+        return
+    end
     for _, change in ipairs(changes) do
+        if BlizzardAPI.IsSecretValue(change) or type(change) ~= "table"
+           or BlizzardAPI.IsSecretValue(change.slot) or type(change.slot) ~= "number" then
+            wipe(slotUsabilityCache)
+            geterrorhandler()("JustAC: invalid ACTION_USABLE_CHANGED entry")
+            return
+        end
         slotUsabilityCache[change.slot] = change
     end
     -- Deliberately NOT a cooldown or charge signal: a slot flips usable on energy ticks,
@@ -94,19 +106,21 @@ end
 --- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
 function BlizzardAPI.InvalidateSlotUsabilityCache()
     wipe(slotUsabilityCache)
+    wipe(actionUsabilityErrors)
     if BlizzardAPI.InvalidateBarSpells then BlizzardAPI.InvalidateBarSpells() end
 end
 
 --- Returns the action bar usability state for a spell, or nil if unavailable.
---- NeverSecret API - safe in combat. Uses ActionBarScanner to find the slot.
+--- Uses only an identity-confirmed direct spell/item slot, or a matching assisted pick.
 --- Falls back to assisted combat slot when spell isn't on the player's bars.
 --- Checks the event-driven cache first; falls back to live API.
 --- @param spellID number
---- @return boolean|nil usable, boolean|nil notEnoughMana
+--- @return boolean|nil usable, boolean|nil notEnoughMana, string source, number|nil slot
 function BlizzardAPI.GetActionBarUsability(spellID)
     local ABS = LibStub("JustAC-ActionBarScanner", true)
-    if not ABS or not ABS.GetSlotForSpell then return nil, nil end
-    local slot = ABS.GetSlotForSpell(spellID)
+    if not ABS or not ABS.GetDirectSlotForSpell then return nil, nil, "scanner unavailable" end
+    local slot = ABS.GetDirectSlotForSpell(spellID)
+    local source = "direct"
 
     -- Assisted combat slot fallback: if the spell isn't on any bar but matches
     -- the current assistant recommendation, use that slot for usability checks.
@@ -117,20 +131,34 @@ function BlizzardAPI.GetActionBarUsability(spellID)
         local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
         if nextCast and (nextCast == spellID or nextCast == displayID) then
             slot = ABS.GetAssistedCombatSlot()
+            source = "assisted"
         end
     end
 
-    if not slot then return nil, nil end
+    if not slot then return nil, nil, "no bound slot" end
 
     -- Prefer event-driven cache (ACTION_USABLE_CHANGED)
     local cached = slotUsabilityCache[slot]
+    local usable, noMana
     if cached then
-        return cached.usable, cached.noMana
+        usable, noMana = cached.usable, cached.noMana
+        source = source .. " event"
+    else
+        if not C_ActionBar or not C_ActionBar.IsUsableAction then
+            return nil, nil, "action API unavailable", slot
+        end
+        local ok
+        ok, usable, noMana = pcall(C_ActionBar.IsUsableAction, slot)
+        if not ok then
+            if not actionUsabilityErrors[slot] then
+                actionUsabilityErrors[slot] = true
+                geterrorhandler()(usable)
+            end
+            return nil, nil, "action query failed", slot
+        end
+        source = source .. " query"
     end
-
-    -- Fallback to live API (cache not yet populated for this slot)
-    if not C_ActionBar or not C_ActionBar.IsUsableAction then return nil, nil end
-    local usable, noMana = C_ActionBar.IsUsableAction(slot)
-    if BlizzardAPI.IsSecretValue(usable) or BlizzardAPI.IsSecretValue(noMana) then return nil, nil end
-    return usable, noMana
+    if BlizzardAPI.IsSecretValue(usable) or type(usable) ~= "boolean" then usable = nil end
+    if BlizzardAPI.IsSecretValue(noMana) or type(noMana) ~= "boolean" then noMana = nil end
+    return usable, noMana, source, slot
 end

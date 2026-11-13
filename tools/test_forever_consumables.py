@@ -136,6 +136,88 @@ def main():
     pe.execute("combat = false; hpLow, mpLow = false, false")
     check(offer() == [], "healthy: nothing")
 
+    pe.execute("""
+        local P = LibStub("JustAC-PrecombatEngine")
+        local B = LibStub("JustAC-BlizzardAPI")
+        mana, gateUnknown = 75, false
+        B.IsUnitPowerBelow = function(unit, pct, power)
+            assert(unit == "player" and power == Enum.PowerType.Mana)
+            queriedManaThreshold = pct
+            if gateUnknown then return nil end
+            return mana < pct
+        end
+        function Recovery(threshold)
+            local out = {}
+            P.AddRecoveryItems(out, threshold)
+            return out
+        end
+        cls = "MAGE"
+    """)
+    g = pe.globals()
+    recovery = lambda threshold: list(g.Recovery(threshold).values())
+    check(recovery(None) == [159] and g.queriedManaThreshold == 80,
+          "unset mana threshold defaults to 80%")
+    for threshold in (50, 60, 70, 80, 90):
+        for mana, expected in ((threshold - 1, [159]), (threshold, []), (threshold + 1, [])):
+            g.mana = mana
+            check(recovery(threshold) == expected, f"{mana}% mana against {threshold}% selection")
+    pe.execute('mana = 75; cls = "DRUID"')
+    check(recovery(None) == [159], "hybrid checks explicit mana rather than active resource")
+    pe.execute("gateUnknown = true")
+    check(recovery(None) == [], "unknown mana does not offer a drink")
+    pe.execute("gateUnknown = false; eating = { spellId = 430 }")
+    check(recovery(None) == [], "already drinking suppresses mana recovery")
+    pe.execute("eating = nil; hpLow = true; recov.food = 159")
+    check(recovery(None) == [159], "combined food/drink item is offered only once")
+    pe.execute("""
+        local P = LibStub("JustAC-PrecombatEngine")
+        P.GetMissingBuffs = function() return {} end
+        P.ClearCache()
+    """)
+    engine = pe.eval('LibStub("JustAC-PrecombatEngine")')
+    for legacy in (False, True):
+        for health_setting in (None, False, True):
+            for mana_setting in (None, False, True):
+                settings = {"recovery": legacy, "food": False}
+                if health_setting is not None:
+                    settings["healthRecovery"] = health_setting
+                if mana_setting is not None:
+                    settings["manaRecovery"] = mana_setting
+                health_enabled = legacy if health_setting is None else health_setting
+                mana_enabled = legacy if mana_setting is None else mana_setting
+                for combined in (False, True):
+                    pe.execute(f"hpLow=true; mana=75; recov.food={159 if combined else 117}")
+                    engine.ClearCache()
+                    result = list(engine.GetMissingBuffItems(pe.table_from(settings), 80).values())
+                    expected = []
+                    if mana_enabled:
+                        expected.append(159)
+                    if health_enabled and (not combined or not mana_enabled):
+                        expected.append(159 if combined else 117)
+                    check(result == expected, f"independent recovery with {settings=}, {combined=}")
+    pe.execute("hpLow=true; recov.food=159")
+    engine.GetMissingBuffs = pe.eval("function() return {{entry={id=159}}} end")
+    engine.ClearCache()
+    check(list(engine.GetMissingBuffItems(pe.table(), 80).values()) == [159],
+          "combined recovery and food buff recommendation appears once")
+    engine.GetMissingBuffs = pe.eval("function() return {} end")
+    engine.ClearCache()
+    check(list(engine.GetMissingBuffItems(pe.table_from({"recovery": False}), 80).values()) == [],
+          "Recovery Off suppresses drinks regardless of threshold")
+    engine.ClearCache()
+    pe.execute("hpLow = false")
+    check(list(engine.GetMissingBuffItems(pe.table(), 70).values()) == [],
+          "custom threshold reaches checklist path")
+    engine.ClearCache()
+    check(list(engine.GetMissingBuffItems(pe.table(), 80).values()) == [159],
+          "updated threshold reaches checklist after option cache invalidation")
+    options = (ROOT / "Options" / "Defensives.lua").read_text(encoding="utf-8")
+    slider = options[options.index("                    recoveryManaThreshold = ClientOnly({"):]
+    slider = slider[:slider.index("                    xp =")]
+    check("min = 50, max = 90, step = 10" in slider and "pbApply(addon)" in slider,
+          "mana slider uses 10% selections and refreshes the queue")
+    check("pb.recoveryManaThreshold = 80" in options, "reset restores 80% mana")
+
     for why in bad:
         print("  FAIL", why)
     print("forever consumables: %d failure(s)" % len(bad))

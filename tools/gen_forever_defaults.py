@@ -100,18 +100,47 @@ TOPOFF = {"rogue": [], "priest": ["renew", "lesser_heal"], "paladin": ["flash_of
 # Maintained buffs (read by class): (group names, default name, raidWide).
 # ponytail: rogue poisons left out until a rogue probe shows whether they apply an aura or a
 # weapon enchant on Forever (the wrong path nags forever).
-# Only long buffs belong here: one shorter than SHORT_BUFF_SECS (Battle Shout, 3 min) is a
-# combat buff the rotation list keeps up, and the build refuses it (see SHORT_BUFFS below).
+# Short combat buffs require an explicit preparation policy: missing-only reminders
+# before combat, with their ordinary combat rotation retained.
 MAINTAINED = {
-    "priest":  [(["power_word_fortitude"], "power_word_fortitude", True),
+    "priest":  [(["power_word_fortitude", "prayer_of_fortitude"], "power_word_fortitude", True),
+                (["divine_spirit", "prayer_of_spirit"], "divine_spirit", True),
+                (["shadow_protection", "prayer_of_shadow_protection"], "shadow_protection", True),
                 (["inner_fire"], "inner_fire", False)],
-    "mage":    [(["arcane_intellect"], "arcane_intellect", True),
+    "mage":    [(["arcane_intellect", "arcane_brilliance"], "arcane_intellect", True),
                 (["frost_armor", "ice_armor", "mage_armor"], "frost_armor", False)],
-    "druid":   [(["mark_of_the_wild"], "mark_of_the_wild", True)],
+    "druid":   [(["mark_of_the_wild", "gift_of_the_wild"], "mark_of_the_wild", True),
+                (["thorns"], "thorns", False)],
     "warlock": [(["demon_skin", "demon_armor"], "demon_skin", False)],
     "shaman":  [(["lightning_shield", "water_shield"], "lightning_shield", False)],
-    "paladin": [(["devotion_aura", "retribution_aura", "concentration_aura"], "devotion_aura", False)],
-    "hunter":  [(["aspect_of_the_hawk", "aspect_of_the_monkey"], "aspect_of_the_hawk", False)],
+    "paladin": [(["devotion_aura", "retribution_aura", "concentration_aura"], "devotion_aura", False),
+                (["blessing_of_might", "blessing_of_wisdom", "blessing_of_kings",
+                  "greater_blessing_of_might", "greater_blessing_of_wisdom",
+                  "greater_blessing_of_kings"], "blessing_of_might", False)],
+}
+PREPARATION = {
+    "paladin": [
+        {"prefix": "seal_of_", "default": "seal_of_righteousness", "combatCritical": True},
+        {"group": ["righteous_fury"], "default": "righteous_fury", "tree": "protection", "combatCritical": True},
+    ],
+    "priest": [
+        {"group": ["shadowform"], "default": "shadowform", "tree": "shadow", "form": True, "combatCritical": True},
+    ],
+    "druid": [
+        {"group": ["moonkin_form"], "default": "moonkin_form", "tree": "balance", "form": True, "combatCritical": True},
+    ],
+    "warrior": [
+        {"group": ["battle_shout"], "default": "battle_shout", "combatCritical": True},
+        {"group": ["battle_stance", "berserker_stance", "defensive_stance"],
+         "default": "battle_stance", "form": True,
+         "defaultByTree": {"fury": "berserker_stance", "protection": "defensive_stance"}, "combatCritical": True},
+    ],
+    "hunter": [
+        {"group": ["aspect_of_the_hawk", "aspect_of_the_monkey", "aspect_of_the_beast",
+                   "aspect_of_the_cheetah", "aspect_of_the_pack", "aspect_of_the_wild",
+                   "aspect_of_the_viper", "aspect_of_the_falcon"],
+         "default": "aspect_of_the_hawk", "defaultByTree": {"survival": "aspect_of_the_beast"}, "combatCritical": True},
+    ],
 }
 # Shaman weapon imbues: first KNOWN wins as the default (the table's rule).
 IMBUES = ["windfury_weapon", "flametongue_weapon", "rockbiter_weapon"]
@@ -162,8 +191,8 @@ DOT_EFFECT, DOT_AURA, ENEMY_TARGET = "6", "3", "6"
 SUMMON_EFFECTS = {"28", "87", "88", "89", "90"}   # SUMMON, SUMMON_OBJECT_SLOT1-4 (totems)
 SCHOOL_DAMAGE = "2"
 # The cast's own hit as a share of hit + the DoT's total (client data, per rank). At or above
-# NUKE_SHARE the spell is a nuke with a DoT rider (Fireball 89%, Holy Fire 73%): never tracked
-# as a DoT, or it sank after every cast while its 2-damage burn ran. At or above FRONTAL_SHARE
+# NUKE_SHARE the spell is a nuke with a DoT rider: no unconditional DoT suppression.
+# Explicit rotation maintenance is observed separately. At or above FRONTAL_SHARE
 # the hit still lands on a dying target (Moonfire, Flame Shock, Rake, Immolate), so the
 # dying-target block skips it; it still sinks while ticking, since an early recast on Forever
 # overwrites the ticks left.
@@ -275,15 +304,24 @@ def main():
         return secs.get(m["DurationIndex"], 0) if m else 0
 
     lines.append("local MAINTAINED = {")
-    for cls, groups in MAINTAINED.items():
+    for cls in dict.fromkeys((*MAINTAINED, *PREPARATION)):
+        groups = [(group, default, raid, {})
+                  for group, default, raid in MAINTAINED.get(cls, [])]
+        for policy in PREPARATION.get(cls, []):
+            family = policy.get("group")
+            if family is None:
+                family = sorted(name for name in res.by_class[cls][0]
+                                if name.startswith(policy["prefix"]))
+            groups.append((family, policy["default"], False, policy))
         out = []
-        for group, default, raid in groups:
+        for group, default, raid, policy in groups:
+            preparation = bool(policy)
             g = ids(res, cls, group)
             auras = [i for n in group for i in res.ranks(cls, n)]
             d = res.r1(cls, default)
             if not g or not d:
                 continue
-            if 0 < duration(d) < SHORT_BUFF_SECS:
+            if not preparation and 0 < duration(d) < SHORT_BUFF_SECS:
                 res.missing.append(f"{cls}: {default} lasts {duration(d):g}s - a combat buff, not upkeep")
                 continue
             member_auras = {
@@ -291,6 +329,15 @@ def main():
                 for name in group if res.r1(cls, name)
             }
             e = {"group": g, "default": d, "memberAuraIDs": member_auras}
+            if preparation:
+                e["preparation"] = True
+            for key in ("tree", "form", "combatCritical"):
+                if key in policy:
+                    e[key] = policy[key]
+            if "defaultByTree" in policy:
+                e["defaultByTree"] = {
+                    tree: res.r1(cls, name) for tree, name in policy["defaultByTree"].items()
+                }
             if raid:
                 e["raidWide"] = True
             e["auraIDs"] = auras          # every rank's aura: a rank-3 cast applies the rank-3 buff
@@ -366,17 +413,24 @@ def main():
     dot_ids = {int(r["SpellID"]) for r in cfa.rows("SpellEffect") if r["SpellID"].isdigit()
                and r["Effect"] == DOT_EFFECT and r["EffectAura"] == DOT_AURA
                and r["ImplicitTarget_0"] == ENEMY_TARGET}
-    # Plus every debuff the rotation lists keep up on the target (a "dot" gate: Faerie Fire,
-    # Demoralizing Shout, Hunter's Mark, curses) - tracked the same way, or they were suggested
-    # again and again. Every rank of each. Not summons (totems are not on the target).
-    # Reads Data/Forever/Rotations.lua: run gen_forever_rotations.py first.
+    # Explicit conditions observe target auras independently of damage classification.
+    # Legacy dot gates also retain suppression. Summons use slot state, not target auras.
+    # Run gen_forever_rotations.py first.
     rot = open(os.path.join(ROOT, "Data", "Forever", "Rotations.lua"), encoding="utf-8").read()
     summons = {r["SpellID"] for r in cfa.rows("SpellEffect") if r["Effect"] in SUMMON_EFFECTS}
-    for gid in {int(x) for x in re.findall(r't="dot",id=(\d+)', rot)}:
-        for cls in CLASSES:
-            chain = res.by_class[cls][1].get(gid)
-            if chain and str(gid) not in summons:
-                dot_ids |= {int(i) for i, _ in chain}
+    def target_ranks(kind):
+        ranks = set()
+        for gid in {int(x) for x in re.findall(r't="' + kind + r'",id=(\d+)', rot)}:
+            for cls in CLASSES:
+                chain = res.by_class[cls][1].get(gid)
+                if chain:
+                    ranks.update(int(i) for i, _ in chain if i not in summons)
+        return ranks
+
+    observed_ids = target_ranks("debuff")
+    # Preserve existing suppression for maintained low/no-upfront-damage debuffs.
+    # Observation additionally covers nukes, without making those unconditional sinks.
+    dot_ids |= observed_ids | target_ranks("dot")
     # Upfront share per id (see NUKE_SHARE): nukes leave the DoT list, frontal DoTs are marked.
     effects = {}
     for r in cfa.rows("SpellEffect"):
@@ -401,7 +455,7 @@ def main():
     shares = {sid: upfront_share(sid) for sid in dot_ids}
     dot_ids = {sid for sid in dot_ids if shares[sid] < NUKE_SHARE}
     # Frontal: every class DoT whose hit is FRONTAL_SHARE or more - the nukes included, since a
-    # list may still carry a "dot" gate on one (Holy Fire) and its hit lands on a dying target.
+    # list may still carry a refresh condition on one, and its hit lands on a dying target.
     lines.append("local FRONTAL_DOTS = {")
     for sid in sorted(s for s in shares if shares[s] >= FRONTAL_SHARE):
         lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({shares[sid]:.0%} upfront)")
@@ -413,6 +467,11 @@ def main():
             m = misc.get(str(sid))
             if m and int(m.get("Attributes_0") or 0) & NEXT_SWING_ATTR0:
                 lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({cls})")
+    lines.append("}")
+
+    lines.append("local TARGET_AURAS = {")
+    for sid in sorted(observed_ids):
+        lines.append(f"    [{sid}] = {duration(sid):g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
 
     # Short buffs (rank 1): kept up in combat, so off retail's party-buff and unique-aura
@@ -429,8 +488,7 @@ def main():
     lines.append("local DOTS = {")
     for cls in CLASSES:
         for sid in sorted(dot_ids & set(res.by_class[cls][1])):
-            m = misc.get(str(sid))
-            dur = secs.get(m["DurationIndex"], 0) if m else 0
+            dur = duration(sid)
             if dur > 0:
                 lines.append(f"    [{sid}] = {dur:g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
@@ -499,6 +557,7 @@ def main():
         "SpellDB.RegisterChanneledSpells(CHANNELED)",
         "-- Replaces retail's DoT list: its ids and durations are retail's.",
         "SpellDB.RegisterTargetDots(DOTS)",
+        "SpellDB.RegisterTargetAuras(TARGET_AURAS)",
         "for id in pairs(FRONTAL_DOTS) do SpellDB.FRONTAL_DOTS[id] = true end",
         "for id in pairs(NEXT_SWING) do SpellDB.NEXT_SWING_SPELLS[id] = true end",
         "",
