@@ -476,15 +476,9 @@ local function HasteBuffEvidence(spellID)
     return haste >= HASTE_BOOSTED
 end
 
---- True while our own self-buff (spellID) is active on the player. Three sources, best
---- first: the stance bar for a form (plain, always), the aura itself (blind to secret
---- auras - i.e. most of combat), then our own cast of the spell within its base duration.
---- ponytail: the cast window is the BASE length - blind to early cancels and to talents that
---- extend it; the game's pick still reveals a window this under-calls.
---- @param spellID number the spell a SimC buff-window gate references (5217, ...)
---- @param durSecs number|nil base aura seconds from the gate; nil = no cast inference
-function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
-    if not spellID then return false end
+-- Evidence independent of a gate's cast-duration fallback. Nil permits that
+-- fallback; a known false (form, CDM or swing evidence) overrides it.
+local function BuffWindowEvidence(spellID, readCache)
     if formCache == nil then formCache = LibStub("JustAC-FormCache", true) or false end
     local formID = formCache and formCache.GetFormIDBySpellID(spellID)
     if formID then return formCache.GetActiveForm() == formID end
@@ -497,17 +491,15 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
         end
         -- Not `x and x.f()`: with the module missing that is false, read as "buff down".
         local tracked
-        if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID) end
+        if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID, nil, readCache) end
         if tracked ~= nil then return tracked end
     end
     -- An attack-speed buff is proven by the swings themselves (Forever): its length can
     -- depend on combo points, and an early cancel or dispel shows as the speed going away.
     local evidence = HasteBuffEvidence(spellID)
     if evidence ~= nil then return evidence end
-    local castAt = durSecs and ownCastAt[spellID]
-    local castLive = castAt and (GetTime() - castAt) < durSecs or false
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
-        return castLive
+        return nil
     end
     -- The aura table in hand proves the buff is up. Its duration adds nothing and cost
     -- two answers: GetAuraDuration is access-denied to a tainted caller while auras are
@@ -532,13 +524,40 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs)
     end
     -- Retail: unchanged - the cast window is the whole fallback there. (A remembered expiry
     -- would also hold a buff consumed early in combat "up" until its old expiry.)
-    if not forever then return castLive end
+    if not forever then return nil end
     if not BlizzardAPI.AreAurasSecret() then
         auraUntil[spellID] = nil   -- readable and absent: really gone
-        return castLive
+        return nil
     end
     local untilAt = auraUntil[spellID]
-    return castLive or (untilAt ~= nil and GetTime() < untilAt)
+    if untilAt ~= nil and GetTime() < untilAt then return true end
+    return nil
+end
+
+local BUFF_UNKNOWN = {}
+
+--- readCache is owned and cleared by the caller for each synchronous queue pass.
+--- Cache evidence, not duration-dependent cast estimates: two gates may name
+--- the same buff with different fallback windows.
+--- @param spellID number
+--- @param durSecs number|nil base aura seconds; nil disables cast inference
+function BlizzardAPI.IsBuffWindowActive(spellID, durSecs, readCache)
+    if not spellID then return false end
+    local reads = readCache and readCache.buffs
+    local evidence = reads and reads[spellID]
+    if evidence == nil then
+        evidence = BuffWindowEvidence(spellID, readCache)
+        if reads then
+            if evidence == nil then
+                reads[spellID] = BUFF_UNKNOWN
+            else
+                reads[spellID] = evidence
+            end
+        end
+    end
+    if evidence ~= nil and evidence ~= BUFF_UNKNOWN then return evidence end
+    local castAt = durSecs and ownCastAt[spellID]
+    return castAt ~= nil and (GetTime() - castAt) < durSecs
 end
 
 --- Diagnostic: which of the given self-buff ids are active right now.

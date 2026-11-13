@@ -372,9 +372,9 @@ Source: mobalytics Rogue/Warlock/Shaman overviews. **Med**.
 
 | Resource | What | Publishes rotations? | Format | License |
 |---|---|---|---|---|
-| ElliotWood/Forever — https://github.com/ElliotWood/Forever | Fork of `wowsims/classic` retargeted to Forever (pushed 2026-10-07) | **Yes**: 49 APL files under `ui/specs/<class>/<spec>/apls/*.apl.json`, incl. Forever-specific ones (`forever_mutilate`, `forever_hemorrhage`, shaman `forever*.apl.json`, `fire_lowrank`, `smite_lowrank`, `default_lowrank` Balance, Warrior `dps_battle`/`dps_dance`/`dps_reck`, Prot Paladin, Prot Warrior, Feral cat/bear) | wowsims APL JSON (`priorityList` of `{action, condition}` with `spellId` + `rank` ids, `auraIsActive`, `auraNumStacks`, `cmp`) — machine-readable | MIT |
-| MythicSim engine (Go) — https://github.com/sage3648/mythicsim-forever-engine-go | Maintained fork of ElliotWood/Forever powering mythicsim.com | Inherits the same APLs | same | MIT |
-| MythicSim engine (Rust, experimental) — https://github.com/sage3648/mythicsim-forever-engine | Rewrite validated against the Go engine; rotations live in prepared fixture files | Yes, inside `fixtures/` prepared inputs | "prepared v2" fixture files | MIT (upstream notices kept) |
+| ElliotWood/Forever — https://github.com/ElliotWood/Forever | Historical fork of `wowsims/classic` retargeted to Forever (pushed 2026-10-07); repository now unavailable | **Yes**: 49 APL files under `ui/specs/<class>/<spec>/apls/*.apl.json` | wowsims APL JSON — machine-readable | MIT |
+| MythicSim engine (Go) — https://github.com/sage3648/mythicsim-forever-engine-go | Deprecated reference engine; no new patches or rotations since 2026-10-27 | Inherits the older APLs | wowsims APL JSON | MIT |
+| MythicSim engine (Rust) — https://github.com/sage3648/mythicsim-forever-engine | Current production engine; its `presets/` directory mirrors the application rotations and catalog | **Yes**: 55 `.apl.json` presets cover all classes, with choices in `presets/catalog.json` | wowsims APL JSON | MIT; MythicSim and wowsims notices retained |
 | MythicSim site — https://mythicsim.com/wow-forever | Quick Sim (paste from the "MythicSim – Forever Sim Exporter" addon on CurseForge), DPS tier list, trinkets, races, per-class change pages, audit log | Not shown on the site; fixed rotations per spec | web | n/a |
 | bottlefedchaney808/wow4_sims — https://github.com/bottlefedchaney808/wow4_sims | Another wowsims fork (DPS/HPS), 33 APL files, last push 2026-09-28 | Yes | wowsims APL JSON | none declared (treat as all rights reserved) |
 | ForeverDB — https://foreverdb.net/ | Client-datamined DB (≈31.7k spells, 22.1k items), talents, `/datamine` diff vs Classic, own sim | Not as data | web | site terms; "not affiliated" |
@@ -384,9 +384,10 @@ Source: mobalytics Rogue/Warlock/Shaman overviews. **Med**.
 
 Caveats: MythicSim sims level 60 vs a level-63 boss with BlizzCon-demo-era data; talents and
 racials partly unverified; its displayed talent splits (e.g. 18/31/28) don't sum to 51 —
-treat as provisional. Many APLs in the forks are inherited Classic/SoD lists (e.g. Sunder
-Armor rank 5 id 11597, "sweaty"/"ghostly" variants) and are level-60 oriented; only the
-`forever_*`/`lowrank` ones were clearly authored for Forever. None target the level-30 cap.
+treat as provisional. The presets remain level-60 oriented and do not target the level-30
+beta cap. JustAC imports only the class/tree lists selected in
+`tools/gen_forever_rotations.py`; unrepresentable source conditions remain delegated and
+local healer damage-filler pins remain hand-authored.
 
 ## Builds that exist at the beta cap
 

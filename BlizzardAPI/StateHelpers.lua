@@ -437,22 +437,25 @@ end
 --- Can this ability reach the target, as the GAME sees it? Same tri-state as SpellInRange.
 --- The spell-range read tests the spell's BASE range and misses anything that extends it -
 --- a stealth teleport, a range talent, a form. The ability's own action button does not:
---- it is what the game lights or reddens, modifiers included. So a "no" from the spell read
---- is only believed when the button does not say otherwise. Field report: Shadowstrike reads
+--- it is what the game lights or reddens, modifiers included. Prefer either readable
+--- button verdict, including false for minimum-range restrictions. Shadowstrike reads
 --- 5yd by spell at every distance its 25yd stealth teleport covers, which made the gap-closer
---- engine reject it always. The button is consulted second, and only to overturn a "no":
---- bars page with form and stance, so an absent or unreadable slot must not REJECT anything.
+--- engine reject it always. An absent or unreadable button falls back to spell range.
 function BlizzardAPI.AbilityInRange(spellID, unit)
     local r = BlizzardAPI.SpellInRange(spellID, unit)
-    if r ~= false then return r end
-    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then return false end
+    if not spellID then return nil end
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then return r end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
     if slot and C_ActionBar and C_ActionBar.IsActionInRange then
-        local s = C_ActionBar.IsActionInRange(slot, unit or "target")
-        if not (IsSecretValue and IsSecretValue(s)) and s == true then return true end
+        local ok, s = pcall(C_ActionBar.IsActionInRange, slot, unit or "target")
+        if not ok then
+            geterrorhandler()(s)
+        elseif not (IsSecretValue and IsSecretValue(s)) and type(s) == "boolean" then
+            return s
+        end
     end
-    return false
+    return r
 end
 
 --------------------------------------------------------------------------------

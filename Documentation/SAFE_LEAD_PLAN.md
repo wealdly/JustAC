@@ -1,6 +1,10 @@
 # Safe Lead: a stable alternative to My List Leads
 
-Status: PLAN. No code yet. Written 2026-09-21, after the 2026-09-20 inference audit.
+**Historical ordering proposal, not current implementation status.** Start with
+the [documentation index](README.md) and current queue code. Preserve this for
+rationale; verify which phases actually shipped before proposing more work.
+
+Original status: PLAN. No code yet. Written 2026-09-21, after the 2026-09-20 inference audit.
 Revised the same day: assumptions checked against the code, and the fight window added as
 the shared foundation (phase 0).
 

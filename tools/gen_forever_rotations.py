@@ -3,13 +3,13 @@
 #
 # WoW Forever priority lists for every class and talent tree -> Data/Forever/Rotations.lua.
 #
-# Source 1: the wowsims-format rotation files vendored in tools/forever-apl-src/ (from
-# github.com/ElliotWood/Forever, MIT; commit in UPSTREAM_COMMIT). Forever spell ids, level
-# 60, structured conditions. Source 2: hand pins in tools/simc-apl-forever/ for trees the sim
-# does not model (healer damage fillers).
+# Source 1: MythicSim's MIT-licensed Forever preset mirror vendored in
+# tools/forever-apl-src/presets/ (engine commit in UPSTREAM_COMMIT; application
+# preset source pinned in presets/catalog.json). Source 2: hand pins in
+# tools/simc-apl-forever/ for healer damage fillers.
 #
 # Each entry keeps the gates JustAC can evaluate under secret values, in the same shape
-# RotationImport already reads (buff / cd / dot / execute / health / power / resource /
+# RotationImport already reads (buff / cd / debuff / execute / health / power / resource /
 # stack / stealth / any / all), plus three Forever gates: `known` (IsPlayerSpell), `swing`
 # (time to next auto attack, PLAYER_SWING) and `tick` (time to next energy tick). What no
 # gate can express marks the entry `delegated`: it keeps its priority place, ungated.
@@ -17,7 +17,8 @@
 # rank known. Spells no Forever class can learn (racials, items, removed abilities such as
 # Tiger's Fury) are dropped and reported.
 #
-# Usage: python tools/gen_forever_rotations.py [--print]
+# Usage: python tools/gen_forever_rotations.py [--print|--coverage]
+# --coverage emits a report-only JSON inventory without writing generated Lua.
 import json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,31 +31,36 @@ import gen_simc_rotations as gsr  # noqa: E402  (the SimC condition parser, for 
 import gen_forever_defaults as gfd  # noqa: E402  (BURST: offensive cooldowns join the bar pool)
 
 # class -> (default tree for characters with no talent points, {tree: source})
-# A source is a vendored file stem or "pin:<file stem>" for a hand pin.
+# A source is a vendored preset path stem or "pin:<file stem>" for a hand pin.
 TREES = {
-    "warrior": ("arms", {"arms": "warrior_dps__dps_battle", "fury": "warrior_dps__dps_reck",
-                         "protection": "warrior_protection__protection"}),
-    "rogue": ("combat", {"assassination": "rogue_dps__forever_mutilate",
-                         "combat": "rogue_dps__combat_sinister_strike",
-                         "subtlety": "rogue_dps__forever_hemorrhage"}),
+    "warrior": ("arms", {"arms": "presets/warrior/dps/arms",
+                         "fury": "presets/warrior/dps/dps_reck",
+                         "protection": "presets/warrior/protection/protection"}),
+    "rogue": ("combat", {"assassination": "presets/rogue/dps/forever_mutilate",
+                         "combat": "presets/rogue/dps/combat_sinister_strike",
+                         "subtlety": "presets/rogue/dps/forever_hemorrhage"}),
     "paladin": ("retribution", {"holy": "pin:paladin_holy",
-                                "protection": "paladin_protection__default",
-                                "retribution": "paladin_retribution__default"}),
-    "priest": ("shadow", {"discipline": "priest_dps__smite", "holy": "priest_dps__smite",
-                          "shadow": "priest_dps__shadow"}),
-    "druid": ("feral", {"balance": "druid_balance__default", "feral": "druid_feralcat__default",
-                        "feral_bear": "druid_feralbear__default",
+                                "protection": "presets/paladin/protection/p5",
+                                "retribution": "presets/paladin/retribution/default"}),
+    "priest": ("shadow", {"discipline": "presets/priest/dps/smite",
+                          "holy": "presets/priest/dps/smite",
+                          "shadow": "presets/priest/dps/shadow"}),
+    "druid": ("feral", {"balance": "presets/druid/balance/launch",
+                        "feral": "presets/druid/feralcat/default",
+                        "feral_bear": "presets/druid/feralbear/default",
                         "restoration": "pin:druid_restoration"}),
-    "shaman": ("enhancement", {"elemental": "shaman_elemental__forever",
-                               "enhancement": "shaman_enhancement__forever",
+    "shaman": ("enhancement", {"elemental": "presets/shaman/elemental/forever",
+                               "enhancement": "presets/shaman/enhancement/forever",
                                "restoration": "pin:shaman_restoration"}),
-    "hunter": ("beast_mastery", {"beast_mastery": "hunter_dps__bm",
-                                 "marksmanship": "hunter_dps__mm", "survival": "hunter_dps__sv"}),
-    "mage": ("frost", {"arcane": "mage_dps__arcane", "fire": "mage_dps__fire",
-                       "frost": "mage_dps__frost"}),
-    "warlock": ("affliction", {"affliction": "warlock_dps__affliction",
-                               "demonology": "warlock_dps__demonic_pact",
-                               "destruction": "warlock_dps__destruction"}),
+    "hunter": ("beast_mastery", {"beast_mastery": "presets/hunter/dps/bm",
+                                 "marksmanship": "presets/hunter/dps/mm",
+                                 "survival": "presets/hunter/dps/sv_melee"}),
+    "mage": ("frost", {"arcane": "presets/mage/dps/arcane",
+                       "fire": "presets/mage/dps/fire",
+                       "frost": "presets/mage/dps/frost"}),
+    "warlock": ("affliction", {"affliction": "presets/warlock/dps/affliction",
+                               "demonology": "presets/warlock/dps/demonic_pact",
+                               "destruction": "presets/warlock/dps/destruction_conflag"}),
 }
 # Keeping your own timed buff up leads every list (Battle Shout, a paladin seal): the sims cast
 # it before the pull and it outlasts their fight, so their in-combat line sits last, but on
@@ -78,8 +84,8 @@ AOE_LEAD_TIERS = ["cleave", "aoe"]
 # "before:<name>".
 # gates: "dot" = keep-it-up on the target (sinks while it runs, never on a dying target),
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
-# move: the ability is already on the sim list - take that entry, with its own conditions, to
-# the front instead of adding a second one.
+# move: the ability is already on the sim list - reposition that entry instead of adding a
+# second one. Set gates to replace its source conditions when the adaptation calls for it.
 EXTRA = {
     "warrior": [dict(spell="demoralizing_shout", tiers=["cleave", "aoe"], at="front", gates=["dot"])],
     # Serpent Sting opens: its DoT lands at once, and it is cast WITH Auto Shot, which is off the
@@ -88,36 +94,53 @@ EXTRA = {
                dict(spell="auto_shot", at="front"),
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
-               dict(spell="mongoose_bite", at="front")],
-    # Backstab is absent from the selected upstream APLs; keep it last among builders for when
-    # its rear-position requirement is met. Sinister Strike backs up the talent builders
-    # (Mutilate, Hemorrhage) a levelling character does not have yet.
+               dict(spell="mongoose_bite", at="front"),
+               # The Forever MM guide recommends Sniper Shot on cooldown ahead of Aimed Shot.
+               # Its imported fight-duration mana gate is unavailable; spell usability still
+               # determines whether Sniper Shot itself can be cast.
+               dict(spell="sniper_shot", trees=["marksmanship"], at="before:aimed_shot",
+                    move=True, gates=[])],
+    # Backstab is absent from the selected upstream APLs. Prefer it to Sinister Strike when
+    # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
+    # Spell usability handles the rear requirement; no position signal is inferred here.
     "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
               dict(spell="garrote", at="front", gates=["stealth", "dot"]),
-              dict(spell="backstab", trees=["combat"], at="after:sinister_strike"),
+              dict(spell="backstab", trees=["combat"], at="before:sinister_strike"),
+              # Shank is the primary energy-gated attack before the Combat finisher.
+              dict(spell="shank", trees=["combat"], at="before:eviscerate", move=True),
               dict(spell="sinister_strike", trees=["subtlety"], at="after:hemorrhage"),
-              dict(spell="backstab", trees=["subtlety"], at="after:sinister_strike"),
+              dict(spell="backstab", trees=["subtlety"], at="before:sinister_strike"),
               dict(spell="sinister_strike", trees=["assassination"], at="after:mutilate"),
-              dict(spell="backstab", trees=["assassination"], at="after:sinister_strike")],
+              dict(spell="backstab", trees=["assassination"], at="before:sinister_strike")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
               dict(spell="wrath", trees=["balance"], at="end")],
-    "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate")],
+    "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate"),
+                dict(spell="shoot", at="end")],
+    # Caster leveling guides describe wanding as a low-health/finishing fallback; keep Shoot last
+    # so listed spells take precedence and spell usability hides it without a usable wand.
     "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
-             dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end")],
-    "priest": [dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
+             dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end"),
+             dict(spell="shoot", at="end")],
+    # Wanding is a documented leveling damage fallback across Priest trees; it is only usable
+    # when the character has an appropriate wand equipped.
+    "priest": [dict(spell="shoot", at="end"),
+               dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
 
 
-# Resource-for-a-price presses, by ability name; every one is flagged w ("offer only when the
+# Hand-reviewed safety gates, by ability name; every entry is flagged w ("offer only when the
 # gates hold": when they fail it trails the queue instead of waiting as a sunk "soon").
 #   starved: its sim mana line widens to "or the rotation cannot be paid for" (read per build) -
 #            a fixed mana line misses a low-level caster whose filler costs a fifth of the bar.
 #   health:  only with health above this percent - it costs health (Life Tap, Bloodrage) or
 #            burns the caster too (Hellfire).
+#   near:    only when close enough for point-blank damage (Cone of Cold, Hellfire).
 REGATE = {
-    "warlock": {"life_tap": dict(starved=True, health=50), "hellfire": dict(health=50)},
-    "mage": {"evocation": dict(starved=True)},
+    "warlock": {"life_tap": dict(starved=True, health=50),
+                "hellfire": dict(health=50, near=10)},
+    "mage": {"evocation": dict(starved=True),
+             "cone_of_cold": dict(near=10)},
     "druid": {"innervate": dict(starved=True)},
     "warrior": {"bloodrage": dict(health=50)},
 }
@@ -137,6 +160,10 @@ def regate(cls, entries, chains):
                 gates.insert(0, {"t": "any", "g": power + [{"t": "starved"}]} if power else {"t": "starved"})
             if spec.get("health"):
                 gates.append({"t": "health", "op": ">", "pct": float(spec["health"])})
+            if spec.get("near"):
+                near = {"t": "near", "n": spec["near"]}
+                if near not in gates:
+                    gates.append(near)
             e["gates"], e["w"] = gates, True
 
 
@@ -156,20 +183,36 @@ def add_extras(cls, tree, entries, chains, unresolved):
         if not sid:
             continue
         mine = next((e for e in entries if e["id"] == sid), None)
-        if mine and x.get("move") and x.get("at") == "front":
+        if mine and x.get("move"):
             if x.get("tiers"):
                 mine["tiers"] = list(x["tiers"])
                 count = min(k for name, k in TIERS if name in x["tiers"])
                 mine["gates"] = [g for g in mine["gates"] if g["t"] != "targets"]
                 mine["gates"].append({"t": "targets", "op": ">=", "n": count})
+            if "gates" in x:
+                mine["gates"] = list(x["gates"])
+                mine["delegated"] = False
             entries.remove(mine)
-            fronts.append(mine)
+            at = x.get("at", "front")
+            if at == "front":
+                fronts.append(mine)
+            elif at.startswith(("after:", "before:")):
+                where, name = at.split(":", 1)
+                anchor = r1_of(name)
+                i = next((n for n, y in enumerate(entries) if y["id"] == anchor), None)
+                if i is None:
+                    entries.append(mine)
+                else:
+                    entries.insert(i + 1 if where == "after" else i, mine)
+            else:
+                entries.append(mine)
             continue
         if mine:
             continue
         gates = []
         for g in x.get("gates", []):
-            gates.append({"t": "dot", "id": sid} if g == "dot" else {"t": "stealth"})
+            gates.append({"t": "debuff", "id": sid, "neg": True, "refresh": True}
+                         if g == "dot" else {"t": "stealth"})
         e = {"id": sid, "delegated": False, "tiers": list(x.get("tiers") or [t for t, _ in TIERS]),
              "gates": gates}
         at = x.get("at", "end")
@@ -298,7 +341,15 @@ class Conv:
         if g == UNK:
             return UNK
         t = g["t"]
-        if t in ("buff", "cd", "known", "stealth", "totem"):
+        if t in ("buff", "cd", "known", "stealth", "totem", "debuff"):
+            if t == "debuff" and g.get("op"):
+                return dict(g, op=NOT_OP[g["op"]])
+            if t == "debuff":
+                gate = dict(g, neg=not g.get("neg", False))
+                gate.pop("refresh", None)
+                if gate["neg"] and gate["id"] == self.self_id:
+                    gate["refresh"] = True
+                return gate
             return dict(g, neg=not g.get("neg", False))
         if t in ("power", "resource", "execute", "health", "stack", "swing", "tick", "targets") and g.get("op") in NOT_OP:
             return dict(g, op=NOT_OP[g["op"]])
@@ -358,11 +409,11 @@ class Conv:
             if not aid:
                 return UNK
             if aura_on_target(val, aid):
-                return {"t": "dot", "id": aid}
+                return {"t": "debuff", "id": aid}
             return self.buff(aid)
         if key == "dotIsActive":
             sid = sid_of(val.get("spellId"))
-            return {"t": "dot", "id": self.rank1(sid)} if sid else UNK
+            return {"t": "debuff", "id": self.rank1(sid)} if sid else UNK
         if key == "isExecutePhase":
             m = re.search(r"\d+", str(val.get("threshold", "E20")))
             return {"t": "execute", "op": "<", "pct": int(m.group()) if m else 20}
@@ -384,7 +435,10 @@ class Conv:
             if aid != self.self_id:
                 self.lose(node)
             if aura_on_target(val, aid):
-                return {"t": "dot", "id": aid}
+                gate = {"t": "debuff", "id": aid, "neg": True}
+                if aid == self.self_id:
+                    gate["refresh"] = True
+                return gate
             return self.buff(aid, True)
         if key == "frontOfTarget":
             return UNK
@@ -462,23 +516,26 @@ class Conv:
         if not sid:
             return UNK
         target = name == "dotRemainingTime" or aura_on_target(side, raw)
-        # "My own DoT about to run out" (Immolate if its time left <= its cast time) IS the dot
-        # gate on Forever: an early recast overwrites the ticks left, so it is refreshed as it
-        # drops (DotTracker times it from the cast; no secret read, nothing delegated).
+        # Own refreshes conservatively wait for expiry. Presence does not establish an
+        # early-refresh threshold; never use this policy for another spell's prerequisite.
         if target and sid == self.self_id and op in ("<", "<="):
-            return {"t": "dot", "id": sid}
+            return {"t": "debuff", "id": sid, "neg": True, "refresh": True}
         # Likewise my own buff about to drop (Slice and Dice, a seal): its window is timed from
         # my cast, so "not up" is the refresh.
         if not target and sid == self.self_id and op in ("<", "<="):
             return self.buff(sid, True)
         # My OTHER buff about to drop (Judgement / Seal of Command as Seal of Righteousness runs
         # out: level-60 seal twisting): the timing detail is dropped, that buff's own line keeps
-        # it up. Never "not up": Judgement needs the seal it consumes.
+        # it up. Never "not up": Judgement needs an active seal, but does not consume it.
         if not target and sid in self.by_id and op in ("<", "<=") and on_self(raw):
             return TRUE
         self.lose({"cmp": val})              # remaining time itself is secret
         if target:
-            return {"t": "dot", "id": sid}
+            _, _, n, _ = cmp_parts(val)
+            gate = {"t": "debuff", "id": sid, "op": op}
+            if n is not None:
+                gate["n"] = n
+            return gate
         return self.buff(sid, op in ("<", "<="))
 
 
@@ -518,7 +575,7 @@ def convert_sim(stem, by_id, dropped):
             if g == UNK:
                 c.lose(cond)
             if extra == "dot":
-                gates.append({"t": "dot", "id": rid})
+                gates.append({"t": "debuff", "id": rid, "neg": True, "refresh": True})
             tiers = [name for name, k in TIERS
                      if (any(c.tier(cond, count) is not False for count in range(3, 41))
                          if name == "aoe" else c.tier(cond, k) is not False)]
@@ -563,18 +620,37 @@ def lua(v):
 
 def generalize_entries(cls, tree, entries, chains):
     """Adapt specialized execution into stable defaults before selecting each context."""
-    if cls == "paladin" and tree == "retribution":
-        seals = [rank1(chains[n]) for n in ("seal_of_command", "seal_of_righteousness")]
+    if cls == "paladin":
+        seals = sorted({rank1(chain) for name, chain in chains.items()
+                        if name.startswith("seal_of_")})
+        judgement = rank1(chains["judgement"])
+        righteousness = rank1(chains["seal_of_righteousness"])
+        converter = Conv({})
         seen = set()
         out = []
-        for e in entries:
+        # Preserve the existing Righteousness-first Retribution fallback instead of
+        # promoting the preset's conditional tank seal when its gates are normalized.
+        ordered = entries
+        if tree == "retribution":
+            ordered = sorted(entries, key=lambda e: 0 if e["id"] == righteousness else 1)
+        for e in ordered:
             if e["id"] in seals:
                 if e["id"] in seen:
                     continue
                 seen.add(e["id"])
-                e = dict(e, gates=[Conv({}, e["id"]).buff(sid, True) for sid in seals],
+                e = dict(e, gates=[converter.buff(sid, True) for sid in seals],
                          delegated=False, tiers=[t for t, _ in TIERS])
+            elif e["id"] == judgement:
+                # Imported presets may require their particular damage seal. Any active
+                # seal enables Judgement; keep unrelated conditions from the source.
+                gates = [g for g in e["gates"]
+                         if not (g.get("t") == "buff" and g.get("id") in seals)]
+                gates.append({"t": "any", "g": [converter.buff(sid) for sid in seals]})
+                e = dict(e, gates=gates)
             out.append(e)
+        if not seen:
+            out.insert(0, {"id": righteousness, "gates": [converter.buff(sid, True) for sid in seals],
+                           "delegated": False, "tiers": [t for t, _ in TIERS]})
         entries[:] = out
     if cls == "druid" and tree == "feral":
         bite = rank1(chains["ferocious_bite"])
@@ -762,6 +838,34 @@ def entry_lua(e, names):
     return "      {" + ",".join(parts) + "},  -- " + names.get(str(e["id"]), "?")
 
 
+def condition_coverage(gates, path=""):
+    """Evaluator coverage, not a claim that the current client can answer a read."""
+    for index, gate in enumerate(gates, 1):
+        key = f"{path}.{index}" if path else str(index)
+        kind = gate["t"]
+        if kind == "unconfirmed":
+            status, reason = "disabled", "runtime always returns false"
+        elif kind in ("dot", "debuff", "buff", "stack"):
+            status = "partial"
+            reason = {
+                "dot": "target-health policy only; tracked own-DoT suppression is separate",
+                "debuff": "presence requires exact aura evidence; own refresh may use cast estimates; remaining-time comparisons stay unknown",
+                "buff": "window helper; ordinary ranking does not fully evaluate presence",
+                "stack": "requires a usable spell-bound aura instance and threshold read",
+            }[kind]
+        elif kind in ("any", "all"):
+            status, reason = "partial", "three-valued group; inspect child coverage and live verdicts"
+        elif kind in ("power", "execute", "health") and gate.get("op") not in ("<", "<=", ">", ">="):
+            status, reason = "partial", "runtime supports threshold operators only"
+        elif kind in ("known", "stealth", "targets", "totem", "near", "swing",
+                      "resource", "power", "execute", "health", "cd", "prev", "starved"):
+            status, reason = "fully supported", "runtime evaluator exists; live unknowns remain possible"
+        else:
+            status, reason = "partial", "no confirmed runtime evaluator"
+        yield {"path": key, "condition": gate, "status": status, "reason": reason}
+        yield from condition_coverage(gate.get("g", []), key)
+
+
 def main():
     names = {r["ID"]: r["Name_lang"] for r in cfa.rows("SpellName")}
     secs = {r["ID"]: int(r["Duration"] or 0) / 1000 for r in cfa.rows("SpellDuration")}
@@ -769,8 +873,12 @@ def main():
         d = secs.get(r["DurationIndex"], 0)
         if d > 0 and r["SpellID"].isdigit():
             DURATION[int(r["SpellID"])] = round(d, 1)
-    commit = open(os.path.join(SRC, "UPSTREAM_COMMIT")).read().strip()
+    commit = open(os.path.join(SRC, "UPSTREAM_COMMIT"), encoding="utf-8").read().strip()
+    catalog = json.load(open(os.path.join(SRC, "presets", "catalog.json"), encoding="utf-8"))
+    catalog_source = catalog["source"]
+    catalog_commit = catalog_source["commit"]
     body, chains_out, report, unresolved, abilities = [], {}, [], [], {}
+    coverage = []
     for cls in sorted(TREES):
         default, trees = TREES[cls]
         chains, by_id = cfa.class_chains(cfa.CLASS_MASK[cls])
@@ -825,6 +933,17 @@ def main():
             body.append(f"    {tree} = {{  -- {src}")
             for t, _ in TIERS:
                 if t in lists:
+                    for index, entry in enumerate(lists[t] if "--coverage" in sys.argv else [], 1):
+                        identity = {"class": cls, "tree": tree, "context": t,
+                                    "entry": index, "spell": entry["id"], "source": src}
+                        coverage.extend(dict(identity, **row)
+                                        for row in condition_coverage(entry["gates"]))
+                        if entry["delegated"]:
+                            coverage.append(dict(
+                                identity, path="delegated", status="delegated",
+                                reason="unsupported source condition omitted",
+                                lost=LOST.get(id(entry)) or ["hand pin: inspect source condition"],
+                            ))
                     body.append(f"      {t} = {{")
                     body += ["  " + entry_lua(e, names) for e in lists[t]]
                     body.append("      },")
@@ -842,6 +961,18 @@ def main():
         body.append("  },")
         abilities[cls] = sorted(pool)
 
+    if "--coverage" in sys.argv:
+        if unresolved:
+            sys.exit("UNRESOLVED hand-pin tokens:\n  " + "\n  ".join(unresolved))
+        counts = {status: sum(row["status"] == status for row in coverage)
+                  for status in ("fully supported", "partial", "delegated", "disabled")}
+        print(json.dumps({
+            "engine_revision": commit, "preset_revision": catalog_commit,
+            "scope": "post-adaptation target-tier condition occurrences; not live validation",
+            "counts": counts, "conditions": coverage,
+        }, indent=2))
+        return
+
     rank_lines = [f"  [{k}] = {lua(v)}," for k, v in sorted(chains_out.items())]
     # tools/ is not packaged (.pkgmeta), so the MIT notice must travel inside this file.
     mit = ["--   " + l.rstrip() if l.strip() else "--" for l in
@@ -853,9 +984,10 @@ def main():
         "-- JustAC: WoW Forever priority lists, per class and talent tree, with secret-safe",
         "-- gates. GENERATED by tools/gen_forever_rotations.py - do not edit by hand.",
         "--",
-        "-- Orderings and conditions derive from the wowsims rotation files of",
-        f"-- github.com/ElliotWood/Forever (commit {commit}), vendored in tools/forever-apl-src/,",
-        "-- used under its license:",
+        "-- Orderings and conditions adapt the MIT-licensed MythicSim Forever presets",
+        "-- (https://github.com/sage3648/mythicsim-forever-engine,",
+        f"-- commit {commit}); the mirrored catalog cites",
+        f"-- {catalog_source['repository']}/{catalog_source['path']} at commit {catalog_commit}.",
         "--",
         *mit,
         "--",

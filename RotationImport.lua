@@ -211,7 +211,7 @@ end
 function RotationImport.OnFormChanged()
     local key = installed[CurrentSpecKey() or ""]
     if key ~= "feral" and key ~= "feral_bear" then return false end
-    if (key == "feral_bear") == (InBearForm() and true or false) then return false end
+    if (key == "feral_bear") == InBearForm() then return false end
     RotationImport.InvalidateLookup()
     return true
 end

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 45)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 47)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -1292,6 +1292,14 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if PE.IsClassBuffFresh(id) then
                 return true, "a member of this buff group was just applied"
             end
+        end
+    end
+    if PE and PE.IsPreparationFamilySatisfied then
+        if PE.IsPreparationFamilySatisfied(spellID) then
+            return true, "a preparation buff from this family is active and does not need this recast"
+        end
+        if PE.IsPreparationFamilyActive and PE.IsPreparationFamilyActive(spellID) then
+            return false
         end
     end
 

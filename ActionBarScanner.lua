@@ -80,6 +80,7 @@ local spellSlotCache = {}
 -- Parallel cache: true when slot directly represents the spell (safe for
 -- C_ActionBar slot-based queries), false when behind a macro modifier.
 local slotDirectCache = {}
+local directSpellSlotCache = {}
 -- Item → action slot cache (items are always direct matches on the bar).
 local itemSlotCache = {}
 -- Shared stale-retry stamp for negative-cached item slots (false entries above).
@@ -385,6 +386,7 @@ local function WipeSpellCaches()
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
     wipe(slotDirectCache)
+    wipe(directSpellSlotCache)
     wipe(itemSlotCache)
 end
 
@@ -1266,17 +1268,66 @@ end
 
 -- Returns slot only when it directly represents the spell/item (not behind
 -- a macro modifier). Safe for C_ActionBar slot-based queries.
+local function DirectSpellSlotMatches(slot, spellID)
+    local ok, kind, id = pcall(BlizzardAPI.GetActionInfo, slot)
+    if not ok then
+        geterrorhandler()(kind)
+        return false
+    end
+    if BlizzardAPI.IsSecretValue(kind) or BlizzardAPI.IsSecretValue(id)
+       or type(id) ~= "number" then return false end
+    if kind == "item" and GetItemSpell then
+        local itemOk, name, itemSpellID = pcall(GetItemSpell, id)
+        if not itemOk then
+            geterrorhandler()(name)
+            return false
+        end
+        return not BlizzardAPI.IsSecretValue(itemSpellID) and itemSpellID == spellID
+    end
+    if kind ~= "spell" then return false end
+    if id == spellID then return true end
+    if C_Spell_GetOverrideSpell then
+        local overrideOk, override = pcall(C_Spell_GetOverrideSpell, id, 0, false)
+        if not overrideOk then
+            geterrorhandler()(override)
+        elseif not BlizzardAPI.IsSecretValue(override) and override == spellID then
+            return true
+        end
+        local targetOk, targetOverride = pcall(C_Spell_GetOverrideSpell, spellID, 0, false)
+        if not targetOk then
+            geterrorhandler()(targetOverride)
+        elseif not BlizzardAPI.IsSecretValue(targetOverride) and targetOverride == id then
+            return true
+        end
+    end
+    return false
+end
+
 function ActionBarScanner.GetDirectSlotForSpell(spellID)
     if not spellID then return nil end
-
-    -- Populate cache if needed
-    if slotDirectCache[spellID] == nil then
-        ActionBarScanner.GetSpellHotkey(spellID)
+    local cached = directSpellSlotCache[spellID]
+    if cached and DirectSpellSlotMatches(cached, spellID) then return cached end
+    local slot = ActionBarScanner.GetSlotForSpell(spellID)
+    if slot and DirectSpellSlotMatches(slot, spellID) then
+        directSpellSlotCache[spellID] = slot
+        return slot
     end
-
-    if slotDirectCache[spellID] then
-        return spellSlotCache[spellID]
+    -- Hotkey selection can prefer a macro or another rank. Eligibility needs an
+    -- exact direct spell even when it is unbound or placed on a different bar.
+    for _, entry in ipairs(BlizzardAPI.GetBarSpells()) do
+        if DirectSpellSlotMatches(entry.slot, spellID) then
+            directSpellSlotCache[spellID] = entry.slot
+            return entry.slot
+        end
     end
+    -- Spell hotkey scans also cache item candidates; GetBarSpells excludes items.
+    for _, itemSlot in pairs(itemSlotCache) do
+        if itemSlot and DirectSpellSlotMatches(itemSlot, spellID) then
+            directSpellSlotCache[spellID] = itemSlot
+            return itemSlot
+        end
+    end
+    directSpellSlotCache[spellID] = nil
     return nil
 end
 

@@ -3,6 +3,54 @@
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-11-13
+
+### WoW Forever priorities
+
+- Updated damage priorities from maintained MythicSim presets, with locally curated healer damage fillers.
+- Fixed repeated Holy Fire recommendations while its debuff is active and improved Protection Thunder Clap upkeep.
+- Improved Rogue priorities for usable Backstab and energy-gated Shank, and placed Marksmanship Sniper Shot ahead of Aimed Shot.
+- Priest, Mage and Warlock lists include Shoot as a final damage fallback when a wand is equipped.
+- Automatic priorities save long-cooldown self-buffs for confirmed elite, boss or multi-enemy fights. Custom lists and explicit spell overrides remain unchanged.
+
+### Preparation
+
+- Renamed Pre-combat Buffs to Preparation, with visually separated groups, aligned health/mana recovery controls and consistently sized buff selectors. Food Buff is distinct from health and mana recovery items. Existing settings are preserved.
+- Forever preparation includes missing Paladin seals and Blessing of Might, Protection's Righteous Fury, Shadowform, Moonkin Form, usable Battle Shout, tree-appropriate stances, and Survival's Aspect of the Beast. Learned ranks are recognized, including low-level Seal of Righteousness.
+- Added Forever Divine Spirit, Shadow Protection and Thorns upkeep reminders, plus group versions of Fortitude, Intellect and Mark of the Wild. Received equivalent buffs suppress redundant reminders; active blessing and Hunter aspect alternatives are preserved.
+- Retail preparation includes specialization-appropriate Druid forms, Shadowform and Paladin weapon rites. Form reminders preserve an active form and stay quiet while mounted.
+- Seals and other preparation alternatives now share one queue choice. Confirmed active seals suppress recasts and alternatives in combat, even near expiry; consumed seals can be reapplied. Shared Seals tracking in the Cooldown Manager also suppresses recasts when individual aura reads are unavailable. Unknown reads, hidden viewers and cooldown-only entries do not establish an active buff; deliberate combat form/stance changes are preserved.
+- Out of combat, short preparation buffs can refresh in their final 25%, capped at 10 seconds. Only the active buff is refreshed, with readable timing and a ready, usable cooldown-free spell. Permanent effects, forms, burst cooldowns and unreadable timers are excluded.
+- Preparation takes priority over consumables on the pre-combat bar and no longer also occupies DPS slot 1 while shown there. Expiring buffs return directly to the preparation bar without briefly flashing in the DPS queue. Seals remain eligible in the DPS queue during combat.
+- Out-of-combat item clicks recheck the current unlocked bag stack, follow bag moves, and wait while matching stacks are locked. Item clicks also wait at merchants and banks so they cannot sell or deposit the consumable.
+
+### Recovery
+
+- Out-of-combat recovery prefers ready, usable short-cooldown self-heals over food and bandages, without requiring Recuperate to be learned. Health Recovery offers learned self-heals and an item-only choice; Auto prefers class heals below 70% health. Mana recovery, optional higher top-off reminders and combat emergency priorities remain independent.
+- Forever health and mana recovery have independent Off/Auto controls, inheriting the previous Recovery setting. Combined food/drink can serve either enabled need without duplicate recommendations; Food Buff remains independent.
+- Forever between-pull drink reminders default to below 80% mana, adjustable from 50% to 90% in 10% steps under Pre-combat Recovery.
+- The pre-combat top-off slider uses 10% steps from 50% to 90%. Its selected threshold (80% by default) must be confirmed before offering optional healing; unavailable health reads no longer trigger a generic below-full reminder. Existing saved thresholds and the separate critical-health reminder are preserved.
+- Cast-time personal defensive heals show a dimmed WAIT indicator at 60% health or above when automatic defensive waiting is enabled. More specific defaults and explicit spell settings take precedence.
+
+### Highlights
+
+- Standardized glow colors across surfaces: green defensives/heals, blue movement/escape, orange burst/execute and violet preparation. Sustain changes tint with its activity. Native gold procs, red interrupts and cyan enrage cleanses are preserved; custom and reused frames now honor the requested tint.
+- Missing combat preparation and safe out-of-combat refreshes receive animated violet emphasis while targeting a live hostile. This includes seals, weapon imbues/rites, appropriate forms/stances, Hunter aspects, Battle Shout and Righteous Fury. Active alternatives and unknown state stay quiet; routine upkeep retains its normal highlight.
+- Proc Only includes these preparation cues. Genuine gold procs and urgent heals retain precedence, and No Glows still suppresses the special emphasis.
+
+### Queue behavior
+
+- Usability and range checks match the actual spell rank or item on the action bar, rather than an unrelated macro branch. Confirmed insufficient mana is preserved when other usability information is unavailable.
+- Proc recommendations respect confirmed combat conditions, explicit holds and automatic cooldown-saving rules. Per-spell proc-priority opt-outs also apply across Forever spell ranks.
+- Range checks honor action-button restrictions and range extensions. Out-of-range openers remain positioning cues before combat; blocked attacks yield to usable alternatives or WAIT during combat.
+- Unknown-duration debuff estimates expire after 12 seconds instead of 30 to reduce uptime gaps. Known durations and live aura evidence take precedence.
+- Locally built ZIP installs now include the existing situational-set keybindings.
+
+### Localization
+
+- Updated glow tooltips in every locale to explain the consistent colors and violet preparation emphasis.
+- Completed translations for new options and Cooldown Manager prompts across all supported non-English locales.
+
 ## [6.1.0] - 2026-11-09
 
 ### Queues and priorities

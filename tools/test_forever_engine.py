@@ -114,6 +114,17 @@ def main():
     check(RI.OnFormChanged() is False, "still in bear form -> no re-pick")
     g.form = 1
     check(RI.OnFormChanged() is True and RI.GetForeverTree() == "feral", "leaving bear form -> feral")
+    check(RI.OnFormChanged() is False, "still in cat form -> no re-pick")
+    g.form = 8
+    check(RI.OnFormChanged() is True and RI.GetForeverTree() == "feral_bear",
+          "entering Dire Bear form -> feral_bear")
+    g.form = 5
+    check(RI.OnFormChanged() is False, "Bear and Dire Bear share the installed list")
+    g.form = None
+    check(RI.OnFormChanged() is True and RI.GetForeverTree() == "feral",
+          "no shapeshift form -> feral")
+    lua.execute("GetShapeshiftFormID = nil")
+    check(RI.OnFormChanged() is False, "missing form API leaves the non-bear list installed")
     # Unregistered key: retail behaviour untouched.
     g.specKey = "MONK_1"
     check(RI.HasRotation() is False, "no data -> no rotation")

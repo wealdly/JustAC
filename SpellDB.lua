@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 20)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 22)
 if not SpellDB then return end
 
 local pcall = pcall
@@ -386,6 +386,18 @@ function SpellDB.GetTargetDotDuration(spellID)
     return (d and d > 0) and d or nil
 end
 
+-- Observation eligibility is independent of unconditional queue suppression.
+local targetAuras
+function SpellDB.RegisterTargetAuras(t) targetAuras = t end
+function SpellDB.IsTrackedTargetAura(spellID)
+    return targetAuras ~= nil and StaticLookup(targetAuras, spellID) ~= nil
+end
+function SpellDB.GetTargetAuraDuration(spellID)
+    local duration = targetAuras and StaticLookup(targetAuras, spellID)
+    if duration and duration > 0 then return duration end
+    return SpellDB.GetTargetDotDuration(spellID)
+end
+
 -- Channeled player spells (curated from the SpellMisc channel bit). Channels
 -- report cast time 0 like instants, so the move-cast marker excludes these -
 -- movement breaks a channel. StaticLookup resolves talent-override / base IDs.
@@ -595,6 +607,15 @@ end
 -- re-offered when the player has it but a party member doesn't (someone who joined,
 -- released, or was out of range when it went out). Entries without the flag are
 -- genuinely personal - poisons, shields, imbues - and are never group-checked.
+-- preparation = true is pre-pull preparation, not long-duration upkeep:
+-- active members satisfy it except for bounded OOC refreshes of readable timed buffs.
+-- Combat remains missing-only, without an in-combat apply latch; forms never refresh.
+-- combatCritical = true enables the contextual missing-preparation tint; routine
+-- upkeep groups do not become urgent merely because a hostile is targeted.
+-- Optional spec/tree scope selects a context; form groups never replace an active form.
+-- defaultByTree selects a missing group's fallback, never overrides an active member.
+-- Active family members can be received without learning their casts; cast knowledge
+-- gates recommendations, not aura detection.
 --------------------------------------------------------------------------------
 SpellDB.CLASS_MAINTAINED_BUFFS = {
     DRUID = {
@@ -603,6 +624,9 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
         -- carrying the variant as unbuffed - a recast nag that never cleared.
         { group = { 1126 }, default = 1126, raidWide = true,
           auraIDs = { 1126, 432661 } },                                -- Mark of the Wild
+        { group = { 24858 }, default = 24858, preparation = true, spec = 1, form = true, combatCritical = true },
+        { group = { 768 }, default = 768, preparation = true, spec = 2, form = true, combatCritical = true },
+        { group = { 5487 }, default = 5487, preparation = true, spec = 3, form = true, combatCritical = true },
     },
     EVOKER = {
         -- Blessing of the Bronze does NOT apply its own cast id: the cast triggers one of
@@ -629,6 +653,7 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
     },
     PRIEST = {
         { group = { 21562 }, default = 21562, raidWide = true },       -- Power Word: Fortitude
+        { group = { 232698 }, default = 232698, preparation = true, spec = 3, form = true, combatCritical = true },
     },
     ROGUE = {
         { group = { 315584, 2823, 8679, 381664 }, default = 315584 },  -- Lethal (Instant default)
@@ -657,19 +682,28 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
 -- Data/Forever/Defaults.lua swaps in Forever's groups.
 SpellDB.ROGUE_POISON_CAST_IDS = {}
 SpellDB.MAINTAINED_BUFF_MEMBERS = {}
+-- Values are the owning group, so sibling routing is an identity comparison.
+SpellDB.PREPARATION_BUFF_MEMBERS = {}
 function SpellDB.IndexMaintainedBuffs()
     wipe(SpellDB.ROGUE_POISON_CAST_IDS)
     wipe(SpellDB.MAINTAINED_BUFF_MEMBERS)
+    wipe(SpellDB.PREPARATION_BUFF_MEMBERS)
     for _, grp in ipairs(SpellDB.CLASS_MAINTAINED_BUFFS.ROGUE or {}) do
         for _, id in ipairs(grp.group) do SpellDB.ROGUE_POISON_CAST_IDS[id] = true end
     end
     for _, classGroups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
         for _, grp in ipairs(classGroups) do
-            for _, id in ipairs(grp.group) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+            for _, id in ipairs(grp.group) do
+                SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true
+                if grp.preparation then SpellDB.PREPARATION_BUFF_MEMBERS[id] = grp end
+            end
             -- Forever's aura ids are each rank's cast id, so a rank-3 cast must latch; on
             -- retail aura ids are separate auras, never cast, and stay out as before.
             if SpellDB.IsForever() then
-                for _, id in ipairs(grp.auraIDs or {}) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+                for _, id in ipairs(grp.auraIDs or {}) do
+                    SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true
+                    if grp.preparation then SpellDB.PREPARATION_BUFF_MEMBERS[id] = grp end
+                end
             end
         end
     end
@@ -688,10 +722,12 @@ SpellDB.WEAPON_ENCHANT_SPELLS = {
     [33757] = true,   -- Windfury Weapon
     [318038] = true,  -- Flametongue Weapon
     [382021] = true,  -- Earthliving Weapon
+    [433568] = true,  -- Rite of Sanctification
+    [433583] = true,  -- Rite of Adjuration
     -- Frostbrand (196834) removed: retired at 12.1 (no SpellName row, no acquisition
     -- route, no live replacement) - a detection entry that could never match.
 }
-SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
+SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021, 433568, 433583 }
 
 -- Cheap self-heals castable out of combat, per class: preferred over Recuperate
 -- for topping off (faster, and the resource regenerates out of combat anyway).
@@ -1563,6 +1599,33 @@ local DEFENSE_TIER_SPEC = {
 --   60 / 50 - cast-time and channelled heals; their instant procs are promoted anyway.
 --   25 - the bubble band, for panic buttons that are not tier 1: a ten-minute full heal,
 --        and the immunities that lock out Divine Shield and Lay on Hands (Forbearance).
+-- Direct healing effects (10/136) with a base cast time in the client exports:
+-- Retail 12.1.5.70783 and Forever 1.60.1.70888. The broader healing category also
+-- contains buffs and utility, so it cannot establish this classification alone.
+local CAST_TIME_HEALS = {
+    [331] = true,     -- Healing Wave (Forever)
+    [596] = true,     -- Prayer of Healing
+    [635] = true,     -- Holy Light (Forever)
+    [1064] = true,    -- Chain Heal
+    [2060] = true,    -- Heal
+    [2061] = true,    -- Flash Heal
+    [5185] = true,    -- Healing Touch (Forever)
+    [8004] = true,    -- Healing Surge / Lesser Healing Wave
+    [8936] = true,    -- Regrowth
+    [19750] = true,   -- Flash of Light
+    [32546] = true,   -- Binding Heal
+    [50464] = true,   -- Nourish
+    [77472] = true,   -- Healing Wave (Retail)
+    [82326] = true,   -- Holy Light (Retail)
+    [116670] = true,  -- Vivify
+    [124682] = true,  -- Enveloping Mist
+    [186263] = true,  -- Shadow Mend
+    [194509] = true,  -- Power Word: Radiance
+    [265202] = true,  -- Holy Word: Salvation
+    [399491] = true,  -- Sheilun's Gift
+}
+local CAST_TIME_HEAL_WAIT_BELOW = 60
+
 local DEFAULT_WAIT_BELOW = {
     [85673]  = 80,  -- Word of Glory
     [49998]  = 80,  -- Death Strike (not Blood's, see below)
@@ -1572,9 +1635,6 @@ local DEFAULT_WAIT_BELOW = {
     [185311] = 90,  -- Crimson Vial (heal over time)
     [774]    = 90,  -- Rejuvenation (heal over time)
     [22842]  = 90,  -- Frenzied Regeneration (heal over time)
-    [8936]   = 60,  -- Regrowth
-    [8004]   = 60,  -- Healing Surge
-    [116670] = 60,  -- Vivify
     [234153] = 60,  -- Drain Life
     [370960] = 50,  -- Emerald Communion (three-minute channel)
     [633]    = 25,  -- Lay on Hands
@@ -1595,6 +1655,9 @@ function SpellDB.GetDefaultWaitBelow(spellID)
     local spec = specKey and DEFAULT_WAIT_SPEC[specKey]
     local v = spec and StaticLookup(spec, spellID)
     if v == nil then v = StaticLookup(DEFAULT_WAIT_BELOW, spellID) end
+    if v == nil and StaticLookup(CAST_TIME_HEALS, spellID) then
+        return CAST_TIME_HEAL_WAIT_BELOW
+    end
     return v or nil
 end
 

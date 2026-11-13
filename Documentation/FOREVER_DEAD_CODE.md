@@ -1,5 +1,9 @@
 # Forever dead-code pass (2026-10-04)
 
+**Historical inventory, not a cleanup queue.** Use
+[client compatibility](CLIENT_COMPAT.md) and current code before changing a path.
+Never delete shared Retail behavior on the strength of this list.
+
 > **Superseded direction (2026-10-07): the branch must stay backward compatible with
 > retail** (one codebase, `## Interface: 120100, 16001`). Nothing below is to be DELETED;
 > "dead on Forever" now means "gate on `SpellDB.IsForever()` / `BlizzardAPI.HasGamePick()`"

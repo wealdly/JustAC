@@ -1,5 +1,11 @@
 # Forever probe plan
 
+**Current research (2026-11-10):** see
+[Forever combat signals](FOREVER_COMBAT_SIGNALS.md) for the source-pinned
+high-value inventory, additional engine-state experiments and adoption controls.
+The port status, branch names and initial hypotheses below are historical, not
+the current release state or proof of access on a newer build.
+
 Forever is game type `camelot` (`WOW_PROJECT_ID` 18, Interface 16001) on the modern engine.
 Measured on the beta (1.60.1.70205): `C_AssistedCombat.IsAvailable()` = false,
 `GetRotationSpells()` = `{}`; the client's own `InterfaceOverrides.HasAssistedCombat()` returns

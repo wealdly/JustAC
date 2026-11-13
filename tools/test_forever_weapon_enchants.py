@@ -19,6 +19,8 @@ B.IsForever = function() return forever end
 B.IsSecretValue = function(v) return v == secret end
 B.AreAurasSecret = function() return combat end
 B.GetRotationSpells = function() return {} end
+B.IsSpellUsable = function() return true end
+B.IsSpellReady = function() return true end
 B.IsUnitHealthBelow = function() return false end
 B.IsPassiveSpell = function() return false end
 B.GetCachedSpellInfo = function() return { name = "Rockbiter Weapon" } end
@@ -26,11 +28,13 @@ function issecretvalue(v) return B.IsSecretValue(v) end
 errors = {}
 function geterrorhandler() return function(e) errors[#errors + 1] = e end end
 local S = LibStub:NewLibrary("JustAC-SpellDB")
+S.IsForever = function() return forever end
 S.WEAPON_IMBUE_SPELLS = { 8017 }
 S.WEAPON_ENCHANT_SPELLS = { [8017] = true, [8018] = true }
 S.CLASS_MAINTAINED_BUFFS = {}
 S.NEXT_SWING_SPELLS = { [2973] = true }
 S.MAINTAINED_BUFF_MEMBERS = {}
+S.PREPARATION_BUFF_MEMBERS = {}
 S.StaticLookup = function(t, id) return t[id] end
 melee = nil
 S.IsTargetWithin = function() return melee end
@@ -41,6 +45,9 @@ function InCombatLockdown() return combat end
 function UnitAffectingCombat() return combat end
 function IsInGroup() return grouped end
 function UnitClass() return "Shaman", "SHAMAN" end
+function UnitExists() return true end
+function UnitHealth() return 100 end
+function UnitHealthMax() return 100 end
 function IsPlayerSpell(id) return id == 8017 or id == 8018 end
 function UnitIsDeadOrGhost() return false end
 function IsMounted() return false end
@@ -57,7 +64,8 @@ C_Item = {
     end,
 }
 function GetWeaponEnchantInfo() return legacyHas, legacyTime, 0, 0, false, 0 end
-C_Spell = { IsSpellInRange = function() return true end }
+spellRange = true
+C_Spell = { IsSpellInRange = function() return spellRange end }
 C_ActionBar = { IsActionInRange = function() return true end }
 LibStub:NewLibrary("JustAC-ActionBarScanner").GetDirectSlotForSpell = function() return 1 end
 C_UnitAuras = { GetPlayerAuraBySpellID = function() end }
@@ -126,6 +134,39 @@ def main():
     assert api.SpellInRange(2973, "target") is False, "next-swing ability uses the same evidence"
     assert api.AbilityInRange(6603) is False, "raw action range cannot overturn confirmed melee range"
     assert api.AbilityInRange(2973) is False, "next-swing action range cannot overturn melee range"
+    for client in (True, False):
+        lua.globals().forever = client
+        for spell, action, expected in (
+            (True, False, False),
+            (False, True, True),
+            (None, False, False),
+            (None, True, True),
+            (True, None, True),
+            (False, None, False),
+            (None, None, None),
+        ):
+            lua.globals().spellRange = spell
+            lua.globals().actionRange = action
+            lua.execute("C_ActionBar.IsActionInRange=function() return actionRange end")
+            assert api.AbilityInRange(2764) is expected, (client, spell, action)
+        lua.execute("spellRange=true; C_ActionBar.IsActionInRange=function() return secret end")
+        assert api.AbilityInRange(2764) is True, "secret action range falls back to spell range"
+        lua.execute("spellRange=false")
+        assert api.AbilityInRange(2764) is False, "secret action range preserves a spell-range rejection"
+        lua.execute("spellRange=secret")
+        assert api.AbilityInRange(2764) is None, "two unreadable range results remain unknown"
+        lua.execute("spellRange=true")
+        lua.execute("C_ActionBar.IsActionInRange=function() error('range denied') end")
+        before = len(lua.globals().errors)
+        assert api.AbilityInRange(2764) is True, "failed action range falls back to spell range"
+        assert len(lua.globals().errors) == before + 1, "range failure is reported"
+        lua.execute("""
+            LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return nil end
+            C_ActionBar.IsActionInRange=function() return false end
+        """)
+        assert api.AbilityInRange(2764) is True, "off-bar spells retain their spell range"
+        lua.execute('LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return 1 end')
+    lua.execute("forever=true; spellRange=true; C_ActionBar.IsActionInRange=function() return true end")
     renderer = (ROOT / "UI" / "UIRenderer.lua").read_text(encoding="utf-8")
     start = renderer.index("local function CheckSpellRange(icon, spellID, directSlot)")
     end = renderer.index("\nend", start) + len("\nend")
@@ -150,6 +191,7 @@ def main():
         function ClaimSpellID(id, added) added[id] = true; return id end
         function PassesRotationFilters() return true end
         function HeldByUserHold() return false end
+        function HasUserHold() return false end
         function IsSpenderSpell() return false end
         function MissingMinimumResource() return false end
         function IsBarGreyedOut() return false end

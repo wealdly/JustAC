@@ -16,12 +16,13 @@ function LibStub(name)
     return RI
 end
 function RI.RegisterForever(data, chains)
-    classes, rankBases = data, {}
+    classes, rankBases, rankChains = data, {}, chains
     for base, chain in pairs(chains) do
         for _, id in ipairs(chain) do rankBases[id] = base end
     end
 end
 function RI.RankBase(id) return rankBases[id] or id end
+function RI.RankChain(id) return rankChains[RI.RankBase(id)] end
 RotationImport = RI
 function wipe(t) for k in pairs(t) do t[k] = nil end end
 SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true end }
@@ -68,12 +69,12 @@ function UnitIsDeadOrGhost() return targetDead end
 function NoteManaStarved() end
 function ClaimSpellID(id, added) added[id] = true; return id end
 function PassesRotationFilters(id) return not filtered[RotationImport.RankBase(id)] end
+function PassesSpellFilters(id) return not filtered[RotationImport.RankBase(id)] end
 function IsSpenderSpell(id) return specKey == "ROGUE_F" end
 function IsConfirmedOutOfRange(id) return BlizzardAPI.AbilityInRange(id) == false end
 function SimcBuffWindowActive() return false end
 function GateInPickWindows() return false end
 function HasPositiveBuffGate() return false end
-function ProcPriorityEnabled() return true end
 function SimcNegativeBuffBlocks() return false end
 function DotGateBlocks() return false end
 function RotationImport.GetEntry(id)
@@ -143,16 +144,20 @@ def create_runtime(real_gates=False):
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     start = source.index("local function IsForeverPullSpell(")
     end = source.index("\n--- Largest icon count", start)
+    tail_start = source.index("function SpellQueue._StageTail(")
+    tail_end = source.index("\nend", tail_start) + len("\nend")
     helpers = "\n".join(extract(name, source) for name in (
-        "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
+        "ProcPriorityEnabled", "ClaimSpellID", "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
         "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
-        "GateVerdict", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
+        "GateVerdict", "ProcGateBlocks", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
         "IsUnusableNonResource", "SimcPowerType", "ThresholdGateBlocks", "StackAtLeast", "StackHolds"
     ))
     helpers = """
         local gateCtx, tieredSpenderCache = {}, {}
         local DISCRETE_POWER = {[4]=true,[9]=true,[12]=true,[7]=true,
             [5]=true,[19]=true,[16]=true}
+        PROC_CONTEXT_GATES = {dot=true,known=true,near=true,prev=true,stealth=true,
+            targets=true,totem=true,unconfirmed=true}
     """ + helpers
     lua.execute(helpers + """
         SpellQueue.IsUnusableNonResource = IsUnusableNonResource
@@ -176,9 +181,20 @@ def create_runtime(real_gates=False):
             reset()
             wipe(tieredSpenderCache)
         end
-    """ + source[start:end] + """
+    """ + source[source.index("local spellbookProcState ="):source.index("\n--- Profile-distance rank")] + source[start:end] + """
         function Build()
-            CategorizeAndAssembleRotation(pool, b)
+            CategorizeAndAssembleRotation(AddSpellbookProcs(pool, b), b)
+            return b.recommendedSpells
+        end
+        local cachedRotationList
+        local lastCtx, pickWindowsBuf = {}, {}
+        BlizzardAPI.GetEffectiveOrdering = function() return b.contextOrder end
+        RotationImport.HasRotation = function() return true end
+        SpellQueue.FilterHealerTail = function(list) return list end
+    """ + source[tail_start:tail_end] + """
+        function BuildStage()
+            cachedRotationList = pool
+            SpellQueue._StageTail(b)
             return b.recommendedSpells
         end
     """)
@@ -190,6 +206,49 @@ def create_runtime(real_gates=False):
     power_end = source.index("\nend", power_start) + len("\nend")
     lua.execute(source[power_start:power_end])
     return lua
+
+
+def check_trash_burst_wait():
+    lua = create_runtime()
+    for setup, should_wait in (
+        ("", True),
+        ("procs[1259799]=true", True),
+        ("b.ctxEnemies=0", True),
+        ("b.inCombat=false;b.ctxEnemies=0", True),
+        ("b.inCombat=false;targetExists=false;b.ctxEnemies=0", True),
+        ("b.inCombat=false;targetDead=true;b.ctxEnemies=0", True),
+        ("b.inCombat=false;b.ctxEnemies=3", True),
+        ("classification='elite'", False),
+        ("b.inCombat=false;classification='elite'", False),
+        ("b.ctxEnemies=3", False),
+        ("SpellQueue._rotationIsCustom=true", False),
+        ("pinnedAlwaysShow[1259799]=true", False),
+        ("holdPoints[1259799]=0", False),
+        ("b.profile.burstTriggers={SHAMAN_F={1259799}}", False),
+    ):
+        lua.execute("""
+            Reset()
+            classification='normal'
+            function UnitClassification() return classification end
+            BlizzardAPI.IsTargetBoss=function() return false end
+            BlizzardAPI.PeekBaseCooldownSeconds=function(id)
+                if id==1259799 then return 180 end
+                return 0
+            end
+            b.inCombat=true;b.ctxEnemies=1;b.leadMode='mylist'
+            entries={{id=403}}
+            pool={403,1259799}
+            cooldown[403]=true
+        """ + setup)
+        queue = lua.globals().Build()
+        lua.globals().b.spellCount = len(queue)
+        lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
+        if should_wait:
+            assert queue[1] == lua.globals().SpellQueue.WAIT_SENTINEL, setup
+            assert queue[2] == 403 and queue[3] == 1259799, setup
+        else:
+            assert queue[1] == 1259799, setup
+    print("Trash burst fallback: wait, proc veto, elites, packs and explicit overrides passed")
 
 
 def check_positioning_openers():
@@ -235,7 +294,175 @@ def check_positioning_openers():
     print(f"Pre-pull positioning: {len(cases)} cases preserve attacks over self buffs, safety gates and explicit ordering")
 
 
+def check_queue_fast_paths():
+    source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        rankSortIdx={}
+        function wipe(t) for k in pairs(t) do t[k]=nil end end
+        sortCalls=0
+        local sort=table.sort
+        table.sort=function(...) sortCalls=sortCalls+1;return sort(...) end
+    """)
+    start = source.index("local sortRanks\n")
+    end = source.index("\n--- Categorize rotation spells", start)
+    lua.execute(source[start:end] + """
+        local q={99}
+        assert(AppendRankedBucket({1,2},{2,1},2,q,1,1)==1 and q[1]==99)
+        assert(AppendRankedBucket({},{},0,q,1,4)==1)
+        assert(AppendRankedBucket({42},{9},1,q,1,4)==2 and q[2]==42)
+        assert(sortCalls==0, 'full, empty and singleton buckets must not sort')
+        q={}
+        assert(AppendRankedBucket({10,11,12},{2,1,1},3,q,0,2)==2)
+        assert(q[1]==11 and q[2]==12 and sortCalls==1, 'stable ties and cap')
+    """)
+    for client in (True, False):
+        for value in (True, False, None):
+            lua = create_runtime()
+            lua.globals().testClient = client
+            lua.globals().dotValue = value
+            lua.execute("""
+                Reset()
+                forever=testClient
+                b.inCombat=true
+                entries={{id=403},{id=8042}}
+                dotReads=0
+                DotTracker={IsDotActiveOnCurrentTarget=function()
+                    dotReads=dotReads+1;return dotValue
+                end}
+                Build()
+                assert(dotReads==2, 'at most one lazy DoT read per spell')
+                b.addedSpellIDs={};b.recommendedSpells={};b.spellCount=0
+                dotValue=false
+                Build()
+                assert(dotReads==4, 'memo must be cleared between categorization passes')
+                b.addedSpellIDs={};b.recommendedSpells={};b.spellCount=0
+                procs={[403]=true,[8042]=true}
+                Build()
+                assert(dotReads==4, 'proc promotion must not introduce DoT reads')
+            """)
+    lua = create_runtime()
+    start = source.index("local function IsForeverPullSpell(")
+    end = source.index("\n--- Largest icon count", start)
+    lua.execute("""
+        Reset();holdReads=0
+        function HasUserHold() holdReads=holdReads+1;return false end
+        function HeldByUserHold() return false end
+    """ + source[start:end] + """
+        CategorizeAndAssembleRotation(pool,b)
+        assert(holdReads==2, 'one hold-setting lookup per admitted spell')
+    """)
+    print("Queue fast paths: skipped sorts, stable ties and fresh tri-state DoT reads passed")
+
+
+def check_spellbook_proc_pipeline():
+    cases = [
+        ("", [2098, 1752]),
+        ("b.profile.showSpellbookProcs=false", [1752, 2098]),
+        ("b.profile.orderProcsFirst=false", [1752, 2098]),
+        ("b.bypassProcs=true", [1752, 2098]),
+        ("b.profile.defensives={spellSettings={[2098]={procPriority=false}}}", [1752, 2098]),
+        ("b.profile.defensives={spellSettings={[11299]={procPriority=false}}}", [1752, 2098]),
+        ("entries[2].gates={{t='targets',op='>=',n=3}}", [1752, 2098]),
+        ("entries[2].gates={{t='stack',id=1,op='>=',n=5}}", [2098, 1752]),
+        ("entries[2].gates={{t='buff',id=5171,neg=true,dur=5}};buffs[5171]=true;forever=true",
+         [1752, 2098]),
+        ("holdPoints[2098]=6; points=2", [1752, 2098]),
+        ("locked[2098]=true", [1752, 2098]),
+        ("points=0", [1752, 2098]),
+        ("cooldown[2098]=true", [1752, 2098]),
+        ("pool={1752}", [2098, 1752]),
+        ("pool={1752};cooldown[2098]=true", [1752]),
+        ("pool={1752};starved[2098]=true", [1752]),
+        ("pool={1752};unusable[2098]=true", [1752]),
+        ("pool={1752};ranges[2098]=false;b.sinkCooldowns=false", [1752]),
+        ("pool={1752};entries[2].gates={{t='targets',op='>=',n=3}}", [1752]),
+        ("SpellQueue._rotationIsCustom=true;b.contextOrder='off';b.profile.orderProcsFirst=false",
+         [1752, 2098]),
+    ]
+    for client in (True, False):
+        for extra, expected in cases:
+            lua = create_runtime()
+            lua.globals().client = client
+            lua.execute("""
+                Reset();forever=client;specKey='ROGUE_F';b.inCombat=true;points=5
+                b.profile.showSpellbookProcs=true
+                b.effectiveBypassProcs=false
+                entries={{id=1752},{id=2098}}
+                pool={1752,2098}
+                BlizzardAPI.GetEngagedEnemyCount=function() return 1 end
+                ActionBarScanner={
+                    GetSpellbookProccedSpells=function() return {2098} end,
+                    GetSpellHotkey=function() return '1' end,
+                }
+            """ + extra)
+            # StageTail computes this from the master/profile switches.
+            lua.execute("b.effectiveBypassProcs=b.bypassProcs or b.profile.orderProcsFirst==false")
+            actual = list(lua.globals().Build().values())
+            assert actual == expected, (client, extra, actual, expected)
+
+    lua = create_runtime()
+    lua.execute("""
+        Reset();b.inCombat=true;b.ctxEnemies=1;b.profile.showSpellbookProcs=true
+        classification='normal'
+        function UnitClassification() return classification end
+        BlizzardAPI.IsTargetBoss=function() return false end
+        BlizzardAPI.PeekBaseCooldownSeconds=function(id) return 180 end
+        pool={403,1259799};entries={{id=403},{id=1259799}}
+        ActionBarScanner={
+            GetSpellbookProccedSpells=function() return {1259799} end,
+            GetSpellHotkey=function() return '1' end,
+        }
+    """)
+    assert list(lua.globals().Build().values()) == [403, 1259799]
+    assert lua.globals().b.automaticBurstHeld
+    print(f"Spellbook proc pipeline: {len(cases) * 2} cross-client cases and automatic burst hold passed")
+
+
+def check_shared_proc_stage():
+    cases = [
+        ("", [11299, 1752]),
+        ("b.profile.orderProcsFirst=false", [1752, 11299]),
+        ("b.bypassProcs=true", [1752, 11299]),
+        ("b.profile.defensives={spellSettings={[2098]={procPriority=false}}}", [1752, 11299]),
+        ("b.profile.defensives={spellSettings={[11299]={procPriority=false}}}", [1752, 11299]),
+        ("entries[2].gates={{t='targets',op='>=',n=3}}", [1752, 11299]),
+        ("pool=nil", [11299]),
+        ("pool=nil;cooldown[2098]=true", []),
+        ("pool=nil;b.profile.showSpellbookProcs=false", []),
+        ("pool={1752};b.hideItems=true;BlizzardAPI.IsItemSpell=function(id) return id==11299 end",
+         [1752]),
+    ]
+    for client in (True, False):
+        for extra, expected in cases:
+            lua = create_runtime()
+            lua.globals().client = client
+            lua.execute("""
+                Reset();forever=client;specKey='ROGUE_F';b.inCombat=true;points=5
+                b.profile.showSpellbookProcs=true
+                entries={{id=1752},{id=2098}}
+                pool={1752,2098}
+                BlizzardAPI.GetDisplaySpellID=function(id)
+                    if RotationImport.RankBase(id)==2098 then return 11299 end
+                    return id
+                end
+                BlizzardAPI.GetEngagedEnemyCount=function() return 1 end
+                ActionBarScanner={
+                    GetSpellbookProccedSpells=function() return {2098,11299} end,
+                    GetSpellHotkey=function() return '1' end,
+                }
+            """ + extra)
+            actual = list(lua.globals().BuildStage().values())
+            assert actual == expected, (client, extra, actual, expected)
+            assert lua.globals().b.spellCount == len(actual)
+    print(f"Shared tail stage: {len(cases) * 2} cross-client rank, settings and absent-rotation cases passed")
+
+
 def main():
+    check_queue_fast_paths()
+    check_spellbook_proc_pipeline()
+    check_shared_proc_stage()
+    check_trash_burst_wait()
     lua = create_runtime()
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     cases = [
@@ -357,6 +584,8 @@ def main():
          [2098, 1752], "out-of-range builder trails a missing-resource finisher"),
         (rogue + "points=0; starved[2098]=nil; procs[2098]=true",
          [1752, 2098], "proc cannot bypass a confirmed actual minimum"),
+        (rogue + "points=2; starved[2098]=nil; procs[2098]=true",
+         [2098, 1752], "proc may override an unmet imported resource preference"),
         (rogue + "points=0; starved[2098]=nil; minimum=0; procs[2098]=true",
          [2098, 1752], "free proc with zero minimum remains usable"),
         (rogue + "points=0; minimum=nil; entries[1].gates=nil", [2098, 1752], "missing minimum remains unknown"),
@@ -383,6 +612,27 @@ def main():
          [2098, 1752], "unknown counts and minimums retain priority order"),
         (rogue + "points=2; forever=false; starved[2098]=nil; starved[1752]=nil",
          [1752, 2098], "retail retains its imported five-point preference"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='targets',op='>=',n=2}}},{id=1752}};
+            procs[2098]=true; points=5;
+            BlizzardAPI.GetEngagedEnemyCount=function() return 1 end""",
+         [1752, 2098], "proc cannot bypass an unmet target-count gate"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='targets',op='>=',n=2}}},{id=1752}};
+            procs[2098]=true; points=5; BlizzardAPI.GetEngagedEnemyCount=nil""",
+         [2098, 1752], "unknown target count does not veto a confirmed proc"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='stack',id=1,op='>=',n=5}}},{id=1752}};
+            procs[2098]=true; points=5; stacks=0""",
+         [2098, 1752], "proc glow may override a stack priority preference"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='buff',id=5171,neg=true,dur=5}}},{id=1752}};
+            procs[2098]=true; points=5; buffs[5171]=true""",
+         [1752, 2098], "proc cannot bypass a confirmed active exclusion buff"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='dot',id=1}}},{id=1752}};
+            procs[2098]=true; points=5;
+            BlizzardAPI.IsUnitHealthBelow=function() return true end""",
+         [1752, 2098], "proc cannot bypass a confirmed short-lived target gate"),
+        ("""pool={2098,1752}; entries={{id=2098,gates={{t='totem',slot=1}}},{id=1752}};
+            procs[2098]=true; points=5;
+            BlizzardAPI.IsTotemSlotOccupied=function() return false end""",
+         [1752, 2098], "proc cannot bypass a confirmed totem-state gate"),
     ])
     for rear, builder in ((703, 1752), (6785, 1082), (8676, 1752), (9005, 1082)):
         cases.append(("pool={%d,%d}; entries={{id=%d},{id=%d}}; targetingMe=true" % (rear, builder, rear, builder),
@@ -481,6 +731,8 @@ def main():
         (rogue + """points=0; pool[3]=2764; starved[1752]=nil;
             ranges[2764]=false""",
          [1752, 2098, 2764], "usable melee leads Throw inside its minimum range"),
+        (rogue + """points=0; pool[3]=2764; ranges[2764]=false""",
+         [wait, 1752, 2098, 2764], "blocked Throw cannot fill an energy-starved melee gap"),
         (rogue + """points=0; pool[3]=2764; ranges[1752]=false;
             ranges[2098]=false; ranges[2764]=false""",
          [wait, 2098, 1752, 2764], "Throw outside its range does not prevent WAIT"),
@@ -526,8 +778,12 @@ def main():
     lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
     assert queue[1] != wait, "later actionable burst injection prevents WAIT"
     print(f"Forever WAIT: {len(wait_cases)} cases and late-injection check passed")
-    lua.execute(extract("AddSpellbookProcs", source) + """
-        function PassesSpellFilters() return true end
+    lua.execute("""
+        function SpellbookProcCount(b)
+            b.profile.showSpellbookProcs = true
+            pool = {}
+            return #Build()
+        end
         SpellDB.IsOffensiveSpell = function() return true end
         ActionBarScanner = {
             GetSpellbookProccedSpells = function() return {2098} end,
@@ -535,29 +791,29 @@ def main():
         }
         Reset(); unusable[2098]=true
     """)
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unusable finisher"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 0, "spellbook proc must not inject unusable finisher"
     lua.execute("Reset(); starved[2098]=true")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject unaffordable finisher"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 0, "spellbook proc must not inject unaffordable finisher"
     lua.execute("Reset(); ranges[2098]=false")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "early spellbook proc must not inject out-of-range spell"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 0, "spellbook proc must not inject out-of-range spell"
     assert not lua.globals().b.addedSpellIDs[2098], "range rejection must release the spell for tail sinking"
     lua.execute("Reset(); ranges[2098]=nil")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "unknown range does not reject early spellbook proc"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 1, "unknown range does not reject spellbook proc"
     lua.execute("Reset()")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "usable spellbook proc remains available"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 1, "usable spellbook proc remains available"
     for spec, spell in (("ROGUE_F", 53), ("DRUID_F", 5221)):
         lua.execute(f"""Reset(); specKey='{spec}'; targetingMe=true;
             ActionBarScanner.GetSpellbookProccedSpells=function() return {{{spell}}} end""")
-        assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, f"{spec} rear gate vetoes early proc"
+        assert lua.globals().SpellbookProcCount(lua.globals().b) == 0, f"{spec} rear gate vetoes spellbook proc"
         assert not lua.globals().b.addedSpellIDs[spell]
         lua.execute("stealthed=true")
-        assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, f"{spec} stealth preserves early proc"
+        assert lua.globals().SpellbookProcCount(lua.globals().b) == 1, f"{spec} stealth preserves spellbook proc"
     lua.execute("""Reset(); specKey='WARRIOR_F';
         ActionBarScanner.GetSpellbookProccedSpells=function() return {7384} end;
         BlizzardAPI.GetActionBarUsability=function() return false,false end""")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 0, "greyed reactive attack vetoes early proc"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 0, "greyed reactive attack vetoes spellbook proc"
     lua.execute("BlizzardAPI.GetActionBarUsability=function() return nil,nil end")
-    assert lua.globals().AddSpellbookProcs(lua.globals().b) == 1, "unknown bar state preserves early proc"
+    assert lua.globals().SpellbookProcCount(lua.globals().b) == 1, "unknown bar state preserves spellbook proc"
     lua.execute("Reset(); " + rogue + "points=5")
     assert list(lua.globals().Build().values()) == [2098, 1752]
     lua.execute("points=0; b.addedSpellIDs={}; b.recommendedSpells={}; unavailableTier={}")

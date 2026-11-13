@@ -13,23 +13,46 @@ not the plan.
 2. **Gate where everything routes through.** A guard in the one function every consumer
    reaches (example: `RotationImport.RegisterForever`) beats a guard at each caller, and it
    survives regenerating the data.
-3. **Data per client, one gate per file.** `Data/ForeverDefaults.lua` returns unless Forever;
-   `Data/ForeverRotations.lua` registers through the gated `RegisterForever`. Shared tables
+3. **Data per client, one gate per file.** `Data/Forever/Defaults.lua` returns unless Forever;
+   `Data/Forever/Rotations.lua` registers through the gated `RegisterForever`. Shared tables
    are merged into, never replaced, and retail never builds `<CLASS>_F` keys.
 4. **Retail behaviour stays exactly as before unless a change is meant for both.** Universal
-   changes are listed below as such; anything else is gated.
+   changes must be intentional; client-specific changes are gated.
 5. **Every leak is a test.** `tools/test_forever_defaults.py` loads the real SpellDB,
    RotationImport, Forever lists and Forever defaults as retail and asserts nothing Forever
    registers there. `tools/test_forever_dots.py` checks the DoT tracker's retail half.
 
-## Planned next steps
+## Current workflow
 
-- A capability layer (`BlizzardAPI/Client.lua`) answering the questions the code actually
-  asks: HasGamePick, HasRanks, HasSwingEvents, DotRefreshCarryover, TargetGUIDPlainInCombat,
-  AurasReadableInCombat. Gates then name the reason, not the client.
-- Per-client TOC file lists, if Forever reads a client-specific TOC suffix (needs an
-  in-game check): each client would then load only its own data files.
-- Merge `main` (5.8.0, 5.8.1) into `forever`, then `forever` back into `main`.
+- Combat-signal research: [Forever combat signals](FOREVER_COMBAT_SIGNALS.md)
+  records existing high-value bridges and unverified next experiments. Source
+  annotations alone are not combat validation.
+
+- Prefer existing capability helpers; this document does not prescribe a new
+  capability module or client-specific TOC split.
+- Use the [two-client refresh workflow](DEV_TOOLING.md#two-client-update-check-and-refresh)
+  for source/data checks and authorized deployment verification.
+- One shared `main` branch supports both clients. The branch review below is
+  historical, not a pending merge or a description of every current code path.
+
+## Forever rotation source review
+
+The current vendored source and local adaptations are described under
+[Lists](FOREVER_ENGINE_DESIGN.md#lists); pinned revision and license live with
+`tools/forever-apl-src/`. Local healer pins live in `tools/simc-apl-forever/`.
+Check those inputs and the current generator before interpreting the old design.
+
+When evaluating alternatives, verify client/level/talent coverage, priority-list
+semantics, maintenance, reproducibility, license and redistribution terms.
+Compare actual imported decisions against supported live signals and general
+play scenarios. Do not adopt Retail IDs/assumptions, infer unknown combat state,
+or claim optimal execution from a simulator result. Document attribution,
+revision and adaptations before adoption.
+
+Future rank handling must account for intentional downranking for utility
+effects, not only maximum damage. See
+[intentional downranking](FOREVER_ENGINE_DESIGN.md#intentional-downranking-future-requirement)
+before changing rank normalization or explicit player spell selection.
 
 ## Review of 2026-10-07 (branch `forever` vs its base 4b0a2f1)
 

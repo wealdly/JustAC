@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Defensives - Defensive queue settings tab + spell list management
-local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 4)
+local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 5)
 if not Defensives then return end
 
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
@@ -37,7 +37,7 @@ local function pbDisabled(addon)
 end
 
 -- Label an option with the specific bag item it resolves to - "Haste  Flask of Tempered
--- Swiftness" (green, matching the OOC buff glow). Answers "which flask does this pick?".
+-- Swiftness" (green item label). Answers "which flask does this pick?".
 -- Falls back to the plain label when nothing owned fits that option.
 local function pbOptLabel(cat, statPref, base)
     local SDB = LibStub("JustAC-SpellDB", true)
@@ -56,7 +56,7 @@ local function pbStatSelect(addon, cat, name, order, withSpeed)
         and { "off", "auto", "haste", "crit", "mastery", "versatility", "speed" }
         or PB_STAT_ORDER
     return {
-        type = "select", name = name, order = order, sorting = sorting,
+        type = "select", name = name, order = order, sorting = sorting, width = "double",
         values = function()
             local vals = {
                 off = L["Off"],
@@ -89,9 +89,10 @@ end
 -- speed). The Auto option is labelled with the winning bag item. `defaultOff` flips the
 -- default so xp/speed stay off until chosen (stored as an explicit truthy value, since a nil
 -- would revert to the AceDB `false` default).
-local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
+local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc, width)
     return {
         type = "select", name = name, order = order, desc = desc, sorting = { "off", "auto" },
+        width = width or "double",
         values = function()
             return { off = L["Off"], auto = pbOptLabel(cat, nil, L["Auto"]) }
         end,
@@ -117,6 +118,56 @@ local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
             pbApply(addon)
         end,
     }
+end
+
+local function pbRecoveryEnabled(addon, category)
+    local PE = LibStub("JustAC-PrecombatEngine", true)
+    return PE and PE.IsRecoveryEnabled(pbCategories(addon), category)
+end
+
+local function pbRecoverySelect(addon, category, name, order, desc)
+    local option = pbOnOffSelect(addon, category, name, order, false, desc, "full")
+    if category == "healthRecovery" then
+        local function choices()
+            local values = { off = L["Off"], auto = L["Auto"], items = L["Food / Bandage"] }
+            local sorting = { "off", "auto" }
+            local PE = LibStub("JustAC-PrecombatEngine", true)
+            local heals = PE and PE.GetRecoveryHeals and PE.GetRecoveryHeals() or {}
+            for i, id in ipairs(heals) do
+                local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+                values[id] = spellName or tostring(id)
+                sorting[#sorting + 1] = id
+                if i == 1 then values.auto = L["Auto"] .. " (" .. values[id] .. ")" end
+            end
+            local selected = pbCategories(addon)[category]
+            if type(selected) == "number" and not values[selected] then
+                values[selected] = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(selected))
+                    or tostring(selected)
+                sorting[#sorting + 1] = selected
+            end
+            sorting[#sorting + 1] = "items"
+            return values, sorting
+        end
+        option.values = function() local values = choices(); return values end
+        option.sorting = function() local _, sorting = choices(); return sorting end
+    end
+    option.get = function()
+        local selected = pbCategories(addon)[category]
+        if category == "healthRecovery" and (type(selected) == "number" or selected == "items") then
+            return selected
+        end
+        if pbRecoveryEnabled(addon, category) then return "auto" end
+        return "off"
+    end
+    option.set = function(_, value)
+        local selected = value == "auto"
+        if category == "healthRecovery" and (type(value) == "number" or value == "items") then
+            selected = value
+        end
+        pbCategories(addon)[category] = selected
+        pbApply(addon)
+    end
+    return option
 end
 
 --- Show an option on one client only (forever = true: WoW Forever; false: retail).
@@ -597,7 +648,7 @@ function Defensives.CreateTabArgs(addon)
             -- ── SUB-TAB 2: PRE-COMBAT BUFFS ─────────────────────────────────────
             precombat = {
                 type = "group",
-                name = L["Pre-combat Buffs"],
+                name = L["Preparation"],
                 order = 2,
                 -- Pre-combat suggestions render on the defensive bar; with defensives
                 -- disabled they have no surface, so the whole section grays out.
@@ -605,8 +656,8 @@ function Defensives.CreateTabArgs(addon)
                 args = {
                     pbEnabled = {
                         type = "toggle",
-                        name = L["Enable Pre-combat Buffs"],
-                        desc = L["Pre-combat Buffs desc"],
+                        name = L["Enable Preparation"],
+                        desc = L["Preparation desc"],
                         order = 1,
                         width = "full",
                         get = function() return addon.db.profile.precombatBuffs.enabled ~= false end,
@@ -615,73 +666,117 @@ function Defensives.CreateTabArgs(addon)
                             pbApply(addon)
                         end,
                     },
-                    topoffHeal = {
-                        type = "toggle",
-                        name = L["Health Top-off"],
-                        desc = L["Health Top-off desc"],
+                    recoveryGroup = {
+                        type = "group",
+                        name = L["Between-pull Recovery"],
                         order = 2,
-                        width = "full",
-                        disabled = function() return pbDisabled(addon) end,
-                        get = function() return addon.db.profile.precombatBuffs.topoffHeal == true end,
-                        set = function(_, v)
-                            addon.db.profile.precombatBuffs.topoffHeal = v
-                            pbApply(addon)
-                        end,
+                        inline = true,
+                        args = {
+                            topoffHeal = {
+                                type = "toggle",
+                                name = L["Self-heal Reminder"],
+                                desc = L["Health Top-off desc"],
+                                order = 3,
+                                width = "full",
+                                disabled = function() return pbDisabled(addon) end,
+                                get = function() return addon.db.profile.precombatBuffs.topoffHeal == true end,
+                                set = function(_, v)
+                                    addon.db.profile.precombatBuffs.topoffHeal = v
+                                    pbApply(addon)
+                                end,
+                            },
+                            -- Each selection asks one health-threshold question, never a percentage scan.
+                            topoffThreshold = {
+                                type = "range",
+                                name = L["Heal Below"],
+                                desc = L["Health Top-off Threshold desc"],
+                                order = 3.1, width = "full",
+                                min = 50, max = 90, step = 10,
+                                disabled = function()
+                                    return pbDisabled(addon)
+                                        or addon.db.profile.precombatBuffs.topoffHeal ~= true
+                                end,
+                                get = function() return addon.db.profile.precombatBuffs.topoffThreshold or 80 end,
+                                set = function(_, v)
+                                    addon.db.profile.precombatBuffs.topoffThreshold = v
+                                    pbApply(addon)
+                                end,
+                            },
+                            healthRecovery = ClientOnly(pbRecoverySelect(addon, "healthRecovery",
+                                L["Health Recovery Items"], 4, L["Health Recovery Items desc"]), true),
+                            manaRecovery = ClientOnly(pbRecoverySelect(addon, "manaRecovery",
+                                L["Mana Recovery Items"], 5.1, L["Mana Recovery Items desc"]), true),
+                            recoveryManaThreshold = ClientOnly({
+                                type = "range",
+                                name = L["Mana Recovery Threshold"],
+                                desc = L["Mana Recovery Threshold desc"],
+                                order = 5, width = "full",
+                                min = 50, max = 90, step = 10,
+                                disabled = function()
+                                    return pbDisabled(addon)
+                                        or not pbRecoveryEnabled(addon, "manaRecovery")
+                                end,
+                                get = function() return addon.db.profile.precombatBuffs.recoveryManaThreshold or 80 end,
+                                set = function(_, v)
+                                    addon.db.profile.precombatBuffs.recoveryManaThreshold = v
+                                    pbApply(addon)
+                                end,
+                            }, true),
+                        },
                     },
-                    -- Only meaningful since the cue moved onto a health curve: before that the
-                    -- threshold was honoured solely where an exact health read works (rested
-                    -- areas), and degraded to "below full" everywhere else - so a slider would
-                    -- have been a lie in the open world. Stepped in 5s for the same reason as
-                    -- the pet slider: each distinct value builds and caches its own curve.
-                    topoffThreshold = {
-                        type = "range",
-                        name = L["Health Top-off Threshold"],
-                        desc = L["Health Top-off Threshold desc"],
-                        order = 2.1, width = "full",
-                        min = 50, max = 95, step = 5,
-                        disabled = function()
-                            return pbDisabled(addon)
-                                or addon.db.profile.precombatBuffs.topoffHeal ~= true
-                        end,
-                        get = function() return addon.db.profile.precombatBuffs.topoffThreshold or 90 end,
-                        set = function(_, v)
-                            addon.db.profile.precombatBuffs.topoffThreshold = v
-                            pbApply(addon)
-                        end,
-                    },
-                    stealthReminder = {
-                        type = "toggle",
-                        name = L["Stealth Reminder"],
-                        desc = L["Stealth Reminder desc"],
-                        order = 3,
-                        width = "full",
+                    readinessGroup = {
+                        type = "group",
+                        name = L["Combat Readiness"],
+                        order = 20,
+                        inline = true,
                         hidden = function()
                             local PE = LibStub("JustAC-PrecombatEngine", true)
                             local entry = PE and PE.STEALTH_REMINDER[select(2, UnitClass("player"))]
                             return not entry or (entry.spec and C_SpecializationInfo.GetSpecialization() ~= entry.spec)
                         end,
-                        disabled = function() return pbDisabled(addon) end,
-                        get = function() return addon.db.profile.precombatBuffs.stealth ~= false end,
-                        set = function(_, v)
-                            addon.db.profile.precombatBuffs.stealth = v
-                            pbApply(addon)
-                        end,
+                        args = {
+                            stealthReminder = {
+                                type = "toggle",
+                                name = L["Stealth Reminder"],
+                                desc = L["Stealth Reminder desc"],
+                                order = 21,
+                                width = "full",
+                                hidden = function()
+                                    local PE = LibStub("JustAC-PrecombatEngine", true)
+                                    local entry = PE and PE.STEALTH_REMINDER[select(2, UnitClass("player"))]
+                                    return not entry or (entry.spec and C_SpecializationInfo.GetSpecialization() ~= entry.spec)
+                                end,
+                                disabled = function() return pbDisabled(addon) end,
+                                get = function() return addon.db.profile.precombatBuffs.stealth ~= false end,
+                                set = function(_, v)
+                                    addon.db.profile.precombatBuffs.stealth = v
+                                    pbApply(addon)
+                                end,
+                            },
+                        },
                     },
-                    -- WoW Forever: Off / Auto only - Auto there picks by the class's stats, and
-                    -- retail's secondary stats (haste, crit, ...) do not exist. Elixirs share
-                    -- the flask slot (Data/Forever/Consumables.lua).
-                    flask = forever and pbOnOffSelect(addon, "flask", L["Flask / Elixir"], 10, false)
-                        or pbStatSelect(addon, "flask", L["Flask"], 10, true),
-                    food = forever and pbOnOffSelect(addon, "food", L["Food"], 11, false)
-                        or pbStatSelect(addon, "food", L["Food"], 11, true),
-                    -- Retail only: WoW Forever has no augment runes.
-                    augmentRune = ClientOnly(pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false), false),
-                    -- WoW Forever only: scrolls stack with elixirs there, and recovery (food,
-                    -- drink, bandages between pulls) has no retail data behind it.
-                    scroll = ClientOnly(pbOnOffSelect(addon, "scroll", L["Scroll"], 12.5, false), true),
-                    weaponEnchant = pbOnOffSelect(addon, "weaponEnchant", L["Weapon Enchant"], 13, false),
-                    recovery = ClientOnly(pbOnOffSelect(addon, "recovery", L["Recovery"], 14, false, L["Recovery desc"]), true),
-                    xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
+                    buffsGroup = {
+                        type = "group",
+                        name = L["Buffs & Enhancements"],
+                        order = 9,
+                        inline = true,
+                        args = {
+                            -- WoW Forever: Off / Auto only - Auto there picks by the class's stats, and
+                            -- retail's secondary stats (haste, crit, ...) do not exist. Elixirs share
+                            -- the flask slot (Data/Forever/Consumables.lua).
+                            flask = forever and pbOnOffSelect(addon, "flask", L["Flask / Elixir"], 10, false)
+                                or pbStatSelect(addon, "flask", L["Flask"], 10, true),
+                            food = forever and pbOnOffSelect(addon, "food", L["Food Buff"], 11, false)
+                                or pbStatSelect(addon, "food", L["Food Buff"], 11, true),
+                            -- Retail only: WoW Forever has no augment runes.
+                            augmentRune = ClientOnly(pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false), false),
+                            -- WoW Forever only: scrolls stack with elixirs there, and recovery (food,
+                            -- drink, bandages between pulls) has no retail data behind it.
+                            scroll = ClientOnly(pbOnOffSelect(addon, "scroll", L["Scroll"], 12.5, false), true),
+                            weaponEnchant = pbOnOffSelect(addon, "weaponEnchant", L["Weapon Enchant"], 13, false),
+                            xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
+                        },
+                    },
                 },
             },
         },
@@ -708,7 +803,8 @@ function Defensives.CreateTabArgs(addon)
             local pb = p.precombatBuffs
             pb.enabled         = true
             pb.topoffHeal      = false
-            pb.topoffThreshold = 90
+            pb.topoffThreshold = 80
+            pb.recoveryManaThreshold = 80
             pb.stealth         = true
             -- Fresh table: assigning the defaults one would alias it into the profile.
             pb.categories      = { xp = false }

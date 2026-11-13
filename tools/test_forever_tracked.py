@@ -18,7 +18,8 @@ LibStub = setmetatable({ NewLibrary = function(_, n) libs[n] = libs[n] or {}; re
     { __call = function(_, n) return libs[n] end })
 LibStub:NewLibrary("JustAC-SpellDB")
 local B = LibStub:NewLibrary("JustAC-BlizzardAPI")
-B.IsSecretValue = function() return false end
+secret = {}
+B.IsSecretValue = function(v) return v == secret end
 B.Unsecret = function(v) return v end
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 now = 0
@@ -77,6 +78,24 @@ def main():
     check(MT.IsTrackedAuraActive(772) is False, "aura entry inactive: down")
     g.viewerShown = False
     check(MT.IsTrackedAuraActive(772) is None, "hidden viewer: no answer (its data is frozen)")
+    for setup, verdict, reason in (
+        ("viewerShown=false", None, "viewer-hidden-or-unavailable"),
+        ("viewerShown=true;SetItems(true,false)", False, "aura-inactive"),
+        ("SetItems(false,true)", True, "aura-active"),
+        ("SetItems(true,secret)", None, "activity-secret"),
+        ("SetItems(true,nil)", None, "activity-unavailable"),
+        ("items={items[1]}", None, "cooldown-entry-not-aura"),
+        ("items={}", None, "no-matching-item"),
+        ("items={{GetCooldownID=function() error('denied') end}}", None, "cooldown-id-denied"),
+        ("items={{GetCooldownID=function() return secret end}}", None, "no-matching-item"),
+    ):
+        lua.execute(setup)
+        diagnostic = lua.table()
+        check(MT.IsTrackedAuraActive(772, diagnostic) is verdict, setup)
+        check(diagnostic.reason == reason, (setup, diagnostic.reason, reason))
+    diagnostic = lua.table()
+    check(MT.IsTrackedAuraActive(999, diagnostic) is None, "unresolved spell stays unknown")
+    check(diagnostic.reason == "no-resolved-entry", "unresolved spell has an explicit reason")
 
     for why in bad:
         print("  FAIL", why)

@@ -8,17 +8,34 @@ from lupa import LuaRuntime
 from lupa.lua51 import LuaRuntime as Lua51Runtime
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = (ROOT / "DebugCommands.lua").read_text(encoding="utf-8")
+DEBUG_FILES = [
+    ROOT.joinpath(*line.strip().split("\\"))
+    for line in (ROOT / "JustAC.toc").read_text(encoding="utf-8").splitlines()
+    if line.strip() == "DebugCommands.lua" or line.strip().startswith("Debug\\")
+]
+RESEARCH_ROOT = ROOT / "Debug" / "Research"
+RESEARCH_TOC = RESEARCH_ROOT / "JustAC_Research.toc"
+RESEARCH_FILES = [
+    RESEARCH_ROOT / line.strip()
+    for line in RESEARCH_TOC.read_text(encoding="utf-8").splitlines()
+    if line.strip() and not line.startswith("#")
+] if RESEARCH_TOC.exists() else []
+SOURCES = {path: path.read_text(encoding="utf-8") for path in DEBUG_FILES + RESEARCH_FILES}
+SOURCE = "\n".join(SOURCES.values())
+COMMON_SOURCE = SOURCES[ROOT / "Debug" / "Common.lua"]
+CAPTURE_SOURCE = SOURCES[ROOT / "Debug" / "Capture.lua"]
 
 
 def method(name):
-    start = SOURCE.index(f"function DebugCommands.{name}(")
-    end = SOURCE.find("\n--------------------------------------------------------------------------------", start)
-    return SOURCE[start:] if end < 0 else SOURCE[start:end]
+    marker = f"function DebugCommands.{name}("
+    source = next(text for text in reversed(SOURCES.values()) if marker in text)
+    start = source.index(marker)
+    end = source.index("\nend", start) + len("\nend")
+    return source[start:end]
 
 
-def runtime():
-    lua = LuaRuntime(unpack_returned_tuples=True)
+def runtime(runtime_type=LuaRuntime):
+    lua = runtime_type(unpack_returned_tuples=True)
     lua.execute("""
         DebugCommands = {}
         output, timers, callbacks, frames = {}, {}, {}, {}
@@ -50,13 +67,20 @@ def runtime():
         function LibStub() return nil end
         addon.GetProfile=function() return {precombatBuffs={topoffThreshold=90,topoffHeal=true}} end
         function date() return 'test' end
+        function wipe(t) for k in pairs(t) do t[k]=nil end end
     """)
-    start = SOURCE.index("local function IsSecret(")
-    end = SOURCE.index("\n--------------------------------------------------------------------------------\n-- THE topic registry", start)
-    lua.execute(SOURCE[start:end].replace("local function ", "function "))
-    start = SOURCE.index("local PROBE_LOG_MAX =")
-    end = SOURCE.index("\n--------------------------------------------------------------------------------", start)
-    lua.execute(SOURCE[start:end].replace("local function ", "function "))
+    start = COMMON_SOURCE.index("local function IsSecret(")
+    end = COMMON_SOURCE.index("\nDebugCommands._Common =")
+    lua.execute(COMMON_SOURCE[start:end].replace("local function ", "function ")
+                .replace("local ClassifyRead\n", ""))
+    start = CAPTURE_SOURCE.index("local PROBE_LOG_MAX =")
+    end = CAPTURE_SOURCE.index("\n--------------------------------------------------------------------------------", start)
+    lua.execute(CAPTURE_SOURCE[start:end].replace("local function ", "function "))
+    if RESEARCH_FILES:
+        lua.execute(method("PriorityGateSample"))
+        lua.execute(method("CombatSignalReads"))
+        lua.execute(method("AuditSignalSamples"))
+    lua.execute("function targetEpoch() return curseTargetEpoch end")
     return lua
 
 
@@ -123,12 +147,402 @@ def test_registry():
     rows = re.findall(r'\{\s*"([^"]+)",\s*"([^"]+)"', SOURCE[start:end])
     methods = re.findall(r"function DebugCommands\.(\w+)\(", SOURCE)
     assert len(rows) == len({topic for topic, _ in rows})
-    assert all(name in methods for _, name in rows)
+    lua = loaded_runtime(False, False)
+    loaded = lua.globals().DebugCommands.GetInspectTopics()
+    assert all(name in methods for name in loaded.values())
+    if RESEARCH_FILES:
+        assert all(name in methods for _, name in rows)
+
+
+def loaded_runtime(forever, research=True):
+    lua = runtime(Lua51Runtime)
+    lua.globals().forever = forever
+    lua.execute("""
+        local createFrame=CreateFrame
+        function CreateFrame(...)
+            local f=createFrame(...)
+            f.Hide=function() end
+            f.SetSize=function() end
+            f.SetStatusBarTexture=function() end
+            return f
+        end
+        libraries={}
+        libraries['JustAC-BlizzardAPI']={
+            IsForever=function() return forever end,
+            GetRotationSpells=function() return {123,456} end,
+        }
+        LibStub=setmetatable({
+            NewLibrary=function(_,name)
+                assert(libraries[name]==nil)
+                libraries[name]={}
+                return libraries[name]
+            end,
+        }, {__call=function(_,name) return libraries[name] end})
+        function UnitExists() return false end
+        function UnitClass() return 'Rogue','ROGUE',4 end
+        function UnitLevel() return 60 end
+        function GetInstanceInfo() return 'Test','none',0,nil,nil,nil,nil,1 end
+        function UnitIsDeadOrGhost() return false end
+        function IsPlayerMoving() return false end
+        function GetCVar() return '0' end
+        addon.db={profile={}}
+    """)
+    files = DEBUG_FILES + (RESEARCH_FILES if research else [])
+    for path in files:
+        lua.execute(SOURCES[path])
+    lua.execute("""
+        DebugCommands=libraries['JustAC-DebugCommands']
+        for name in pairs(DebugCommands._Common) do _G[name]=nil end
+        for name in pairs(DebugCommands._Capture) do _G[name]=nil end
+        targetEpoch=nil
+    """)
+    return lua
+
+
+def test_loaded_modules():
+    expected_files = {ROOT / "DebugCommands.lua", *(ROOT / "Debug").glob("*.lua")}
+    assert set(DEBUG_FILES) == expected_files, "every diagnostic file must load through the TOC"
+    assert len(DEBUG_FILES) == len(set(DEBUG_FILES)), "no duplicate TOC loads"
+    for research in ((False, True) if RESEARCH_FILES else (False,)):
+        files = DEBUG_FILES + (RESEARCH_FILES if research else [])
+        methods = set(re.findall(r"function DebugCommands\.(\w+)\(", "\n".join(SOURCES[p] for p in files)))
+        for forever in (False, True):
+            for external in (False, True):
+                lua = loaded_runtime(forever, research)
+                dc = lua.globals().DebugCommands
+                missing = [name for name in methods if lua.eval("type")(dc[name]) != "function"]
+                assert not missing, missing
+                assert len(lua.globals().timers) == 0, "loading research must not start capture"
+                for name in ("_diagnosticSession", "_probeSession", "_errorCapture", "_locWatch", "_selfCast"):
+                    assert dc[name] is None
+                lua.execute("""
+                    local ids=DebugCommands._Common.RotationIds(1)
+                    assert(#ids==1 and ids[1]==123)
+                    DebugCommands._Common.ProbeReport(addon)('control',function() return false end)
+                    assert(output[#output]:find('plain',1,true))
+                    local proxy=DebugCommands._Capture.LogProxy(addon)
+                    proxy:Print('loaded proxy')
+                    assert(JustACGlobal.probeLog[#JustACGlobal.probeLog]=='loaded proxy')
+                    batteryCalls={}
+                    for _,name in ipairs({'SecrecyMapProbe','ValidateAssumptions','DurationProbe',
+                        'AuraInstanceIdsProbe','CooldownFieldsProbe','FrameStateProbe',
+                        'CooldownViewerItemsProbe','EngineSignalsProbe','ForeverProbe','ForeverAuraProbe'}) do
+                        if DebugCommands[name] then
+                            DebugCommands[name]=function() batteryCalls[name]=(batteryCalls[name] or 0)+1 end
+                        end
+                    end
+                """)
+                if external:
+                    dc.ErrorCapture(lua.globals().addon, "on")
+                    dc.ProbeSession(lua.globals().addon, "on")
+                dc.StartDiagnostics(lua.globals().addon)
+                s = dc._diagnosticSession
+                assert s is not None, lines(lua)
+                assert s.ownsAudit == (not external) and s.ownsErrors == (not external)
+                assert s.last.forever == f"plain:{str(forever).lower()}"
+                assert s.last.researchAvailable == f"plain:{str(research).lower()}"
+                if research:
+                    assert s.last["signal.priorityGates"] is not None
+                    assert s.last["signal.rogueArchetype"] is not None
+                else:
+                    assert s.last["signal.priorityGates"] is None
+                    assert s.last["signal.rogueArchetype"] is None
+                    assert "Research unavailable" in lines(lua)
+                    assert dc.GetInspectTopics()["forever"] is None
+                    assert "foreverauras" not in dc.GetInspectUsage()
+                    assert dc.GetInspectTopics()["modules"] == "ModuleDiagnostics"
+                for name in dc.GetInspectTopics().values():
+                    assert lua.eval("type")(dc[name]) == "function"
+                calls = lua.globals().batteryCalls
+                assert calls.ValidateAssumptions == 1
+                assert calls.ForeverProbe == (1 if forever and research else None)
+                assert calls.ForeverAuraProbe == (1 if forever and research else None)
+                timer_count = len(lua.globals().timers)
+                dc.StartDiagnostics(lua.globals().addon)
+                assert len(lua.globals().timers) == timer_count
+                audit, errors = dc._probeSession, dc._errorCapture
+                lua.globals().audit = audit
+                lua.globals().errors = errors
+                audit.scripts.OnEvent(None, "PLAYER_TARGET_CHANGED")
+                if research:
+                    dc._probeTicker.fn()
+                log = list(lua.globals().JustACGlobal.probeLog.values())
+                if research:
+                    assert any("CURSE snapshot" in line and "epoch=1" in line for line in log)
+                assert not any("AUDIT SAMPLE ERROR" in line for line in log), log
+                dc.StopDiagnostics(lua.globals().addon)
+                assert s.ticker.cancelled is True and s.frame.unregistered is True
+                assert lua.globals().JustACGlobal.diagnosticSummary.id == s.id
+                if external:
+                    lua.execute("assert(DebugCommands._probeSession==audit and DebugCommands._errorCapture==errors)")
+                    assert audit.unregistered is None and errors.unregistered is None
+                    dc.ProbeSession(lua.globals().addon, "off")
+                    dc.ErrorCapture(lua.globals().addon, "off")
+                else:
+                    assert audit.unregistered is True and errors.unregistered is True
+                assert dc._probeSession is None and dc._errorCapture is None
+                assert dc._locWatch is None and dc._selfCast is None
+                assert all(timer.cancelled for timer in lua.globals().timers.values())
+                dc.DiagnosticReport(lua.globals().addon)
+
+
+def test_log_capacity():
+    for research in ((False, True) if RESEARCH_FILES else (False,)):
+        lua = loaded_runtime(True, research)
+        limit = 32000 if research else 8000
+        lua.globals().limit = limit
+        lua.execute("""
+            JustACGlobal={
+                diagnosticBaseline={id='baseline'},
+                diagnosticSummary={id='summary'},
+            }
+            DebugCommands._diagnosticSession={dropped=0}
+            local emit=DebugCommands._Capture.ProbeLogEmit
+            for i=1,limit do emit('row '..i) end
+            assert(#JustACGlobal.probeLog==limit)
+            assert(JustACGlobal.probeLogDropped==nil)
+            emit('overflow')
+            local kept=math.floor(limit/2)
+            assert(#JustACGlobal.probeLog==kept)
+            assert(JustACGlobal.probeLog[kept]=='overflow')
+            assert(JustACGlobal.probeLog[1]=='row '..(limit-kept+2))
+            assert(JustACGlobal.probeLogDropped==limit+1-kept)
+            assert(DebugCommands._diagnosticSession.dropped==limit+1-kept)
+            assert(JustACGlobal.diagnosticBaseline.id=='baseline')
+            assert(JustACGlobal.diagnosticSummary.id=='summary')
+        """)
+
+
+def test_loaded_recovery_mana():
+    for research in ((False, True) if RESEARCH_FILES else (False,)):
+        for forever in (False, True):
+            for capacity, expected in (
+                ("0", "plain:not applicable: no mana"),
+                ("100", "plain:false"),
+                ("secretCapacity", "plain:unknown mana capacity"),
+            ):
+                lua = loaded_runtime(forever, research)
+                lua.execute("""
+                    secretCapacity={}
+                    function issecretvalue(value) return value==secretCapacity end
+                    Enum={PowerType={Mana=0}}
+                    libraries['JustAC-PrecombatEngine']={
+                        GetRecoveryThresholds=function(pct)
+                            assert(pct==nil or pct==60)
+                            return 80,pct or 40
+                        end,
+                    }
+                    local B=libraries['JustAC-BlizzardAPI']
+                    B.IsUnitHealthBelow=function() return false end
+                    B.IsUnitPowerBelow=function(unit,pct,powerType)
+                        if powerType~=nil then
+                            assert(unit=='player' and pct==60 and powerType==0)
+                            manaCalls=(manaCalls or 0)+1
+                        end
+                        return false
+                    end
+                    DebugCommands.RunProbeBattery=function() end
+                    addon.GetProfile=function()
+                        return {precombatBuffs={recoveryManaThreshold=60}}
+                    end
+                """)
+                lua.execute("function UnitPowerMax() return " + capacity + " end")
+                dc = lua.globals().DebugCommands
+                dc.StartDiagnostics(lua.globals().addon)
+                session = dc._diagnosticSession
+                assert session is not None, lines(lua)
+                result = session.last.recoveryManaBelow
+                assert result == (expected if forever else "nil:nil"), result
+                assert lua.globals().manaCalls == (1 if forever and capacity == "100" else None)
+                dc.StopDiagnostics(lua.globals().addon)
+
+
+def test_rotation_target_enemy_context():
+    lua = loaded_runtime(True, False)
+    lua.execute("""
+        secretThreat={}
+        function issecretvalue(value) return value==secretThreat end
+        units={target=true,nameplate1=true,nameplate2=true,nameplate3=true,nameplate4=true}
+        function UnitExists(unit) return units[unit] or false end
+        function UnitCanAttack(_,unit) return unit~='nameplate4' end
+        function UnitCreatureType(unit) assert(unit=='target'); return 'Undead',6 end
+        function UnitClassification() return 'elite' end
+        function UnitLevel(unit) if unit=='target' then return 7 end return 6 end
+        threats={nameplate1=0,nameplate3=secretThreat}
+        function UnitThreatSituation(_,unit) return threats[unit] end
+        C_Spell={IsSpellUsable=function(id)
+            if id==678 then return false,true end
+            return true,false
+        end}
+        local B=libraries['JustAC-BlizzardAPI']
+        B.GetEngagedEnemyCount=function() return 1 end
+        B.IsSpellUsable=function(id,failOpen)
+            assert(failOpen==true)
+            if id==678 then return false,true end
+            return true,false
+        end
+        B.IsSpellReady=function(id) return id~=20271,'test source' end
+        B.AbilityInRange=function(id) if id==20271 then return false end return true end
+        B.GetClassResourcePoints=function() return nil end
+        libraries['JustAC-SpellQueue']={
+            DebugContextState=function()
+                return {simcCtx='aoe',enemies=1,outOfMelee=false,dying=true,execute=false,pickID=679}
+            end,
+            _SimcGateBlocks=function(gates) return gates.blocked==true end,
+        }
+        libraries['JustAC-RotationImport']={
+            GetRotationGated=function(context)
+                requestedContext=context
+                return {
+                    {id=679,gates={}},
+                    {id=20271,gates={blocked=true},delegated=true},
+                }
+            end,
+            HighestKnownRank=function(id) if id==679 then return 678 end end,
+        }
+        addon.spellIcons={{currentSpellID=678,IsShown=function() return true end,
+            GetAlpha=function() return 1 end,iconTexture={IsShown=function() return true end}}}
+        DebugCommands.RunProbeBattery=function() end
+    """)
+    dc = lua.globals().DebugCommands
+    dc.StartDiagnostics(lua.globals().addon)
+    s = dc._diagnosticSession
+    assert s is not None, lines(lua)
+    assert lua.globals().requestedContext == "aoe"
+    rotation = s.last.rotationEligibility
+    assert "context=aoe entries=2" in rotation
+    assert "1:679>678 raw=false/true helper=false/true ready=true/test source range=true gate=ok q=1" in rotation
+    assert "2:20271>20271" in rotation and "ready=false/test source range=false gate=block/delegated q=-" in rotation
+    assert s.last.targetContext == "plain:type=Undead typeID=6 classification=elite level=7"
+    assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679"
+    assert s.last.enemyProvenance == (
+        "plain:plates=4 hostile=3 threat=1 noThreat=1 unknown=1 threatApi=true helper=1"
+    )
+    dc.StopDiagnostics(lua.globals().addon)
+    assert "enemyProvenance=plain:plates=4" in lines(lua)
+
+
+def test_eligibility_evidence_capture():
+    for forever in (False, True):
+        lua = loaded_runtime(forever, True)
+        lua.execute("""
+            DebugCommands.RunProbeBattery=function() end
+            clock=10
+            function GetTime() return clock end
+            secretPayload=setmetatable({}, {__index=function() error('secret payload accessed') end})
+            function issecretvalue(value) return rawequal(value,secretPayload) end
+            local B=libraries['JustAC-BlizzardAPI']
+            B.GetBarSpells=function() return {{id=679,slot=1}} end
+            B.GetActionInfo=function() return 'spell',679 end
+            B.AbilityInRange=function() return false end
+            nativeRangeCalls=0
+            C_ActionBar={IsActionInRange=function() nativeRangeCalls=nativeRangeCalls+1; return false end,
+                EnableActionRangeCheck=function() error('must not alter range subscriptions') end}
+            C_Spell={IsSpellInRange=function() return false end}
+            C_CombatLog={IsCombatLogRestricted=function() return true end}
+            C_CVar={GetCVarBool=function(name) assert(name=='damageMeterEnabled'); return true end}
+            function SetCVar() error('must not alter settings') end
+            function GetGameMessageInfo(index)
+                assert(index==23)
+                if denyMapping then error('mapping denied') end
+                return 'SPELL_FAILED_OUT_OF_RANGE'
+            end
+            Enum={DamageMeterSessionType={Overall=0,Current=1,Expired=2},DamageMeterType={DamageDone=0}}
+            function UnitGUID(unit) assert(unit=='player'); return 'player-guid' end
+            aggregateCalls=0
+            meterSource={totalAmount=25,combatSpells={{spellID=679,totalAmount=25,amountPerSecond=5}}}
+            C_DamageMeter={
+                IsDamageMeterAvailable=function() return true,'available' end,
+                GetSessionDurationSeconds=function(kind) return kind+10 end,
+                GetCombatSessionSourceFromID=function(id,kind,guid)
+                    assert(combat~=true, 'aggregates must never be read in combat')
+                    assert(id==42 and kind==0 and guid=='player-guid')
+                    aggregateCalls=aggregateCalls+1
+                    return meterSource
+                end,
+            }
+        """)
+        dc = lua.globals().DebugCommands
+        dc.StartDiagnostics(lua.globals().addon)
+        s = dc._diagnosticSession
+        assert s is not None, lines(lua)
+        event = s.frame.scripts.OnEvent
+        event(s.frame, "ACTION_RANGE_CHECK_UPDATE", 1, False, False)
+        s.ticker.fn()
+        text = s.last["signal.range.event"]
+        assert "raw=plain:false" in text and "verdict=plain:unknown:no check" in text
+        event(s.frame, "SPELL_RANGE_CHECK_UPDATE", 679, False, True)
+        s.ticker.fn()
+        assert "verdict=plain:false" in s.last["signal.range.event"]
+        assert "helper=plain:false" in s.last["signal.range.event"]
+        size = len(lua.globals().JustACGlobal.probeLog)
+        event(s.frame, "SPELL_RANGE_CHECK_UPDATE", 679, False, True)
+        assert len(lua.globals().JustACGlobal.probeLog) == size, "identical range evidence is suppressed"
+        s.ticker.fn()
+        assert s.last["signal.evidence.suppressed"] == "plain:1"
+        size = len(lua.globals().JustACGlobal.probeLog)
+        event(s.frame, "SPELL_RANGE_CHECK_UPDATE", 679, False, False)
+        assert len(lua.globals().JustACGlobal.probeLog) == size + 1, "validity transitions survive"
+        event(s.frame, "UNIT_SPELLCAST_SENT", "player", "target", "cast-1", 679)
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
+        s.ticker.fn()
+        text = s.last["signal.failure.event"]
+        assert "name=plain:SPELL_FAILED_OUT_OF_RANGE" in text
+        assert "recentCast=plain:679" in text and "association=unconfirmed" in text
+        assert "localized error" not in text
+        event(s.frame, "PLAYER_TARGET_CHANGED")
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
+        s.ticker.fn()
+        assert "recentCast=none" in s.last["signal.failure.event"], "target swaps break correlation"
+        lua.execute("denyMapping=true")
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
+        s.ticker.fn()
+        assert "err:" in s.last["signal.failure.event"] and "mapping denied" in s.last["signal.failure.event"]
+        event(s.frame, "UNIT_SPELLCAST_FAILED", "player", "cast-1", 679)
+        s.ticker.fn()
+        assert "UNIT_SPELLCAST_FAILED spell=plain:679" in s.last["signal.failure.event"]
+        lua.execute("combat=true")
+        event(s.frame, "PLAYER_REGEN_DISABLED")
+        event(s.frame, "DAMAGE_METER_COMBAT_SESSION_UPDATED", 0, 42)
+        event(s.frame, "DAMAGE_METER_COMBAT_SESSION_UPDATED", 1, 42)
+        meter_rows = len(lua.globals().JustACGlobal.probeLog)
+        event(s.frame, "DAMAGE_METER_COMBAT_SESSION_UPDATED", 0, 42)
+        assert len(lua.globals().JustACGlobal.probeLog) == meter_rows, "interleaved meter types deduplicate"
+        s.ticker.fn()
+        assert lua.globals().aggregateCalls == 0
+        assert "unavailable:in combat" in s.last["signal.meter.postCombat"]
+        before_range_calls = lua.globals().nativeRangeCalls
+        for index in range(125):
+            event(s.frame, "ACTION_RANGE_CHECK_UPDATE", 1, bool(index % 2), True)
+        s.ticker.fn()
+        assert s.last["signal.evidence.dropped"] == "plain:5"
+        assert lua.globals().nativeRangeCalls - before_range_calls == 120
+        lua.execute("combat=false")
+        event(s.frame, "PLAYER_REGEN_ENABLED")
+        assert "session=42" in s.last["signal.meter.postCombat"]
+        assert "679:damage=plain:25" in s.last["signal.meter.postCombat"]
+        assert "Current=plain:11" in s.last["signal.meter.duration"]
+        lua.execute("meterSource={combatSpells=secretPayload};clock=clock+2")
+        s.ticker.fn()
+        assert "secret:<secret>" in s.last["signal.meter.postCombat"]
+        assert "secret payload accessed" not in s.last["signal.meter.postCombat"]
+        lua.execute("meterSource=secretPayload;clock=clock+2")
+        s.ticker.fn()
+        assert "secret:<secret>" in s.last["signal.meter.postCombat"]
+        event(s.frame, "DAMAGE_METER_RESET")
+        s.ticker.fn()
+        assert "untested:no notified session" in s.last["signal.meter.postCombat"]
+        log = list(lua.globals().JustACGlobal.probeLog.values())
+        assert any("EVIDENCE failure session=" + s.id in row for row in log)
+        dc.StopDiagnostics(lua.globals().addon)
+        size = len(lua.globals().JustACGlobal.probeLog)
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
+        assert len(lua.globals().JustACGlobal.probeLog) == size
 
 
 def test_low_health_heal_glow():
     source = (ROOT / "UI" / "UIRenderer.lua").read_text(encoding="utf-8")
-    start = source.index("local function IsUrgentPlayerHeal(")
+    start = source.index("local function IsUrgentPreparation(")
     end = source.index("\n-- Per-frame defensive visual state", start)
     for forever in (False, True):
         lua = runtime()
@@ -187,6 +601,220 @@ def test_low_health_heal_glow():
         lua.execute("fresh(); below=nil; vignette=true")
         assert fn(lua.globals().icon, False) == "proc"
         assert lua.globals().icon.defGlowReason == "low-health-fallback"
+
+
+def test_critical_preparation_glow():
+    source = (ROOT / "UI" / "UIRenderer.lua").read_text(encoding="utf-8")
+    lua = runtime(Lua51Runtime)
+    lua.execute("""
+        UIAnimations={};missing=true;procActive=false
+        LibStub=setmetatable({NewLibrary=function() return UIAnimations end}, {
+            __call=function(_,name)
+                if name=='JustAC-PrecombatEngine' then
+                    return {ShouldEmphasizePreparation=function() return missing end}
+                end
+            end,
+        })
+        function object()
+            local o={scripts={},shown=false,playing=false,paused=false}
+            setmetatable(o,{__index=function() return function() end end})
+            function o:Show() self.shown=true end
+            function o:Hide()
+                self.shown=false
+                if self.scripts.OnHide then self.scripts.OnHide() end
+            end
+            function o:IsShown() return self.shown end
+            function o:Play() self.playing=true;self.paused=false end
+            function o:Stop() self.playing=false;self.paused=false end
+            function o:Pause() self.playing=false;self.paused=true end
+            function o:IsPlaying() return self.playing end
+            function o:IsPaused() return self.paused end
+            function o:SetScript(key,fn) self.scripts[key]=fn end
+            function o:SetVertexColor(r,g,b) self.tint={r,g,b} end
+            function o:SetDesaturated(value) self.desaturated=value end
+            function o:CreateTexture() return object() end
+            function o:CreateAnimationGroup() return object() end
+            function o:CreateAnimation() return object() end
+            return o
+        end
+        function CreateFrame() return object() end
+        SpellDB={IsHealingSpell=function() return false end}
+        BlizzardAPI={
+            IsSpellReady=function() return true end,
+            IsSpellProcced=function() return procActive end,
+        }
+        SpellQueue={}
+        icon={currentID=20154,spellID=20154,isPrecombatBuff=true,defGlowMode='all',
+            defShowGlow=true,cachedIconSize=45,GetFrameLevel=function() return 0 end}
+    """)
+    lua.execute((ROOT / "UI" / "UIAnimations.lua").read_text(encoding="utf-8"))
+    lua.execute("""
+        UIAnimations.ShowColoredProcGlow(icon,'retintGlow',0.6,1,0.6)
+        local frame=icon.retintGlow
+        UIAnimations.ShowColoredProcGlow(icon,'retintGlow',1,0.6,0.25)
+        assert(icon.retintGlow==frame and frame.ProcLoopFlipbook.tint[1]==1,
+            'a reused named frame must honor the newly requested tint')
+        UIAnimations.HideColoredProcGlow(icon,'retintGlow')
+        UIAnimations.StartDefensiveGlow(icon,true)
+        assert(icon.DefensiveHighlightFrame.Flipbook.desaturated==true,
+            'a green defensive cue must not retain the native blue atlas')
+        UIAnimations.StopAllGlows(icon)
+        UIAnimations.StartPrecombatGlow(icon,false)
+        assert(icon.PrecombatHighlightFrame.Flipbook.desaturated==true,
+            'preparation must use a neutral base before tinting')
+        UIAnimations.StopAllGlows(icon)
+    """)
+    start = source.index("-- Blue: \"this mitigation")
+    end = source.index("-- Pet-heal cue threshold", start)
+    lua.execute(source[start:end].replace("local MAINTENANCE_GLOW", "MAINTENANCE_GLOW"))
+    lua.execute("""
+        local colors=UIAnimations.GLOW_COLORS
+        local function matches(texture,color)
+            assert(texture.tint[1]==color.r and texture.tint[2]==color.g and texture.tint[3]==color.b)
+        end
+        UIAnimations.StartGapCloserGlow(icon)
+        matches(icon.GapCloserHighlightFrame.Flipbook,colors.MOVEMENT)
+        assert(icon.GapCloserHighlightFrame.Flipbook.desaturated==true)
+        UIAnimations.StopAllGlows(icon)
+        UIAnimations.StartBurstGlow(icon)
+        matches(icon.BurstHighlightFrame.Flipbook,colors.BURST)
+        assert(colors.BURST.r>colors.BURST.b, 'offensive burst must not read as violet preparation')
+        UIAnimations.StopAllGlows(icon)
+        UIAnimations.StartMaintenanceGlow(icon)
+        UIAnimations.ShowColoredProcGlow(icon,'maintenanceGlow',MAINTENANCE_GLOW.r,MAINTENANCE_GLOW.g,MAINTENANCE_GLOW.b)
+        matches(icon.MaintenanceHighlightFrame.Flipbook,colors.MAINTENANCE)
+        matches(icon.maintenanceGlow.ProcLoopFlipbook,colors.MAINTENANCE)
+        UIAnimations.StopAllGlows(icon)
+        UIAnimations.HideColoredProcGlow(icon,'maintenanceGlow')
+        UIAnimations.StartPrecombatGlow(icon,false)
+        UIAnimations.ShowPreparationGlow(icon)
+        matches(icon.PrecombatHighlightFrame.Flipbook,colors.PREPARATION)
+        matches(icon.PreparationProcGlowFrame.ProcLoopFlipbook,colors.PREPARATION)
+        UIAnimations.StopAllGlows(icon)
+        UIAnimations.ShowProcGlow(icon,true)
+        assert(rawget(icon.ProcGlowFrame.ProcLoopFlipbook,'tint')==nil,
+            'native proc art must keep its authored gold')
+        UIAnimations.StopAllGlows(icon)
+    """)
+    start = source.index("local function ApplyMaintenanceGlow(")
+    end = source.index("\n-- Single teardown", start)
+    lua.execute(source[start:end].replace("local function ", "function "))
+    lua.execute("""
+        local colors=UIAnimations.GLOW_COLORS
+        ApplyMaintenanceGlow(icon,'burst',colors.MAINTENANCE)
+        local frame=icon.maintenanceGlow
+        ApplyMaintenanceGlow(icon,'burst',colors.DEFENSIVE)
+        assert(icon._maintGlowColor==colors.DEFENSIVE and icon.maintenanceGlow==frame)
+        assert(frame.ProcLoopFlipbook.tint[2]==colors.DEFENSIVE.g,
+            'a heal taking over the same loud stage must replace the blue mitigation tint')
+        ApplyMaintenanceGlow(icon,'burst',colors.MOVEMENT)
+        assert(frame.ProcLoopFlipbook.tint[1]==colors.MOVEMENT.r,
+            'spell/macro escape must share the movement color, not keep a heal tint')
+        ApplyMaintenanceGlow(icon,'ants',colors.MAINTENANCE)
+        assert(not frame:IsShown() and icon.hasMaintenanceGlow)
+        ApplyMaintenanceGlow(icon,nil,colors.MAINTENANCE)
+        assert(icon._maintGlow==nil and icon._maintGlowColor==nil and not icon.hasMaintenanceGlow)
+    """)
+    start = source.index("    local glowColor = MAINTENANCE_GLOW")
+    end = source.index("\nend", start)
+    lua.execute("function renderClaim(ccSpellID,petSpellID,emergencyHealID) local wantGlow='burst'\n"
+                + source[start:end] + "\nend")
+    lua.execute("""
+        local colors=UIAnimations.GLOW_COLORS
+        renderClaim(nil,nil,nil)
+        assert(icon._maintGlowColor==colors.MAINTENANCE)
+        renderClaim(nil,136,nil)
+        assert(icon._maintGlowColor==colors.DEFENSIVE)
+        renderClaim(nil,nil,740)
+        assert(icon._maintGlowColor==colors.DEFENSIVE)
+        renderClaim(42292,nil,nil)
+        assert(icon._maintGlowColor==colors.MOVEMENT)
+        ApplyMaintenanceGlow(icon,nil,colors.MAINTENANCE)
+    """)
+    start = source.index("local GLOW_SETTLE_TIME =")
+    end = source.index("\n-- Per-frame defensive visual state", start)
+    lua.execute(source[start:end].replace("local function ", "function "))
+    lua.execute("""
+        assert(ComputeDefensiveGlowState(icon,false)=='preparation')
+        assert(icon.defGlowReason=='critical-preparation')
+        ApplyDefensiveGlow(icon,'preparation',false,false)
+        local frame=icon.PreparationProcGlowFrame
+        assert(icon.hasPreparationGlow and frame:IsShown() and frame.ProcLoop:IsPlaying())
+        assert(not icon.hasProcGlow and not icon.hasPrecombatGlow)
+        assert(frame.ProcLoopFlipbook.tint[1]<1 and frame.ProcLoopFlipbook.tint[3]==1)
+        missing=false
+        assert(ComputeDefensiveGlowState(icon,false)=='precombat')
+        ApplyDefensiveGlow(icon,'precombat',false,false)
+        assert(not icon.hasPreparationGlow and not frame:IsShown() and not frame.ProcLoop:IsPlaying())
+        assert(icon.hasPrecombatGlow, 'normal preparation highlighting must survive a downgrade')
+        missing=true
+        ApplyDefensiveGlow(icon,'preparation',false,false)
+        assert(icon.PreparationProcGlowFrame==frame, 'pooled icons reuse the tinted frame')
+        assert(not icon.hasPrecombatGlow)
+        assert(ComputeDefensiveGlowState(icon,true)=='proc', 'real proc outranks preparation')
+        ApplyDefensiveGlow(icon,'proc',false,false)
+        assert(icon.hasProcGlow and not icon.hasPreparationGlow and not frame:IsShown())
+        UIAnimations.StopAllGlows(icon)
+        assert(not icon.hasPreparationGlow and not icon.hasProcGlow and icon.appliedDefGlowState==nil)
+        icon.defGlowMode='procOnly'
+        assert(ComputeDefensiveGlowState(icon,false)=='preparation', 'Proc Only includes urgent preparation')
+        ApplyDefensiveGlow(icon,ComputeDefensiveGlowState(icon,false),false,true)
+        assert(icon.PreparationProcGlowFrame.ProcLoop:IsPlaying(), 'Proc Only preparation animates out of combat')
+        assert(ComputeDefensiveGlowState(icon,true)=='proc', 'real procs retain precedence in Proc Only')
+        missing=false
+        assert(ComputeDefensiveGlowState(icon,false)=='precombat', 'cleared urgency removes the proc-style cue')
+        missing=true;icon.defGlowMode='none'
+        assert(ComputeDefensiveGlowState(icon,false)=='precombat', 'No Glows preserves baseline precombat policy')
+        icon.defGlowMode='primaryOnly'
+        assert(ComputeDefensiveGlowState(icon,false)=='preparation')
+        icon.isWaiting=true
+        assert(ComputeDefensiveGlowState(icon,false)=='none')
+        icon.isWaiting=false
+    """)
+    start = source.index("local GLOW_NONE ")
+    end = source.index("\nlocal itemIconInfoCache", start)
+    resolver = source[start:end].replace("local function ", "function ")
+    start = source.index("        if glowState == GLOW_PREPARATION then")
+    end = source.index("\n        -- Re-query only", start)
+    lua.execute(resolver + "\nfunction draw(glowState) local ctx={inCombat=true}\n"
+                + source[start:end] + "\nend")
+    lua.execute("""
+        assert(ResolveGlowState(1,20154,true,true,true)==5)
+        assert(ResolveGlowState(2,20154,true,false,false)==5)
+        assert(ResolveGlowState(1,20154,false,true,true)==5, 'Proc Only includes preparation in shared DPS/nameplate rendering')
+        assert(ResolveGlowState(2,20154,false,true,false)==5)
+        assert(ResolveGlowState(1,20154,false,false,false)==0, 'No Glows suppresses preparation emphasis')
+        procActive=true
+        assert(ResolveGlowState(1,20154,true,true,true)==2)
+        procActive=false;missing=false
+        assert(ResolveGlowState(1,20154,false,true,false)==0, 'Proc Only does not light ordinary recommendations')
+        assert(ResolveGlowState(1,20154,true,true,true)==1)
+        assert(ResolveGlowState(2,20154,true,true,true)==0)
+    """)
+    lua.execute("""
+        draw(5)
+        assert(icon.hasPreparationGlow and not icon.hasProcGlow)
+        draw(2)
+        assert(icon.hasProcGlow and not icon.hasPreparationGlow)
+        draw(5);draw(0)
+        assert(not icon.hasPreparationGlow and not icon.hasProcGlow)
+        draw(5);UIAnimations.StopAllGlows(icon)
+        assert(not icon.PreparationProcGlowFrame:IsShown())
+        draw(5)
+        local addon={spellIcons={icon}}
+        UIAnimations.PauseAllGlows(addon)
+        assert(icon.PreparationProcGlowFrame.ProcLoop:IsPlaying(), 'preparation also animates OOC')
+        icon.PreparationProcGlowFrame:Hide()
+        assert(not icon.PreparationProcGlowFrame.ProcLoop:IsPlaying())
+        UIAnimations.ResumeAllGlows(addon)
+        assert(icon.PreparationProcGlowFrame:IsShown() and icon.PreparationProcGlowFrame.ProcLoop:IsPlaying())
+        UIAnimations.StopAllGlows(icon);UIAnimations.ResumeAllGlows(addon)
+        assert(not icon.PreparationProcGlowFrame:IsShown(), 'resume must not resurrect a cleared preparation cue')
+        draw(5);UIAnimations.PauseAllGlows({defensiveIcons={icon}})
+        assert(not icon.hasPreparationGlow and icon.appliedDefGlowState==nil)
+        ApplyDefensiveGlow(icon,'preparation',false,false)
+        assert(icon.hasPreparationGlow, 'defensive transition rebuild restores the correct cue')
+    """)
 
 
 def test_shared_health_fallback():
@@ -371,19 +999,28 @@ def test_shared_session():
         assert baseline.last.mapID == "plain:1429", "baseline must not alias live context"
         assert s.id == session_id
         changes = s.changes
+        before_event = len(lua.globals().JustACGlobal.probeLog)
         s.frame.scripts.OnEvent(s.frame, "GROUP_ROSTER_UPDATE")
         assert s.changes == changes, "event snapshots must not inflate change counts"
+        assert len(lua.globals().JustACGlobal.probeLog) == before_event + 1, "unchanged context emits only its marker"
+        burst_start = len(lua.globals().JustACGlobal.probeLog)
+        for _ in range(100):
+            s.frame.scripts.OnEvent(s.frame, "GROUP_ROSTER_UPDATE")
+        assert len(lua.globals().JustACGlobal.probeLog) - burst_start == 100
+        assert s.changes == changes
         log = list(lua.globals().JustACGlobal.probeLog.values())
         assert any(f"session={session_id}" in row and "sample=" in row and "elapsed=" in row for row in log)
         dc.DiagnosticStatus(lua.globals().addon)
         assert "errors=true" in lines(lua)
         assert "sampler ms:" in lines(lua)
-        lua.execute("for i=1,8100 do ProbeLogEmit('fill '..i) end")
+        lua.execute("for i=1,32100 do ProbeLogEmit('fill '..i) end")
         assert s.dropped > 0 and lua.globals().JustACGlobal.probeLogDropped > 0
         assert lua.globals().JustACGlobal.diagnosticBaseline.last.mapID == "plain:1429"
         old_event = s.frame.scripts.OnEvent
         dc.StopDiagnostics(lua.globals().addon)
+        assert "WARNING: detailed capture is incomplete" in lines(lua)
         assert s.ticker.cancelled and s.frame.unregistered
+        assert s.signalReads is None and s.signalEvent is None
         assert dc._diagnosticSession is None
         assert (dc._probeSession is not None) == existing
         assert (dc._errorCapture is not None) == existing
@@ -607,13 +1244,14 @@ def test_ticker_lifecycle():
 def test_battery_failures():
     lua = runtime()
     start = SOURCE.index("local PROBE_BATTERY =")
-    end = SOURCE.index("\n--------------------------------------------------------------------------------", start)
-    lua.execute(SOURCE[start:end].replace("local function RunProbeBattery(", "function RunProbeBattery(", 1))
+    end = SOURCE.index("\nfunction DebugCommands.RunProbeBattery(", start)
+    battery = SOURCE[start:end]
+    lua.execute(battery + method("RunProbeBattery"))
     for forever, expected in ((False, 7), (True, 9)):
         lua.execute("output={}; JustACGlobal={}")
         lua.globals().forever = forever
         lua.execute("LibStub=function() return {IsForever=function() return forever end} end")
-        lua.globals().RunProbeBattery(lua.globals().addon, "TEST", False)
+        lua.globals().DebugCommands.RunProbeBattery(lua.globals().addon, "TEST", False)
         assert f"{expected} failures" in lines(lua)
         log = lua.globals().JustACGlobal.probeLog
         assert sum("PROBE ERROR" in msg for msg in log.values()) == expected
@@ -622,7 +1260,7 @@ def test_battery_failures():
         function debugprofilestop() clock=clock+1; return clock end
         DebugCommands._diagnosticSession={id='timing-test',pulls=1,failures=0}
     """)
-    lua.globals().RunProbeBattery(lua.globals().addon, "TIMED", False)
+    lua.globals().DebugCommands.RunProbeBattery(lua.globals().addon, "TIMED", False)
     session = lua.globals().DebugCommands._diagnosticSession
     assert session.batteries == 1 and session.batteryMs == 1 and session.batteryMaxMs == 1
 
@@ -635,10 +1273,10 @@ def test_delayed_snapshots():
         f=CreateFrame()
         DebugCommands._probeSession=f
         captures={}
-        function RunProbeBattery(_, tag) captures[#captures+1]=tag end
+        function DebugCommands.RunProbeBattery(_, tag) captures[#captures+1]=tag end
     """)
     start = SOURCE.index('    f:SetScript("OnEvent", function(_, event, unit, _, spellID)', SOURCE.index("function DebugCommands.ProbeSession("))
-    end = SOURCE.index("\n\n    -- Change-only", start)
+    end = SOURCE.index("\n\n    local curseSample", start)
     lua.execute(SOURCE[start:end])
     event = lua.globals().f.scripts.OnEvent
     event(None, "PLAYER_TARGET_CHANGED")
@@ -685,9 +1323,10 @@ def test_topoff_log():
     update(None, 0.25)
     assert lua.globals().DebugCommands._topoffWatch is None
     assert "TOPOFF ERROR" in lua.globals().JustACGlobal.probeLog[2]
-    for _ in range(8100):
+    limit = 32000 if RESEARCH_FILES else 8000
+    for _ in range(limit + 100):
         lua.globals().ProbeLogEmit("bounded")
-    assert len(lua.globals().JustACGlobal.probeLog) <= 8000
+    assert len(lua.globals().JustACGlobal.probeLog) <= limit
 
 
 def test_category_knowledge():
@@ -714,7 +1353,7 @@ def test_category_knowledge():
     source = (ROOT / "PrecombatEngine.lua").read_text(encoding="utf-8")
     for first, last in (
         ("local function WeaponEnchantHolds(", "\n-- The off-hand"),
-        ("local function HasAnyAura(", "\n-- The weapon imbue"),
+        ("local function HasAnyAura(", "\nlocal function KnownWeaponImbue("),
         ("function PrecombatEngine.IsCategorySatisfied(", "\n--- Pre-combat buffs"),
     ):
         start = source.index(first)
@@ -742,9 +1381,9 @@ def test_category_knowledge():
 
 def test_error_capture_lifecycle():
     lua = runtime()
-    start = SOURCE.index("local ERRORLOG_MAX =")
-    end = SOURCE.index("\nfunction DebugCommands.ProbeSession", start)
-    lua.execute(SOURCE[start:end])
+    start = CAPTURE_SOURCE.index("local ERRORLOG_MAX =")
+    end = CAPTURE_SOURCE.index("\nDebugCommands._Capture =")
+    lua.execute(CAPTURE_SOURCE[start:end])
     fn = lua.globals().DebugCommands.ErrorCapture
     fn(lua.globals().addon, "on")
     fn(lua.globals().addon, "on")
@@ -757,7 +1396,7 @@ def test_error_capture_lifecycle():
 def test_audit_lifecycle():
     lua = runtime()
     lua.execute("""
-        function RunProbeBattery() end
+        function DebugCommands.RunProbeBattery() end
         DebugCommands._locWatch={external=true}
         DebugCommands._selfCast={external=true}
         DebugCommands.LossOfControlWatch=function() error('external CC watcher stopped') end
@@ -914,18 +1553,635 @@ def test_curse_signals():
         assert any("BuffIconCooldownViewer shown=unavailable" in line for line in delta)
 
     lua = Lua51Runtime(unpack_returned_tuples=True)
-    lua.execute("assert(loadstring(...))", SOURCE)
+    for source in SOURCES.values():
+        lua.execute("assert(loadstring(...))", source)
+
+
+def test_combat_signal_reads():
+    for forever in (False, True):
+        lua = runtime()
+        lua.globals().forever = forever
+        lua.execute("""
+            now=0; incoming=nil; debt=0; predicted=false
+            secret={}; secretFalse={}
+            function issecretvalue(v) return v==secret or v==secretFalse end
+            function secretwrap(v) if v then return secret else return secretFalse end end
+            function GetTime() return now end
+            function UnitExists(u) return u~='pet' end
+            function UnitIsDeadOrGhost() return false end
+            function UnitGetIncomingHeals() return incoming end
+            function UnitGetTotalHealAbsorbs() return debt end
+            zeroCalls=0
+            B={
+                IsForever=function() return forever end,
+                IsSecretZero=function(v)
+                    assert(v~=nil, 'nil must never enter zero gate')
+                    zeroCalls=zeroCalls+1
+                    if v==secret then return false end
+                    if v==secretFalse then return true end
+                    return v==0
+                end,
+                GetBarSpells=function() return {{id=123,slot=1},{id=456,slot=2}} end,
+                IsDurationObjectActive=function() return true end,
+                IsDurationBelowSeconds=function(_,seconds) assert(seconds==1); return false end,
+            }
+            LibStub=function(name) if name=='JustAC-BlizzardAPI' then return B end end
+            Enum={
+                LuaCurveType={Linear=0},
+                UnitHealAbsorbMode={ReducedByIncomingHeals=0},
+                UnitHealAbsorbClampMode={MaximumHealth=1},
+                UnitIncomingHealClampMode={MissingHealth=0},
+            }
+            calc={}
+            function calc:SetHealAbsorbMode(v) assert(v==0) end
+            function calc:SetHealAbsorbClampMode(v) assert(v==1) end
+            function calc:SetIncomingHealClampMode(v) assert(v==0) end
+            function calc:SetIncomingHealOverflowPercent(v) assert(v==1) end
+            function calc:ResetPredictedValues() self.populated=false end
+            function calc:HasSecretValues() assert(self.populated); return true end
+            function calc:GetHealAbsorbs() assert(self.populated); return debt,secret end
+            function calc:GetIncomingHeals() assert(self.populated); return incoming,0,0,secret end
+            function CreateUnitHealPredictionCalculator() return calc end
+            denied=false
+            function UnitGetDetailedHealPrediction(_,healer,c)
+                assert(healer=='player')
+                if denied then error('prediction denied') end
+                c.populated=true
+            end
+            C_CurveUtil={CreateCurve=function()
+                return {
+                    SetType=function() end, AddPoint=function() end,
+                    Evaluate=function(_,v) if v<0.5 then return 100 else return 0 end end,
+                }
+            end}
+            C_CurveUtil.EvaluateColorValueFromBoolean=function(v,yes,no)
+                assert(yes==1 and no==0)
+                if issecretvalue(v) then return v end
+                if v then return yes else return no end
+            end
+            function UnitHealthPercent(_,prediction)
+                if prediction and predicted then return 100 end
+                return 0
+            end
+            castActive=false
+            function UnitCastingInfo()
+                if castActive then return secret,nil,nil,nil,nil,false,secret,secretFalse,secret,42 end
+            end
+            function UnitChannelInfo() return nil end
+            function PlayerIsSpellTarget() return secret end
+            function UnitIsCharmed() return secretFalse end
+            function HasFullControl() return true end
+            function IsPlayerMoving() return false end
+            dur={
+                HasSecretValues=function() return true end,
+                IsActive=function() return secret end,
+                HasExpired=function() return false end,
+                HasStarted=function() return true end,
+                IsZero=function() return secret end,
+            }
+            C_LossOfControl={
+                GetActiveLossOfControlDataCount=function() return 1 end,
+                GetActiveLossOfControlData=function()
+                    return {locType=secret,priority=2,displayType=1,lockoutSchool=secret}
+                end,
+                GetActiveLossOfControlDataCountByUnit=function() return 1 end,
+                GetActiveLossOfControlDuration=function() return dur end,
+            }
+            function UnitHasEffectivelyTankAura() return secret end
+            function UnitGroupRolesAssigned() return 'NONE' end
+            function HasPetUI() return true,false end
+            gcdValue=false
+            C_Spell={
+                GetSpellCooldown=function() return {isOnGCD=gcdValue} end,
+                GetSpellCooldownDuration=function() return dur end,
+                IsActiveSpell=function(id) if id==123 then return false else return secret end end,
+                IsSpellImportant=function() return secretFalse end,
+            }
+            bucket={Size=function() return 2 end}
+            frame={
+                unit='nameplate1',IsVisible=function() return true end,
+                aggroHighlight={IsShown=function() return false end},
+                AurasFrame={buffList=bucket,debuffList=bucket,crowdControlList=bucket},
+            }
+            C_NamePlate={GetNamePlateForUnit=function() return {UnitFrame=frame} end}
+            item={
+                cooldownID=789,IsActive=function() return false end,
+                GetAuraDataUnit=function() return 'target' end,IsVisible=function() return true end,
+            }
+            BuffIconCooldownViewer={
+                IsVisible=function() return false end,isEditing=false,
+                itemFramePool={EnumerateActive=function()
+                    local done=false
+                    return function() if not done then done=true; return item end end
+                end},
+            }
+            reads,event=DebugCommands.CombatSignalReads()
+        """)
+        reads = lua.globals().reads
+        assert reads["signal.player.incomingZero"]() == "plain:unknown:nil input"
+        assert lua.globals().zeroCalls == 0
+        assert reads["signal.player.healDebtZero"]() == "plain:true"
+        assert reads["signal.player.tankAura"]() == "secret:<secret>"
+        calibration = reads["signal.booleanCalibration"]()
+        assert "true=plain:true false=plain:false" in calibration
+        assert "secretTrue=plain:true secretFalse=plain:false" in calibration
+        assert reads["signal.target.cast"]() == "plain:unavailable:no cast"
+        assert reads["signal.player.charmed"]() == "plain:raw=secret:<secret> bridge=plain:false"
+        assert "fullControl{plain:raw=plain:true bridge=plain:true}" in reads["signal.player.control"]()
+        loc = reads["signal.player.locDetails"]()
+        assert "type=secret:<secret>" in loc and "priority=plain:2 display=plain:1" in loc
+        assert "123=plain:false" in reads["signal.spells.toggles"]()
+        assert "456=secret:<secret>" in reads["signal.spells.toggles"]()
+        assert "IsActive=secret:<secret>" in reads["signal.spells.duration"]()
+        assert "below1s=plain:false" in reads["signal.target.loc"]()
+        assert "crowdControlList=plain:2" in reads["signal.target.nameplate"]()
+        assert "visible=plain:false" in reads["signal.viewers"]()
+        assert "pandemic=plain:unknown:no marker" in reads["signal.viewers"]()
+        assert reads["signal.pet.prediction"]() == "plain:unavailable:no unit"
+        lua.execute("incoming=secret; debt=secret; predicted=true; now=1")
+        lua.execute("castActive=true")
+        cast = reads["signal.target.cast"]()
+        assert "barID=plain:42" in cast
+        assert "notInterruptible{raw=secret:<secret> bridge=plain:false}" in cast
+        assert "important{plain:raw=secret:<secret> bridge=plain:false}" in cast
+        assert "onPlayer{plain:raw=secret:<secret> bridge=plain:true}" in cast
+        lua.globals().event("UNIT_SPELLCAST_START", "target", "secret-guid", "secret-id", 42)
+        assert "arg4=plain:42" in list(lua.globals().JustACGlobal.probeLog.values())[-1]
+        assert reads["signal.player.incomingZero"]() == "plain:false"
+        prediction = reads["signal.player.prediction"]()
+        assert "debtZero=plain:false" in prediction
+        assert "debtClamped=secret:<secret>" in prediction
+        assert "incomingClamped=secret:<secret>" in prediction
+        assert "actual=plain:false predicted=plain:true" in reads["signal.player.health50"]()
+        lua.execute("incoming=0")
+        assert reads["signal.player.incomingZero"]() == "plain:false", "heavy reads memoized for one second"
+        lua.globals().event("UNIT_SPELLCAST_START", "target", "secret-guid", "secret-id", 42)
+        assert reads["signal.player.incomingZero"]() == "plain:false", "cast events must not invalidate heavy sibling reads"
+        lua.globals().event("PLAYER_TARGET_CHANGED")
+        assert reads["signal.targetEpoch"]() == 1
+        assert reads["signal.player.incomingZero"]() == "plain:true"
+        lua.execute("denied=true; now=2")
+        assert "prediction denied" in reads["signal.player.prediction"]()
+        assert reads["signal.player.healDebtZero"]() == "plain:false", "one denial must not kill sibling reads"
+        lua.globals().event("SPELL_UPDATE_COOLDOWN")
+        assert "123=plain:false" in reads["signal.gcd.event"]()
+        lua.execute("gcdValue=true; now=3")
+        assert "123=plain:true" in reads["signal.gcd.sample"]()
+        assert "123=plain:false" in reads["signal.gcd.event"](), "event snapshot must not be overwritten by polling"
+        for i in range(125):
+            lua.globals().gcdValue = i % 2 == 0
+            lua.globals().event("SPELL_UPDATE_COOLDOWN")
+        assert reads["signal.gcd.dropped"]() == 6
+        lua.globals().event("PLAYER_REGEN_DISABLED")
+        assert reads["signal.gcd.dropped"]() == 0
+        assert reads["signal.gcd.event"]() == "untested"
+        for _ in range(125):
+            lua.globals().event("UNIT_SPELLCAST_STOP", "target", "secret-guid", "secret-id", 42)
+        assert reads["signal.cast.dropped"]() == 5
+        rows = list(lua.globals().JustACGlobal.probeLog.values())
+        assert sum("cast events capped" in row for row in rows) == 1
+        lua.execute(
+            """
+            castActive=false
+            function UnitChannelInfo()
+                return secret,nil,nil,nil,nil,false,secret,secret,false,0,43
+            end
+            """
+        )
+        lua.globals().event("PLAYER_TARGET_CHANGED")
+        channel = reads["signal.target.cast"]()
+        assert "channel barID=plain:43" in channel
+        assert "notInterruptible{raw=secret:<secret> bridge=plain:true}" in channel
+        lua.globals().event("PLAYER_REGEN_ENABLED")
+        lua.globals().event("UNIT_SPELLCAST_CHANNEL_STOP", "target", lua.globals().secret,
+                            lua.globals().secret, lua.globals().secret, 43)
+        row = list(lua.globals().JustACGlobal.probeLog.values())[-1]
+        assert "arg4=secret:<secret> arg5=plain:43" in row
+        assert all("secret-guid" not in row and "secret-id" not in row
+                   for row in lua.globals().JustACGlobal.probeLog.values())
+        lua.execute(
+            """
+            originalSelector=C_CurveUtil.EvaluateColorValueFromBoolean
+            C_CurveUtil.EvaluateColorValueFromBoolean=function() return nil end
+            """
+        )
+        lua.globals().event("PLAYER_TARGET_CHANGED")
+        assert "bridge=plain:unknown:nil input" in reads["signal.target.cast"]()
+        lua.execute("C_CurveUtil.EvaluateColorValueFromBoolean=function() error('selector denied') end")
+        lua.globals().event("PLAYER_TARGET_CHANGED")
+        assert "selector denied" in reads["signal.target.cast"]()
+        assert "raw=secret:<secret>" in reads["signal.target.cast"]()
+        lua.execute("C_CurveUtil.EvaluateColorValueFromBoolean=originalSelector")
+        lua.execute("originalZero=B.IsSecretZero; B.IsSecretZero=function() return secret end")
+        lua.globals().event("PLAYER_TARGET_CHANGED")
+        assert "bridge=secret:<secret>" in reads["signal.target.cast"]()
+        lua.execute("B.IsSecretZero=originalZero")
+        lua.globals().event("SPELL_UPDATE_COOLDOWN")
+        before = len(lua.globals().JustACGlobal.probeLog)
+        lua.globals().event("SPELL_UPDATE_COOLDOWN")
+        assert len(lua.globals().JustACGlobal.probeLog) == before, "identical GCD event snapshots must not emit"
+        lua.execute("""
+            now=4
+            function UnitExists() return true end
+            C_PetInfo={
+                GetPetHappiness=function() return 2,100,-1 end,
+                GetPetFoodTypes=function() return {'Meat','Fish'} end,
+                CanPetEatItem=function(id) return id==5 end,
+            }
+            C_Container={
+                GetContainerNumSlots=function() return 36 end,
+                GetContainerItemID=function(_,slot) return slot end,
+            }
+        """)
+        assert "level=plain:2" in reads["signal.pet.happiness"]()
+        assert "plain:Meat" in reads["signal.pet.foodTypes"]()
+        foods = reads["signal.pet.foodCandidates"]()
+        assert "5=plain:true" in foods and "truncated:12" in foods
+        assert "13=" not in foods, "inventory classification must stay bounded"
+        # All saved values must be classified text or plain counters, never raw payloads.
+        lua.execute("""
+            for key,fn in pairs(reads) do
+                local value=fn()
+                assert(type(value)=='string' or type(value)=='number',key)
+            end
+        """)
+
+
+def test_spell_bound_aura_capture():
+    lua = runtime()
+    start = SOURCE.index("    local auraRouteCandidates, auraRouteLast =")
+    end = SOURCE.index("\n    local curseLast, curseEpoch", start)
+    lua.execute("""
+        curseTargetEpoch=1
+        function UnitExists() return true end
+        secret={}
+        function issecretvalue(v) return v==secret end
+        DT={DebugState=function() return {entries={{spellID=1}}} end}
+        RI={GetRotationGated=function(ctx)
+            if ctx=='cleave' then
+                return {{id=10,gates={{t='any',g={{t='dot',id=2},{t='dot',id=2}}}}}}
+            end
+            return {}
+        end}
+        B={
+            GetAuraDurationObject=function(_,id) assert(id==102); return {} end,
+            IsDurationBelowPercent=function(_,pct) assert(pct==30); return false end,
+        }
+        C_UnitAuras={
+            GetUnitAuraInstanceIDs=function() return {901} end,
+            GetUnitAuraBySpellID=function(_,sid)
+                if sid==2 then return {auraInstanceID=102} end
+            end,
+        }
+        function LibStub(name)
+            if name=='JustAC-DotTracker' then return DT end
+            if name=='JustAC-RotationImport' then return RI end
+            if name=='JustAC-BlizzardAPI' then return B end
+        end
+    """)
+    lua.execute(SOURCE[start:end] + "\nauraSample=auraRouteSample")
+    lua.globals().auraSample()
+    rows = list(lua.globals().JustACGlobal.probeLog.values())
+    assert len(rows) == 2, "tracked and nested cleave references must be deduplicated"
+    assert "ref=1" in rows[0] and "duration=no-id" in rows[0]
+    assert "ref=2" in rows[1] and "below30=plain:false" in rows[1]
+    lua.globals().auraSample()
+    assert len(lua.globals().JustACGlobal.probeLog) == 2
+    lua.execute("curseTargetEpoch=2; C_UnitAuras.GetUnitAuraBySpellID=function() return secret end")
+    lua.globals().auraSample()
+    assert all("bySpell=secret duration=no-id" in row
+               for row in list(lua.globals().JustACGlobal.probeLog.values())[-2:])
+    lua.execute("""
+        curseTargetEpoch=3
+        C_UnitAuras.GetUnitAuraBySpellID=function(_,sid)
+            if sid==1 then error('lookup denied') end
+            return {auraInstanceID=102}
+        end
+        B.GetAuraDurationObject=function() error('duration denied') end
+    """)
+    lua.globals().auraSample()
+    rows = list(lua.globals().JustACGlobal.probeLog.values())[-2:]
+    assert "ref=1" in rows[0] and "bySpell=denied" in rows[0]
+    assert "ref=2" in rows[1] and "duration denied" in rows[1]
+
+
+def test_priority_gate_capture():
+    for forever in (False, True):
+        lua = runtime()
+        lua.globals().forever = forever
+        lua.execute("""
+            now=0
+            function GetTime() return now end
+            secret={}
+            function issecretvalue(v) return v==secret end
+            B={
+                GetClassResourcePoints=function() return 3,5,'combo_points' end,
+                GetAuraStackAtLeast=function() return nil end,
+                GetSwingRemaining=function() return 0.4 end,
+                IsBuffWindowActive=function() return false end,
+            }
+            SQ={_GateVerdict=function(g,ctx)
+                assert(ctx.resCount==3 and ctx.resMax==5 and ctx.resName=='combo_points')
+                if g.t=='known' then return true end
+                if g.t=='swing' then return false end
+                if g.t=='unconfirmed' then return false end
+                if ctx.strict then return false end
+            end}
+            list={
+                {id=10,delegated=true,gates={{t='any',g={
+                    {t='dot',id=20},{t='stack',id=30,n=5,op='>=',tgt=true}
+                }}}},
+                {id=11,gates={{t='swing',ranged=true,n=0.5,op='<'}}},
+                {id=12,gates={{t='known',id=99}}},
+            }
+            RI={
+                GetForeverTree=function() if forever then return 'marksmanship' end end,
+                GetRotationGated=function(ctx) if ctx=='cleave' then return list end return {} end,
+            }
+            DT={
+                IsDotActiveOnCurrentTarget=function(id) assert(id==20); return true end,
+                DebugState=function() return {entries={{spellID=20,confirmed=true,enginePandemic=false}}} end,
+            }
+            C_UnitAuras={GetUnitAuraBySpellID=function() return {auraInstanceID=secret} end}
+            function LibStub(name)
+                if name=='JustAC-BlizzardAPI' then return B end
+                if name=='JustAC-SpellQueue' then return SQ end
+                if name=='JustAC-RotationImport' then return RI end
+                if name=='JustAC-DotTracker' then return DT end
+            end
+            sample=DebugCommands.PriorityGateSample()
+        """)
+        sample = lua.globals().sample
+        assert sample(1) == "records=8 truncated=false"
+        rows = list(lua.globals().JustACGlobal.probeLog.values())
+        assert any("cleave/1/10/1.1" in row and "tracked=plain:true" in row
+                   and "rank=unknown:nil" in row and "confirmed=true" in row for row in rows)
+        assert any("cleave/1/10/1.2" in row and "binding=plain:secret instance" in row
+                   and "threshold=unknown:nil" in row for row in rows)
+        assert any("source=swing-tracker remaining=plain:0.4" in row for row in rows)
+        before = len(rows)
+        assert sample(1) == "records=8 truncated=false"
+        lua.execute("now=1")
+        sample(1)
+        assert len(lua.globals().JustACGlobal.probeLog) == before
+        lua.execute("now=2")
+        sample(2)
+        assert len(lua.globals().JustACGlobal.probeLog) == before + 1, "epoch-only changes emit one context row"
+        assert any("PRIORITY DEF" in row and "type=dot" in row for row in rows)
+        lua.execute("""
+            now=3
+            B.GetAuraStackAtLeast=function() error('stack denied') end
+            C_UnitAuras.GetUnitAuraBySpellID=function() error('binding denied') end
+        """)
+        sample(2)
+        rows = list(lua.globals().JustACGlobal.probeLog.values())
+        assert any("stack denied" in row and "binding denied" in row for row in rows)
+        lua.execute("now=3.5; B.GetSwingRemaining=function() return secret end")
+        # A forced target change does not bypass the one-second work limit.
+        sample(3)
+        assert not any("epoch=3" in row for row in lua.globals().JustACGlobal.probeLog.values())
+        lua.execute("now=4")
+        sample(3)
+        assert any("remaining=secret:<secret>" in row
+                   for row in lua.globals().JustACGlobal.probeLog.values())
+        lua.execute("now=5; list={}")
+        sample(2)
+        assert any("removed epoch=2" in row for row in lua.globals().JustACGlobal.probeLog.values())
+        lua.execute("""
+            now=6; list={}
+            for i=1,300 do list[i]={id=i,gates={{t='known',id=1}}} end
+        """)
+        assert sample(2) == "records=240 truncated=true"
+
+
+def test_consolidated_gate_reports():
+    for forever in (False, True):
+        lua = runtime()
+        lua.globals().forever = forever
+        lua.execute("""
+            calls={}
+            B={
+                GetClassResourcePoints=function() return 3,5,'combo_points' end,
+                GetAuraStackAtLeast=function() return false end,
+                IsThresholdGateAvailable=function() return true end,
+                IsForever=function() return forever end,
+            }
+            SQ={
+                _GateVerdict=function(g)
+                    if g.t=='stack' then return false end
+                    if g.t=='known' then return true end
+                end,
+                _StackHolds=function() return false end,
+                _SimcGateBlocks=function(gates)
+                    return #gates>0 and gates[1].t=='stack'
+                end,
+            }
+            RI={
+                HasRotation=function() return true end,
+                GetRotationGated=function(ctx)
+                    calls[#calls+1]=ctx
+                    return {
+                        {id=1,gates={{t='stack',id=2,n=5,op='>='}}},
+                        {id=3,gates={{t='dot',id=4}}},
+                        {id=5,gates={{t='any',g={{t='known',id=6},{t='buff',id=7}}}}},
+                        {id=8,delegated=true,gates={}},
+                    }
+                end,
+            }
+            C_Spell={GetSpellInfo=function(id) return {name='spell'..id} end}
+            function UnitExists() return false end
+            function LibStub(name)
+                if name=='JustAC-BlizzardAPI' then return B end
+                if name=='JustAC-SpellQueue' then return SQ end
+                if name=='JustAC-RotationImport' then return RI end
+            end
+        """)
+        lua.execute(method("SimcGateProbe"))
+        lua.execute(method("GateDiagnostics"))
+        lua.globals().DebugCommands.GateDiagnostics(lua.globals().addon)
+        assert list(lua.globals().calls.values()) == ["st", "cleave", "aoe"]
+        report = lines(lua)
+        assert "holds=false" in report and "[>=5 is false]" in report
+        assert "dot[4] verdict=nil:nil" in report, "unknown top-level gates must not vanish"
+        assert "known[6]" in report and "buff[7]" in report
+        assert "no gates" in report and "(delegated)" in report
+        assert "4 imported entries, 1 blocked" in report
+        lua.execute("output={}; SQ._GateVerdict=nil")
+        lua.globals().DebugCommands.SimcGateProbe(lua.globals().addon, "st")
+        assert "modules unavailable" in lines(lua)
+        lua.execute("B=nil; output={}")
+        lua.globals().DebugCommands.GateDiagnostics(lua.globals().addon)
+        assert "No SimC gate data" in lines(lua)
+
+
+def test_rotation_probe_source():
+    lua = runtime()
+    lua.execute("""
+        gamePick=true
+        B={
+            HasGamePick=function() return gamePick end,
+            GetRotationSpells=function(gameOnly)
+                assert(gameOnly==true, 'must exclude imported pool additions')
+                return {1,2,3}
+            end,
+            GetNextCastSpell=function() return 1 end,
+        }
+        C_Spell={GetSpellName=function(id) return 'spell'..id end}
+        function LibStub() return B end
+    """)
+    lua.execute("local lastRotationSnap\n" + method("RotationOrderProbe"))
+    lua.globals().DebugCommands.RotationOrderProbe(lua.globals().addon)
+    assert "ascending by spell ID" in lines(lua)
+    lua.execute("gamePick=false; output={}; B.GetRotationSpells=function() error('no Blizzard feed') end")
+    lua.globals().DebugCommands.RotationOrderProbe(lua.globals().addon)
+    assert "no Blizzard priority feed" in lines(lua)
+
+
+def test_stack_shape_scope():
+    lua = runtime()
+    lua.execute("""
+        C_UnitAuras={GetAuraDataByIndex=function(_,i)
+            if i==1 then return {spellId=1,applications=5,name='stack'} end
+            if i==2 or i==3 then return {spellId=2,applications=1,name='multi'} end
+        end}
+    """)
+    lua.execute(method("StacksProbe"))
+    lua.globals().DebugCommands.StacksProbe(lua.globals().addon)
+    report = lines(lua)
+    assert "STACKING counter=5 (combat threshold access untested)" in report
+    assert "MULTI-INSTANCE x2 (OOC shape only)" in report
+    assert "NOT countable" not in report and "-> countable in combat" not in report
+
+
+def test_dot_provenance_capture():
+    lua = runtime()
+    start = SOURCE.index("    local dotState, lastTarget =")
+    end = SOURCE.index("\n    -- Can we hold an aura INSTANCE", start)
+    lua.execute("""
+        log={}; epoch=1; guid='Creature-A'; now=1; active=false
+        function GetTime() return now end
+        function UnitGUID() return guid end
+        function UnitAffectingCombat() return true end
+        function targetEpoch() return epoch end
+        function IsSecret() return false end
+        function ProbeLogEmit(text) log[#log+1]=text end
+        RI={GetRotationGated=function()
+            local entries={}
+            for i=1,14 do entries[i]={gates={{t='any',g={{t='dot',id=i}}}}} end
+            return entries
+        end}
+        DT={DebugState=function(ids)
+            assert(#ids==12, 'candidate bound')
+            local entries={}
+            for _,id in ipairs(ids) do
+                entries[#entries+1]={spellID=id,active=active,confirmed=false,
+                    source='cooldown-manager',cooldownManager=active,cooldownManagerReason='aura-inactive'}
+            end
+            return {entries=entries}
+        end}
+        function LibStub(name)
+            if name=='JustAC-DotTracker' then return DT end
+            if name=='JustAC-RotationImport' then return RI end
+        end
+    """)
+    lua.execute(SOURCE[start:end] + "\nSampleDots=dotSample")
+    lua.globals().SampleDots()
+    text = "\n".join(lua.globals().log.values())
+    assert "source=cooldown-manager cdm=false cdmReason=aura-inactive epoch=1 truncated=true" in text
+    before = len(lua.globals().log)
+    lua.globals().SampleDots()
+    assert len(lua.globals().log) == before, "identical state is change-only"
+    lua.execute("guid='Creature-B';epoch=2")
+    lua.globals().SampleDots()
+    assert len(lua.globals().log) == before + 13, "target change re-emits every candidate"
+    before = len(lua.globals().log)
+    lua.execute("epoch=3")
+    lua.globals().SampleDots()
+    assert len(lua.globals().log) == before + 13, "epoch change works without a readable GUID change"
+    lua.execute("active=true")
+    lua.globals().SampleDots()
+    assert "cdm=true" in lua.globals().log[len(lua.globals().log)]
+
+
+def test_rogue_archetype_candidate():
+    for runtime_type in (LuaRuntime, Lua51Runtime):
+        lua = runtime(runtime_type)
+        lua.execute("""
+            secret={}
+            function IsSecret(v) return v==secret end
+            forever=true; spec='ROGUE_F'; learned={}; ranks={}; reads=0
+            B={IsForever=function() return forever end}
+            SDB={GetSpecKey=function() return spec end}
+            RI={
+                GetForeverTree=function() return 'combat' end,
+                HighestKnownRank=function(id) return ranks[id] end,
+                SpentByTree=function()
+                    return {{groupID=1},{groupID=2},{groupID=3}}, {[1]=0,[2]=10,[3]=0}
+                end,
+            }
+            function IsPlayerSpell(id)
+                reads=reads+1
+                if learned[id]==nil then return false end
+                return learned[id]
+            end
+            function LibStub(name)
+                if name=='JustAC-BlizzardAPI' then return B end
+                if name=='JustAC-SpellDB' then return SDB end
+                if name=='JustAC-RotationImport' then return RI end
+            end
+        """)
+        lua.execute(method("RogueArchetypeSample"))
+        sample = lua.globals().DebugCommands.RogueArchetypeSample
+        for setup, status, candidates in (
+            ("learned={}", "insufficient-signature", ""),
+            ("learned={[399956]=true}", "candidate-only", "mutilate"),
+            ("learned={[16511]=true}", "candidate-only", "hemorrhage"),
+            ("learned={[13877]=true,[13750]=true}", "candidate-only", "combat-family"),
+            ("learned={[399956]=true,[16511]=true}", "ambiguous-overlap", "mutilate,hemorrhage"),
+            ("learned={[16511]=true,[13877]=true}", "ambiguous-overlap", "hemorrhage,combat-family"),
+            ("learned={[399956]=secret}", "unknown-signature", ""),
+            ("ranks={[399956]=1241584};learned={[1241584]=true}", "candidate-only", "mutilate"),
+            ("ranks={[399956]=secret};learned={}", "unknown-signature", ""),
+            ("ranks={};RI.HighestKnownRank=function() error('denied') end",
+             "unknown-signature", ""),
+        ):
+            lua.execute(setup)
+            report = sample()
+            assert f"status={status}" in report, (setup, report)
+            assert f"candidates={candidates} status=" in report, (setup, report)
+            assert "selection=unchanged" in report and "liveVerified=false" in report
+        lua.execute("forever=false;reads=0")
+        assert sample() == "not-applicable:client" and lua.globals().reads == 0
+        lua.execute("forever=true;spec='WARLOCK_F'")
+        assert sample() == "not-applicable:class" and lua.globals().reads == 0
 
 
 def main():
-    for test in (
-        test_registry, test_shared_health_fallback, test_low_health_heal_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
+    tests = (
+        test_rotation_target_enemy_context, test_eligibility_evidence_capture,
+        test_registry, test_loaded_modules, test_log_capacity, test_loaded_recovery_mana, test_shared_health_fallback, test_low_health_heal_glow, test_critical_preparation_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
         test_ticker_lifecycle, test_battery_failures, test_delayed_snapshots,
         test_topoff_log, test_category_knowledge, test_error_capture_lifecycle,
-        test_audit_lifecycle, test_curse_signals, test_chat_output,
-    ):
+        test_audit_lifecycle, test_curse_signals, test_chat_output, test_combat_signal_reads,
+        test_priority_gate_capture,
+        test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
+        test_consolidated_gate_reports, test_rotation_probe_source, test_stack_shape_scope,
+    )
+    research_tests = {
+        test_eligibility_evidence_capture,
+        test_shared_session, test_census_count, test_battery_failures,
+        test_delayed_snapshots, test_audit_lifecycle, test_curse_signals,
+        test_combat_signal_reads, test_priority_gate_capture,
+        test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
+        test_rotation_probe_source, test_stack_shape_scope,
+    }
+    for test in tests:
+        if not RESEARCH_FILES and test in research_tests:
+            continue
         test()
-    print("debug probes: registry, denial/unknown, preferences, lifecycle, failures, delayed snapshots and saved transitions passed")
+    if not RESEARCH_FILES:
+        print("research companion absent: research-only regressions skipped")
+    print("debug probes: TOC-ordered Lua 5.1 loading, both clients, registry, denial/unknown, preferences, lifecycle, failures, delayed snapshots and saved transitions passed")
 
 
 if __name__ == "__main__":

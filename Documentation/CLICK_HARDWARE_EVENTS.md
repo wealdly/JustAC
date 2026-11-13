@@ -61,11 +61,19 @@ both via macrotext:
 - **Recuperate**: `/cancelaura` + `/cast`. A damage tick can interrupt
   Recuperate's heal-over-time while its 30s active aura (and animation) keeps
   running - the stale aura must be cancelled before a re-cast lands.
-- **Weapon enhancements** (oil / whetstone / weightstone): `/use item:<id>` +
+- **Weapon enhancements** (oil / whetstone / weightstone): `/use <bag> <slot>` +
   `/use 16`. Using the item only arms an "apply to which item?" cursor; the
   enchant lands when a weapon slot is used while it's held. `/use 16` is
   `INVSLOT_MAINHAND` - `SecureCmdItemParse` matches a bare number as a slot, so
   `SecureCmdUseItem` routes it to `UseInventoryItem(16)`, consuming the cursor.
+
+Item actions resolve a current unlocked bag stack rather than using an item ID.
+The overlay rechecks at `PreClick`, follows bag/lock changes, and disarms while
+no unlocked matching stack exists. This keeps asynchronous bag sorting from
+leaving an action pointed at a moved or locked stack. Both weapon-enhancement
+steps still run in the same secure macro. Item clicks also wait while a merchant
+or bank interaction is open, because bag-slot use would sell or deposit the
+item instead of consuming it. Spell clicks remain available.
 
 Both must stay macros: these layers are mouse-driven, and per "What a MOUSE
 click actually resolves" a press/release split would simply never fire its

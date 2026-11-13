@@ -408,6 +408,48 @@ Disagreement, the core one: is the builder Backstab (wowtbc; it fishes Cutthroat
 
 ---
 
+## Rogue archetype diagnostic pilot (2026-11-10)
+
+This pilot measures candidate signatures only. It does not select a new list, implement a
+similarity score, or replace dominant-tree selection. Historical guide claims above remain
+dated evidence. Current preset choices are recorded in the
+[local source catalog](../../tools/forever-apl-src/presets/catalog.json), whose application
+source is pinned to `sage3648/mythicsim` revision
+`4bf15417001a5e86ebc99cae159a09f91ff0be4b`. Existing upstream notices are unchanged.
+
+| Candidate family | Signature evidence to measure | Priority-source candidate |
+|---|---|---|
+| Mutilate | Learned Mutilate rank family, base 399956 | `rogue/dps/forever_mutilate` |
+| Hemorrhage | Learned Hemorrhage rank family, base 16511 | `rogue/dps/forever_hemorrhage` |
+| Combat family | Learned Blade Flurry 13877 or Adrenaline Rush 13750 | `rogue/dps/combat_sinister_strike` or `rogue/dps/combat_backstab`, unresolved |
+
+IDs follow the current Forever CSV/generated rank data, not similarly named Retail spells.
+The probe resolves the highest known rank and records an independent `IsPlayerSpell` result,
+alongside the installed tree and raw group-point totals. Errors, secret or missing reads
+remain unknown. These API results still require live controls before automatic matching.
+
+With the optional research companion, `/jac inspect forever` reports the candidate and
+`/jac inspect start` captures change-only `signal.rogueArchetype` samples through the existing
+shared recorder. Output includes `diagnosticOnly=true`, `liveVerified=false` and
+`selection=unchanged`. Multiple candidate families report `ambiguous-overlap`; no signature
+reports `insufficient-signature`, not a guessed leveling build. A single observed family is
+only `candidate-only`, not a validated build match.
+
+Required controls before selection work:
+
+- Compare the reported rank knowledge and group totals with the actual talent allocation.
+  Repeat after a learned rank, talent change and reload when practical.
+- Record signature-defining passive talents and meaningful priority differences from reviewed
+  current sources. Active abilities alone are not a complete hybrid-build fingerprint.
+- Distinguish Combat dagger/Backstab and Sinister Strike builds using verified talent and
+  weapon evidence. A baseline learned Backstab alone does not establish a dagger archetype.
+- Define deterministic overlap, tie and insufficient-evidence behavior. Keep the existing
+  selector as fallback and preserve custom lists.
+- Validate the chosen archetype's opener, repeat priority and target-count contexts separately
+  from whether its combat conditions are readable.
+
+No automatic archetype matching or additional generated lists are enabled by this pilot.
+
 ## Rogue - tank / other Forever builds
 - **None found.** No guide publishes a rogue tank, and lfcarry and mythicsim (Oct 7) explicitly state that Rogue has only the three DPS specs. Evasion-tanking is mentioned only as a way to survive pulling aggro [Icy Sub].
 

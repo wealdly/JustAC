@@ -1,368 +1,94 @@
-# JustAC - Contributor Instructions
+# JustAC contributor instructions
 
-WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua + WoW API + Ace3.
+Lua + WoW API + Ace3 addon for Retail and WoW Forever. Maintain one shared
+`main` branch and release. Read [JustAC.toc](JustAC.toc) for supported interfaces,
+version, dependencies and load order; do not duplicate changing inventories here.
 
-## Client version
+## Workflow
 
-Support both Retail and WoW Forever. `JustAC.toc` currently declares
-`## Interface: 120100, 16001`; read the TOC for the current supported versions.
+- Propose changes before implementing; obtain approval for behavior/scope changes.
+- Preserve unrelated work. Do not build, commit, push, tag or publish
+  without authorization. Never bump the addon version unless explicitly requested.
+- Edit and test in the development checkout, not through a client addon junction.
+  After every validated runtime update, deploy to the shared runtime target used
+  by Retail and Forever. This local deployment has standing authorization; verify
+  contents against source, junction targets and active TOC/XML dependencies, not
+  just matching client paths or version labels. Preserve SavedVariables and unrelated
+  files. See [runtime test sync](Documentation/DEV_TOOLING.md#runtime-test-sync).
+- Keep release notes player-facing in [UNRELEASED.md](UNRELEASED.md).
+  Research, probes and tooling do not belong in player release notes.
+- No AI attribution, acknowledgments or co-author trailers in project files or
+  commits. Preserve required upstream source/license credits.
+- No em dashes in project files.
 
-- Maintain cross-client compatibility on every change, including shared queue
-  ordering, resource gates, UI, options, saved profiles, generated data and packaging.
-- Prefer shared, capability-based logic and existing helpers. Use `SpellDB.IsForever()`
-  or `BlizzardAPI.IsForever()` only for a verified client-specific difference; do not
-  scatter build-number checks or add spell/class exceptions to generic behavior.
-- Do not assume Retail APIs, Assisted Combat picks, resource representations or
-  secrecy rules apply to Forever. Verify each affected client's signals against
-  source documentation or saved in-game probes. See `Documentation/CLIENT_COMPAT.md`.
-- Builder/consumer logic must work for every supported resource context with
-  confirmed signals, not just the spell or class that exposed a bug. Unknown reads
-  remain unknown; do not infer hidden resources or change player overrides.
-- Test affected shared behavior for both clients, including custom lists and
-  explicit settings. A client-specific fix must preserve the other client's
-  intended behavior unless a cross-client change was explicitly approved.
+## Cross-client correctness
 
-## Critical Workflow
+- Preserve both clients' queue ordering, resources, UI, options, profiles, generated
+  data and packaging. Test affected shared behavior on both, including custom
+  lists and explicit settings. Do not change player overrides to make a fix work.
+- Prefer existing shared helpers and capability checks. Use `SpellDB.IsForever()`
+  or `BlizzardAPI.IsForever()` only for verified client differences; no scattered
+  build checks or spell/class exceptions in generic logic.
+- Unknown remains unknown. Do not infer hidden resources, aura identity or
+  mechanic state from an unrelated signal. General priorities need not simulate
+  optimal play, but must use confirmed signals for every supported context.
+- Never guess WoW API behavior. Check the matching client's generated API docs,
+  caller implementation and saved in-game evidence. Source annotations describe
+  contracts, not proof of live taint/secrecy behavior.
 
-1. **NEVER guess WoW API behavior** - Verify with `/script` commands in-game or check the matching client source under `D:\.src\WOW\WOW\00-SOURCE\`: `wow-ui-source` for Retail, `wow-ui-source-forever` for Forever, generated docs under `Interface\AddOns\Blizzard_APIDocumentationGenerated`, and `WowPacketParser\WowPacketParser\Enums` for enums. `update-sources.ps1` refreshes these plus the Retail `simc` mirror, using fast-forward only. See the two-client workflow below.
-2. **Propose before implementing** - Describe changes, ask "Should I proceed?"
-3. **Test with debug commands** - Use `/jac inspect modules`, `/jac find`, `/jac inspect cooldown` to validate changes
-4. **DO NOT auto-increment versions** - Track changes in `UNRELEASED.md`, only bump version on explicit instruction
-5. **DO NOT auto-build or push** - Commit changes, let user build/push manually
-6. **NO AI attribution** - Never add `Co-Authored-By`, credits, acknowledgments, or any other reference to AI agents/models in commit messages, code comments, README, CHANGELOG, or any project file. All contributions are authored solely by the project owner.
-7. **Release notes must be player-facing** - `UNRELEASED.md` and `CHANGELOG.md` should focus on user-visible changes, fixes, and configuration impacts. Technical details are allowed, but keep them simple and concise. Never mention AI, agents, models, or tooling attribution in release notes.
+## Lua safety
 
-## Lua validation (before commit / `/reload`)
+- Four spaces, camelCase locals, UPPER_SNAKE constants, early returns.
+  Keep implementation variables local; do not introduce accidental globals.
+  Follow existing module/public API names; localize repeated hot-path lookups.
+- Use `LibStub("JustAC-Module", true)` and check availability before use.
+  Preserve TOC dependency order; options panels resolve `JustAC-Options` per call
+  because `Options\Core.lua` loads last. Bump LibStub versions on breaking changes.
+- Wrap fallible WoW calls in `pcall`; preserve explicit error/unknown outcomes.
+  Use `BlizzardAPI.GetActionInfo()` to filter the `"assistedcombat"` pseudo-ID.
+- Never use `a and b or c` when `b` can be nil/false; write an explicit branch.
+- Use `BlizzardAPI.IsSecretValue()` before comparing, branching on or performing
+  arithmetic with potentially secret values. Never iterate secret payload lists.
+- Use `AreAurasSecret()` / `AreCooldownsSecret()`, not combat lockdown as a
+  secrecy proxy. Call denial is separate from result secrecy: inspect `Requires*`
+  as well as `Secret*`. A remembered plain aura never authorizes a denied call.
+- Before buff/aura work read the relevant identity/container reference; before
+  new thresholds read the threshold scope rule. No hidden-number reconstruction.
+  See the task-specific links in the [documentation index](Documentation/README.md).
 
-WoW loads Lua at runtime, so a brace slip or a typo'd global is a silent load
-failure. Run the static-analysis gate on anything you touch:
+## Validation and diagnosis
 
-```
-tools/check.ps1 SpellQueue.lua UI/UIRenderer.lua   # specific files
-tools/check.ps1                                     # whole addon
-```
+- For changed Lua run `.\tools\check.ps1 <changed files>` before commit/reload.
+  It prefers luacheck and falls back to syntax-only luaparser; add no errors or
+  new warnings. Run the smallest relevant existing regression tests.
+- For in-game regressions start with `/jac inspect validate`, then
+  `/jac inspect errors` and `/jac inspect secrecy`; use `/jac inspect modules`
+  for loading and `/jac why <spell>` for queue decisions.
+- `INSPECT_TOPICS` in [DebugCommands.lua](DebugCommands.lua) is the authoritative
+  probe registry; `/jac help` lists current commands. Do not copy the full list.
+- Prefer bounded, debug-only time-series captures to pasted snapshots.
+  SavedVariables flush only on `/reload` or logout: confirm a flush before
+  reading disk results. Never mistake the previous session for live evidence.
 
-It prefers **luacheck** (config `.luacheckrc`: undefined globals, unused locals,
-syntax) and falls back to a **luaparser** syntax check. Baseline is 54 known
-warnings / 0 errors, all of them WoW globals the config does not list plus
-multiple-return placeholders in `FormCache.lua`; a clean change adds no errors and
-no *new* warnings. If no
-checker is installed, `check.ps1` prints the install command. Details:
-`Documentation/DEV_TOOLING.md`.
+## Read only what the task needs
 
-## Versioning
+Start with the [documentation index](Documentation/README.md), then read relevant
+headings/ranges, not the whole research archive. Do not load old plans by default.
+Treat dated findings as build/client/context-specific; distinguish measured
+results, source-backed candidates and untested ideas. Do not rerun settled
+dead ends without a concrete new API, composition or contradictory measurement.
 
-**Semantic Versioning (MAJOR.MINOR.PATCH):** (current version: see `## Version:` in `JustAC.toc`)
-- Hotfixes: 4.5.5, 4.5.6, etc. (bug fixes only)
-- Features: 4.6.0, 4.7.0, etc. (new functionality)
-- Breaking: 5.0.0, 6.0.0, etc. (major rewrites)
-
-Update in three places: `JustAC.toc`, `CHANGELOG.md`, `UNRELEASED.md`
-
-## Architecture (Load Order Matters)
-
-LibStub modules in `JustAC.toc` - **MUST edit in dependency order**:
-
-```
-BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter
-                                    ↓
-              DotTracker → MaintenanceTracker → SpellQueue → UI/*
-                                    ↓
-              DefensiveEngine → GapCloserEngine → PrecombatEngine
-                                    ↓
-              DebugCommands → DebugHUD → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
-```
-Note `Options/Core.lua` loads LAST of the `Options/*` files: the panels resolve
-`LibStub("JustAC-Options")` per call, not at load time.
-
-| Module | Role | Key Exports | Current Version |
-|--------|------|-------------|-----------------|
-| `Locales/*.lua` | AceLocale-3.0 localization (9 languages) | `L` global | N/A (not LibStub) |
-| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v20 |
-| `RotationImport.lua` | Alternate rotation source (gated import lookup + burst anchors) | `GetRotation()`, `HasRotation()`, `RegisterGated()`, `GetBurstTriggers()` | v1 |
-| `BlizzardAPI.lua` | Root: secret value primitives, live secrecy gates, version detection | `IsSecretValue()`, `Unsecret()`, `AreCooldownsSecret()`, `AreAurasSecret()`, `GetActionBarUsability()` | v36 |
-| `BlizzardAPI/CooldownTracking.lua` | Cooldown / charge / buff-window state from engine reads (no local cooldown model) | `IsSpellReady()`, `IsSpellOnCooldown()`, `IsChargeSpellOnCooldown()`, `IsBuffWindowActive()`, `NoteOwnCast()` | v13 |
-| `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `GetFeatureAvailability()` | v2 |
-| `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v2 |
-| `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v14 |
-| `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v11 |
-| `FightWindow.lua` | Last abilities the game served / the player used this fight: multi-target context from recent picks, stuck-pick detection. Context and safeguards only - never evidence for leading over the pick (`Documentation/SAFE_LEAD_PLAN.md`) | `Served()`, `Used()`, `MultiContext()`, `StuckSeconds()`, `SelfTest()` | v1 |
-| `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v25 |
-| `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v38 |
-| `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v45 |
-| `DotTracker.lua` | Sink maintained enemy DoTs while their debuff is live on the target (cast-observation + `IsAuraFilteredOutByInstanceID` bridge; secret-safe) | `OnCastSucceeded()`, `OnTargetAuraUpdate()`, `IsDotActiveOnCurrentTarget()` | v1 |
-| `MaintenanceTracker.lua` | Sustain/maintenance slot: tracked buff+bar viewer bridge, cosmetic CDM hides | `ApplyViewerVisibility()`, `Reset()`, `GetBridgeDiag()` | v8 |
-| `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v43 |
-| **UI/** | **UI rendering subsystem (8 files)** | | |
-| `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v9 |
-| `UI/UIAnimations.lua` | Animation helpers (glow, flash, channel fill) | `StartAssistedGlow()`, `ShowProcGlow()`, `StartFlash()` | v18 |
-| `UI/CastInterruptTracker.lua` | Interrupt debounce, cast bar discovery, LSM sound registration | `EvaluateInterrupt()`, `PlayInterruptAlertSound()`, `NotifyCCApplied()` | v2 |
-| `UI/UIFrameFactory.lua` | Icon/grab-tab frame construction | `CreateSpellIcons()`, `CreateInterruptIcon()` | v25 |
-| `UI/UIRenderer.lua` | Icon rendering + Masque integration (shared per-icon render for both surfaces) | `RenderSpellQueue()`, `RenderQueueIcon()`, `RenderInterruptSlot()` | v44 |
-| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v14 |
-| `UI/UISootheCue.lua` | Soothe (enrage-cleanse) cue; rides the interrupt slot | `Create()`, `SetSpell()`, `Show()`, `Available()` | v8 |
-| `UI/UIPrecombatOverlay.lua` | OOC click overlay for the defensive queue (pooled click layers) | `Init()`, `Refresh()`, `OverlayClickLayers()` | v3 |
-| `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v4 |
-| `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()`, `InvalidateGapCloserCache()` | v6 |
-| `PrecombatEngine.lua` | Out-of-combat buff checklist (flask/food/rune/imbue) | `IsCategorySatisfied()`, maintained-buff offers | v8 |
-| `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v37 |
-| `DebugHUD.lua` | Movable live overlay of the signals feeding the queue | `Toggle()` | v1 |
-| **Options/** | **Modular options panel (18 files)** | | |
-| `Options/Widgets.lua` | Shared AceConfig entry builders (`JustAC-OptionsWidgets`) | `W.toggle()`, `W.select()`, `W.range()`, `W.resetButton()` | v1 |
-| `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()`, `HoldModeControl()` | v3 |
-| `Options/ListWidget.lua` | The rows every ability list is drawn with: pane, drag, settings strip and panels | `PlaceRows()`, `Attach()`, `Pane()`, `BindDetail()`, `BindPanels()` | v1 |
-| `Options/SpellLists.lua` | Registry of the editable ability lists + the plain list widget | `Args()`, `AddButton()`, `Remove()`, `LISTS` | v1 |
-| `Options/LiveSearchPopup.lua` | Persistent modal for spell/item selection | `Open()`, `Close()`, `IsOpen()` | v1 |
-| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v8 |
-| `Options/StandardQueue.lua` | Standard Queue tab (icon size, spacing, layout) | `CreateTabArgs()` | v4 |
-| `Options/Offensive.lua` | Offensive tab + burst triggers | `CreateTabArgs()` | v3 |
-| `Options/CustomQueue.lua` | Custom Queue tab (manual spell list override) | `CreateTabArgs()` | v1 |
-| `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v3 |
-| `Options/Defensives.lua` | Defensives tab | `CreateTabArgs()` | v4 |
-| `Options/GapClosers.lua` | Gap Closers tab (sub-tab of Offensive) | `CreateTabArgs()` | v1 |
-| `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v4 |
-| `Options/Hotkeys.lua` | Hotkey Overrides tab | `CreateTabArgs()`, `UpdateHotkeyOverrideOptions()` | v1 |
-| `Options/Profiles.lua` | Per-spec profile switching (injected into profiles) | `AddSpecProfileOptions()` | v1 |
-| `Options/Core.lua` | Options assembly, slash commands, initialization | `Initialize()`, `UpdateX()` forwards | v32 |
-| `TargetFrameAnchor.lua` | Anchor main frame to Blizzard TargetFrame | `UpdateTargetFrameAnchor()`, `ClampFrameToScreen()` | v1 |
-| `KeyPressDetector.lua` | Flash feedback on matching key press | `Create()` | v2 |
-| `JustAC.lua` | Core addon, events, defensive cooldowns | `OnInitialize()`, `OnUpdate()` | N/A (main addon) |
-
-## Required Patterns
-
-### Module Access (ALWAYS use this pattern)
-```lua
-local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-if not BlizzardAPI then return end
-
-local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-if not addon or not addon.db then return end
-```
-
-### Hot Path Optimization (top of each file)
-```lua
-local GetTime = GetTime
-local pcall = pcall
-local wipe = wipe
-```
-
-### Critical API Gotcha - MUST filter "assistedcombat" string
-```lua
--- GetActionInfo(slot) may return "assistedcombat" as ID - causes crashes if not filtered
--- BlizzardAPI.GetActionInfo() handles this automatically
-if actionType == "spell" and type(id) == "string" and id == "assistedcombat" then return nil end
-```
-
-## Code Standards
-
-- **4 spaces** indentation, **camelCase** variables, **UPPER_SNAKE** constants
-- **Early returns** over nesting (max 3 levels)
-- **pcall()** all WoW APIs that can fail
-- **All variables local** except `JustAC` global table
-- **Increment LibStub version** on breaking changes: `LibStub:NewLibrary("JustAC-Module", VERSION)`
-- **Never write `cond and nil or x`, `cond and false or x`, or any `a and b or c` where `b` can be `nil` or `false`.** Lua evaluates `true and nil` to `nil`, and `nil or c` to `c`, so the expression CANNOT produce the falsy value - it silently returns `c` every time. Use an explicit `if/else`. This has shipped as a bug three times: a default-on toggle that could not be unchecked (user-reported, see `Options/Abilities.lua`), the same again in the priority list's per-row settings, and an expand/collapse control that would not collapse. `grep -rn "and nil or\|and false or" --include=*.lua .` should only ever match comments warning about it.
-- **Never use em dashes (`—`) anywhere**: not in code, comments, locale strings, README, CHANGELOG, `UNRELEASED.md`, or any project file. Use a hyphen, colon, comma, or separate sentence instead.
-
-## Cache Patterns
-
-| Pattern | Usage | Example |
-|---------|-------|---------|
-| Throttled | `if now - lastUpdate < interval then return cached` | SpellQueue (0.1s combat) |
-| State hash | `hash = page + bonusOffset*100 + form*10000` | ActionBarScanner |
-| Event-driven | Clear on `ACTIONBAR_SLOT_CHANGED` | ActionBarScanner |
-| Time-based | `if now - lastFlush > 30 then wipe(cache)` | MacroParser |
-
-## Event→Cache Invalidation Map
-
-| Event | Invalidates |
-|-------|-------------|
-| `UPDATE_SHAPESHIFT_FORM` | MacroParser, ActionBarScanner, FormCache |
-| `ACTIONBAR_SLOT_CHANGED` | ActionBarScanner slot cache |
-| `UPDATE_BINDINGS` | Binding cache (0.2s debounce) |
-| `SPELL_ACTIVATION_OVERLAY_GLOW_*` | Immediate UI refresh |
-| `UNIT_AURA(unit, updateInfo)` | RedundancyFilter instance maps (addedAuras/removedAuraInstanceIDs) |
-| `UNIT_SPELLCAST_SUCCEEDED` | RedundancyFilter pending activation queue |
-| `PLAYER_REGEN_ENABLED` | RedundancyFilter combat state (inCombatActivations, combatRemovedSpellIDs, pendingActivations) |
-
-## Debug Commands
-
-```
-/jac help                     - EVERY inspect topic with its one-liner
-/jac find [spell]             - Locate spell on action bars (defaults to AC suggestion)
-/jac why <spell>              - Per-stage verdict on why a spell is/isn't in the queue
-```
-
-The topic list is **not duplicated here**. `INSPECT_TOPICS` at the top of
-`DebugCommands.lua` is the single source for the slash dispatch, the usage line and
-the `/jac help` listing; a copy in this file would be a fourth list to keep in sync,
-and every previous copy had already drifted. Add a probe by adding one row there.
-
-**When a feature stops working, start with these three**, in order - they separate
-"the client changed" from "the addon broke":
-
-| Command | Answers |
+| Task | Primary reference |
 |---|---|
-| `/jac inspect validate` | Did a secrecy predicate flip, or did one of the techniques the addon rides on (threshold curves, the zero-gate, duration evaluation, stack counts) stop producing its known-correct answer? `arm` diffs across a combat enter/exit. |
-| `/jac inspect errors` | Did we start getting taint or secret-value errors? Run it after a fight. |
-| `/jac inspect secrecy` | Which values actually read plain vs secret right now, in and out of combat. |
+| Client behavior and compatibility | [CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md) |
+| Code patterns and options | [STYLE_GUIDE_JUSTAC.md](Documentation/STYLE_GUIDE_JUSTAC.md) |
+| Secrecy and combat signals | [12.0_COMPATIBILITY.md](Documentation/12.0_COMPATIBILITY.md), relevant signal reference from the index |
+| Tests, source/CSV refresh, generators, captures, release | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md) |
+| Player behavior, configuration, source credits | [README.md](README.md) |
 
-Then reach for the probe covering the specific subsystem (`/jac help` lists them).
-
-## Reading in-game results from disk
-
-Probe output does NOT have to be copied out of the chat frame. Two channels exist; prefer them,
-they remove a whole round trip per question.
-
-**SavedVariables (structured, preferred).** `## SavedVariables: JustACDB JustACGlobal`, written to:
-
-```
-WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua
-```
-
-(`.bak` alongside it is the previous session.) Anything parked on `JustACGlobal` is readable
-directly off disk. **It only flushes on `/reload` or logout** - so the loop is
-*play → `/reload` → read the file*, never live tailing. Ask for the `/reload`; without it the
-file still holds the previous session and you will analyse stale data and not notice.
-
-**Chat log (raw, opt-in).** `/chatlog` writes `Logs/WoWChatLog.txt` under the WoW root. Absent
-unless the user enabled it - check before assuming, and prefer SavedVariables anyway since chat
-output is truncated, interleaved with game spam, and unstructured.
-
-**Why this matters for hard bugs.** A pasted snapshot shows one moment. Intermittent faults -
-a tracker stuck in a wrong state for minutes, a bind that never retries, a state that a
-`/reload` silently clears - are only diagnosable from a time series. For those, have the probe
-append to a debug-only ring buffer on `JustACGlobal` (bounded, e.g. 300 entries, gated behind
-`/jac debug` so it never runs for normal players or bloats the file), then read the sequence.
-Prefer that over asking the user to catch the moment by hand.
-
-Debug commands and this tooling are dev-facing: they never appear in `UNRELEASED.md` /
-`CHANGELOG.md` (see Versioning).
-
-## Defensive Spell System
-
-Spell lists managed by `DefensiveEngine.lua` using `SpellDB.CLASS_DEFENSIVE_DEFAULTS` (via `SPELL_LIST_CONFIG`).
-Also manages `CLASS_PETHEAL_DEFAULTS` and `CLASS_PET_REZ_DEFAULTS`.
-
-## Data Pipeline (tools/)
-
-### Required two-client update workflow
-
-- **Licensing and source attribution are adoption requirements.** Before adopting any preferred external source for either client, verify reuse and redistribution terms and compatibility with JustAC's license. Preserve required notices and license files, and document the upstream project/authors, URL, license, pinned revision and local adaptations in the source documentation and relevant README credits. Public availability is not permission; unresolved licensing blocks adoption.
-
-- **Every update-check session covers both clients.** Follow [the two-client refresh workflow](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh) before claiming sources or data are current. Compare installed builds, published builds, CSV builds, source revisions and both deployed addon copies; a version label alone is not a content check.
-- **Source root:** `D:\.src\WOW\WOW\00-SOURCE\`. Inspect and refresh its four mirrors with `update-sources.ps1` (fetch plus fast-forward only): Retail UI `live`, Forever UI `forever`, packet-parser enums `master`, Retail SimC `midnight`. Stop on dirty/conflicting mirrors; never reset them.
-- **Separate CSV folders:** Retail uses `Documentation\wow_spell_csv`; Forever uses `Documentation\wow_spell_csv_forever`. Each must contain one complete build.
-- **Stage new-build downloads.** The updater writes into its input folder and a failure leaves mixed builds. Refresh a separate copy with `--skip-gen`, verify completeness, then replace the live snapshot and regenerate explicitly. Keep the previous snapshot until validation succeeds; never generate from a failed download.
-- **Forever refresh:** discover the latest `wowf` build, then use `python tools\update_data.py <build> --dir Documentation\wow_spell_csv_forever --skip-gen`. `--product wowf` is not supported; `--dir` does not retarget every generator. Run the three Forever generators explicitly as documented. A failed/incomplete download means no refresh, not success.
-- **Rotation freshness is separate from CSV freshness.** Refresh Retail SimC pins with `tools\update_simc_apl.py`; inspect Forever vendored rotations and JustAC custom pins separately. Forever has no native Assisted Combat priority feed. Follow [Forever source review](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review) to discover and assess alternatives; a recent repository or simulation result is not proof of a reliable, importable priority list.
-- **Keep testing copies identical.** Use one combined source and version, validate affected behavior for both clients, and verify deployed file contents and TOC dependencies after an authorized sync. Do not build, publish, push, tag, or reconcile release branches as a side effect of an update check.
-
-### Generator ownership and refresh rules
-
-Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Documentation/wow_spell_csv/` (Retail) and `Documentation/wow_spell_csv_forever/` (Forever), both gitignored. Rules:
-
-- **One build per folder.** Generators join across tables and resolve files by glob; a mixed-build folder silently joins across builds.
-- **Refresh flow:** `python tools/update_data.py [--product wow|wowt]` pulls the latest build for every tracked table, prints a per-table row diff, swaps the folder atomically, reruns all generators, and shows `git diff --stat Data/`. It is rate-limited - be gentle with wago.tools; never script tight request loops against it.
-- **One generator per Data file** (`tools/gen_*.py`, plus `gen_archetypes.sh`). Arg-free default reads `Documentation/wow_spell_csv`.
-- **Audits are report-only** (`tools/audit_*.py|sh`): candidate diffs vs curated lists (`audit_topoff_heals.py`, `audit_cooldownset.py` for the client's own per-spec cooldown lists). Human judgment decides what enters curated files.
-- **Blizzard's rotation is in the data** (`AssistedCombat` / `AssistedCombatStep` / `AssistedCombatRule`): per-spec steps in priority order, with conditions. `tools/audit_assisted_combat.py` uses it to show what SimC pool insertion adds per spec (run after touching `SimcRotations.lua` or `NEVER_INSERT`) and, via `update_data.py`, which specs' rotations changed between builds. It is a SUPERSET of the live `GetRotationSpells()` list - see `Documentation/DEV_TOOLING.md`.
-- Curated files (`SpellCategories`, `InterruptAbilities`, `RangeReferences`) have no generator - edit by hand, re-run audits per patch.
-
-**Data file → source map** (which generator owns which table - skip the grep):
-
-| `Data/*.lua` | Source | Holds |
-|--------------|--------|-------|
-| `SpellCategories.lua` | curated (hand) | Category tags (defensive/interrupt/etc.) per spell |
-| `InterruptAbilities.lua` | curated (hand) | Interrupt/CC spell reference |
-| `RangeReferences.lua` | curated (hand) | Per-class range-check spell IDs |
-| `SpellArchetypes.lua` | `gen_archetypes.sh` | Role/archetype classification |
-| `AuraStacks.lua` | `gen_aura_stacks.py` | Max-stack counts (secret-charge fallback) |
-| `SelfAuras.lua` | `gen_self_auras.py` | Player buff/form IDs for RedundancyFilter |
-| `TargetDots.lua` | `gen_target_dots.py` | Maintained enemy DoT IDs for DotTracker |
-| `HealingItems.lua` | `gen_healing_items.py` | Usable heal/potion items |
-| `PrecombatBuffs.lua` | `gen_precombat_buffs.py` | Flask/food/rune/imbue + Well Fed families |
-| `SpellCooldowns.lua` | `gen_spell_cooldowns.py` | Per-spec cooldown-set reference |
-| `SpellTransforms.lua` | `gen_spell_transforms.py` | Action-bar transforms from the override-action-bar auras (332/333): `[form id] = { original button ids }` (Eviscerate -> Coup de Grace). Forms are not in the spellbook and are never "known", so this feeds the options search and list-row labels, and lets a form be its own custom-priority entry that is live only while its button shows it (`SpellDB.GetTransformBase` / `GetTransformForms`) |
-| `AssistedCombatOrder.lua` | `gen_assisted_combat_order.py` | Blizzard's own per-spec priority order from the client's assisted-combat tables (rank = a spell's last, unconditional step). Tiebreaker for the "Match Blizzard's pick" ordering; `RotationImport.GetBlizzardRank` answers nil when there is no data and the queue keeps its old order |
-| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (40 specs: 34 upstream lists + 6 local-only pins in `tools/simc-apl/` for the healer specs upstream ships no list for - Mistweaver plus five plain damage-filler pins) + per-spec `burst` anchor lists (mined from potion/trinket/PI sync conditions; feed the burst-ready cue). Pinned source APLs in `tools/simc-apl/`; refresh via `tools/update_simc_apl.py` (syncs from the `00-SOURCE/simc` sparse mirror, branch `midnight`, then regenerates) - standard pre-release step |
-| *(not shipped)* | `gen_aura_durations.py` | Retained only - durations are secret in combat, superseded by the readiness probe |
-
-## 12.0 Compatibility & Secret Values
-
-**Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`, `C_Spell.IsSpellInRange()`, `C_Spell.IsExternalDefensive()`
-
-**`isOnGCD`** (the most-used signal) is a three-state NeverSecret bool on `C_Spell.GetSpellCooldown()`: `true`=on GCD only (spell ready), `false`=real CD running (only Blizzard-flagged spells like Judgment/BoJ/Wake), `nil`=ambiguous in combat (off-CD OR unflagged-on-CD - indistinguishable; fall back to local CD tracking + action-bar usability). See `BlizzardAPI.IsSpellReady()` for the full fallback chain.
-
-**Full combat-safe signal matrix** - every verified NeverSecret/SECRET API (units, spells, auras, action bars, cooldown events, classification APIs, C_Secrets pre-flight guards, LossOfControl, LuaDurationObject) with verification dates lives in `Documentation/12.0_COMPATIBILITY.md` → "Combat-Safe Signal Reference". Consult it before assuming any combat API is readable. Do not duplicate the matrix here - update the doc instead. (C_Secrets function list: `Documentation/MIDNIGHT_POST_LAUNCH_RESEARCH.md`.) Re-verify the whole matrix in-game anytime with `/jac inspect validate arm`.
-
-**Live secrecy gates (validated 2026-07-05, all contexts):** the `C_Secrets.Should*BeSecret` predicates flip exactly at combat edges, both directions. Use `BlizzardAPI.AreCooldownsSecret()` / `BlizzardAPI.AreAurasSecret()` as the "is this data readable" signal - never `InCombatLockdown()` as a secrecy proxy. Per-spell secrecy overrides the globals: `C_Secrets.GetSpellAuraSecrecy(id) == 0` means that aura stays readable even mid-combat (RedundancyFilter's `IsNeverSecretAura` caches this; forced evaluation via its `ForceReadNumber`/`ForceReadString` reads exempt fields past the generic secret mark).
-
-**12.1.0 (69214) added a second, harsher failure mode for AURAS: the call is DENIED, not secreted.** `GetAuraDataByIndex`, `GetUnitAuras` (every filter), `GetAuraDuration` and friends now THROW for a tainted caller when auras are secret - the denial is a property of the FUNCTION, not of the aura, so holding a plain aura table is no evidence the next call will be allowed. Consequences: pcall every aura call (a pcall around the known-risky one does nothing for a sibling that only became risky later), gate hot loops on `AreAurasSecret()` first so they do not throw per tick, and treat `type(x) == "secret"` as a real case when reading UNIT_AURA payloads (the payload LISTS are secret now, so `ipairs` throws). Grep the generated docs for `Requires*`, not `SecretArguments`, when asking "can we call this". For hostile-unit auras nothing readable remains - see `Documentation/AURA_CONTAINER_12.1.md`.
-
-**Secret Values (WoW 12.0+):** Blizzard hides certain combat data to prevent automation.
-A secret value cannot be compared, used in arithmetic, or branched on - it can only be
-handed back to the engine (`FontString:SetText`, `Cooldown:SetCooldownFromDurationObject`,
-`SetAlphaFromBoolean`, `SetVertexColorFromBoolean`). Detect with `BlizzardAPI.IsSecretValue(value)`.
-
-Per the rule above, the limitation list, the per-API secrecy table, and the worked patterns
-(cooldown readiness via `isOnGCD` + local tracking, aura identity via `auraInstanceID`) are
-NOT repeated here - they live in `Documentation/12.0_COMPATIBILITY.md`. Update that doc.
-
-## Reference Docs
-
-- `Documentation/STYLE_GUIDE_JUSTAC.md` - Full coding conventions
-- `Documentation/ASSISTED_COMBAT_API_DEEP_DIVE.md` - C_AssistedCombat reference
-- `Documentation/MACRO_PARSING_DEEP_DIVE.md` - Macro conditional parsing
-- `Documentation/12.0_COMPATIBILITY.md` - API compatibility, secret values, implementation status
-- `Documentation/AURA_DETECTION_ALTERNATIVES.md` - Alternative aura detection methods for 12.0
-- `Documentation/AURA_CONTAINER_12.1.md` - the ONLY route left to a hostile unit's aura state,
-  and the most exact route to the PLAYER's: an engine-driven DISPLAY via `Blizzard_AuraContainer`.
-  On an enemy the selector is a dispel-type colour curve; on the player you may name the spell id
-  outright. Covers what can and cannot be built inside a container button, the full set of widgets
-  the container will drive for you (swipe, countdown text, stack count, pandemic region - several
-  of which look blocked because calling them directly throws), and how to AND plain state onto a
-  secret one. **Read before proposing anything that reacts to a buff**
-- `Documentation/AURA_IDENTITY_12.0.md` - Identifying a SPECIFIC spell's aura in combat: the two
-  routes that work, their conditions, and the measured dead ends. Read before proposing any
-  "just look up the aura by spell id" solution
-- `Documentation/SECRET_VALUE_READINESS_PROBE.md` - recovering a BOOLEAN from a secret duration
-  (is it on cooldown / is the buff up) via the scratch-Cooldown shown-state probe
-- `Documentation/SECRET_VALUE_THRESHOLD_GATES.md` - recovering a THRESHOLD from a secret value
-  (is it below N% / under N seconds) via the zero-gate + threshold curves. Covers health, power,
-  aura and cooldown durations, and aura stacks. **Read before adding any new threshold, and read
-  its SCOPE RULE before proposing anything that reconstructs a hidden number**
-- `README.md` - User-facing docs, installation, credits
-- `CHANGELOG.md` - Release history (GPL-3.0-or-later since v2.95)
-
-## Build & Release
-
-**Local build** - `build.ps1` creates `dist/JustAC-<version>.zip` for local testing.
-
-**CI/CD** - GitHub Actions (`.github/workflows/release.yml`) auto-deploys to CurseForge via BigWigs Packager.
-- Triggered by git tag push (`v*` pattern)
-- Packages per `.pkgmeta`, creates GitHub Release, uploads to CurseForge (project ID: 1289544)
-- Requires `CF_API_KEY` secret in GitHub repo settings
-
-**Workflow:**
-1. Make changes and commit them
-2. Update `UNRELEASED.md` with change notes
-3. `git push` to keep remote in sync (does NOT trigger CurseForge deploy)
-4. When user requests version bump:
-   - Move UNRELEASED changes to CHANGELOG.md
-   - Increment version in JustAC.toc
-   - Update library versions if breaking changes
-   - Update README.md if new features, removed features, or significant behavior changes
-   - Verify `build.ps1` lists all current source files (new files must be added)
-   - Clear UNRELEASED.md
-   - Commit version bump
-5. User runs `.\build.ps1` when ready to test locally
-6. When user explicitly requests deploy/release to CurseForge:
-   - `git tag v<version>`, then `git push` and `git push origin v<version>`
-   - Push the tag by name. `--follow-tags` pushes annotated tags only and silently
-     skips these (they're lightweight), so the branch push succeeds while the tag
-     stays local and CI never fires. Verify the tag landed: `git ls-remote --tags origin`
-   - This triggers CI → CurseForge upload
-
-**DO NOT auto-tag or auto-deploy to CurseForge** - Only tag and push tags when the user explicitly requests a release/deploy.
-
-**Before release:** Test with `/jac inspect modules` + in-game rotation to verify all modules loaded.
+Data updates must cover both clients, use one complete build per CSV folder and
+stage downloads before generation. Never hand-edit generated output or regenerate
+from failed/mixed downloads. Source freshness and rotation freshness are separate.
+Before adopting external sources verify license compatibility, preserve notices,
+and record authors, URL, license, pinned revision and adaptations. See
+[the refresh workflow](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh).

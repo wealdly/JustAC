@@ -1,6 +1,10 @@
 # Heal Mode — Implementation Plan
 
-Status: PLANNED (no code yet). Test spec: Restoration Druid, solo follower dungeons.
+**Historical design proposal, not current implementation status.** Start with
+the [documentation index](README.md) and current engines/options for shipped
+behavior; do not treat the phases below as an active task queue.
+
+Original status: PLANNED (no code yet). Test spec: Restoration Druid, solo follower dungeons.
 Scope: 5-man party content (dungeon/raid; raid degrades gracefully — see limits).
 
 Two deliverables:

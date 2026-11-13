@@ -72,8 +72,8 @@ def main():
     check(sdb.CLASS_MAINTAINED_BUFFS.ROGUE is None, "retail rogue poison groups dropped on Forever")
     check(sdb.ROGUE_POISON_CAST_IDS[315584] is None, "derived poison index rebuilt")
     check(sdb.MAINTAINED_BUFF_MEMBERS[7128] is True, "a rank-2 Inner Fire counts as a member")
-    check(sdb.CLASS_MAINTAINED_BUFFS.WARRIOR is None and sdb.MAINTAINED_BUFF_MEMBERS[6673] is None,
-          "Battle Shout is no between-pull upkeep buff on Forever")
+    check(sdb.PREPARATION_BUFF_MEMBERS[6673] is not None,
+          "Battle Shout is missing-only preparation on Forever, not long-buff upkeep")
     check(sdb.RAID_BUFF_SPELLS[6673] is None and sdb.UNIQUE_AURA_SPELLS[6673] is None,
           "Battle Shout off the raid-buff lists that hide it in combat")
     check(sdb.WEAPON_ENCHANT_SPELLS[8235] is True and sdb.WEAPON_ENCHANT_SPELLS[33757] is True,
@@ -81,8 +81,13 @@ def main():
     check(sdb.GetDefenseTier(11958) == 1, "Ice Block tier 1")
     check(sdb.IsTargetDot(772) is True and sdb.GetTargetDotDuration(11574) == 21, "Rend tracked, each rank its own duration")
     check(sdb.IsTargetDot(133) is False, "Fireball is a nuke with a burn rider: never sunk as a DoT")
+    check(sdb.IsTrackedTargetAura(770) is True and sdb.IsTrackedTargetAura(1130) is True,
+          "kept-up debuffs (Faerie Fire, Hunter's Mark) observed separately from damage")
     check(sdb.IsTargetDot(770) is True and sdb.IsTargetDot(1130) is True,
-          "kept-up debuffs (Faerie Fire, Hunter's Mark) tracked like DoTs")
+          "existing maintained-debuff suppression remains available for custom queues")
+    for sid in (14914, 15261, 6343, 11581):
+        check(sdb.IsTrackedTargetAura(sid) is True and sdb.IsTargetDot(sid) is False,
+              "explicit maintenance does not turn a nuke into an unconditional DoT sink")
     check(sdb.IsTargetDot(3599) is False, "a totem is not on the target")
     check(sdb.IsFrontalDot(8921) is True and sdb.IsFrontalDot(14914) is True and sdb.IsFrontalDot(772) is False,
           "Moonfire / Holy Fire hit up front; Rend does not")
@@ -98,6 +103,8 @@ def main():
     r = rt.eval('LibStub("JustAC-SpellDB")')
     check(r.IsDefensiveSpell(8071) is False, "Forever Stoneskin category does not leak to retail")
     check(r.IsForever() is False, "retail client detected")
+    check(r.IsTrackedTargetAura(14914) is False and r.IsTrackedTargetAura(6343) is False,
+          "Forever target-aura observation policy does not register on retail")
     check(r.GetSpecKey()[0] == "WARRIOR_1", "retail spec key unchanged")
     check(r.CLASS_GAPCLOSER_DEFAULTS.WARRIOR_F is None, "no Forever keys on retail")
     check(r.CLASS_TOPOFF_HEALS.PRIEST[1] == 2061, "retail class lists untouched")

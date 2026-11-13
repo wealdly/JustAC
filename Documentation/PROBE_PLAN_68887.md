@@ -1,5 +1,10 @@
 # In-game probe plan - build 12.0.7 (68887) signal audit
 
+**Historical build-specific plan, not a current task list.** Start with the
+[documentation index](README.md) and
+[current combat-signal review](FOREVER_COMBAT_SIGNALS.md). Read this only for a
+specific earlier hypothesis or measurement; commands and access may have changed.
+
 Source audit date: 2026-07-24, against `r:\WOW\00-SOURCE` mirrors at 68887.
 Goal: validate every candidate in-combat signal found in the source audit with
 measured in-game probes before any feature consumes it.
@@ -243,6 +248,11 @@ scratch widgets, aura-linkage data (GetCooldownAuraBySpellID cross-check).
 
 ### Batch 8 - `/jac inspect kick` (extend existing castdiag) - C1 + S8, C3
 
+Historical plan: current source distinguishes the secret shield from the
+conditional icon-hide route already used by JustAC. `IsSpellImportant` is not
+guaranteed plain, and `castBarID` is absent from interruptibility-only events.
+See the [current review and temporary capture](FOREVER_COMBAT_SIGNALS.md#interrupt-and-cc-dead-end-review).
+
 - `UNIT_SPELLCAST_INTERRUPTIBLE` / `UNIT_SPELLCAST_NOT_INTERRUPTIBLE` event
   identity as a state machine on target/nameplates - the only plain
   interruptibility signal (shield icon + `notInterruptible` are closed:
@@ -323,6 +333,11 @@ Not signal probes; verify behavior before adopting in display code:
 | Player-slowed signal (LoC locType or fallback ladder) | Shift-to-break-slow suggestion (Druid: a quick form shift removes movement-impairing effects) - needs a *branchable* "slowed now" boolean, so this feature's viability hangs entirely on the Batch 1 slows sub-probe |
 
 ## Known dead ends - do not probe (refuted at source level)
+
+These are build-68887 findings, not blanket claims about all current compositions.
+The [current interrupt/CC review](FOREVER_COMBAT_SIGNALS.md#interrupt-and-cc-dead-end-review)
+separates direct secret reads from the icon route and the new numeric-selector
+experiment. It does not reopen denied aura reads or secret display-state reads.
 
 - Cast-bar shield / `barType` / `IsInterruptable()` - secretwrap'd by design.
 - Arena frame LoC `IsShown()` - SetShown + Blizzard TODO to move secure.

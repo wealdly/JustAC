@@ -163,13 +163,14 @@ local TOTEM_SLOTS = {
 }
 local MAINTAINED_PROTECTION = { [8071] = true }
 local MAINTAINED = {
-    PRIEST = { { group = {1243}, default = 1243, memberAuraIDs = { [1243] = {1243, 1244, 1245, 2791, 10937, 10938} }, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938} }, { group = {588}, default = 588, memberAuraIDs = { [588] = {588, 7128, 602, 1006, 10951, 10952} }, auraIDs = {588, 7128, 602, 1006, 10951, 10952} } },
-    MAGE = { { group = {1459}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
-    DRUID = { { group = {1126}, default = 1126, memberAuraIDs = { [1126] = {1126, 5232, 6756, 5234, 8907, 9884, 9885} }, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885} } },
+    PRIEST = { { group = {1243, 21562}, default = 1243, memberAuraIDs = { [1243] = {1243, 1244, 1245, 2791, 10937, 10938}, [21562] = {21562, 21564} }, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938, 21562, 21564} }, { group = {14752, 27681}, default = 14752, memberAuraIDs = { [14752] = {14752, 14818, 14819, 27841}, [27681] = {27681} }, raidWide = true, auraIDs = {14752, 14818, 14819, 27841, 27681} }, { group = {976, 27683}, default = 976, memberAuraIDs = { [976] = {976, 10957, 10958}, [27683] = {27683} }, raidWide = true, auraIDs = {976, 10957, 10958, 27683} }, { group = {588}, default = 588, memberAuraIDs = { [588] = {588, 7128, 602, 1006, 10951, 10952} }, auraIDs = {588, 7128, 602, 1006, 10951, 10952} }, { group = {15473}, default = 15473, memberAuraIDs = { [15473] = {15473} }, preparation = true, tree = "shadow", form = true, combatCritical = true, auraIDs = {15473} } },
+    MAGE = { { group = {1459, 23028}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157}, [23028] = {23028} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157, 23028} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
+    DRUID = { { group = {1126, 21849}, default = 1126, memberAuraIDs = { [1126] = {1126, 5232, 6756, 5234, 8907, 9884, 9885}, [21849] = {21849, 21850} }, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885, 21849, 21850} }, { group = {467}, default = 467, memberAuraIDs = { [467] = {467, 782, 1075, 8914, 9756, 9910} }, auraIDs = {467, 782, 1075, 8914, 9756, 9910} }, { group = {24858}, default = 24858, memberAuraIDs = { [24858] = {24858} }, preparation = true, tree = "balance", form = true, combatCritical = true, auraIDs = {24858} } },
     WARLOCK = { { group = {687, 706}, default = 687, memberAuraIDs = { [687] = {687, 696}, [706] = {706, 1086, 11733, 11734, 11735} }, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
     SHAMAN = { { group = {324, 408510}, default = 324, memberAuraIDs = { [324] = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363}, [408510] = {408510} }, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
-    PALADIN = { { group = {465, 7294, 19746}, default = 465, memberAuraIDs = { [465] = {465, 10290, 643, 10291, 1032, 10292, 10293}, [7294] = {7294, 10298, 10299, 10300, 10301}, [19746] = {19746} }, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} } },
-    HUNTER = { { group = {13165, 13163}, default = 13165, memberAuraIDs = { [13165] = {13165, 14318, 14319, 14320, 14321, 14322, 25296}, [13163] = {13163} }, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163} } },
+    PALADIN = { { group = {465, 7294, 19746}, default = 465, memberAuraIDs = { [465] = {465, 10290, 643, 10291, 1032, 10292, 10293}, [7294] = {7294, 10298, 10299, 10300, 10301}, [19746] = {19746} }, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} }, { group = {19740, 19742, 20217, 25782, 25894, 25898}, default = 19740, memberAuraIDs = { [19740] = {19740, 19834, 19835, 19836, 19837, 19838, 25291}, [19742] = {19742, 19850, 19852, 19853, 19854, 25290}, [20217] = {20217}, [25782] = {25782, 25916}, [25894] = {25894, 25918}, [25898] = {25898} }, auraIDs = {19740, 19834, 19835, 19836, 19837, 19838, 25291, 19742, 19850, 19852, 19853, 19854, 25290, 20217, 25782, 25916, 25894, 25918, 25898} }, { group = {20375, 1311649, 20164, 20165, 20154, 21082, 20166}, default = 20154, memberAuraIDs = { [20375] = {20375, 20915, 20918, 20919, 20920}, [1311649] = {1311649, 1311656, 20163, 20419, 20421, 20422, 20423}, [20164] = {20164}, [20165] = {20165, 20347, 20348, 20349}, [20154] = {20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293}, [21082] = {21082, 20162, 20305, 20306, 20307, 20308}, [20166] = {20166, 20356, 20357} }, preparation = true, combatCritical = true, auraIDs = {20375, 20915, 20918, 20919, 20920, 1311649, 1311656, 20163, 20419, 20421, 20422, 20423, 20164, 20165, 20347, 20348, 20349, 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 21082, 20162, 20305, 20306, 20307, 20308, 20166, 20356, 20357} }, { group = {25780}, default = 25780, memberAuraIDs = { [25780] = {25780} }, preparation = true, tree = "protection", combatCritical = true, auraIDs = {25780} } },
+    WARRIOR = { { group = {6673}, default = 6673, memberAuraIDs = { [6673] = {6673, 5242, 6192, 11549, 11550, 11551, 25289} }, preparation = true, combatCritical = true, auraIDs = {6673, 5242, 6192, 11549, 11550, 11551, 25289} }, { group = {2457, 2458, 71}, default = 2457, memberAuraIDs = { [2457] = {2457}, [2458] = {2458}, [71] = {71} }, preparation = true, form = true, combatCritical = true, defaultByTree = { fury = 2458, protection = 71 }, auraIDs = {2457, 2458, 71} } },
+    HUNTER = { { group = {13165, 13163, 13161, 5118, 13159, 20043, 415423, 469145}, default = 13165, memberAuraIDs = { [13165] = {13165, 14318, 14319, 14320, 14321, 14322, 25296}, [13163] = {13163}, [13161] = {13161, 1299445, 1299446, 1299447}, [5118] = {5118}, [13159] = {13159}, [20043] = {20043, 20190}, [415423] = {415423}, [469145] = {469145} }, preparation = true, combatCritical = true, defaultByTree = { survival = 13161 }, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163, 13161, 1299445, 1299446, 1299447, 5118, 13159, 20043, 20190, 415423, 469145} } },
 }
 local IMBUES = {8232, 8024, 8017}
 local IMBUE_CASTS = {8232, 8235, 10486, 16362, 8024, 8027, 8030, 16339, 16341, 16342, 8017, 8018, 8019, 10399, 16314, 16315, 16316, 8033, 8038, 10456, 16355, 16356}
@@ -365,9 +366,13 @@ local FRONTAL_DOTS = {
     [1824] = true,  -- Rake (37% upfront)
     [2941] = true,  -- Immolate (37% upfront)
     [3140] = true,  -- Fireball (87% upfront)
+    [6343] = true,  -- Thunder Clap (100% upfront)
     [8050] = true,  -- Flame Shock (47% upfront)
     [8052] = true,  -- Flame Shock (52% upfront)
     [8053] = true,  -- Flame Shock (50% upfront)
+    [8198] = true,  -- Thunder Clap (100% upfront)
+    [8204] = true,  -- Thunder Clap (100% upfront)
+    [8205] = true,  -- Thunder Clap (100% upfront)
     [8400] = true,  -- Fireball (88% upfront)
     [8401] = true,  -- Fireball (86% upfront)
     [8402] = true,  -- Fireball (89% upfront)
@@ -389,6 +394,8 @@ local FRONTAL_DOTS = {
     [10447] = true,  -- Flame Shock (49% upfront)
     [10448] = true,  -- Flame Shock (49% upfront)
     [11366] = true,  -- Pyroblast (71% upfront)
+    [11580] = true,  -- Thunder Clap (100% upfront)
+    [11581] = true,  -- Thunder Clap (100% upfront)
     [11665] = true,  -- Immolate (37% upfront)
     [11667] = true,  -- Immolate (36% upfront)
     [11668] = true,  -- Immolate (36% upfront)
@@ -444,6 +451,147 @@ local NEXT_SWING = {
     [9745] = true,  -- Maul (druid)
     [9880] = true,  -- Maul (druid)
     [9881] = true,  -- Maul (druid)
+}
+local TARGET_AURAS = {
+    [99] = 30,  -- Demoralizing Roar
+    [172] = 12,  -- Corruption
+    [348] = 15,  -- Immolate
+    [589] = 18,  -- Shadow Word: Pain
+    [594] = 18,  -- Shadow Word: Pain
+    [603] = 60,  -- Bane of Doom
+    [703] = 18,  -- Garrote
+    [707] = 15,  -- Immolate
+    [770] = 40,  -- Faerie Fire
+    [772] = 9,  -- Rend
+    [778] = 40,  -- Faerie Fire
+    [970] = 18,  -- Shadow Word: Pain
+    [980] = 24,  -- Bane of Agony
+    [992] = 18,  -- Shadow Word: Pain
+    [1014] = 24,  -- Bane of Agony
+    [1079] = 12,  -- Rip
+    [1094] = 15,  -- Immolate
+    [1130] = 120,  -- Hunter's Mark
+    [1160] = 45,  -- Demoralizing Shout
+    [1735] = 30,  -- Demoralizing Roar
+    [1822] = 9,  -- Rake
+    [1823] = 9,  -- Rake
+    [1824] = 9,  -- Rake
+    [1943] = 6,  -- Rupture
+    [1978] = 15,  -- Serpent Sting
+    [2767] = 18,  -- Shadow Word: Pain
+    [2941] = 15,  -- Immolate
+    [5570] = 12,  -- Insect Swarm
+    [6190] = 45,  -- Demoralizing Shout
+    [6217] = 24,  -- Bane of Agony
+    [6222] = 15,  -- Corruption
+    [6223] = 18,  -- Corruption
+    [6343] = 10,  -- Thunder Clap
+    [6546] = 12,  -- Rend
+    [6547] = 15,  -- Rend
+    [6548] = 18,  -- Rend
+    [7648] = 18,  -- Corruption
+    [8050] = 12,  -- Flame Shock
+    [8052] = 12,  -- Flame Shock
+    [8053] = 12,  -- Flame Shock
+    [8198] = 14,  -- Thunder Clap
+    [8204] = 18,  -- Thunder Clap
+    [8205] = 22,  -- Thunder Clap
+    [8631] = 18,  -- Garrote
+    [8632] = 18,  -- Garrote
+    [8633] = 18,  -- Garrote
+    [8639] = 6,  -- Rupture
+    [8640] = 6,  -- Rupture
+    [8647] = 30,  -- Expose Armor
+    [8649] = 30,  -- Expose Armor
+    [8650] = 30,  -- Expose Armor
+    [8921] = 9,  -- Moonfire
+    [8924] = 12,  -- Moonfire
+    [8925] = 12,  -- Moonfire
+    [8926] = 12,  -- Moonfire
+    [8927] = 12,  -- Moonfire
+    [8928] = 12,  -- Moonfire
+    [8929] = 12,  -- Moonfire
+    [9490] = 30,  -- Demoralizing Roar
+    [9492] = 12,  -- Rip
+    [9493] = 12,  -- Rip
+    [9747] = 30,  -- Demoralizing Roar
+    [9749] = 40,  -- Faerie Fire
+    [9752] = 12,  -- Rip
+    [9833] = 12,  -- Moonfire
+    [9834] = 12,  -- Moonfire
+    [9835] = 12,  -- Moonfire
+    [9894] = 12,  -- Rip
+    [9896] = 12,  -- Rip
+    [9898] = 30,  -- Demoralizing Roar
+    [9904] = 9,  -- Rake
+    [9907] = 40,  -- Faerie Fire
+    [10447] = 12,  -- Flame Shock
+    [10448] = 12,  -- Flame Shock
+    [10892] = 18,  -- Shadow Word: Pain
+    [10893] = 18,  -- Shadow Word: Pain
+    [10894] = 18,  -- Shadow Word: Pain
+    [11197] = 30,  -- Expose Armor
+    [11198] = 30,  -- Expose Armor
+    [11273] = 6,  -- Rupture
+    [11274] = 6,  -- Rupture
+    [11275] = 6,  -- Rupture
+    [11289] = 18,  -- Garrote
+    [11290] = 18,  -- Garrote
+    [11554] = 45,  -- Demoralizing Shout
+    [11555] = 45,  -- Demoralizing Shout
+    [11556] = 45,  -- Demoralizing Shout
+    [11572] = 21,  -- Rend
+    [11573] = 21,  -- Rend
+    [11574] = 21,  -- Rend
+    [11580] = 26,  -- Thunder Clap
+    [11581] = 30,  -- Thunder Clap
+    [11665] = 15,  -- Immolate
+    [11667] = 15,  -- Immolate
+    [11668] = 15,  -- Immolate
+    [11671] = 18,  -- Corruption
+    [11672] = 18,  -- Corruption
+    [11711] = 24,  -- Bane of Agony
+    [11712] = 24,  -- Bane of Agony
+    [11713] = 24,  -- Bane of Agony
+    [13549] = 15,  -- Serpent Sting
+    [13550] = 15,  -- Serpent Sting
+    [13551] = 15,  -- Serpent Sting
+    [13552] = 15,  -- Serpent Sting
+    [13553] = 15,  -- Serpent Sting
+    [13554] = 15,  -- Serpent Sting
+    [13555] = 15,  -- Serpent Sting
+    [14323] = 120,  -- Hunter's Mark
+    [14324] = 120,  -- Hunter's Mark
+    [14325] = 120,  -- Hunter's Mark
+    [14914] = 10,  -- Holy Fire
+    [15261] = 10,  -- Holy Fire
+    [15262] = 10,  -- Holy Fire
+    [15263] = 10,  -- Holy Fire
+    [15264] = 10,  -- Holy Fire
+    [15265] = 10,  -- Holy Fire
+    [15266] = 10,  -- Holy Fire
+    [15267] = 10,  -- Holy Fire
+    [18265] = 30,  -- Siphon Life
+    [18879] = 30,  -- Siphon Life
+    [18880] = 30,  -- Siphon Life
+    [18881] = 30,  -- Siphon Life
+    [22959] = 30,  -- Fire Vulnerability
+    [24974] = 12,  -- Insect Swarm
+    [24975] = 12,  -- Insect Swarm
+    [24976] = 12,  -- Insect Swarm
+    [24977] = 12,  -- Insect Swarm
+    [25295] = 15,  -- Serpent Sting
+    [25309] = 15,  -- Immolate
+    [25311] = 18,  -- Corruption
+    [29228] = 12,  -- Flame Shock
+    [440892] = 300,  -- Curse of the Elements
+    [1311676] = 300,  -- Curse of the Elements
+    [1311677] = 300,  -- Curse of the Elements
+    [1311680] = 300,  -- Curse of the Elements
+    [1316709] = 6,  -- Death Mark
+    [1325756] = 6,  -- Death Mark
+    [1325757] = 6,  -- Death Mark
+    [1325758] = 6,  -- Death Mark
 }
 local SHORT_BUFFS = {
     10,  -- Blizzard (8s)
@@ -583,6 +731,11 @@ local DOTS = {
     [8633] = 18,  -- Garrote
     [8639] = 6,  -- Rupture
     [8640] = 6,  -- Rupture
+    [8647] = 30,  -- Expose Armor
+    [8649] = 30,  -- Expose Armor
+    [8650] = 30,  -- Expose Armor
+    [11197] = 30,  -- Expose Armor
+    [11198] = 30,  -- Expose Armor
     [11273] = 6,  -- Rupture
     [11274] = 6,  -- Rupture
     [11275] = 6,  -- Rupture
@@ -618,6 +771,7 @@ local DOTS = {
     [10447] = 12,  -- Flame Shock
     [10448] = 12,  -- Flame Shock
     [29228] = 12,  -- Flame Shock
+    [22959] = 30,  -- Fire Vulnerability
     [172] = 12,  -- Corruption
     [348] = 15,  -- Immolate
     [603] = 60,  -- Bane of Doom
@@ -745,5 +899,6 @@ SpellDB.RegisterCategories(CATEGORIES)
 SpellDB.RegisterChanneledSpells(CHANNELED)
 -- Replaces retail's DoT list: its ids and durations are retail's.
 SpellDB.RegisterTargetDots(DOTS)
+SpellDB.RegisterTargetAuras(TARGET_AURAS)
 for id in pairs(FRONTAL_DOTS) do SpellDB.FRONTAL_DOTS[id] = true end
 for id in pairs(NEXT_SWING) do SpellDB.NEXT_SWING_SPELLS[id] = true end

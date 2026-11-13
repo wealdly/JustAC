@@ -1,5 +1,10 @@
 # Midnight Post-Launch Research (March 2026)
 
+**Historical launch research with later corrections, not a current API matrix.**
+Use [the signal reference](12.0_COMPATIBILITY.md) for accepted findings and
+[current research](FOREVER_COMBAT_SIGNALS.md) for open candidates. Read this
+only for a specific launch-era decision or source trail.
+
 Researched: 2026-03-07. Midnight (12.0) launched: 2026-03-02.
 
 Companion to `12.0_COMPATIBILITY.md` (alpha/beta findings).
@@ -156,10 +161,14 @@ JustAC has no current use case, but relevant if health-bar overlays are revisite
 -- Allows fill-from-remaining-duration for channels.
 StatusBar:SetTimerDuration(duration, direction)
 
--- C_CurveUtil: convert secret boolean to color for visual-only display.
-C_CurveUtil.EvaluateColorFromBoolean(curve, secretBool)       --> r, g, b, a
-C_CurveUtil.EvaluateColorValueFromBoolean(curve, secretBool)  --> number (0–1)
+-- Corrected against the pinned 2026-11-10 source review: these take no curve.
+C_CurveUtil.EvaluateColorFromBoolean(secretBool, trueColor, falseColor) --> ColorMixin
+C_CurveUtil.EvaluateColorValueFromBoolean(secretBool, trueValue, falseValue) --> SingleColorValue
 ```
+
+The numeric selector plus the existing zero-gate is now an unverified diagnostic
+experiment, not a proven gameplay reader. See
+[the interrupt/CC review](FOREVER_COMBAT_SIGNALS.md#interrupt-and-cc-dead-end-review).
 
 ### String / Display Utilities
 

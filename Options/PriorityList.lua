@@ -452,6 +452,15 @@ GatePhrase = function(g)
             L["Priority Cond Stacks"])
     elseif g.t == "dot" then
         piece = L["Priority Cond Dot"]
+    elseif g.t == "debuff" and g.id then
+        if g.op then
+            piece = nameOf(g.id) .. ": " .. L["Priority Cond Unknown"]
+        elseif g.refresh then
+            piece = nameOf(g.id) .. ": " .. L["Priority Cond Dot"]
+        else
+            piece = string.format(g.neg and L["Priority Cond Not During"]
+                or L["Priority Cond During"], nameOf(g.id))
+        end
     elseif g.t == "prev" and g.id then
         piece = string.format(g.neg and L["Priority Cond Not After"]
             or L["Priority Cond After"], nameOf(g.id))

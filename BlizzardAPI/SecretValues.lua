@@ -10,6 +10,8 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
 -- Hot path cache
 local GetTime    = GetTime
 local pcall      = pcall
+local tostring   = tostring
+local geterrorhandler = geterrorhandler
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
@@ -29,6 +31,7 @@ local featureAvailability = {
     lastCheck = 0,
 }
 local FEATURE_CHECK_INTERVAL = 30.0  -- Safety net only; events (PLAYER_REGEN_*) are the primary trigger
+local procProbeErrorReported = false
 
 -- Health readability probe: diagnostic only (feeds GetFeatureAvailability and the debug print).
 local function TestHealthAccess()
@@ -53,7 +56,13 @@ local function TestProcAccess()
         return true
     end)
 
-    if not ok then return true end
+    if not ok then
+        if not procProbeErrorReported and geterrorhandler then
+            procProbeErrorReported = true
+            geterrorhandler()("JustAC: spell overlay access probe failed: " .. tostring(result))
+        end
+        return false
+    end
     return result
 end
 
@@ -78,7 +87,7 @@ local function RefreshFeatureAvailability()
                 addon:Print("Health API access: " .. (featureAvailability.healthAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
             if oldProcAccess ~= featureAvailability.procAccess then
-                addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED (secrets)"))
+                addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED"))
             end
         end
     end
@@ -368,4 +377,3 @@ function BlizzardAPI.HasBigDefensive(unit)
     if n == nil then return nil end
     return n > 0
 end
-

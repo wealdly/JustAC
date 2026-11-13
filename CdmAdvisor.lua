@@ -130,7 +130,7 @@ function CdmAdvisor.CriticalSpells()
     local set = {}
     local function walk(gates)
         for _, g in ipairs(gates or {}) do
-            if (g.t == "buff" or g.t == "dot") and g.id then set[R1(g.id)] = true end
+            if (g.t == "buff" or g.t == "dot" or g.t == "debuff") and g.id then set[R1(g.id)] = true end
             if g.g then walk(g.g) end
         end
     end

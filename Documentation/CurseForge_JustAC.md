@@ -1,75 +1,65 @@
-**JustAC - play any spec like you've mained it for years.**
+> **PRELIMINARY SUPPORT: WoW Forever** - Forever has no built-in Combat Assistant; JustAC brings rotation assistance to the client. Some features are still being verified in game.
 
-Blizzard's Assisted Combat tells you what to press. JustAC turns that into something you can actually play from: a clean queue of your next abilities, with *your* keybinds, right where you're already looking. Nothing to memorize, no import strings to untangle.
+**JustAC - less staring at your bars, more dodging the fire.**
 
-**Working on Midnight, and kept that way.** Midnight changed what an addon is allowed to see mid-fight, and a lot of rotation helpers quietly broke or stopped being updated. JustAC was rebuilt around the new rules rather than patched over them, and it's current on 12.1.0.
+JustAC shows your next abilities with your keybinds. Fresh alt, rusty main, or "wait, what does this spec do again?" - see what to press without hunting through your bars.
 
-**Now on WoW Forever too** *(early test build)*. Same download, same queue - see below.
+One download supports **Retail** and **WoW Forever**. Retail follows Blizzard's Assisted Combat by default. Forever has no Combat Assistant, so JustAC provides rotation suggestions. The queue, keybinds and settings work on both clients.
 
-- **Perform instantly on anything.** A fresh alt, a rusty main, a spec you've never touched. The next button is right there, and so are the three after it.
-- **Keep your eyes on the fight.** Rotation, defensives, interrupts, CC and burst windows all show up in one place, in your line of sight, labeled with the keys you press.
-- **Stay alive.** Your defensives are ordered by how much trouble you're in, and the panic buttons - immunities, big heals, potions - wait at the back while you're healthy.
+**At a glance**
 
-## Whatever you play
+- A keybound queue for your next abilities.
+- Suggestions for damage, defensives, interrupts and group support.
+- Priorities that adjust to the fight and move unusable abilities out of the way.
+- Built-in priorities to choose from, or make your own.
+- Optional Mana Conservation to favor free attacks when mana is low.
 
-Same addon, same queue, nothing to set up. It shows what your spec needs:
+## What's next?
 
-**Damage** - Follow-ups ordered by community theorycraft for your spec, then re-ranked for the pull in front of you. DoTs come back when it's time to refresh, and your burst cooldown glows purple when a burst window is actually called for.
+On Retail, Blizzard's suggestion leads by default, followed by abilities to consider next. On WoW Forever, JustAC provides the rotation suggestions. Choose which priority leads or use your own list.
 
-**Tanks** - A dedicated slot for the mitigation buff your spec keeps rolling: Ignore Pain, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield. A ring warns you before it drops and the slot flares if it lapses. Pick how early it warns, add an alert sound, and have Demon Spikes glow while every charge is ready. (Brewmaster isn't covered yet.)
+Area abilities move up for groups of enemies. Out of range? Wrong form? Those abilities move back. Damage effects return when they need refreshing, rather than asking you to apply the same one again.
 
-**Healers** - Keep your healing addon. JustAC isn't one, and what it adds is the other half of your job: a damage priority with heals kept out, and an optional caster mode without melee suggestions, so the time between heals still does damage. Group heal suggestions ride alongside as a nudge when the group is in trouble. Who to heal stays your call.
+Mana Conservation is optional and off by default. When health is safe and only one enemy is engaged, it can favor a ready free attack if mana is low or slow to recover. It does not change multi-target fights or custom and exact priorities.
 
-**Everyone else in the group** - A **Help Your Group** list for party-wide buttons like Rallying Cry, Darkness or Vampiric Embrace, offered when your group could use them, so you can take pressure off your healer without being one.
+## Whatever job you signed up for
 
-**Pet classes** - Summon and revive reminders for every pet class, and Hunters get a pet heal reminder in combat.
+- **Damage:** Priorities adjust to the fight, track damage effects on your target and flag major cooldowns when it is a good time to use them.
+- **Tanks:** A dedicated slot tracks your spec's key mitigation buff and warns when it is about to expire or has fallen off. Brewmaster maintenance is not covered.
+- **Healers:** Keep your healing addon. JustAC handles the "I have a moment to hit something" part, with damage suggestions and an optional caster mode that leaves out melee abilities. Group-heal cues flag when the party is in trouble; who gets the heal is still your call.
+- **Group support:** Those party-wide buttons aren't just decoration. Get a reminder when your group could use them.
+- **Pet classes:** Forgot someone? Get reminders to summon or revive your pet. Hunters can also get a pet-heal reminder during combat.
+- **Everyone:** Interrupts, crowd control, enrage cleanses, pre-combat buffs and ways to escape a stun, fear or root.
 
-**Everyone** - Interrupts, CC and enrage cleanses, the pre-combat checklist, and an escape button when a stun, fear or root has you.
+## WoW Forever
 
-## More than the bare glow
+WoW Forever has no Assisted Combat. JustAC includes priorities for its classes and talent trees, and matches learned spell ranks to your bars and keybinds where available.
 
-Blizzard shows one dim suggestion on your action bar. Simpler addons echo it with a hotkey. JustAC adds the judgment a good player brings:
+- Swing timers show when abilities that wait for your next weapon swing are ready. Auto-attack, Auto Shot and wand timers help you time attacks; Hunters can see when to stand still for a shot.
+- Hunters can switch between Auto Shot at range and Attack in melee as they move.
+- Damage effects follow your own casts, so they can step back while active and return when they need refreshing.
+- Resource recovery abilities move up when your spells need more mana. Abilities that cost health are held back when your health is low.
+- Food, drinks, bandages and the consumables you carry can appear between pulls. Snacks count as preparation.
 
-- It **re-ranks your follow-ups to the pull.** An AOE pack lifts your AOE tools, a single target keeps them out of the way.
-- It **won't waste a suggestion.** Melee abilities step back out of range, Cat abilities while you're a Bear, stealth openers while unstealthed. Buffs you already have drop out.
-- It **learns what your CC won't work on.** Bosses and immune targets are ruled out from the start, and the moment a mob type shrugs off your crowd control, it stops being offered.
-- It's an **assist, not a bot.** On retail everything rides Blizzard's own recommendation; on WoW Forever, a published simulation priority. Nothing to script, nothing to get banned for.
+The queue's WAIT suggestions, attacks that need you behind the target, crowd-control escape and interrupt cues still need in-game verification. Feedback is welcome.
 
-## Make it yours
+## Your bars, your rules
 
-**Priority** - See the game's order, the theorycraft order and your own side by side, one line per ability with what it waits for. Looking never changes anything; **Use This Order** does. Build your own list by exporting or merging one of the others, drag to reorder, and undo if you change your mind. You also decide who leads: the game (default), the queue filling gaps when the game has nothing to recommend, or your own list.
+- **Choose your order:** compare available priorities, then select one. Make your own list by copying or merging another, reordering abilities and adjusting individual entries.
+- **Tune individual abilities:** hide or pin an ability, hold it until it is fully charged, or set a custom key label. On Retail, you can also remove an ability from your action bars and restore it later.
+- **Pick where it appears:** use the main queue, the target's nameplate, or both. Choose the types of content where each queue is visible.
+- **Display and controls:** adjust the layout, show an optional resource bar, use keyboard or gamepad, and apply Masque styling. Per-spec profiles and 10 languages are included.
 
-**Your lists, same look everywhere** - Defensives, Help Your Group, pet lists, gap-closers and burst triggers all use the same compact rows as the priority list.
+## Interrupts and pre-combat buffs
 
-**Overrides** - Everything set on one spell or item in one place: hide it, pin it, hold it until it's fully charged, give it a custom hotkey label. You can even **take it off your action bars**, which is the one thing that makes the game's own assist stop suggesting it too - with **Put Back** to restore it to the same buttons.
+The slot before your queue can show an interrupt for an enemy cast, crowd control when that is more appropriate, or an enrage cleanse. Suggestions account for targets that cannot be interrupted or affected by your crowd control.
 
-**Show in** - Keep the queue in dungeons and hide it in raids, or any mix of open world, delves, dungeons, raids and PvP. Separately for the main queue and the nameplate queue.
+Before combat, see the buffs and consumables you have available but still need, including food, flasks, weapon buffs and class buffs. Group buffs can remind you when party members are missing them. Yes, including the person who just joined.
 
-## On WoW Forever *(early test build)*
-
-WoW Forever has no Assisted Combat, so JustAC brings its own: a priority for every class and talent tree, built from the Forever simulations and tuned for levelling, combined with the abilities on your bars. Same queue, same keybinds, nothing to set up.
-
-- **Ranks handled.** The queue shows the rank you have on your bars, with its key.
-- **Swing timers where they matter.** Heroic Strike, Cleave, Raptor Strike and Maul show a bar to the swing they wait for, and a tick so you know pressing again won't help. Attack, Auto Shot and wands show their timer while they run, so hunters can see when to stand still for the shot.
-- **Auto Shot at range, Attack in melee**, swapping as you move.
-- **DoTs timed from your own casts**, opener included: they step back while ticking, come back as they drop, and skip a target that's about to die.
-- **Resources, sensibly.** Life Tap, Evocation and Innervate come forward when you can't afford your spells, and nothing that costs health is offered below half.
-- **Between pulls** - food, drink or a bandage when you need them, plus the flasks, elixirs and scrolls you carry.
-
-It's an early build for the beta, so a few cues are still being checked in game. Feedback is very welcome.
-
-## What's in the box
-
-**Disruption** - One slot ahead of your queue for everything that stops what the enemy is doing: interrupts, crowd control that knows a stun from a silence, and enrage cleanses (Soothe, Tranquilizing Shot, Shiv and similar glow green). Each part works on its own.
-
-**Pre-combat buffs** - Out of combat, the buffs you're missing but own appear as clickable icons: flask, food, augment rune, weapon enchants, class buffs like poisons and shields, plus the Recuperate self-heal. Group buffs watch your party, so one re-cast covers whoever joined late.
-
-**Display & input** - Standard frame, nameplate queue, or both, each with an optional resource bar. Markers show when an ability can be cast on the move or is off the global cooldown. Full layout control. Hotkeys found from your bars and macros, with manual overrides. Keyboard and gamepad. Masque support. Per-spec profiles. Localized: EN, DE, FR, IT, RU, ES (ES/MX), PT-BR, KO, ZH (CN/TW).
-
-**One limitation:** the interrupt is correctly hidden on casts that can't be interrupted, whatever your UI. *Substituting* crowd control for a kick on a non-interruptible cast still needs Blizzard's default cast bar. Replace the cast bar and you get no suggestion there instead of a CC - never a wrongly-shown kick.
+**One limitation:** Showing crowd control in place of an interrupt on a non-interruptible cast requires Blizzard's default cast bar. With a replacement cast bar, JustAC omits that suggestion rather than showing an unreliable one.
 
 ---
 
 What else are you up to? JustAC, Just Delve, Just Loot
 
-Enjoying the addon? I love keeping JustAC updated and providing quick support, but development has real expenses. If you'd like to help out, your support is greatly appreciated - consider buying me a coffee! 😊
+If JustAC is useful to you, consider buying me a coffee. It helps fund development and support. 😊

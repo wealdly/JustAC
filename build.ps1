@@ -30,10 +30,13 @@ $pendingZip = Join-Path $distDir ".$addonName-$buildID.zip"
 $tocFiles = @($tocLines | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -notmatch '^#' -and $_ -ne '' })
 $addonFiles = @($tocFiles | Where-Object { $_ -notmatch '^Libs[\\/]' })
-$coreFiles = @("JustAC.toc", "LICENSE", "README.md") + $addonFiles
+if ($addonFiles | Where-Object { $_ -match '^Debug[\\/]Research([\\/]|$)' }) {
+    throw "Research probes belong to the optional local companion, not JustAC.toc."
+}
+$coreFiles = @("JustAC.toc", "Bindings.xml", "LICENSE", "README.md") + $addonFiles
 
 $missingFiles = @()
-foreach ($file in (@("JustAC.toc", "LICENSE", "README.md") + $tocFiles)) {
+foreach ($file in (@("JustAC.toc", "Bindings.xml", "LICENSE", "README.md") + $tocFiles)) {
     $src = Join-Path $PSScriptRoot $file
     if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
         $missingFiles += $file

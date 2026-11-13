@@ -72,6 +72,63 @@ PENDING = {"tick"}
 DATA = (Path("SimcRotations.lua"), Path("Forever") / "Rotations.lua")
 
 
+def check_automatic_burst():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        SpellQueue={}
+        b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
+        boss=false; classification='normal'; selfBuff=true; seconds=180
+        pick=false; target=true
+        function UnitClassification() return classification end
+        function IsLiveAttackableTarget() return target end
+        SpellDB={
+            IsPureSelfAura=function() return selfBuff end,
+            GetSpecKey=function() return 'ROGUE_F' end,
+        }
+        BlizzardAPI={
+            HasGamePick=function() return pick end,
+            IsSecretValue=function(v) return v==secret end,
+            IsTargetBoss=function() return boss end,
+            PeekBaseCooldownSeconds=function() return seconds end,
+            GetDisplaySpellID=function(id) return id end,
+        }
+        secret={}
+    """ + extract("HoldAutomaticBurst", SRC.read_text(encoding="utf-8")))
+    cases = [
+        ("", True),
+        ("classification='trivial'", True),
+        ("classification='minus'", True),
+        ("classification='rare'", True),
+        ("classification='elite'", False),
+        ("classification='rareelite'", False),
+        ("classification='worldboss'", False),
+        ("boss=true", False), ("boss=nil", True), ("boss=secret", True),
+        ("classification=secret", True), ("classification=nil", True),
+        ("b.ctxEnemies=2", False), ("b.ctxEnemies=0", True),
+        ("b.ctxEnemies=nil", True), ("b.ctxEnemies=secret", True),
+        ("pick=true", False), ("target=false", True),
+        ("b.inCombat=false", True), ("b.sinkCooldowns=false", False),
+        ("b.inCombat=false;classification='elite'", False),
+        ("b.inCombat=false;b.ctxEnemies=3", True),
+        ("b.contextOrder='off'", False), ("SpellQueue._rotationIsCustom=true", False),
+        ("selfBuff=false", False), ("selfBuff=nil", False), ("selfBuff=secret", False),
+        ("seconds=119", False), ("seconds=120", True),
+        ("seconds=0", False), ("seconds=secret", False),
+        ("BlizzardAPI.PeekBaseCooldownSeconds=function() error('denied') end", False),
+        ("b.profile.burstTriggers={ROGUE_F={1259799}}", False),
+    ]
+    for setup, expected in cases:
+        lua.execute("""
+            b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
+            boss=false;classification='normal';selfBuff=true;seconds=180
+            pick=false;target=true;SpellQueue._rotationIsCustom=false
+            BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
+        """ + setup)
+        assert lua.eval("HoldAutomaticBurst(1259799,b)") == expected, setup
+    print("Automatic burst hold: %d cases passed" % len(cases))
+    return 0
+
+
 def check_coverage():
     emitted = set()
     for name in DATA:
@@ -93,6 +150,7 @@ def main():
     run = lua.eval("function(src) return assert(load(src))() end")
     lua.execute("""
         enemies, occupied = 0, nil
+        BlizzardAPI.IsSecretValue = function() return false end
         BlizzardAPI.GetEngagedEnemyCount = function() return enemies end
         BlizzardAPI.IsTotemSlotOccupied = function() return occupied end
     """)
@@ -113,7 +171,11 @@ def main():
     lua.globals().ctx.strict = False
     print(f"Forever signal gates: {signal_cases} cases passed")
     lua.execute("gateCtx={}; BlizzardAPI.IsForever=function() return not hasPick end")
-    lua.execute(extract("SimcGateBlocks", SRC.read_text(encoding="utf-8")))
+    source = SRC.read_text(encoding="utf-8")
+    start = source.index("local PROC_CONTEXT_GATES =")
+    end = source.index("\n--- Every evaluable SimC gate", start)
+    lua.execute(source[start:end] + "\n"
+                + extract("SimcGateBlocks", source))
     preference = '{{t="resource",res="combo_points",op=">=",n=5}}'
     both = "function(...) local a, b = SimcGateBlocks(...); return {a, b} end"
     blocks = lua.eval(both)
@@ -277,6 +339,7 @@ BlizzardAPI.IsSpellUsable = function(id) local u = usableOf[id] or {true, false}
             bad += 1
             print("  FAIL cd %s got %s, want %s  (%s)" % (gate, got, want, why))
     bad += check_coverage()
+    bad += check_automatic_burst()
     print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved) + len(cd), bad))
     return 1 if bad else 0
 

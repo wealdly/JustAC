@@ -30,6 +30,7 @@ function ClaimSpellID(id, added)
     return id
 end
 function NotePick() end
+function LibStub() return nil end
 """
 
 

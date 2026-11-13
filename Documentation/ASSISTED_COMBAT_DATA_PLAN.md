@@ -1,5 +1,9 @@
 # Assisted-combat rotation data: plan
 
+**Historical data plan, not a current tool inventory.** Use
+[development tooling](DEV_TOOLING.md) and script headers for current flags and
+outputs. Retain the dated counts and decisions below as evidence, not live totals.
+
 Blizzard's per-spec rotation is in the client data (`AssistedCombat`, `AssistedCombatStep`,
 `AssistedCombatRule`; 693 steps and 3,116 conditions across 40 specs at 12.1.0.69382). Steps are
 in priority order; each carries conditions. Found 2026-09-19.
