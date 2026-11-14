@@ -30,6 +30,9 @@ pass. These establish reduced work and preserved queue behavior, not live CPU sa
 The same suite exercises spellbook proc candidates through the shared categorizer on both
 clients, including contextual vetoes, automatic burst holds, settings across Forever ranks,
 deduplication and the actual tail stage without a cached rotation.
+`python tools\test_forever_general_priorities.py` also checks Shifting Power's below-50
+Energy boundary, unknown reads, proc/cap promotions, Mana affordability, maximum-Energy
+changes and explicit ordering/hold overrides using the generated Druid entry.
 `python tools\test_forever_aura_policy.py` uses the real generated data, tracker and shared
 tail stage to cover every Holy Fire rank, Thunder Clap's different tree policies, bounded
 cast estimates, miss cancellation, CDM precedence, prerequisites, proc vetoes and totems.
@@ -104,7 +107,9 @@ steps, each threshold on exact and engine-gate paths on both clients, legacy
 95%, the default 80% when unset, immediate clearing above the line, onset
 debounce and unavailable gates. Below-full, regen, party alerts and post-combat
 activity must not substitute for the configured threshold; the emergency floor
-remains independent.
+remains independent. Registry regressions also exclude healing spells and HoTs
+from additive precombat buff offers, including Forever ranks, while retaining
+real buffs and health-gated recovery on both clients.
 `test_forever_consumables.py` covers the configurable 80% mana-recovery default,
 all 10% selections, explicit hybrid mana, unknown reads, active consumption,
 combined-item deduplication, Recovery Off and threshold changes through the

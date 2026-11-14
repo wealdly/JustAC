@@ -660,6 +660,60 @@ def test_forever_empty_fallbacks():
     print("support defaults: Forever fallback lists are explicit-empty; Retail defaults remain")
 
 
+def test_engine_buff_registry_excludes_heals():
+    for forever in (True, False):
+        lua, _ = new_runtime(forever, precombat=False)
+        lua.execute((ROOT / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
+        lua.execute("""
+            playerClass="DRUID"
+            local S=LibStub("JustAC-SpellDB")
+            S.CLASS_MAINTAINED_BUFFS={}
+            known={[774]=true,[8936]=true,[1126]=true}
+            local B=LibStub("JustAC-BlizzardAPI")
+            B.GetPlayerHealthPercentSafe=function() return 100,false end
+            B.IsUnitFullHealth=function() return true end
+            B.IsUnitHealthBelow=function() return false end
+            registry={
+                {spellID=774,isKnown=true},
+                {spellID=8936,isKnown=true},
+                {spellID=1126,isKnown=true},
+            }
+            B.GetGroupBuffItems=function() return registry end
+        """)
+        if forever:
+            lua.execute("""
+                known[1058]=true
+                registry[#registry+1]={spellID=1058,isKnown=true}
+                LibStub("JustAC-RotationImport").RankBase=function(id)
+                    if id==1058 then return 774 end
+                    return id
+                end
+            """)
+        lua.execute((ROOT / "PrecombatEngine.lua").read_text(encoding="utf-8"))
+        lua.execute("""
+            P=LibStub("JustAC-PrecombatEngine")
+            function RegistryOffers(topoff)
+                P.ClearCache()
+                return P.GetMissingClassBuffs(topoff,50,false,{healthRecovery=false})
+            end
+        """)
+        g = lua.globals()
+        for enabled in (True, False):
+            check(seq(g.RegistryOffers(enabled)) == [1126] and g.P.offeredTopoffHeal is None,
+                  f"{forever=}, {enabled=}: registry heals became preparation instead of only Mark")
+        lua.execute("auraByID={[774]={duration=12,expirationTime=now+12}}")
+        check(seq(g.RegistryOffers(False)) == [1126],
+              "an active HoT must not make other registry heals into preparation")
+        lua.execute("""
+            auraByID={[1126]={duration=1800,expirationTime=now+1800}}
+            LibStub("JustAC-BlizzardAPI").GetPlayerHealthPercentSafe=function() return 30,false end
+        """)
+        heal = 774 if forever else 8936
+        check(seq(g.RegistryOffers(False)) == [heal] and g.P.offeredTopoffHeal == heal,
+              "filtering registry heals must preserve actual low-health recovery")
+    print("precombat registry: heals/HoTs and Forever ranks excluded; real buffs and recovery preserved on both clients")
+
+
 def test_recovery_heal_preference():
     for forever in (True, False):
         lua, _ = new_runtime(forever, precombat=False)
@@ -725,6 +779,7 @@ def test_recovery_heal_preference():
 
 
 def main():
+    test_engine_buff_registry_excludes_heals()
     test_recovery_heal_preference()
     test_health_threshold_detection()
     test_topoff_slider_thresholds()

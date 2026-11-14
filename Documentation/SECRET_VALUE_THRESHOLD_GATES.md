@@ -138,6 +138,12 @@ Practically: boundaries must come from *what a feature does differently*, never 
 wanting resolution. Three health bands exist because the defensive cluster orders
 itself three ways - not to locate health within 25%.
 
+Imported threshold gates may opt into `required=true` when a recommendation needs
+positive evidence. Unknown then blocks that condition, and a proc cannot override it.
+Forever Shifting Power uses this for Energy below 50 before spending Mana.
+Existing gates retain their unknown-state fallback; an explicit Hold Until dial
+still replaces imported resource conditions.
+
 The one deliberate exception is diagnostic: `/jac inspect durcurve` has a reveal ramp
 whose whole purpose is to test **whether** a value leaks. It reads `secret` in combat,
 which is the outcome that keeps the rest of this legitimate.

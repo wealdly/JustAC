@@ -69,7 +69,7 @@ RotationImport.RegisterForever({
     feral = {  -- presets/druid/feralcat/default
       st = {
         {id=768,gates={{t="buff",id=768,neg=true}}},  -- Cat Form
-        {id=1322605,gates={},delegated=true},  -- Shifting Power
+        {id=1322605,gates={{t="power",res="energy",op="<",n=50,required=true}},w=true},  -- Shifting Power
         {id=6785,gates={{t="buff",id=5215}}},  -- Ravage
         {id=770,gates={{t="any",g={{t="debuff",id=770,neg=true,refresh=true},{t="debuff",id=770,neg=true,refresh=true}}}}},  -- Faerie Fire
         {id=1328618,gates={{t="resource",res="combo_points",op=">=",n=5},{t="debuff",id=1079,op=">",n=3},{t="buff",id=16870,dur=15,neg=true}},delegated=true},  -- Ferocious Bite

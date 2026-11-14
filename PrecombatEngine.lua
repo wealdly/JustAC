@@ -1064,6 +1064,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
     -- `get`/`restricted` are still required: without a readable aura probe every buff
     -- reads as missing and we would nag for buffs already up.
     local engineBuffs = (not InCombatLockdown()) and get and not restricted
+        and SpellDB and SpellDB.IsHealingSpell
         and BlizzardAPI and BlizzardAPI.GetGroupBuffItems and BlizzardAPI.GetGroupBuffItems()
     if engineBuffs then
         local covered = {}
@@ -1077,13 +1078,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerSteal
         -- PASSIVES - isKnown answers true for those, and so does IsPlayerSpell. Neither
         -- is a precombat offer. The registry item carries no discriminating field, so:
         --   * passives are refused outright;
+        --   * heals and HoTs belong to health-gated recovery, not buff upkeep;
         --   * anything with a real cooldown is refused - a buff you keep up between
         --     pulls has none, a group save has minutes. GetSpellBaseCooldown is plain
         --     out of combat, which is the only place this block runs.
         for i = 1, #engineBuffs do
             local it = engineBuffs[i]
             if it.isKnown and not it.hideByDefault and not covered[it.spellID]
-               and IsPlayerSpell(it.spellID) then
+               and IsPlayerSpell(it.spellID) and not SpellDB.IsHealingSpell(it.spellID) then
                 local aura, known = SafeAuraCall(get, "GetPlayerAuraBySpellID", it.spellID)
                 if known and not aura
                    and not (BlizzardAPI and BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(it.spellID)) then
