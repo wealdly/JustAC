@@ -6,7 +6,83 @@ from gen_forever_rotations import (
 from test_forever_openers import create_runtime
 
 
+def check_shifting_power():
+    lua = create_runtime(real_gates=True)
+    lua.execute("""
+        Enum = {PowerType={Mana=0,Energy=3}}
+        function UnitPowerMax(_, pt)
+            if pt == 3 then return energyMax end
+            return 100
+        end
+        BlizzardAPI.IsUnitPowerBelow = function(_, pct, pt)
+            if pt ~= 3 then return false end
+            energyReadType, energyReadThreshold = pt, pct
+            if unknownEnergy then return nil end
+            return energy * 100 / energyMax < pct
+        end
+        function IsSpenderSpell() return true end
+        function Cat()
+            Reset()
+            specKey = "DRUID_F"
+            entries = classes.DRUID_F.feral.st
+            pool = {1322605,1082}
+            ranges = {[1322605]=true,[1082]=true}
+            energyMax, energy, unknownEnergy = 100, 0, false
+            energyReadType, energyReadThreshold = nil, nil
+        end
+    """)
+    for energy, should_lead in ((0, True), (49, True), (50, False),
+                                (51, False), (100, False)):
+        for procced in (False, True):
+            lua.globals().Cat()
+            lua.globals().energy = energy
+            lua.globals().procs[1322605] = procced
+            lua.globals().capped = energy == 100
+            queue = list(lua.globals().Build().values())
+            expected = 1322605 if should_lead else 1082
+            assert queue[0] == expected, ("Shifting Power Energy guard", energy, procced, queue)
+            assert lua.globals().energyReadType == 3
+            assert lua.globals().energyReadThreshold == 50
+
+    for procced in (False, True):
+        lua.globals().Cat()
+        lua.globals().unknownEnergy = True
+        lua.globals().procs[1322605] = procced
+        assert list(lua.globals().Build().values())[0] == 1082, \
+            "Unknown Energy must not authorize Shifting Power"
+
+    lua.globals().Cat()
+    lua.execute("energyMax=120; energy=55")
+    assert list(lua.globals().Build().values())[0] == 1082, \
+        "The guard uses Energy units, not a percentage of maximum Energy"
+    lua.globals().Cat()
+    lua.execute("starved[1322605]=true")
+    assert list(lua.globals().Build().values())[0] == 1082, \
+        "Low Energy must not override insufficient Mana"
+    lua.globals().Cat()
+    lua.execute("cooldown[1322605]=true")
+    assert list(lua.globals().Build().values())[0] == 1082
+
+    for procced in (False, True):
+        lua.globals().Cat()
+        lua.execute("energy=100; holdPctVal[1322605]=10; holdPctType[1322605]=0")
+        lua.globals().procs[1322605] = procced
+        assert list(lua.globals().Build().values())[0] == 1322605, \
+            "An explicit Hold Until dial replaces the imported Energy preference"
+    lua.globals().Cat()
+    lua.execute("energy=100; SpellQueue._rotationIsCustom=true; b.contextOrder='off'")
+    assert list(lua.globals().Build().values()) == [1322605, 1082], \
+        "Custom fixed ordering remains unchanged"
+
+    lua.globals().Cat()
+    lua.globals().unknownEnergy = True
+    assert lua.eval("""
+        SpellQueue._GateVerdict({t='power',res='energy',op='<',n=50},{})
+    """) is None, "Existing power gates retain their unknown-state behavior"
+
+
 def main():
+    check_shifting_power()
     early = {"id": 1, "gates": [{"t": "resource", "op": ">=", "n": 5}],
              "tiers": ["st"]}
     middle = {"id": 2, "gates": [], "tiers": ["st"]}

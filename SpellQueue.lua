@@ -1384,7 +1384,10 @@ local function GateVerdict(g, ctx)
             below = unit and g.pct and BlizzardAPI.IsUnitHealthBelow
                 and BlizzardAPI.IsUnitHealthBelow(unit, g.pct)
         end
-        if below == nil then return nil end
+        if below == nil then
+            if g.required then return false end
+            return nil
+        end
         return not ThresholdGateBlocks(g, below)
     end
     if t == "stack" then
@@ -1515,7 +1518,7 @@ local function ProcGateBlocks(g, ctx)
         ctx.confirmedAura = nil
         return blocked
     end
-    if not PROC_CONTEXT_GATES[g.t] then return false end
+    if not PROC_CONTEXT_GATES[g.t] and not g.required then return false end
     if g.t == "targets" then
         local count = BlizzardAPI.GetEngagedEnemyCount and BlizzardAPI.GetEngagedEnemyCount()
         if count == nil or BlizzardAPI.IsSecretValue(count) then return false end

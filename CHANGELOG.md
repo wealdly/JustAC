@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-11-13
+
+- Forever Feral: Shifting Power now waits for confirmed Energy below 50 to avoid wasting Energy and Mana.
+- Preparation no longer treats Rejuvenation or other healing spells as buffs to maintain before combat. Health-based recovery remains unchanged.
+
 ## [6.2.0] - 2026-11-13
 
 ### WoW Forever priorities

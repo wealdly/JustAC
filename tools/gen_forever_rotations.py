@@ -654,11 +654,16 @@ def generalize_entries(cls, tree, entries, chains):
         entries[:] = out
     if cls == "druid" and tree == "feral":
         bite = rank1(chains["ferocious_bite"])
+        shifting_power = rank1(chains["shifting_power"])
         for e in entries:
             if e["id"] == bite:
                 e["gates"] = [dict(g, op=">=") if g["t"] == "resource" and g.get("res") == "combo_points"
                               and g.get("op") == "=" and g.get("n") == 5
                               else g for g in e["gates"]]
+            elif e["id"] == shifting_power:
+                # Replace unsupported maximum-Energy arithmetic with a conservative guide threshold.
+                e["gates"] = [{"t": "power", "res": "energy", "op": "<", "n": 50, "required": True}]
+                e["delegated"], e["w"] = False, True
 
 
 def tier_lists(entries):
