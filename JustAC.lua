@@ -41,6 +41,14 @@ local function NotifyOptionsChange()
     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
 end
 
+-- WoW Forever levelling runs on mana and wands, so mana conservation starts on for solo
+-- open-world play there; Retail keeps it opt-in.
+local function DefaultEfficiencyMode()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if SpellDB and SpellDB.IsForever and SpellDB.IsForever() then return "solo" end
+    return "off"
+end
+
 local defaults = {
     profile = {
         framePosition = {
@@ -81,7 +89,7 @@ local defaults = {
         orderProcsFirst = true,           -- Surface procced abilities ahead of source order
         contextOrder = "simc",            -- "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft priority; falls back to "ac" without spec data)
         orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
-        efficiencyMode = "off",           -- off | solo (open world) | always (PvE)
+        efficiencyMode = DefaultEfficiencyMode(), -- off | solo (open world) | always (PvE)
         efficiencyManaThreshold = 40,
         efficiencyRecoverySeconds = 10,
         includeHiddenAbilities = true,    -- Let the pick name abilities with no visible bar button
@@ -720,6 +728,8 @@ function JustAC:OnEnable()
         UNIT_SPELLCAST_SUCCEEDED     = "OnSpellcastSucceeded",
         UNIT_SPELLCAST_START         = "OnPlayerCastChanged",
         UNIT_SPELLCAST_STOP          = "OnPlayerCastChanged",
+        UNIT_SPELLCAST_DELAYED       = "OnPlayerCastDelayed",
+        UNIT_COMBAT                  = "OnPlayerCombatHit",
         UNIT_SPELLCAST_CHANNEL_START = "OnPlayerChannelChanged",
         UNIT_SPELLCAST_CHANNEL_STOP  = "OnPlayerChannelChanged",
         UNIT_PET                     = "OnPetChanged",
@@ -776,6 +786,10 @@ function JustAC:OnEnable()
     uf:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
+    if BlizzardAPI and BlizzardAPI.IsForever and BlizzardAPI.IsForever() then
+        uf:RegisterUnitEvent("UNIT_SPELLCAST_DELAYED", "player")
+        uf:RegisterUnitEvent("UNIT_COMBAT", "player")
+    end
     uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
     uf:RegisterUnitEvent("UNIT_PET", "player")
@@ -1463,6 +1477,10 @@ function JustAC:RefreshInterruptSpells()
 end
 
 function JustAC:OnCombatEvent(event)
+    if SpellQueue and SpellQueue.ResetPushback then SpellQueue.ResetPushback() end
+    if SpellQueue and SpellQueue.ResetNearMeleeHint then SpellQueue.ResetNearMeleeHint() end
+    local preparation = LibStub("JustAC-PrecombatEngine", true)
+    if preparation and preparation.InvalidateTargetDebuffs then preparation.InvalidateTargetDebuffs() end
     if event == "PLAYER_REGEN_DISABLED" then
         -- First-engage warmup: availability cache can contain startup false entries
         -- (before spell APIs are fully ready), which suppresses defensives until
@@ -1633,6 +1651,7 @@ end
 
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
+    if SpellDB and SpellDB.InvalidateRangeCache then SpellDB.InvalidateRangeCache(true) end
     -- The engine group-buff registry caches `isKnown`, which a talent or spec change
     -- moves. Its own 5s window would heal this eventually; flushing here means the
     -- buff list is right on the first rebuild after the change rather than the second.
@@ -1694,7 +1713,12 @@ end
 
 function JustAC:OnUnitAura(event, unit, updateInfo)
     if unit == "target" then
-        -- Target debuff changes feed only the DoT tracker (cast->instance bridge
+        local preparation = LibStub("JustAC-PrecombatEngine", true)
+        if preparation and preparation.InvalidateTargetDebuffs then
+            preparation.InvalidateTargetDebuffs()
+            if not UnitAffectingCombat("player") then self:MarkQueueDirty() end
+        end
+        -- Target debuff changes also feed the DoT tracker (cast->instance bridge
         -- and live removal). Kept off the player-aura path below to avoid its
         -- cache invalidation churn on every enemy aura tick. Mark the queue dirty
         -- so a dropped/expiring DoT un-sinks promptly.
@@ -1914,9 +1938,10 @@ function JustAC:OnProcGlowChange(event, spellID)
 end
 
 function JustAC:OnTargetChanged()
-    -- Clear gap-closer range state on target switch.  The melee reference
-    -- spell's slot is re-resolved lazily on the next GetGapCloserSpell call
-    -- (via IsActionInRange), so no seeding pass is needed.
+    if SpellDB and SpellDB.InvalidateRangeCache then SpellDB.InvalidateRangeCache() end
+    local preparation = LibStub("JustAC-PrecombatEngine", true)
+    if preparation and preparation.InvalidateTargetDebuffs then preparation.InvalidateTargetDebuffs() end
+    -- Neither distance evidence nor approach debounce belongs to the previous target.
     if GapCloserEngine then
         GapCloserEngine.ClearRangeState()
     end
@@ -2052,6 +2077,9 @@ function JustAC:OnBagUpdate()
     if SpellDB and SpellDB.MarkHealingBagsDirty then
         SpellDB.MarkHealingBagsDirty()
     end
+    if SpellDB and SpellDB.MarkConsumableBagsDirty then
+        SpellDB.MarkConsumableBagsDirty()
+    end
 end
 
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
@@ -2150,6 +2178,23 @@ end
 function JustAC:OnPlayerCastChanged(event, unit)
     if unit ~= "player" then return end
     MarkPrecombatGuardDirty()
+end
+
+function JustAC:OnPlayerCastDelayed(event, unit)
+    if BlizzardAPI.IsSecretValue(unit) or unit ~= "player" or not UnitAffectingCombat("player") then return end
+    if SpellQueue and SpellQueue.NotePushback then SpellQueue.NotePushback() end
+    self:MarkQueueDirty()
+end
+
+-- An unabsorbed hit on the player (Forever only). Only the action and flag are read; the
+-- amount is a secret value. A hit fully soaked by a shield carries the ABSORB flag.
+function JustAC:OnPlayerCombatHit(event, unit, action, flagText)
+    if BlizzardAPI.IsSecretValue(unit) or unit ~= "player"
+       or BlizzardAPI.IsSecretValue(action) or action ~= "WOUND"
+       or BlizzardAPI.IsSecretValue(flagText) or flagText == "ABSORB" then return end
+    if SpellQueue and SpellQueue.NoteIncomingHit and SpellQueue.NoteIncomingHit() then
+        self:MarkQueueDirty()
+    end
 end
 
 function JustAC:OnPlayerChannelChanged(event, unit)

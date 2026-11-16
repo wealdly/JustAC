@@ -23,6 +23,7 @@ inRange, attacking, shooting, knowsAutoShot = nil, false, false, true
 rangedIn, within10 = nil, nil   -- the ranged check (8-35 yd) and the 10-yard probe
 B.IsTargetInSwingRange = function(t) if t == 2 then return rangedIn end return inRange end
 B.SpellInRange = function() return inRange end
+B.AbilityInRange = function(id) if id == 6603 then return inRange end return abilityRanged end
 LibStub:NewLibrary("JustAC-SpellDB").IsTargetWithin = function() return within10 end
 C_Spell = {
     IsCurrentSpell = function() return attacking end,
@@ -48,7 +49,10 @@ def main():
     assert red(75), "Auto Shot in melee range (inside its minimum range)"
     g.inRange = False
     assert not red(75), "Auto Shot out of melee, not running"
-    assert red(6603), "Attack out of melee range yields to Auto Shot"
+    assert not red(6603), "unknown shooting range cannot hide Attack"
+    g.abilityRanged = True
+    assert red(6603), "confirmed ability reach lets Auto Shot replace Attack"
+    g.abilityRanged = None
     g.knowsAutoShot = False
     assert not red(6603), "no Auto Shot: Attack stays"
     g.inRange = None
@@ -72,6 +76,11 @@ def main():
     # Far beyond 35 yd: Auto Shot stays (the pull, greyed out of range).
     g.rangedIn, g.within10 = False, False
     assert not red(75), "out of range far away: Auto Shot stays as the pull"
+    assert not red(6603), "neither attack reaches: do not claim Auto Shot can fire"
+    g.abilityRanged, g.rangedIn = False, True
+    assert not red(6603), "specific ability rejection wins over a stale swing reading"
+    g.forever, g.abilityRanged = False, True
+    assert not red(6603), "retail redundancy is unchanged even with a readable action range"
     print("ok")
 
 

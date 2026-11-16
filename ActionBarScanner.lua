@@ -508,7 +508,11 @@ local function SearchSlots(slotSet, spellID, spellName)
                         end
                     end
                 elseif actionType == "macro" then
-                    if subType == "spell" and macroSpellID and macroSpellID > 0 then
+                    local parsedEntry = MacroParser and MacroParser.GetMacroSpellInfo
+                        and MacroParser.GetMacroSpellInfo(slot, spellID, spellName)
+                    local safeAttack = (spellID ~= 6603 and spellID ~= 5019 and spellID ~= 75)
+                        or (parsedEntry and parsedEntry.autoAttackOnly == true)
+                    if safeAttack and subType == "spell" and macroSpellID and macroSpellID > 0 then
                         local macroIconSpellInfo = C_Spell_GetSpellInfo and C_Spell_GetSpellInfo(macroSpellID)
                         if macroIconSpellInfo and macroIconSpellInfo.name == spellName then
                             candidates[#candidates + 1] = {
@@ -520,8 +524,7 @@ local function SearchSlots(slotSet, spellID, spellName)
                         end
                     end
 
-                    if MacroParser and MacroParser.GetMacroSpellInfo then
-                        local parsedEntry = MacroParser.GetMacroSpellInfo(slot, spellID, spellName)
+                    if safeAttack then
                         if parsedEntry and parsedEntry.found then
                             local baseScore = parsedEntry.qualityScore or 500
                             candidates[#candidates + 1] = {
@@ -1329,6 +1332,25 @@ function ActionBarScanner.GetDirectSlotForSpell(spellID)
     end
     directSpellSlotCache[spellID] = nil
     return nil
+end
+
+--- Checked state is also unambiguous on a macro containing only this auto attack.
+function ActionBarScanner.GetAutoAttackSlotForSpell(spellID)
+    if spellID ~= 6603 and spellID ~= 5019 and spellID ~= 75 then return nil end
+    local slot = ActionBarScanner.GetSlotForSpell(spellID)
+    if slot then
+        if DirectSpellSlotMatches(slot, spellID) then return slot end
+        local ok, info = pcall(C_Spell_GetSpellInfo, spellID)
+        if not ok then
+            geterrorhandler()(info)
+            return nil
+        end
+        if info and info.name and MacroParser and MacroParser.GetMacroSpellInfo then
+            local entry = MacroParser.GetMacroSpellInfo(slot, spellID, info.name)
+            if entry and entry.autoAttackOnly == true then return slot end
+        end
+    end
+    return ActionBarScanner.GetDirectSlotForSpell(spellID)
 end
 
 -- Returns action slot for an item placed directly on the bar.

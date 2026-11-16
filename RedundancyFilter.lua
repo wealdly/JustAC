@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 47)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 48)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -697,6 +697,7 @@ RefreshAuraCache = function()
     cachedAuras.complete = false
     
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
+    local playerAuras
     
     -- 12.0+ fast pre-check: skip the full aura scan when all fields are known secret.
     -- When true (combat), the loop below would just hit secret values on every aura,
@@ -728,7 +729,8 @@ RefreshAuraCache = function()
         -- are plain even in combat; only the fields below are secret, so the
         -- per-aura secret handling is unchanged. GetAuras absorbs the throw risk
         -- (compound tokens, hotfixes) and falls back to the index loop itself.
-        local playerAuras, complete = BlizzardAPI.GetAuras("player", "HELPFUL")
+        local complete
+        playerAuras, complete = BlizzardAPI.GetAuras("player", "HELPFUL")
         cachedAuras.complete = complete == true
         playerAuras = playerAuras or {}
         for i = 1, #playerAuras do
@@ -755,8 +757,8 @@ RefreshAuraCache = function()
                     if realSpellId and IsNeverSecretAura(realSpellId) then
                         -- spellId was readable (NeverSecret) despite IsSecretValue
                         -- returning true. Process as a normal non-secret aura,
-                        -- force-reading timing the same way (GetAuraTiming can't
-                        -- serve this - it trusts the generic secret mark).
+                        -- force-reading timing the same way rather than trusting
+                        -- the generic secret mark.
                         cachedAuras.byID[realSpellId] = true
                         local dur = ForceReadNumber(auraData, "duration")
                         local exp = ForceReadNumber(auraData, "expirationTime")
@@ -800,8 +802,9 @@ RefreshAuraCache = function()
                 -- Not secret - process normally and update instance maps
                 if auraData.spellId then
                     cachedAuras.byID[auraData.spellId] = true
-                    -- Store aura timing info for pandemic check (use API-specific helper)
-                    local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
+                    -- Keep timing on this snapshot; an indexed re-read may be denied.
+                    local dur = BlizzardAPI.Unsecret(auraData.duration)
+                    local exp = BlizzardAPI.Unsecret(auraData.expirationTime)
                     local timingInfo = BuildAuraTiming(dur, exp, auraData.applications)
                     cachedAuras.auraInfo[auraData.spellId] = timingInfo
                     
@@ -851,15 +854,14 @@ RefreshAuraCache = function()
         lastTrustedCacheTime = now
         
         -- Out of combat, we have authoritative data - prune stale entries.
-        -- Only prune against a list we actually got: treating a failed enumeration
+        -- Prune against the same snapshot: treating a failed enumeration
         -- as "nothing is active" would wipe every instance map wholesale. A secret
         -- instance id is exactly that kind of partial read, so it blocks the prune too.
-        local liveAuras = BlizzardAPI.GetAuras and BlizzardAPI.GetAuras("player", "HELPFUL")
-        if liveAuras then
+        if playerAuras then
             local activeInstances = {}
             local partialRead = false
-            for i = 1, #liveAuras do
-                local instanceID = BlizzardAPI.Unsecret(liveAuras[i].auraInstanceID)
+            for i = 1, #playerAuras do
+                local instanceID = BlizzardAPI.Unsecret(playerAuras[i].auraInstanceID)
                 if instanceID then
                     activeInstances[instanceID] = true
                 else
@@ -1241,13 +1243,13 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     --   Attack yields while Auto Shot can fire;
     --   Auto Shot yields while too close for it: out of its range and in melee or within 10 yd
     --   (out of range far away it stays - the pull - and the queue greys it).
-    -- No ranged reading yet: melee reach alone, the old rule.
-    if spellID == AUTO_ATTACK_SPELL or spellID == AUTO_SHOT_SPELL then
-        local ranged, melee = BlizzardAPI.IsTargetInSwingRange(2), BlizzardAPI.IsTargetInSwingRange(0)
-        if BlizzardAPI.IsForever() then melee = BlizzardAPI.SpellInRange(AUTO_ATTACK_SPELL, "target") end
+    -- Unknown ranged reach does not establish that Auto Shot can fire.
+    if (spellID == AUTO_ATTACK_SPELL or spellID == AUTO_SHOT_SPELL) and BlizzardAPI.IsForever() then
+        local ranged = BlizzardAPI.AbilityInRange(AUTO_SHOT_SPELL)
+        if ranged == nil then ranged = BlizzardAPI.IsTargetInSwingRange(2) end
+        local melee = BlizzardAPI.AbilityInRange(AUTO_ATTACK_SPELL)
         if spellID == AUTO_ATTACK_SPELL then
-            local canShoot = ranged == true or (ranged == nil and melee == false)
-            if canShoot and IsPlayerSpell(AUTO_SHOT_SPELL) then
+            if ranged == true and IsPlayerSpell(AUTO_SHOT_SPELL) then
                 return true, "Auto Shot can fire: Attack would only walk in"
             end
         else

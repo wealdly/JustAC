@@ -7,7 +7,22 @@ from gen_forever_rotations import condition_coverage
 from gen_forever_rotations import add_extras, generalize_entries, keeps_own_buff, tier_lists
 from gen_forever_rotations import rank1
 from gen_forever_rotations import DURATION
+from gen_forever_rotations import direct_damage_estimates
 import check_forever_apl as cfa
+
+damage_estimates = direct_damage_estimates({
+    585, 591, 589, 15407, 5019, 75, 133, 3044, 1752, 78, 19434, 2764, 3018, 14914,
+})
+assert set(damage_estimates) == {585, 591, 3044, 133, 14914}, \
+    "Periodic, channel, weapon/AP-scaled and repeat/manual weapon attacks stay outside direct cast estimates"
+assert len(damage_estimates[585]) == 6, "Plain direct hits carry no partial flag"
+assert damage_estimates[133][6] == 1 and damage_estimates[14914][6] == 1, \
+    "A hit followed by its own damage over time is priced but flagged partial"
+for actual, expected in zip(damage_estimates[14914][7:], (20, 0, 0.25)):
+    assert abs(actual - expected) < 0.000001, "Holy Fire: five 4-damage ticks with a 0.05 share each"
+assert damage_estimates[591][0] > damage_estimates[585][0], "Exact ranks retain different damage"
+for actual, expected in zip(damage_estimates[585], (15, 0.1, 1, 6, 0.429, 2)):
+    assert abs(actual - expected) < 0.000001, "Smite rank-1 mean, growth, cap, coefficient and Holy school"
 
 paladinChains, _ = cfa.class_chains(cfa.CLASS_MASK["paladin"])
 
@@ -152,7 +167,7 @@ IN = {"HUNTER_F": [75, 6603, 1510, 13795],        # Auto Shot, Attack, Volley, I
       "DRUID_F": [768, 5487, 16914],              # Cat Form, Bear Form, Hurricane
       "PRIEST_F": [15473, 20554, 1277331],        # Shadowform, Berserking, Chastise (root side effect)
       "ROGUE_F": [53, 2480, 14251],               # Backstab, Shoot Bow, Riposte
-      "SHAMAN_F": [8042, 8056],                   # Earth Shock (6s interrupt), Frost Shock
+      "SHAMAN_F": [8042, 8056],                   # Custom-eligible Earth Shock, Frost Shock
       "MAGE_F": [5019, 401502],                   # Shoot (wand), Frostfire Bolt (slow side effect)
       "PALADIN_F": [2812, 21082]}                 # Holy Wrath, Seal of the Crusader
 OUT = {"HUNTER_F": [1494, 5118, 6991, 5116,       # Track Beasts, Aspect of the Cheetah, Feed Pet, Concussive Shot
@@ -211,12 +226,123 @@ from lupa import LuaRuntime  # type: ignore[import-not-found]  # noqa: E402
 runtime = LuaRuntime(unpack_returned_tuples=True)
 runtime.execute("""
     function LibStub()
-        return {RegisterForever = function(data, chains) classes = data end}
+        return {RegisterForever = function(data, chains, abilities, damage)
+            classes, pushbackDamage = data, damage
+        end}
     end
 """)
 runtime.execute(data)
 classes = runtime.globals().classes
+damage = runtime.globals().pushbackDamage
+assert damage[8042] == 6 and damage[8056] == 6 and damage[2136] == 8
+assert damage[120] is None and damage[8050] is None and damage[8921] is None, \
+    "Ten-second cooldowns and DoTs are not pushback fillers"
 ids_of = lambda entries: [entry["id"] for entry in entries.values()]
+
+
+def gate_list(entry):
+    gates = entry["gates"]
+    return [gates[i] for i in range(1, len(gates) + 1)] if gates else []
+
+
+def entry_of(entries, sid):
+    return next(e for e in entries.values() if e["id"] == sid)
+
+
+# Core rules (gen_forever_rotations.py CORE RULES), checked on the generated data.
+rupture = entry_of(classes.ROGUE_F.subtlety.st, 1943)
+assert any(g["t"] == "resource" and g["res"] == "combo_points" and g["op"] == ">=" and g["n"] == 4
+           for g in gate_list(rupture)), "a damage-over-time finisher spends at least four points"
+rip = entry_of(classes.DRUID_F.feral.st, 1079)
+assert sum(1 for g in gate_list(rip) if g["t"] == "resource") == 1, "a source point gate is kept, not doubled"
+for hunter_tree in ("beast_mastery", "marksmanship"):
+    for context in ("st", "cleave", "aoe"):
+        ids = ids_of(classes.HUNTER_F[hunter_tree][context])
+        assert max(ids.index(s) for s in (75, 3044)) < min(ids.index(s) for s in (2973, 1495)), \
+            (hunter_tree, context, "melee attacks trail ranged attacks in a ranged tree")
+survival = ids_of(classes.HUNTER_F.survival.st)
+assert survival.index(13795) < survival.index(2973) < survival.index(3044), \
+    "Survival is a melee tree: launch order Immolation Trap, Raptor Strike, then the ranged shots"
+for context in ("st", "cleave", "aoe"):
+    ids = ids_of(classes.MAGE_F.frost[context])
+    assert ids[0] != 11426 and ids[-2:] == [11426, 5019], (context, "absorb shield trails damage, wand last")
+assert ids_of(classes.WARRIOR_F.protection.st)[0] == 2565, "tank trees keep their own shield lead"
+for context in ("st", "cleave", "aoe"):
+    burn = entry_of(classes.WARLOCK_F.destruction[context], 17877)
+    either = [g for g in gate_list(burn) if g["t"] == "any"]
+    assert burn["w"] and len(either) == 1 and [dict(g) for g in either[0]["g"].values()] == [
+        {"t": "execute", "op": "<", "pct": 20}, {"t": "known", "id": 426316}], \
+        (context, "Shadowburn waits for a dying target unless Shadow and Flame is talented")
+
+# Launch-guide adaptations (forever-guides/ "Launch rotation", read 2026-11-16).
+arms = ids_of(classes.WARRIOR_F.arms.st)
+assert arms.index(7384) < arms.index(12294) < arms.index(5308) < arms.index(1240193), \
+    "Arms: Overpower > Mortal Strike > Execute > Slam"
+assert arms[-1] == 772, "untalented warriors (Arms list) keep Rend last in single target"
+for context in ("cleave", "aoe"):
+    ids = ids_of(classes.WARRIOR_F.arms[context])
+    assert 12292 in ids and ids.index(1240193) < ids.index(772), (context, "Sweeping Strikes; Rend after Slam")
+for context in ("st", "aoe"):
+    ids = ids_of(classes.WARRIOR_F.fury[context])
+    assert ids.index(1680) < ids.index(5308) < ids.index(23881) < ids.index(7384) < ids.index(772), \
+        (context, "Fury: Whirlwind > Execute > Bloodthirst > Overpower > Rend")
+for tree in ("arms", "fury"):
+    ids = ids_of(classes.WARRIOR_F[tree].aoe)
+    assert ids[-1] == 1160, (tree, "Demoralizing Shout is upkeep behind the attacks")
+assert ids_of(classes.WARRIOR_F.protection.aoe).index(1160) < 3, "the tank still leads with it"
+for tree in ("assassination", "combat"):
+    ids = ids_of(classes.ROGUE_F[tree].st)
+    assert ids.index(703) < ids.index(1833), (tree, "Garrote opens ahead of Cheap Shot")
+    rupture = entry_of(classes.ROGUE_F[tree].st, 1943)
+    assert ids.index(1943) < ids.index(2098) and {"t": "resource", "res": "combo_points", "op": ">=", "n": 5} \
+        in [dict(g) for g in gate_list(rupture)], (tree, "Rupture at 5 points before Eviscerate")
+shadow = ids_of(classes.PRIEST_F.shadow.st)
+assert shadow.index(1309595) < shadow.index(15286) < shadow.index(15407), "Vampiric Embrace before Mind Flay"
+assert ids_of(classes.WARLOCK_F.affliction.st)[-3:] == [1316697, 686, 5019], "Wrack fills before Shadow Bolt"
+assert ids_of(classes.WARLOCK_F.destruction.st)[-3:] == [412758, 686, 5019], "Incinerate fills before Shadow Bolt"
+fire = ids_of(classes.MAGE_F.fire.st)
+assert fire.index(401502) + 1 == fire.index(133), "Frostfire Bolt fills before Fireball"
+assert 120 in ids_of(classes.MAGE_F.fire.aoe), "Fire AoE uses Cone of Cold"
+arcane_aoe = ids_of(classes.MAGE_F.arcane.aoe)
+assert arcane_aoe.index(2120) < arcane_aoe.index(1449), "Arcane AoE opens with Flamestrike"
+for cls, tree, context, sid, radius in (("PRIEST_F", "shadow", "aoe", 15237, 10),
+                                        ("PALADIN_F", "retribution", "aoe", 26573, 8),
+                                        ("WARRIOR_F", "arms", "aoe", 6343, 8),
+                                        ("WARRIOR_F", "fury", "st", 1680, 8)):
+    pbaoe = entry_of(classes[cls][tree][context], sid)
+    assert pbaoe["w"] and {"t": "near", "n": radius} in [dict(g) for g in gate_list(pbaoe)], \
+        (cls, tree, sid, "a point-blank attack waits for the target inside its radius")
+assert not any(g["t"] == "near" for g in gate_list(entry_of(classes.MAGE_F.frost.st, 116))), \
+    "a ranged spell keeps its range, not a radius"
+assert not any(g["t"] == "near" for g in gate_list(entry_of(classes.WARLOCK_F.destruction.aoe, 5740))), \
+    "a ground-targeted area (Rain of Fire) is not point-blank"
+for tree in ("protection", "retribution"):
+    wrath = entry_of(classes.PALADIN_F[tree].st, 24275)
+    assert {"t": "execute", "op": "<", "pct": 20} in [dict(g) for g in gate_list(wrath)], \
+        (tree, "Hammer of Wrath carries the game's below-20% restriction")
+fury_aoe = ids_of(classes.WARRIOR_F.fury.aoe)
+assert fury_aoe.count(1680) == 1 and fury_aoe.index(1680) < fury_aoe.index(7384), \
+    "a derived gate does not change which Whirlwind branch the AoE tier keeps"
+fire_aoe = ids_of(classes.MAGE_F.fire.aoe)
+assert fire_aoe.index(2120) < fire_aoe.index(11113) < fire_aoe.index(1449) < fire_aoe.index(133), \
+    "Fire AoE follows the guides: Flamestrike, Blast Wave, Arcane Explosion, then the filler"
+assert 1449 in ids_of(classes.MAGE_F.arcane.aoe) and 1449 not in ids_of(classes.MAGE_F.arcane.st), \
+    "Arcane Explosion joins only the Arcane AoE tier"
+for context in ("st", "aoe"):
+    ids = ids_of(classes.HUNTER_F.survival[context])
+    assert ids[-1] == 3044 and max(ids.index(s) for s in (2973, 1495)) < ids.index(3044), \
+        (context, "Survival keeps a ranged shot behind its melee attacks")
+assert 2643 in ids_of(classes.HUNTER_F.survival.aoe) and 2643 not in ids_of(classes.HUNTER_F.survival.st)
+for cls, tree, sid in (("WARRIOR_F", "arms", 402927), ("WARRIOR_F", "fury", 402927),
+                       ("ROGUE_F", "combat", 14251), ("HUNTER_F", "survival", 19306)):
+    reactive = entry_of(classes[cls][tree].st, sid)
+    assert not gate_list(reactive), (cls, tree, sid, "a reactive attack is gated by the game's own usability")
+assert ids_of(classes.WARRIOR_F.arms.st).index(402927) < ids_of(classes.WARRIOR_F.arms.st).index(12294), \
+    "Victory Rush leads while it is lit"
+assert 402927 not in ids_of(classes.WARRIOR_F.protection.st), "tank lists keep Victory Rush defensive"
+heroic = entry_of(classes.WARRIOR_F.arms.st, 78)
+assert any(g["t"] == "power" and g["res"] == "rage" and g["n"] == 90 for g in gate_list(heroic)), \
+    "an unreachable rage threshold reads as near the cap"
 frost = classes.MAGE_F.frost
 assert 120 in ids_of(frost.cleave), "Cone of Cold retains reviewed two-target coverage"
 assert any(e["id"] == 120 and any(g["t"] == "near" and g["n"] == 10 for g in e["gates"].values())
@@ -234,12 +360,20 @@ assert 10 in ids_of(frost.aoe)
 blizzard = next(e for e in frost.aoe.values() if e["id"] == 10)
 assert any(g["t"] == "targets" and g["n"] == 4 for g in blizzard["gates"].values())
 enh = classes.SHAMAN_F.enhancement.st
-assert ids_of(enh).index(408341) < ids_of(enh).index(403), "Fire Nova precedes combat Lightning Bolt"
+assert ids_of(enh).index(403) < ids_of(enh).index(408341), \
+    "Single-target instant Bolt precedes Nova"
+for tree in ("elemental", "enhancement", "restoration"):
+    for context in ("st", "cleave", "aoe"):
+        entries = classes.SHAMAN_F[tree][context]
+        if entries is not None:
+            assert 8042 not in ids_of(entries), (tree, context)
+assert ids_of(classes.SHAMAN_F.enhancement.aoe).index(408341) < \
+    ids_of(classes.SHAMAN_F.enhancement.aoe).index(17364), "AoE Nova precedes Stormstrike"
 assert any(e["id"] == 403 and e["gates"][1]["t"] == "stack" and e["gates"][1]["n"] == 5
-           for e in enh.values()), "Combat Maelstrom requirement remains intact"
+           and e["gates"][1]["required"] for e in enh.values()), "Combat Maelstrom requires confirmed stacks"
 fire_nova = next(e for e in enh.values() if e["id"] == 408341)
-assert any(g["t"] == "known" and g["id"] == 16246 for g in fire_nova["gates"].values())
-assert any(g["t"] == "buff" and g["id"] == 16246 for g in fire_nova["gates"].values())
+assert list(g["t"] for g in fire_nova["gates"].values()) == ["totem"], \
+    "Nova requires a fire totem, not the Clearcasting talent or buff"
 elemental_bolt = next(e for e in classes.SHAMAN_F.elemental.st.values() if e["id"] == 403)
 assert len(elemental_bolt["gates"]) == 0, "Unconfirmed pacing must not mask the unconditional bolt filler"
 for tree_name in ("discipline", "holy", "shadow"):
@@ -260,3 +394,26 @@ for class_table, tree_names in (
                 ids = ids_of(entries)
                 assert ids[-1] == 5019, (tree_name, context, ids)
 print("ok")
+
+# The shared (retail-keyed) interrupt and soothe tables never apply an id that is a different
+# spell on Forever: each must be a real interrupt / cast-stopping CC (or enrage dispel) in the
+# Forever data, or be retracted by the Forever defaults.
+import re as _re
+import gen_forever_defaults as _gfd
+import gen_forever_rotations as _gen
+_names = {r["ID"]: r["Name_lang"] for r in cfa.rows("SpellName")}
+with open(os.path.join(root, "Data", "InterruptAbilities.lua"), encoding="utf-8") as _f:
+    _shared = _f.read()
+_split = _shared.index("RegisterSootheAbilities")
+for _sid in {int(x) for x in _re.findall(r"\[(\d+)\]\s*=\s*\{\s*kind=", _shared[:_split])}:
+    if str(_sid) not in _names:
+        continue
+    _real = any(e[0] == _gen.INTERRUPT for e in _gen.effects_of(_sid)) \
+        or _gen.not_dps(_sid, True) == "cc" or _gen.spell_meta(_sid)[0] == 9  # silenced
+    assert _real or _sid in _gfd.INTERRUPT_REMOVE, \
+        (_sid, _names[str(_sid)], "a shared interrupt/CC id that is another spell on Forever must be removed")
+for _sid in {int(x) for x in _re.findall(r"\[(\d+)\]\s*=\s*\{\s*reach=", _shared[_split:])}:
+    if str(_sid) not in _names:
+        continue
+    _dispels = any(e[0] == 38 and e[4] == 9 for e in _gen.effects_of(_sid))  # dispel: enrage
+    assert _dispels or _sid in _gfd.SOOTHE_REMOVE, (_sid, _names[str(_sid)], "not an enrage dispel on Forever")

@@ -53,6 +53,7 @@ local BURST = {
     MAGE = {12042, 11129, 12043},
     HUNTER = {3045, 19574},
     PRIEST = {10060, 401977},
+    SHAMAN = {16166, 425336},
 }
 local TOPOFF = {
     ROGUE = {},
@@ -68,6 +69,7 @@ local PREVIOUS_DEFENSIVE = {
 }
 local ABILITY_ROLES = {
     [17] = "protection",  -- Power Word: Shield
+    [72] = "utility",  -- Shield Bash
     [126] = "utility",  -- Eye of Kilrogg
     [130] = "utility",  -- Slow Fall
     [139] = "healing",  -- Renew
@@ -107,6 +109,7 @@ local ABILITY_ROLES = {
     [6789] = "mixed",  -- Death Coil
     [7744] = "protection",  -- Will of the Forsaken
     [8004] = "healing",  -- Lesser Healing Wave
+    [8042] = "utility",  -- Earth Shock
     [8071] = "protection",  -- Stoneskin Totem
     [8143] = "protection",  -- Tremor Totem
     [8166] = "protection",  -- Poison Cleansing Totem
@@ -133,6 +136,7 @@ local ABILITY_ROLES = {
     [22812] = "protection",  -- Barkskin
     [22842] = "healing",  -- Frenzied Regeneration
     [402927] = "mixed",  -- Victory Rush
+    [1238122] = "utility",  -- Feral Charge
     [1259718] = "protection",  -- Will to Survive
     [1299026] = "protection",  -- Shatter Curse
     [1311015] = "protection",  -- Templar's Bulwark
@@ -167,7 +171,7 @@ local MAINTAINED = {
     MAGE = { { group = {1459, 23028}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157}, [23028] = {23028} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157, 23028} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
     DRUID = { { group = {1126, 21849}, default = 1126, memberAuraIDs = { [1126] = {1126, 5232, 6756, 5234, 8907, 9884, 9885}, [21849] = {21849, 21850} }, raidWide = true, auraIDs = {1126, 5232, 6756, 5234, 8907, 9884, 9885, 21849, 21850} }, { group = {467}, default = 467, memberAuraIDs = { [467] = {467, 782, 1075, 8914, 9756, 9910} }, auraIDs = {467, 782, 1075, 8914, 9756, 9910} }, { group = {24858}, default = 24858, memberAuraIDs = { [24858] = {24858} }, preparation = true, tree = "balance", form = true, combatCritical = true, auraIDs = {24858} } },
     WARLOCK = { { group = {687, 706}, default = 687, memberAuraIDs = { [687] = {687, 696}, [706] = {706, 1086, 11733, 11734, 11735} }, auraIDs = {687, 696, 706, 1086, 11733, 11734, 11735} } },
-    SHAMAN = { { group = {324, 408510}, default = 324, memberAuraIDs = { [324] = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363}, [408510] = {408510} }, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
+    SHAMAN = { { group = {324, 408510}, default = 324, memberAuraIDs = { [324] = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363}, [408510] = {408510} }, defaultByTree = { elemental = 408510 }, auraIDs = {324, 26364, 325, 26365, 905, 26366, 945, 26367, 8134, 26369, 10431, 26370, 10432, 26363, 408510} } },
     PALADIN = { { group = {465, 7294, 19746}, default = 465, memberAuraIDs = { [465] = {465, 10290, 643, 10291, 1032, 10292, 10293}, [7294] = {7294, 10298, 10299, 10300, 10301}, [19746] = {19746} }, auraIDs = {465, 10290, 643, 10291, 1032, 10292, 10293, 7294, 10298, 10299, 10300, 10301, 19746} }, { group = {19740, 19742, 20217, 25782, 25894, 25898}, default = 19740, memberAuraIDs = { [19740] = {19740, 19834, 19835, 19836, 19837, 19838, 25291}, [19742] = {19742, 19850, 19852, 19853, 19854, 25290}, [20217] = {20217}, [25782] = {25782, 25916}, [25894] = {25894, 25918}, [25898] = {25898} }, auraIDs = {19740, 19834, 19835, 19836, 19837, 19838, 25291, 19742, 19850, 19852, 19853, 19854, 25290, 20217, 25782, 25916, 25894, 25918, 25898} }, { group = {20375, 1311649, 20164, 20165, 20154, 21082, 20166}, default = 20154, memberAuraIDs = { [20375] = {20375, 20915, 20918, 20919, 20920}, [1311649] = {1311649, 1311656, 20163, 20419, 20421, 20422, 20423}, [20164] = {20164}, [20165] = {20165, 20347, 20348, 20349}, [20154] = {20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293}, [21082] = {21082, 20162, 20305, 20306, 20307, 20308}, [20166] = {20166, 20356, 20357} }, preparation = true, combatCritical = true, auraIDs = {20375, 20915, 20918, 20919, 20920, 1311649, 1311656, 20163, 20419, 20421, 20422, 20423, 20164, 20165, 20347, 20348, 20349, 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 21082, 20162, 20305, 20306, 20307, 20308, 20166, 20356, 20357} }, { group = {25780}, default = 25780, memberAuraIDs = { [25780] = {25780} }, preparation = true, tree = "protection", combatCritical = true, auraIDs = {25780} } },
     WARRIOR = { { group = {6673}, default = 6673, memberAuraIDs = { [6673] = {6673, 5242, 6192, 11549, 11550, 11551, 25289} }, preparation = true, combatCritical = true, auraIDs = {6673, 5242, 6192, 11549, 11550, 11551, 25289} }, { group = {2457, 2458, 71}, default = 2457, memberAuraIDs = { [2457] = {2457}, [2458] = {2458}, [71] = {71} }, preparation = true, form = true, combatCritical = true, defaultByTree = { fury = 2458, protection = 71 }, auraIDs = {2457, 2458, 71} } },
     HUNTER = { { group = {13165, 13163, 13161, 5118, 13159, 20043, 415423, 469145}, default = 13165, memberAuraIDs = { [13165] = {13165, 14318, 14319, 14320, 14321, 14322, 25296}, [13163] = {13163}, [13161] = {13161, 1299445, 1299446, 1299447}, [5118] = {5118}, [13159] = {13159}, [20043] = {20043, 20190}, [415423] = {415423}, [469145] = {469145} }, preparation = true, combatCritical = true, defaultByTree = { survival = 13161 }, auraIDs = {13165, 14318, 14319, 14320, 14321, 14322, 25296, 13163, 13161, 1299445, 1299446, 1299447, 5118, 13159, 20043, 20190, 415423, 469145} } },
@@ -176,6 +180,7 @@ local IMBUES = {8232, 8024, 8017}
 local IMBUE_CASTS = {8232, 8235, 10486, 16362, 8024, 8027, 8030, 16339, 16341, 16342, 8017, 8018, 8019, 10399, 16314, 16315, 16316, 8033, 8038, 10456, 16355, 16356}
 local INTERRUPTS = {
     [72] = { kind = "interrupt", reach = "ranged", pri = 1 },  -- Shield Bash
+    [12809] = { kind = "cc", mech = 12, reach = "ranged", pri = 3 },  -- Concussion Blow
     [8042] = { kind = "interrupt", reach = "ranged", pri = 1 },  -- Earth Shock
     [1238122] = { kind = "interrupt", reach = "ranged", pri = 2 },  -- Feral Charge
     [5211] = { kind = "cc", mech = 12, reach = "ranged", pri = 3 },  -- Bash
@@ -184,8 +189,9 @@ local INTERRUPTS = {
     [118] = { kind = "cc", mech = 17, reach = "ranged", pri = 4 },  -- Polymorph
     [5782] = { kind = "cc", mech = 5, reach = "ranged", pri = 5 },  -- Fear
     [6789] = { kind = "cc", mech = 24, reach = "ranged", pri = 4 },  -- Death Coil
+    [99] = false,  -- Demoralizing Roar (a different spell on Retail)
 }
-local SOOTHE_REMOVE = {2908}
+local SOOTHE_REMOVE = {2908, 5938}
 local RANGE = {
     [772] = 5,  -- Rend (warrior)
     [1715] = 5,  -- Hamstring (warrior)
@@ -222,7 +228,7 @@ local TIERS = {
     [5277] = 4,  -- Evasion
     [19263] = 4,  -- Deterrence
 }
-local CATEGORIES = { defensive = { [17] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1463] = true, [1856] = true, [2651] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [8071] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true, [1311015] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [19503] = true, [19577] = true, [20549] = true } }
+local CATEGORIES = { defensive = { [17] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1463] = true, [1856] = true, [2651] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [8071] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true, [1311015] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [12809] = true, [19503] = true, [19577] = true, [20549] = true } }
 CATEGORIES.defensive[17] = true
 CATEGORIES.defensive[498] = true
 CATEGORIES.defensive[543] = true
@@ -421,6 +427,9 @@ local FRONTAL_DOTS = {
     [1237312] = true,  -- Frostfire Bolt (82% upfront)
     [1237313] = true,  -- Frostfire Bolt (84% upfront)
 }
+local DELAYED_PAYOFF = {
+    [603] = true,  -- Bane of Doom
+}
 local NEXT_SWING = {
     [78] = true,  -- Heroic Strike (warrior)
     [284] = true,  -- Heroic Strike (warrior)
@@ -571,6 +580,7 @@ local TARGET_AURAS = {
     [15265] = 10,  -- Holy Fire
     [15266] = 10,  -- Holy Fire
     [15267] = 10,  -- Holy Fire
+    [15286] = 30,  -- Vampiric Embrace
     [18265] = 30,  -- Siphon Life
     [18879] = 30,  -- Siphon Life
     [18880] = 30,  -- Siphon Life
@@ -754,6 +764,7 @@ local DOTS = {
     [10892] = 18,  -- Shadow Word: Pain
     [10893] = 18,  -- Shadow Word: Pain
     [10894] = 18,  -- Shadow Word: Pain
+    [15286] = 30,  -- Vampiric Embrace
     [15407] = 3,  -- Mind Flay
     [17311] = 3,  -- Mind Flay
     [17312] = 3,  -- Mind Flay
@@ -868,6 +879,7 @@ SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE
 SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES
 SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS
 SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION
+SpellDB.FOREVER_DELAYED_PAYOFF = DELAYED_PAYOFF
 Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)
 Put(SpellDB.CLASS_PET_REZ_DEFAULTS, PET_REZ, true)
 Put(SpellDB.CLASS_GROUP_HELP_DEFAULTS, GROUP_HELP)

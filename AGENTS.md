@@ -13,7 +13,8 @@ version, dependencies and load order; do not duplicate changing inventories here
   After every validated runtime update, deploy to the shared runtime target used
   by Retail and Forever. This local deployment has standing authorization; verify
   contents against source, junction targets and active TOC/XML dependencies, not
-  just matching client paths or version labels. Preserve SavedVariables and unrelated
+  just matching client paths or version labels. `python tools/deploy_runtime.py --apply`
+  does the copy and every check. Preserve SavedVariables and unrelated
   files. See [runtime test sync](Documentation/DEV_TOOLING.md#runtime-test-sync).
 - Keep release notes player-facing in [UNRELEASED.md](UNRELEASED.md).
   Research, probes and tooling do not belong in player release notes.
@@ -32,6 +33,10 @@ version, dependencies and load order; do not duplicate changing inventories here
 - Unknown remains unknown. Do not infer hidden resources, aura identity or
   mechanic state from an unrelated signal. General priorities need not simulate
   optimal play, but must use confirmed signals for every supported context.
+- The goal is good-enough damage in most situations, not perfect output in every
+  scenario. Leave situational strategy to the player (kiting, slows, positioning,
+  crowd-control timing, encounter-specific play); do not add list entries, gates or
+  probes to advise it. Prefer a simple general rule over a special case.
 - Never guess WoW API behavior. Check the matching client's generated API docs,
   caller implementation and saved in-game evidence. Source annotations describe
   contracts, not proof of live taint/secrecy behavior.
@@ -58,6 +63,8 @@ version, dependencies and load order; do not duplicate changing inventories here
 
 ## Validation and diagnosis
 
+- Put multi-line edit or analysis scripts in a temporary file rather than an inline
+  shell heredoc; quotes and backslashes in Lua/Markdown text break heredocs on Windows.
 - For changed Lua run `.\tools\check.ps1 <changed files>` before commit/reload.
   It prefers luacheck and falls back to syntax-only luaparser; add no errors or
   new warnings. Run the smallest relevant existing regression tests.
@@ -72,18 +79,25 @@ version, dependencies and load order; do not duplicate changing inventories here
 
 ## Read only what the task needs
 
-Start with the [documentation index](Documentation/README.md), then read relevant
-headings/ranges, not the whole research archive. Do not load old plans by default.
-Treat dated findings as build/client/context-specific; distinguish measured
-results, source-backed candidates and untested ideas. Do not rerun settled
-dead ends without a concrete new API, composition or contradictory measurement.
+Use the [documentation index](Documentation/README.md) when a task needs project
+policy, client behavior, tooling, data or research context. For a localized code
+or test change, start with the relevant source and tests; consult only directly
+relevant docs when the task requires them. Read the relevant heading/range, not
+the whole file or research archive. Do not load old plans by default. Treat dated
+findings as build/client/context-specific; distinguish measured results,
+source-backed candidates and untested ideas. Do not rerun settled dead ends
+without a concrete new API, composition or contradictory measurement.
 
 | Task | Primary reference |
 |---|---|
-| Client behavior and compatibility | [CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md) |
-| Code patterns and options | [STYLE_GUIDE_JUSTAC.md](Documentation/STYLE_GUIDE_JUSTAC.md) |
-| Secrecy and combat signals | [12.0_COMPATIBILITY.md](Documentation/12.0_COMPATIBILITY.md), relevant signal reference from the index |
-| Tests, source/CSV refresh, generators, captures, release | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md) |
+| Client behavior and compatibility | [CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md#rules) |
+| Code patterns and options | [STYLE_GUIDE_JUSTAC.md](Documentation/STYLE_GUIDE_JUSTAC.md#module-system-libstub); read the specific pattern section needed |
+| Secrecy and combat signals | Relevant topic in the [documentation index](Documentation/README.md#working-references); [12.0 signal notes](Documentation/12.0_COMPATIBILITY.md#combat-safe-signal-reference) are historical and must be reverified |
+| Lua checks | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#lua-static-analysis) |
+| Runtime test sync | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#runtime-test-sync) |
+| Data refresh | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh) |
+| Forever priority lists and interrupt tables | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#changing-a-forever-priority-list) |
+| Captures and release | Relevant section in [DEV_TOOLING.md](Documentation/DEV_TOOLING.md) |
 | Player behavior, configuration, source credits | [README.md](README.md) |
 
 Data updates must cover both clients, use one complete build per CSV folder and

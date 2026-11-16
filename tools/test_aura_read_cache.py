@@ -3,10 +3,97 @@
 # Real queue categorization, buff evidence, target tracking and CDM reads in one runtime.
 from pathlib import Path
 
+from lupa.lua51 import LuaRuntime
+
 from test_forever_openers import create_runtime
 from test_gate_groups import extract
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def check_player_aura_snapshot():
+    for forever in (True, False):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().forever = forever
+        lua.execute("""
+            libs={}
+            LibStub=setmetatable({
+                NewLibrary=function(_,name) libs[name]=libs[name] or {};return libs[name] end,
+            }, {__call=function(_,name) return libs[name] end})
+            secret={}
+            BlizzardAPI={
+                IsSecretValue=function(v) return v==secret end,
+                Unsecret=function(v) if v~=secret then return v end end,
+                AreAurasSecret=function() return restricted end,
+                IsForever=function() return forever end,
+            }
+            libs["JustAC-BlizzardAPI"]=BlizzardAPI
+            now=100;combat=false;restricted=false
+            function GetTime() return now end
+            function UnitAffectingCombat() return combat end
+            function wipe(t) for k in pairs(t) do t[k]=nil end end
+            function CreateFrame()
+                return {RegisterEvent=function() end,SetScript=function() end}
+            end
+            batchReads=0;indexReads=0
+            liveList={
+                {spellId=91001,name="First",auraInstanceID=1,duration=20,expirationTime=120},
+                {spellId=91002,name="Second",auraInstanceID=2,duration=40,expirationTime=140},
+            }
+            C_UnitAuras={
+                GetUnitAuras=function()
+                    batchReads=batchReads+1
+                    return liveList
+                end,
+                GetAuraDataByIndex=function()
+                    indexReads=indexReads+1
+                    error("indexed aura access denied")
+                end,
+            }
+        """)
+        for file in ("BlizzardAPI\\SecretValues.lua", "RedundancyFilter.lua"):
+            lua.execute((ROOT / file).read_text(encoding="utf-8"))
+        lua.execute("""
+            R=LibStub("JustAC-RedundancyFilter")
+            cache=R.GetAuraCache()
+            assert(batchReads==1 and indexReads==0,
+                "one snapshot must supply presence, timing and instance pruning")
+            assert(cache.complete and cache.byID[91001] and cache.byID[91002])
+            assert(cache.auraInfo[91001].duration==20
+                and cache.auraInfo[91001].expirationTime==120)
+            assert(R.GetAuraCache()==cache and batchReads==1, "cached access makes no new read")
+
+            now=101
+            liveList={liveList[2]}
+            R.InvalidateCache()
+            cache=R.GetAuraCache()
+            assert(batchReads==2 and indexReads==0 and cache.complete)
+            assert(cache.byID[91001]==nil and cache.byID[91002])
+
+            now=102
+            liveList={{spellId=91003,name="Partial",auraInstanceID=secret,
+                duration=50,expirationTime=152}}
+            R.InvalidateCache()
+            R.GetAuraCache()
+            combat=true;restricted=true;now=103
+            R.InvalidateCache()
+            cache=R.GetAuraCache()
+            assert(batchReads==3 and indexReads==0 and not cache.complete)
+            assert(cache.byID[91001]==nil, "a complete snapshot prunes the removed instance")
+            assert(cache.byID[91002], "an unreadable instance ID cannot prune old bindings")
+
+            combat=false;restricted=false;now=104
+            liveList={{spellId=91004,name="Hidden timing",auraInstanceID=4,
+                duration=secret,expirationTime=secret}}
+            R.InvalidateCache()
+            cache=R.GetAuraCache()
+            assert(batchReads==4 and indexReads==0)
+            assert(cache.byID[91004] and cache.auraInfo[91004].duration==0
+                and cache.auraInfo[91004].expirationTime==0,
+                "hidden timing stays unknown rather than reaching expiry arithmetic")
+        """)
+    print("Player aura cache: one batch, zero indexed timing reads; snapshot pruning, "
+          "partial IDs, secret timing and restricted combat fallback passed on both clients")
 
 
 def runtime(forever=True):
@@ -93,6 +180,7 @@ def runtime(forever=True):
 
 
 def main():
+    check_player_aura_snapshot()
     lua = runtime()
     lua.execute("""
         specKey="PRIEST_F";b.inCombat=true;b.maxIcons=1

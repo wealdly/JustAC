@@ -114,7 +114,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
     -- the BASE range, so it rejected a stealth teleport (5yd by spell, 25yd in stealth) at
     -- every distance a gap closer is for, and the stealth path below never returned it.
     -- Self-targeted spells (Sprint) and unknowns read nil -> pass; only a confirmed false rejects.
-    if BlizzardAPI.AbilityInRange(spellID) == false then
+    if BlizzardAPI.AbilityInRange(resolvedID) == false then
         return nil
     end
 

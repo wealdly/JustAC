@@ -35,6 +35,16 @@ Spell ranks: new ranks every 2 levels from level 2 (wowhead); action bars do NOT
 
 ## Paladin - Retribution
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/retribution-paladin-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Unsealed Wrath build: Judgement with Seal of the Crusader if its debuff is missing, then Seal of Command; swap between Command and Righteousness by Echo stacks (rules differ for slow and fast weapons); Hammer of Wrath on cooldown below 20%; Consecration, Judgement and Holy Strike on cooldown; Exorcism only on Demons and Undead.
+- Shockadin build: Crusader judgement, then maintain Seal of Righteousness (refresh under 10 seconds when nothing else is ready); Hammer of Wrath below 20%; Consecration, Judgement, Holy Strike, Holy Shock on cooldown; Exorcism on Demons and Undead.
+- AoE: same as single target, with Holy Wrath on cooldown against several Demons or Undead; Crusader judgement on one target only.
+- Neither build uses Seal of Fury for damage.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetched |
@@ -315,6 +325,15 @@ Seal of Righteousness -> Judgement -> Holy Strike -> Exorcism (Undead/Demon) -> 
 ---
 
 ## Priest - Shadow
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/shadow-priest-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Opener: Fade, pre-cast Mind Blast (the only hard cast) so it lands as combat starts, then Shadow Word: Pain, Devouring Plague, Shadow Word: Death, Vampiric Embrace, Mind Blast, Mind Flay.
+- Priority: Shadow Word: Pain, Devouring Plague, Mind Blast, Shadow Word: Death, Vampiric Embrace, Mind Flay. Refresh DoTs right after they expire (no clipping); never clip Mind Flay (Improved Mind Flay ramps each tick). Inner Focus with Mind Flay.
+- AoE: Shadow Word: Pain on every target, Devouring Plague on the lowest-health target, the rest on the primary target. No debuff limit in Forever.
 
 **Sources**
 

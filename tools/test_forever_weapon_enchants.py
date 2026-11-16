@@ -64,8 +64,15 @@ C_Item = {
     end,
 }
 function GetWeaponEnchantInfo() return legacyHas, legacyTime, 0, 0, false, 0 end
-spellRange = true
-C_Spell = { IsSpellInRange = function() return spellRange end }
+spellRange, spellReads = true, 0
+C_Spell = { IsSpellInRange = function(id, unit)
+    assert(unit == "target" or unit == "party1")
+    spellReads = spellReads + 1
+    lastRangeSpell = id
+    if spellRanges then return spellRanges[id] end
+    if spellRange == "error" then error("spell range denied") end
+    return spellRange
+end }
 C_ActionBar = { IsActionInRange = function() return true end }
 LibStub:NewLibrary("JustAC-ActionBarScanner").GetDirectSlotForSpell = function() return 1 end
 C_UnitAuras = { GetPlayerAuraBySpellID = function() end }
@@ -168,23 +175,79 @@ def main():
         lua.execute('LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return 1 end')
     lua.execute("forever=true; spellRange=true; C_ActionBar.IsActionInRange=function() return true end")
     renderer = (ROOT / "UI" / "UIRenderer.lua").read_text(encoding="utf-8")
-    start = renderer.index("local function CheckSpellRange(icon, spellID, directSlot)")
+    start = renderer.index("local function CheckSpellRange(")
     end = renderer.index("\nend", start) + len("\nend")
     lua.execute('BlizzardAPI = LibStub("JustAC-BlizzardAPI"); C_ActionBar_IsActionInRange = C_ActionBar.IsActionInRange')
     lua.execute(renderer[start:end] + "\nCheckRange = CheckSpellRange")
-    assert lua.globals().CheckRange(None, 6603, 1) is True, "Attack range tint agrees with sinking"
+    assert lua.globals().CheckRange(6603, 1) is True, "Attack range tint agrees with sinking"
     lua.execute("melee = true")
     assert api.SpellInRange(6603, "target") is True, "walking into melee updates without an event"
     lua.execute("melee = nil")
     assert api.SpellInRange(6603, "target") is None, "unknown melee range stays unknown"
     lua.execute("forever = false")
     assert api.SpellInRange(6603, "target") is True, "retail spell range is unchanged"
-    assert lua.globals().CheckRange(None, 6603, 1) is False, "retail action-button range tint is unchanged"
+    assert lua.globals().CheckRange(6603, 1) is False, "retail action-button range tint is unchanged"
+    for client in (True, False):
+        lua.globals().forever = client
+        for spell, action in ((False, None), (False, True), (True, False), (None, None)):
+            lua.globals().spellRange, lua.globals().actionRange = spell, action
+            lua.execute("C_ActionBar.IsActionInRange=function() return actionRange end")
+            verdict = api.AbilityInRange(2764)
+            assert lua.globals().CheckRange(2764, 1) is (verdict is False), (
+                "queue and renderer must agree", client, spell, action
+            )
+        lua.execute("spellRange='error'; actionRange=true")
+        before = lua.globals().spellReads
+        assert api.AbilityInRange(2764) is True
+        assert lua.globals().spellReads == before, "authoritative slot does not poll spell fallback"
+        assert api.AbilityInRange(2764, "party1") is True
+        lua.execute("actionRange=nil")
+        before = len(lua.globals().errors)
+        assert api.AbilityInRange(2764) is None
+        assert len(lua.globals().errors) == before + 1, "denied spell range is reported"
+        lua.execute("actionRange=false")
+        assert lua.globals().CheckRange(-123, 1, True) is True, "items retain direct-slot range"
+        assert lua.globals().CheckRange(-123, None, True) is False, "off-bar item range stays unknown"
+    lua.execute("spellRange=true; C_ActionBar.IsActionInRange=function() return true end")
+    interrupt = (ROOT / "UI" / "CastInterruptTracker.lua").read_text(encoding="utf-8")
+    start_int = interrupt.index("local function IsReachable(")
+    end_int = interrupt.index("\nend", start_int) + len("\nend")
+    lua.execute('SpellDB=LibStub("JustAC-SpellDB")')
+    lua.execute(interrupt[start_int:end_int] + "\nReachable=IsReachable")
+    lua.execute("""
+        spellRange=false
+        assert(Reachable({spellID=2764}) == true, "targeted interrupt uses action-slot extension")
+        C_ActionBar.IsActionInRange=function() return nil end
+        assert(Reachable({spellID=2764}) == false, "targeted interrupt keeps spell fallback rejection")
+        spellRange=nil
+        assert(Reachable({spellID=2764}) == true, "unknown targeted interrupt range remains fail-open")
+        melee=false
+        assert(Reachable({spellID=123,reach="pbaoe",radius=8}) == false, "AoE keeps distance rejection")
+        melee=nil
+        assert(Reachable({spellID=123,reach="pbaoe",radius=8}) == nil, "unprovable AoE remains unknown")
+    """)
+    gap = (ROOT / "GapCloserEngine.lua").read_text(encoding="utf-8")
+    start_gap = gap.index("local function TryGapCloserCandidate(")
+    end_gap = gap.index("\nend", start_gap) + len("\nend")
+    lua.execute(gap[start_gap:end_gap] + "\nTryGap=TryGapCloserCandidate")
+    lua.execute("""
+        BlizzardAPI.ResolveSpellID=function() return 11299 end
+        BlizzardAPI.IsPassiveSpell=function() return false end
+        LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return nil end
+        spellRange=true
+        assert(TryGap(2098) == 11299 and lastRangeSpell == 11299,
+            "gap closer checks the resolved ability it will display")
+        LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return 1 end
+        C_ActionBar.IsActionInRange=function() return true end
+    """)
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
-    start = source.index("local function IsForeverPullSpell(")
+    # From the queue-placement helper on: target-setup and pull openers, the categorizer
+    # and its local helpers come from the real source in one block.
+    start = source.index("local function PlaceQueueSpell(")
     end = source.index("\n--- Largest icon count", start)
     lua.execute("""
         SpellQueue = { IsSpellBlacklisted = function() return false end }
+        lastCtx = {}
         proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
         cooldownSpells, sunkSet, unavailableTier, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
         function NoteManaStarved() end
@@ -198,6 +261,7 @@ def main():
         function IsRearAttackBlocked() return false end
         function IsConfirmedOutOfRange(id) return BlizzardAPI.AbilityInRange(id) == false end
         function rankOf() return 1 end
+        rankState = {}
         function AppendRankedBucket(bucket, _, count, queue, size)
             for i = 1, count do size = size + 1; queue[size] = bucket[i] end
             return size
@@ -208,6 +272,14 @@ def main():
         BlizzardAPI.HasGamePick = function() return not forever end
         BlizzardAPI.IsItemSpell = function() return false end
     """)
+    prepare_start = source.index("function SpellQueue._PrepareWeaponFillers(")
+    prepare_end = source.index("\nfunction SpellQueue._AddWeaponFiller(", prepare_start)
+    lua.execute(source[prepare_start:prepare_end])
+    # The categorizer refreshes the near-melee ordering hint on every build; load the
+    # real function so these orderings run through it (it stands down with ordering off).
+    hint_start = source.index("function SpellQueue._UpdateNearMeleeHint(")
+    hint_end = source.index("\nfunction SpellQueue._PrepareWeaponFillers(", hint_start)
+    lua.execute(source[hint_start:hint_end])
     lua.execute(source[start:end] + """
         function BuildQueue(sink)
             wipe(sunkSet); wipe(unavailableTier)
@@ -233,6 +305,29 @@ def main():
         assert list(build(False).values()) == [6603, 403], "Unavailable last off preserves order"
         lua.execute("forever = false")
         assert list(build(True).values()) == [6603, 403], "retail Attack ordering is unchanged"
+    db_source = (ROOT / "SpellDB.lua").read_text(encoding="utf-8")
+    db_start = db_source.index("local knownRangeProbes =")
+    db_end = db_source.index("\n--------------------------------------------------------------------------------\n-- API Functions", db_start)
+    lua.execute("""
+        forever=true; spellRanges={[3044]=false,[403]=true}
+        RANGE_REFERENCES={[3044]=35}
+        C_Spell_IsSpellInRange=C_Spell.IsSpellInRange
+        function IsSpellKnown() return true end
+        function GetBlizzardAPI() return BlizzardAPI end
+        LibStub("JustAC-RotationImport").RankChain=function() end
+        BlizzardAPI.GetCachedSpellInfo=function(id)
+            if id==3044 then return {minRange=8,maxRange=35} end
+            return {minRange=0,maxRange=5}
+        end
+        BlizzardAPI.IsTargetInSwingRange=function() return nil end
+    """)
+    lua.execute(db_source[db_start:db_end])
+    assert api.AbilityInRange(6603) is None, "minimum-range failure cannot reject actual melee"
+    assert list(build(True).values()) == [6603, 403], "unknown melee must not sink Attack"
+    assert lua.globals().CheckRange(6603) is False, "UI shares the queue's unknown verdict"
+    lua.execute("RANGE_REFERENCES[2974]=5; spellRanges[2974]=true; SpellDB.InvalidateRangeCache(true)")
+    assert api.AbilityInRange(2973) is True, "confirmed Wing Clip reach authorizes next-swing melee"
+    assert lua.globals().CheckRange(2973) is False, "UI accepts the same confirmed melee evidence"
     print("weapon enchant and melee-range regressions: passed")
 
 

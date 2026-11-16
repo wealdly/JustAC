@@ -50,6 +50,8 @@ PREVIOUS_DEFENSIVE = {
 # Roles describe routing, not whether an effect can ever cause damage. Ward reflection
 # remains protection; damage/heal and tank-rotation buttons keep their offensive role.
 ABILITY_ROLES = {
+    # Every INTERRUPTS interrupt also gets "utility" (see the role loop): the automatic damage
+    # queue leaves it for the interrupt slot; custom lists may still name it.
     "warrior": {"shield_block": "mitigation", "retaliation": "mixed", "victory_rush": "mixed"},
     "paladin": {"templars_bulwark": "protection", "holy_shield": "mixed", "holy_shock": "mixed"},
     "priest": {"elunes_grace": "protection", "holy_nova": "mixed",
@@ -85,14 +87,14 @@ GROUP_HEAL = {"priest": ["prayer_of_healing"], "shaman": ["chain_heal"], "druid"
 EMERGENCY = {"druid": ["tranquility"]}
 # Melee gap closers (the table's presence also marks the class as melee).
 GAP_CLOSER = {"warrior": ["charge", "intercept"], "rogue": ["sprint"], "druid": ["feral_charge"]}
-# Major offensive cooldowns: the burst-ready cue. (Elemental Mastery, Concussive Blow and a
-# learnable Wyvern Sting do not exist on Forever - the resolver rejected them.)
+# Major offensive cooldowns: the burst-ready cue.
 BURST = {
     "warrior": ["recklessness", "death_wish"],
     "rogue":   ["adrenaline_rush", "blade_flurry", "cold_blood"],
     "mage":    ["arcane_power", "combustion", "presence_of_mind"],
     "hunter":  ["rapid_fire", "bestial_wrath"],
     "priest":  ["power_infusion", "shadowfiend"],
+    "shaman":  ["lightning_mastery", "rage_of_the_farseer"],
 }
 # Cheap between-pull heals (read by class).
 TOPOFF = {"rogue": [], "priest": ["renew", "lesser_heal"], "paladin": ["flash_of_light", "holy_light"],
@@ -117,6 +119,9 @@ MAINTAINED = {
                 (["blessing_of_might", "blessing_of_wisdom", "blessing_of_kings",
                   "greater_blessing_of_might", "greater_blessing_of_wisdom",
                   "greater_blessing_of_kings"], "blessing_of_might", False)],
+}
+MAINTAINED_DEFAULT_BY_TREE = {
+    ("shaman", "lightning_shield"): {"elemental": "water_shield"},
 }
 PREPARATION = {
     "paladin": [
@@ -151,6 +156,7 @@ IMBUE_ALL = IMBUES + ["frostbrand_weapon"]
 INTERRUPTS = {  # name: meta (SpellMechanic ids: 2 disoriented, 5 fleeing, 12 stunned,
                 #                               17 polymorphed, 24 horrified)
     ("warrior", "shield_bash"):     {"kind": "interrupt", "reach": "ranged", "pri": 1},
+    ("warrior", "concussion_blow"): {"kind": "cc", "mech": 12, "reach": "ranged", "pri": 3},
     ("shaman", "earth_shock"):      {"kind": "interrupt", "reach": "ranged", "pri": 1},
     ("druid", "feral_charge"):      {"kind": "interrupt", "reach": "ranged", "pri": 2},
     ("druid", "bash"):              {"kind": "cc", "mech": 12, "reach": "ranged", "pri": 3},
@@ -160,8 +166,15 @@ INTERRUPTS = {  # name: meta (SpellMechanic ids: 2 disoriented, 5 fleeing, 12 st
     ("warlock", "fear"):            {"kind": "cc", "mech": 5, "reach": "ranged", "pri": 5},
     ("warlock", "death_coil"):      {"kind": "cc", "mech": 24, "reach": "ranged", "pri": 4},
 }
-# 2908 is Soothe Animal on Forever (beast crowd control), not an enrage dispel.
-SOOTHE_REMOVE = [2908]
+# 2908 is Soothe Animal on Forever (beast crowd control), not an enrage dispel; Forever's
+# Shiv (5938) carries no dispel effect in the data. tools/test_forever_rotations.py checks
+# every shared soothe id against the data.
+SOOTHE_REMOVE = [2908, 5938]
+# Retail interrupt/CC ids that are a different spell on Forever, emitted as `false` (removed)
+# in INTERRUPTS: 99 is Incapacitating Roar on Retail but Demoralizing Roar (an attack-power
+# debuff) here. tools/test_forever_rotations.py derives such collisions from the data and
+# requires each to be listed.
+INTERRUPT_REMOVE = [99]
 # Range-check references per class: yards come from the client data. Never an on-next-swing
 # ability: its range check answers "in" at any distance (measured: Heroic Strike in at 15 yd
 # while Rend read out), which reads as permanent melee range and kills the gap closer.
@@ -188,6 +201,9 @@ CHANNEL_ATTR1 = 0x4 | 0x40   # SPELL_ATTR1_IS_CHANNELLED / IS_SELF_CHANNELLED
 NEXT_SWING_ATTR0 = 0x4       # SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Raptor Strike, Maul)
 # A DoT: APPLY_AURA (6) of PERIODIC_DAMAGE (3) on the enemy target (6).
 DOT_EFFECT, DOT_AURA, ENEMY_TARGET = "6", "3", "6"
+# A damage aura whose first tick comes this late pays off only in a long fight (Bane of Doom:
+# one hit after 60s). The queue holds such spells outside worthwhile fights.
+DELAYED_PAYOFF_MS = 30000
 SUMMON_EFFECTS = {"28", "87", "88", "89", "90"}   # SUMMON, SUMMON_OBJECT_SLOT1-4 (totems)
 SCHOOL_DAMAGE = "2"
 # The cast's own hit as a share of hit + the DoT's total (client data, per rank). At or above
@@ -278,6 +294,10 @@ def main():
             sid = res.r1(cls, name)
             if sid:
                 roles[sid] = role
+    for (cls, name), meta in INTERRUPTS.items():
+        sid = meta["kind"] == "interrupt" and res.r1(cls, name)
+        if sid:
+            roles[sid] = "utility"
     for cls, entries in GROUP_HELP.items():
         for name in entries:
             sid = res.r1(cls, name)
@@ -334,9 +354,10 @@ def main():
             for key in ("tree", "form", "combatCritical"):
                 if key in policy:
                     e[key] = policy[key]
-            if "defaultByTree" in policy:
+            tree_defaults = policy.get("defaultByTree") or MAINTAINED_DEFAULT_BY_TREE.get((cls, default))
+            if tree_defaults:
                 e["defaultByTree"] = {
-                    tree: res.r1(cls, name) for tree, name in policy["defaultByTree"].items()
+                    tree: res.r1(cls, name) for tree, name in tree_defaults.items()
                 }
             if raid:
                 e["raidWide"] = True
@@ -353,6 +374,8 @@ def main():
         sid = res.r1(cls, name)
         if sid:
             lines.append(f"    [{sid}] = {lua(meta)},  -- {names.get(str(sid), '?')}")
+    for sid in INTERRUPT_REMOVE:
+        lines.append(f"    [{sid}] = false,  -- {names.get(str(sid), '?')} (a different spell on Retail)")
     lines.append("}")
     lines.append("local SOOTHE_REMOVE = " + lua(SOOTHE_REMOVE))
 
@@ -460,6 +483,12 @@ def main():
     for sid in sorted(s for s in shares if shares[s] >= FRONTAL_SHARE):
         lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({shares[sid]:.0%} upfront)")
     lines.append("}")
+    lines.append("local DELAYED_PAYOFF = {")
+    for sid in sorted(sid for sid in class_ids if any(
+            e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA
+            and num(e["EffectAuraPeriod"]) >= DELAYED_PAYOFF_MS for e in effects.get(str(sid), []))):
+        lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
     # On-next-swing abilities, every rank: the queue shows one as in progress while queued.
     lines.append("local NEXT_SWING = {")
     for cls in CLASSES:
@@ -526,6 +555,7 @@ def main():
         "SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES",
         "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
         "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",
+        "SpellDB.FOREVER_DELAYED_PAYOFF = DELAYED_PAYOFF",
         "Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)",
         "Put(SpellDB.CLASS_PET_REZ_DEFAULTS, PET_REZ, true)",
         "Put(SpellDB.CLASS_GROUP_HELP_DEFAULTS, GROUP_HELP)",

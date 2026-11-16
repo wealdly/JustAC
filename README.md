@@ -62,6 +62,11 @@ Before pulling, automatic queues without a native game pick keep a ready attack
 ahead of DPS buffs even when out of range, as a cue to move closer. Combat
 range ordering and custom/exact lists are unchanged.
 
+On Forever, automatic filler can favor a free wand or an in-reach melee attack
+until a supported cast offers at least 20% more estimated damage per second.
+The comparison uses readable pre-combat stats and observed cast pushback;
+unknown estimates and custom/exact ordering retain their usual behavior.
+
 - **Three orders, one queue** - tabs show the game's order, the theorycraft order and your own list, one line per ability with what it waits for. Looking at a tab never changes the queue; **Use This Order** does, and a green dot marks the one in use.
 - **Your own list** (per spec) - start from **Export to My List** or **Merge** from another tab, then drag rows to reorder. Click a row for its settings, right-click to open it on the Overrides tab, and undo the last ten changes. If the game's rotation changes later, **Merge Changes** brings your list up to date without reordering it.
 - **Who leads** - the first slot is the game's by default. **Fill the gaps** lets the queue use it only while the game has nothing to recommend; **Replace with my list** gives it to your list's first ready entry.
@@ -231,6 +236,17 @@ learnability, and retains local healer damage-filler pins. The original MIT
 license and notice are vendored; generated rotations include the full MIT license.
 Source revisions and adaptations are documented in
 [CLIENT_COMPAT.md](Documentation/CLIENT_COMPAT.md#forever-rotation-source-review).
+
+### WoW Forever distance reference items
+
+The four reference items JustAC uses to bracket target distance on WoW Forever
+(Voodoo Charm and Curative Animal Salve at 5 yards, Treant and Wildkin Muisek
+Vessels at 10 yards) and their yardages come from the Classic Era/Forever list in
+[LibRangeCheck-3.0](https://github.com/WeakAuras/LibRangeCheck-3.0) by mitch0 and
+The WoWUIDev Community (MIT license, revision `3f9e454`). The library is not
+embedded. JustAC uses two items per distance, requires both to agree, and counts a
+negative answer only for a live attackable target. See
+[Data/RangeReferences.lua](Data/RangeReferences.lua).
 
 ### Retail priority lists
 

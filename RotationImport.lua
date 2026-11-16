@@ -13,7 +13,7 @@
 -- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
 -- action priority lists; provenance in that file and tools/simc-apl/).
 
-local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
+local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 2)
 if not RotationImport then return end
 
 -- specKey (e.g. "DRUID_2") -> { st = {line,...}, aoe = {...}, burst = {id,...} }
@@ -77,9 +77,11 @@ local rankBase = {}       -- any rank's id -> rank 1 id
 local rankChain = {}      -- rank 1 id -> { rank1, rank2, ... } (learn order)
 local installed = {}      -- specKey -> tree key installed since the last invalidation
 local classAbilities = {} -- "WARRIOR_F" -> { [rank-1 id] = true } for every class ability
+local pushbackDamage = {}
+local directDamageEstimates = {}
 local BEAR_FORMS = { [5] = true, [8] = true }   -- Bear, Dire Bear (GetShapeshiftFormID)
 
-function RotationImport.RegisterForever(classes, chains, abilities)
+function RotationImport.RegisterForever(classes, chains, abilities, damageCooldowns, damageEstimates)
     if type(classes) ~= "table" then return end
     -- WoW Forever only. Without this, retail registered every Forever rank chain too, and the
     -- 131 rank-1 ids retail shares (Rend, Moonfire, Polymorph...) resolved through Forever's
@@ -96,6 +98,8 @@ function RotationImport.RegisterForever(classes, chains, abilities)
         rankChain[r1] = chain
         for i = 1, #chain do rankBase[chain[i]] = r1 end
     end
+    for id, seconds in pairs(damageCooldowns or {}) do pushbackDamage[id] = seconds end
+    for id, estimate in pairs(damageEstimates or {}) do directDamageEstimates[id] = estimate end
     RotationImport.InvalidateLookup()
 end
 
@@ -108,6 +112,16 @@ end
 function RotationImport.RankChain(id)
     local r1 = id and rankBase[id]
     return r1 and rankChain[r1] or nil
+end
+
+--- Static Forever cooldown of a direct-damage candidate, or nil when not eligible.
+function RotationImport.GetPushbackDamageCooldown(id)
+    return id and pushbackDamage[RotationImport.RankBase(id)] or nil
+end
+
+--- Exact learned-rank baseline only; never substitute rank 1 for an unknown rank.
+function RotationImport.GetDirectDamageEstimate(id)
+    return id and directDamageEstimates[id] or nil
 end
 
 --- The highest rank of id's chain the player knows, or nil when they know none. Forever

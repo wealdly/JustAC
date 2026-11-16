@@ -110,6 +110,37 @@ single-repo build can put retail's pick engine and this engine behind the same s
   assumption; `TREES` records each selected preset and the retained local pins. The
   independently published `wowsims/forever` APL tree was reviewed but not used: it did not
   provide complete class coverage in the available JSON format.
+- Core rules (2026-11-15): after the class adaptations, the generator applies a few general,
+  data-driven damage principles to every tree; class and spec quirks stay in the small
+  `EXTRA`, `REGATE` and `generalize_entries` tables. A combo-point finisher that applies damage
+  over time needs at least four points unless its source gates points. In a ranged tree
+  (`RANGED_TREES`), attacks with a melee maximum range trail the ranged attacks. Outside tank
+  trees an absorb shield moves behind the damage abilities, ahead of a trailing wand. A
+  rage/energy threshold above 100 reads as 90 ("near the cap") instead of never firing.
+  A point-blank attack (no range of its own; every enemy effect a caster-centred area or
+  cone) gets a `near` gate at its data radius (Holy Nova, Consecration, Frost Nova, Thunder
+  Clap, Whirlwind, Cone of Cold), since the game reports no range for it and the
+  out-of-range sink never moves it; casters rarely own a probe short enough to prove
+  "within", so an unproven distance never blocks. A spell restricted to targets below 20%
+  health (`SpellAuraRestrictions.TargetAuraState` 2: Execute, Hammer of Wrath) gets the
+  execute gate. These two gate rules run after tier selection, which treats an ungated
+  entry as the general fallback. Hellfire's distance stays in `REGATE` (it burns from a self
+  aura the data does not mark as an area). Magma Totem's radius belongs to the totem, so it
+  has no derived gate. A stack requirement on a buff whose every effect only shortens cast
+  time or cost (Maelstrom Weapon) is marked `castOnly`.
+- Pull opener (2026-11-15): before a pull nothing can push a cast back and its cast time
+  costs no fight time, so any ready list entry with a cast time and a direct-hit estimate is
+  an opener, with its `castOnly` requirements waived. The biggest estimated whole damage
+  leads (the hit plus every tick of a damage over time it applies, from spell data), with
+  no cast-time penalty; one unknown estimate keeps list order. The in-combat weapon
+  comparison still prices only plain hits, by cast time alone: Forever global cooldown
+  timing under haste is unmeasured. Instants keep their list
+  rank: they cost the same GCD in or out of combat. An opener skips the weapon comparison,
+  which resumes in combat. This replaced a hand-listed per-class pull table.
+  The converter also reads `auraIsInactive`. The one bespoke tweak from the same audit gates
+  Shadowburn to targets below 20%. `tools/test_forever_rotations.py` checks each rule on the
+  generated data. Target-count tiers still depend on the engaged-enemy count, which is the
+  main open gap: see [FOREVER_COMBAT_SIGNALS.md](FOREVER_COMBAT_SIGNALS.md#enemy-context-membership-is-not-tanking-or-proximity).
 - Mixed builds: Forever has one class spec key, not separate specializations for each tree.
   `RotationImport.PickTree` currently installs only the list for the tree with the most points;
   hybrid allocations therefore use their dominant-tree list. A better extension may be a small

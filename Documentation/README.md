@@ -12,10 +12,14 @@ module versions, constants, exports and cache invalidation live in code.
 | Contributor rules | [AGENTS.md](../AGENTS.md) |
 | Player features, configuration and source credits | [Project README](../README.md) |
 | CurseForge description copy | [CurseForge_JustAC.md](CurseForge_JustAC.md) |
-| Shared Retail/Forever rules | [CLIENT_COMPAT.md](CLIENT_COMPAT.md) |
-| Tests, mirrors, data generation, captures and release | [DEV_TOOLING.md](DEV_TOOLING.md) |
-| Lua, modules, options and compile limits | [STYLE_GUIDE_JUSTAC.md](STYLE_GUIDE_JUSTAC.md) |
-| Verified combat signals and secrecy | [12.0_COMPATIBILITY.md](12.0_COMPATIBILITY.md), Combat-Safe Signal Reference |
+| Shared Retail/Forever rules | [CLIENT_COMPAT.md](CLIENT_COMPAT.md#rules) |
+| Lua static checks | [DEV_TOOLING.md](DEV_TOOLING.md#lua-static-analysis) |
+| Runtime test sync | [DEV_TOOLING.md](DEV_TOOLING.md#runtime-test-sync) |
+| Data refresh | [DEV_TOOLING.md](DEV_TOOLING.md#two-client-update-check-and-refresh) |
+| Forever priority lists, interrupt and soothe tables | [DEV_TOOLING.md](DEV_TOOLING.md#changing-a-forever-priority-list) |
+| Forever rotation guides (launch summaries per tree) | [forever-guides/README.md](forever-guides/README.md) |
+| Lua patterns, modules, options and compile limits | [STYLE_GUIDE_JUSTAC.md](STYLE_GUIDE_JUSTAC.md#module-system-libstub); read only the needed section |
+| Secrecy and combat signals | Use the relevant topic below; [12.0 signal notes](12.0_COMPATIBILITY.md#combat-safe-signal-reference) are historical and must be reverified |
 | Aura call denial and engine-driven display | [AURA_CONTAINER_12.1.md](AURA_CONTAINER_12.1.md) |
 | Specific aura identity and measured dead ends | [AURA_IDENTITY_12.0.md](AURA_IDENTITY_12.0.md) |
 | Duration readiness | [SECRET_VALUE_READINESS_PROBE.md](SECRET_VALUE_READINESS_PROBE.md) |
@@ -46,12 +50,14 @@ They are not task queues or current implementation inventories.
 
 | Document | Scope / caution |
 |---|---|
+| [12.0_COMPATIBILITY.md](12.0_COMPATIBILITY.md) | Historical launch-era status and signal notes; claims and code suggestions require current verification |
 | [FOREVER_PROBE_PLAN.md](FOREVER_PROBE_PLAN.md) | Early port probes and dated captures; old branch/status assumptions |
 | [PROBE_PLAN_68887.md](PROBE_PLAN_68887.md) | Build-68887 hypotheses; current interrupt/CC corrections are in active research |
 | [MIDNIGHT_POST_LAUNCH_RESEARCH.md](MIDNIGHT_POST_LAUNCH_RESEARCH.md) | Launch-era API research, with some later corrections |
 | [AURA_DETECTION_ALTERNATIVES.md](AURA_DETECTION_ALTERNATIVES.md) | Earlier aura techniques; later denial/identity references take precedence |
 | [FOREVER_ENGINE_DESIGN.md](FOREVER_ENGINE_DESIGN.md) | Design rationale and rotation provenance, not current port status |
 | [FOREVER_DEAD_CODE.md](FOREVER_DEAD_CODE.md) | Historical inventory, not permission to delete shared Retail paths |
+| [PRIORITY_AUDIT_2026-07-19.md](PRIORITY_AUDIT_2026-07-19.md) | Single-pass audit with unverified findings; leads only, not current task guidance |
 | [HEAL_MODE_PLAN.md](HEAL_MODE_PLAN.md) | Design proposal, not proof that listed features are absent or implemented |
 | [SAFE_LEAD_PLAN.md](SAFE_LEAD_PLAN.md) | Ordering rationale; verify actual queue behavior in code |
 | [ASSISTED_COMBAT_DATA_PLAN.md](ASSISTED_COMBAT_DATA_PLAN.md) | Data-audit history; read tools for current output and flags |

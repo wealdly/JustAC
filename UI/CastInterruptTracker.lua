@@ -306,7 +306,7 @@ function CastInterruptTracker.DebugSuppression()
 end
 
 --- Can the suggested ability actually hit the current target right now?
---- Ranged CCs/kicks: exact via IsSpellInRange, fail-OPEN on unknown - pressing a
+--- Ranged CCs/kicks: ability-specific range, fail-OPEN on unknown - pressing a
 --- targeted spell out of range is a harmless "Out of range" error, nothing is spent.
 --- Player-centered AoE (reach="pbaoe") fails CLOSED - proven within radius or not
 --- shown - because the waste asymmetry is reversed: the cast fires on the spot
@@ -331,9 +331,8 @@ local function IsReachable(entry)
         if SpellDB.CanProveWithin and SpellDB.CanProveWithin(radius) then return false end
         return nil
     end
-    -- Tri-state read (BlizzardAPI.SpellInRange owns the required-unit-arg finding that
-    -- was first measured here). Fail OPEN: nil (unknown) → assume reachable.
-    local r = BlizzardAPI.SpellInRange and BlizzardAPI.SpellInRange(entry.spellID)
+    -- Unknown does not suppress a targeted interrupt; it cannot waste the cooldown.
+    local r = BlizzardAPI.AbilityInRange(entry.spellID)
     return r ~= false
 end
 

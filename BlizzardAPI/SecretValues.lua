@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Secret Value Utilities, Feature Availability, Secrecy API Wrappers (12.0+)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after CooldownTracking.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SecretValues", 2
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SecretValues", 3
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -16,7 +16,6 @@ local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local IsSecretValue = BlizzardAPI.IsSecretValue
-local Unsecret      = BlizzardAPI.Unsecret
 
 --------------------------------------------------------------------------------
 -- Feature Availability (12.0+ secret value graceful degradation)
@@ -243,18 +242,6 @@ end
 --- the client simply never had it. Plain inputs, no secret - safe to call anywhere.
 function BlizzardAPI.IsTextReadbackWorking()
     return TextReadbackWorks()
-end
-
---- 12.1.0: GetAuraDataByIndex is ACCESS-DENIED to a tainted caller while auras are secret -
---- it throws rather than returning secrets, and the denial applies even where the caller has
---- already read that aura's fields plainly. So the pcall is not belt-and-braces: this is
---- reached from RefreshAuraCache's NOT-secret branch, where a readable NeverSecret aura in
---- combat still cannot be re-read by index. nil,nil is the existing "timing unknown" answer.
-function BlizzardAPI.GetAuraTiming(unit, index, filter)
-    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end
-    local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
-    if not ok or not aura then return nil, nil end
-    return Unsecret(aura.duration), Unsecret(aura.expirationTime)
 end
 
 --------------------------------------------------------------------------------

@@ -446,8 +446,10 @@ end
 --------------------------------------------------------------------------------
 -- Assumption Validation Suite
 -- /jac inspect validate       - one-shot sweep of every load-bearing API read
--- /jac inspect validate arm   - also re-captures on combat enter/exit and prints
---                               only what changed class (readable/secret/sealed)
+-- /jac inspect validate arm   - also re-captures on combat enter/exit and holds only
+--                               what changed class (readable/secret/sealed); nothing
+--                               prints at combat edges
+-- /jac inspect validate show  - prints the held combat comparison (also in the probe log)
 -- Every probe is classified: ok:<value> | secret | SEALED (threw) | nil | absent.
 -- Nothing is written or branched on a secret; reads are pcall-guarded.
 --------------------------------------------------------------------------------
@@ -813,6 +815,17 @@ local function DiffValidate(addon, base, now, order)
 end
 
 function DebugCommands.ValidateAssumptions(addon, arg)
+    -- Combat-edge comparisons are held for `validate show` and written to the probe
+    -- log; nothing prints to chat when combat starts or ends.
+    if arg == "show" then
+        local held = DebugCommands._validateHeld
+        if not held or #held == 0 then
+            addon:Print("validate: no combat comparison held; /jac inspect validate arm, then fight")
+            return
+        end
+        for _, line in ipairs(held) do addon:Print(line) end
+        return
+    end
     local armed = arg == "arm"
     if armed and DebugCommands._validate then
         addon:Print("|cffffff00validate already armed (/reload to cancel).|r")
@@ -851,7 +864,7 @@ function DebugCommands.ValidateAssumptions(addon, arg)
     local base, order = RunValidateSnapshot(addon, true)
 
     if not armed then
-        addon:Print("Tip: '/jac inspect validate arm' re-captures on combat enter/exit and prints the diff.")
+        addon:Print("Tip: '/jac inspect validate arm' compares combat enter/exit; 'validate show' prints it.")
         addon:Print("=============================================")
         return
     end
@@ -859,6 +872,14 @@ function DebugCommands.ValidateAssumptions(addon, arg)
     local f = CreateFrame("Frame")
     DebugCommands._validate = f
     local armT = GetTime()
+    local held = {}
+    DebugCommands._validateHeld = held
+    local quiet = LogProxy(addon)
+    local logPrint = quiet.Print
+    quiet.Print = function(self, msg)
+        held[#held + 1] = msg
+        logPrint(self, msg)
+    end
     local combatSnap
     local pendingCaptureAt
     local settleCaptureAt
@@ -866,7 +887,7 @@ function DebugCommands.ValidateAssumptions(addon, arg)
     local function disarm(msg)
         f:UnregisterAllEvents(); f:SetScript("OnEvent", nil); f:SetScript("OnUpdate", nil)
         DebugCommands._validate = nil
-        addon:Print(msg)
+        quiet:Print(msg)
     end
 
     f:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -876,10 +897,10 @@ function DebugCommands.ValidateAssumptions(addon, arg)
             pendingCaptureAt = GetTime() + 0.5  -- let secrecy state settle
         elseif combatSnap then
             settleCaptureAt = nil
-            addon:Print("|cff00ff00validate: combat ended - post-combat vs in-combat:|r")
-            PrintValidateEnv(addon)
-            local post = RunValidateSnapshot(addon, false)
-            DiffValidate(addon, combatSnap, post, order)
+            quiet:Print("validate: combat ended - post-combat vs in-combat:")
+            PrintValidateEnv(quiet)
+            local post = RunValidateSnapshot(quiet, false)
+            DiffValidate(quiet, combatSnap, post, order)
             disarm("validate: done.")
         end
     end)
@@ -887,25 +908,25 @@ function DebugCommands.ValidateAssumptions(addon, arg)
         local now = GetTime()
         if pendingCaptureAt and now >= pendingCaptureAt then
             pendingCaptureAt = nil
-            addon:Print("|cff00ff00validate: in-combat capture (+0.5s) - changes vs baseline:|r")
-            PrintValidateEnv(addon)
-            combatSnap = RunValidateSnapshot(addon, false)
-            DiffValidate(addon, base, combatSnap, order)
+            quiet:Print("validate: in-combat capture (+0.5s) - changes vs baseline:")
+            PrintValidateEnv(quiet)
+            combatSnap = RunValidateSnapshot(quiet, false)
+            DiffValidate(quiet, base, combatSnap, order)
             settleCaptureAt = now + 4.5  -- settle check: does anything flip late?
         end
         if settleCaptureAt and now >= settleCaptureAt then
             settleCaptureAt = nil
-            local settled = RunValidateSnapshot(addon, false)
-            addon:Print("|cff00ff00validate: settle check (~+5s vs +0.5s capture):|r")
-            DiffValidate(addon, combatSnap, settled, order)
+            local settled = RunValidateSnapshot(quiet, false)
+            quiet:Print("validate: settle check (~+5s vs +0.5s capture):")
+            DiffValidate(quiet, combatSnap, settled, order)
             combatSnap = settled  -- exit diff compares against the latest state
         end
         if now - armT > 600 then
-            disarm("|cffffff00validate: 10min window ended - disarmed.|r")
+            disarm("validate: 10min window ended - disarmed.")
         end
     end)
     if UnitAffectingCombat("player") then pendingCaptureAt = GetTime() end
-    addon:Print("|cff00ff00validate ARMED:|r enter (and leave) combat to capture diffs. 10min window.")
+    addon:Print("validate: armed for 10 min; fight once, then /jac inspect validate show (also in the probe log)")
 end
 
 --- /jac inspect secrecymap - one-shot, OOC: per-spell SecrecyLevel from C_Secrets
@@ -994,6 +1015,6 @@ function DebugCommands.RunProbeBattery(addon, tag, includeStatic)
             session.batteryMaxMs = math.max(session.batteryMaxMs or 0, elapsed)
         end
     end
-    addon:Print(string.format("audit: %s snapshot captured (%d failures, %d log lines held).",
-        tag, failures, #ProbeLogStore()))
+    -- Log only: snapshots run at combat edges, which must stay quiet in chat.
+    ProbeLogEmit(string.format("audit: %s snapshot (%d failures, %d log lines)", tag, failures, #ProbeLogStore()))
 end

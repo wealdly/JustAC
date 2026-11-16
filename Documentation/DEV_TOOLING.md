@@ -18,10 +18,13 @@ definitions/context/verdicts, and classified range/meter deduplication. See
 [capture volume and retention](FOREVER_COMBAT_SIGNALS.md#capture-volume).
 The capture also includes bounded per-entry/nested-condition `PRIORITY` records;
 see [coverage and controls](FOREVER_COMBAT_SIGNALS.md#priority-condition-coverage).
+On Forever, it temporarily records per-entry next-swing queue eligibility and
+restores the queue probe state on stop. Research-only direct swing-range reads
+are skipped during combat; no queue behavior or player settings change.
 For a static, report-only inventory use
 `python tools\gen_forever_rotations.py --coverage`; no generated Lua is written.
 
-## Lua static analysis (the pre-commit / pre-reload gate)
+## Lua static analysis
 
 Queue optimization regressions in `python tools\test_forever_openers.py` check
 empty/full/single-entry sort fast paths, stable rank ties, one hold-setting lookup
@@ -41,6 +44,9 @@ It also requires every emitted self-refresh condition to have an observation rou
 target tracker and CDM reader in one runtime. It checks exact read counts, shared
 true/false/unknown evidence, independent cast-duration policies, fresh passes,
 miss/target changes and live diagnostic reads on both clients where applicable.
+Its full player-aura cache cases require one batch per refresh and no indexed
+timing re-reads, preserving snapshot-based pruning, partial-instance safeguards,
+secret timing and the restricted-combat fallback on both clients.
 `python tools\test_precombat_preparation.py` checks preparation groups
 with real Forever seal ranks, active alternatives, denied/secret reads, visible
 offer deduplication and disabled surfaces. It also checks generic groups on both
@@ -209,11 +215,13 @@ follow the standing [runtime test sync](#runtime-test-sync) workflow.
    only): Retail UI `live`, Forever UI `forever`, packet-parser enums `master`,
    Retail SimC `midnight`. Stop on dirty/conflicting mirrors; never reset them.
 4. Keep separate CSV folders: `Documentation\wow_spell_csv` for Retail and
-   `Documentation\wow_spell_csv_forever` for Forever. Copy the complete old snapshot
-   to a separate staging folder, refresh that copy with `--skip-gen`, then verify
-   successful downloads and exactly one complete build before replacing live data.
-   Keep the previous snapshot until validation succeeds. Never generate from a
-   failed/mixed download or use `--keep-old` in a generator input folder.
+   `Documentation\wow_spell_csv_forever` for Forever. `tools/stage_csv_update.py`
+   implements this step and the next: `python tools\stage_csv_update.py forever <wowf-build>`
+   (or `retail [build]`) copies the live folder to `<folder>.staging`, downloads there with
+   `--skip-gen` and refuses unless every live table is present on exactly one build;
+   `--accept` keeps the old folder as `<folder>.previous`, moves staging live and runs that
+   client's generators; `--discard` drops staging. Never generate from a failed/mixed
+   download or use `--keep-old` in a generator input folder.
 5. Forever download form: `python tools\update_data.py <wowf-build> --dir <staging-folder> --skip-gen`.
    After accepting it into the Forever CSV folder, run:
    ```
@@ -326,7 +334,7 @@ that spine:
 | `gen_spell_transforms.py` | Override-action-bar spell effects (332/333) | `SpellTransforms.lua` (transformed buttons and their bases) |
 | `gen_assisted_combat_order.py` | `AssistedCombat`, `AssistedCombatStep`, `AssistedCombatRule` | `AssistedCombatOrder.lua` (last/unconditional step rank) |
 | `gen_cc_breakers.py` | Mechanic-immunity spell effects plus item-use links, both clients | `CCBreakers.lua` |
-| `gen_forever_defaults.py` | Forever CSVs and curated ability names | `Forever/Defaults.lua` |
+| `gen_forever_defaults.py` | Forever CSVs, curated ability names and the generated `Forever/Rotations.lua` (run it after the rotations) | `Forever/Defaults.lua` |
 | `gen_forever_rotations.py` | Forever CSVs, vendored priorities and local pins | `Forever/Rotations.lua` |
 | `gen_forever_consumables.py` | Forever item/spell CSVs | `Forever/Consumables.lua` |
 | `gen_aura_durations.py` | `SpellDuration` | *(retained, not shipped - durations are secret in combat)* |
@@ -335,6 +343,47 @@ that spine:
 
 Curated-by-hand (no generator, no CSV): `SpellCategories.lua`,
 `InterruptAbilities.lua`, `RangeReferences.lua`.
+
+### Changing a Forever priority list
+
+Use this for guide-driven order changes, new list entries, safety gates and the Forever
+interrupt/CC tables. Read [the launch guide summary](forever-guides/README.md) for the tree
+first.
+
+1. **Check for a recorded decision.** Search the tree's guide file for "default queue"
+   and the existing assertions in `tools/test_forever_rotations.py`. A failing assertion may
+   encode a deliberate choice (Earth Shock is reserved for interrupts; Serpent Sting opens
+   with Auto Shot), not stale data. Change it only with the user's agreement.
+2. **Resolve ids from the Forever data.** Names map to rank 1 through
+   `check_forever_apl.class_chains(cfa.CLASS_MASK[cls])`; Forever ids differ from Retail
+   (Slam 1240193, Shadow Word: Death 1309595). Check every new spell is learnable there.
+3. **Edit the right layer** in `tools/gen_forever_rotations.py`:
+
+   | Layer | Use it for |
+   |---|---|
+   | `EXTRA` | add, move (`move`, `all` for duplicate copies), place (`at`: front, end, `before:`/`after:` a spell, `last` for its final copy), tier-limit (`tiers`), gate (`dot`, `stealth` or a raw gate dict) or `drop` an entry |
+   | `REGATE` | safety gates on an existing entry: `starved`, `health`, `near`, `execute` (`or_known` adds a talent alternative) |
+   | `CORE RULES` | data-derived rules for every tree; prefer a rule here to repeated class exceptions |
+   | `generalize_entries` | hand-ordered Shaman Elemental/Enhancement lists and Paladin seals; these replace `EXTRA` changes for those entries |
+
+   A sim may list a spell twice (an AoE-only copy, a proc copy): `tier_lists` keeps one per
+   context, so move every copy (`all`) or anchor on the plain one (`last`).
+4. **Regenerate and check** with `python tools/forever_regen.py`. It runs
+   `gen_forever_rotations.py` then `gen_forever_defaults.py` (defaults read the generated
+   debuff gates to build the tracked target auras; without it a new debuff gate fails
+   `test_forever_aura_policy.py` with "refresh condition without an observation route"),
+   prints only the list contexts and Defaults lines that changed, runs the Forever tests and
+   `tools/check.ps1` on the generated Lua. Only intended rows should change. Add an assertion
+   per change to `test_forever_rotations.py`; use `--all` for every `tools/test_*.py`.
+5. **Review a tree** with `python tools/forever_queue_dump.py CLASS [tree]`.
+6. **Deploy** with `python tools/deploy_runtime.py --apply` and add a player note.
+
+Interrupt and enrage-dispel tables: `Data/InterruptAbilities.lua` is shared and keyed by
+Retail ids. Forever additions live in `INTERRUPTS` in `tools/gen_forever_defaults.py`;
+a Retail id that is another spell on Forever goes in `INTERRUPT_REMOVE` or
+`SOOTHE_REMOVE` (the rotation test derives these collisions from the data). A non-`mixed`
+`ABILITY_ROLES` entry keeps an interrupt out of automatic damage queues while custom lists
+can still name it.
 
 ## Source and enum mirrors
 
@@ -427,9 +476,10 @@ To install the local companion into a chosen test client, explicitly run:
 ```
 
 This copies only the companion to the sibling `JustAC_Research` addon folder;
-it does not sync JustAC or touch another client. The standing runtime sync runs
-it for both the Retail and Forever AddOns directories. Enable the companion in the
-addon list; a newly installed addon may require restarting the client.
+it does not sync JustAC. With the shared junction layout, the standing runtime
+sync instead runs it once against the shared runtime root as described below.
+Enable the companion in the addon list; a newly installed addon may require
+restarting the client.
 Re-run the installer after changing local probes. Do not install/sync it over
 an active test session without agreeing on a reload boundary.
 
@@ -478,6 +528,66 @@ Reuse the shared capture lifecycle and its bounds rather than adding parallel
 recorders. `/chatlog` is opt-in; `Logs\WoWChatLog.txt` may not exist and is a
 truncated/interleaved fallback, not the preferred evidence channel.
 
+### Behavior baseline and the analyzer
+
+The routine loop for catching behavior changes early, on either client:
+
+1. `/jac inspect start`, play normally, `/jac inspect stop`, `/reload`.
+2. `python tools\analyze_probe.py`
+
+The default session records every diagnostic key and event row plus the
+change-only audit samplers (edges, DoTs, aura routes, curses), without the audit
+battery's aura sweeps, for up to 20 minutes. `/jac inspect start full` adds the
+battery for 10 minutes; it fills the rolling log quickly.
+
+The analyzer reads the latest session of every client under
+`C:\Blizzard\World of Warcraft` (override with `--wow-root`, `JUSTAC_WOW_ROOT`, or
+explicit SavedVariables paths) and builds a qualitative fingerprint: for each key,
+in and out of combat, which read classes occurred (plain, secret, err, nil, and the
+inner status of research cells), the status of each named field, which event row
+kinds appeared, question control counts, contradictions and tallies. It compares
+that with the client's saved baseline in `.probe-baselines\` (git-ignored) and
+lists differences first:
+
+- **CHANGED**: a secret or error read, contradiction, sampler failure, probe error
+  row or tally category that the baseline never had.
+- **LOST**: plain reads, keys or fields the baseline had and this session lacks.
+  Key presence is only compared when both sessions kept their BASELINE sample.
+- **NOT SEEN**: a control or row kind seen in the baseline did not occur. This may
+  just mean the situation was not played.
+- Informational differences (build and version changes, unknown/unavailable shifts)
+  are counted; `--info` lists them. Combat behavior is compared only after at least
+  30 seconds of combat.
+
+Review a capture, then make it the baseline with `--accept`. A session without a
+STOP row, or whose BASELINE sample was evicted, is refused. The replaced baseline
+is kept as `<client>.prev.json`. Other options: `--details` (every control and
+check), `--all`, `--session <id>`, `--question <id>` and `--json`.
+
+Research questions in `Debug\Research\Questions.lua` give the fingerprint its
+consistency checks. Each lists the keys it needs, the in-combat controls that must
+occur, and checks that can contradict a signal without reconstructing a hidden
+value. A check can cite captured evidence: for example, an execute latch released
+right after a completed target cast is reported as explained, not contradicted.
+**CONTROLS MET** means the required transitions occurred with no contradiction: a
+candidate for adoption review, not proof. Optional extras:
+
+- `/jac inspect questions` lists the questions and their controls.
+- `/jac inspect start <id>` records one question's keys and rows only.
+- `/jac inspect mark <label>` timestamps a control the probe cannot observe,
+  such as crowd control landing. Bind it to a macro. Mark checks with
+  `scope="combat"` look across the whole fight containing the mark, or the next
+  fight starting within 15 seconds, so a mark typed just before a pull still counts.
+- Question patterns of the form `name=value` match that whole field (`count=0`
+  never matches `count=05`); other patterns are plain substrings. List values are
+  separated by `,` in the log (`|` collides with WoW colour codes, which the log strips).
+
+Every session writes its definitions, key list, mode and start/stop rows into the
+log, and `DIAG` headers carry game time and the target epoch, so a capture is scored
+against the registry that produced it. Captures from before this harness are scored
+against the current registry, with epochs and the game clock inferred, and labeled
+as such. Tests: `python tools\test_analyze_probe.py`.
+
 ## Runtime test sync
 
 Local runtime syncing has standing authorization after every validated runtime
@@ -517,11 +627,18 @@ SavedVariables and addon enablement remain client-specific in each client's
 - Preserve SavedVariables, player settings and unrelated files. Investigate
   unexpected deployment differences rather than overwriting unknown work or
   broadly deleting destination files.
+- `python tools/deploy_runtime.py` plans and `--apply` performs the steps below: it copies
+  differing TOC/XML-closure files and other files the runtime shares with the checkout,
+  never deletes, reports runtime-only files, verifies every compared runtime file against the
+  checkout by SHA-256, checks that each client path is a junction to that runtime, and
+  refreshes and verifies the Research companion in both clients. Investigate any reported problem rather than forcing it.
 - Verify junction type/target and the complete runtime inventory and SHA-256
   contents against the validated checkout, then verify both client paths. Comparing
   the two junctions alone cannot detect a stale shared target. Resolve active TOC
   entries and XML Include/Script dependencies on both, ignoring commented-out
-  entries. Version labels alone are insufficient.
+  entries. Version labels alone are insufficient. On Windows, inspect `LinkType`
+  and `Target` with `Get-Item -Force -LiteralPath`; `Resolve-Path` can return the
+  junction path itself rather than its target.
 - Keep the local research companion current in both clients too. For a completed
   junction deployment with local `Debug\Research\` sources, run
   the following from the development checkout:
@@ -531,9 +648,11 @@ SavedVariables and addon enablement remain client-specific in each client's
   ```
 
   This refreshes the separate shared companion visible to both clients. Verify
-  each sibling `JustAC_Research` folder
-  matches the source TOC, Lua files and LICENSE by SHA-256. The companion stays
-  local-only: never commit it or add it to a release package.
+  each sibling `JustAC_Research` junction and compare the Lua files and LICENSE
+  to their sources by SHA-256. The installer writes the companion TOC using the
+  core TOC's Interface field, so verify its resulting contents against the source
+  TOC with that substitution rather than assuming byte-identical TOCs. The
+  companion stays local-only: never commit it or add it to a release package.
   For ordinary client directories, run the installer for each client's AddOns
   directory instead.
 - Report parity or any blocker. Syncing files does not reload a running client;
@@ -546,6 +665,8 @@ SavedVariables and addon enablement remain client-specific in each client's
 
 Before replacing directories or junctions, back up the complete installations,
 including hidden Git files and ignored local Research sources, and verify hashes.
+Keep displaced originals outside `AddOns` as well; do not assume a renamed folder
+there is a safe long-term backup or delete it without verifying its contents.
 Close agents/editors/terminals using the old path before renaming a workspace;
 changing a shell's directory does not update an agent session's saved workspace.
 Switch the session to the development checkout first, or start a new session there

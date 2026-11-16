@@ -58,6 +58,13 @@ def check_options():
         assert(updates==2)
         c.efficiencyMode.set(nil,'always')
         assert(c.efficiencyMode.get()=='always' and updates==3)
+        -- The panel follows the profile default (WoW Forever: solo; Retail: off, above).
+        addon.db.profile.efficiencyMode=nil
+        addon.db.defaults={profile={efficiencyMode='solo'}}
+        assert(Controls().efficiencyMode.get()=='solo', 'panel default follows the profile default')
+        addon.db.defaults=nil
+        local c=Controls()
+        addon.db.profile.efficiencyMode='always'
         c.efficiencyMode.set(nil,'solo')
         manaCapacity=0
         assert(c.efficiencyMode.disabled())
@@ -359,6 +366,90 @@ def check_eligibility_binding():
     print("eligibility: direct/macro identity, explicit ranks, overrides, items, unknown power and denial passed")
 
 
+def check_engaged_count():
+    source = (ROOT / "BlizzardAPI" / "StateHelpers.lua").read_text(encoding="utf-8")
+    start = source.index("local UnitCanAttack       = UnitCanAttack\nlocal UnitThreatSituation")
+    end = source.index("\n-- Important casts nearby", start)
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        BlizzardAPI={IsForever=function() return forever~=false end}; secret={}; now=0
+        function IsSecretValue(v) return rawequal(v,secret) end
+        function GetTime() return now end
+        group={}; plates={}
+        local function plate(u) return plates[tonumber(u:match('^nameplate(%d+)$') or 0)] end
+        function UnitExists(u)
+            local target=u:match('^(nameplate%d+)target$')
+            if target then local p=plate(target); return p and p.target~=nil end
+            if u:match('^nameplate') then return plate(u)~=nil end
+            return group[u]==true
+        end
+        function UnitCanAttack(_,u) local p=plate(u); return p and p.hostile end
+        function UnitThreatSituation(member,u)
+            local p=plate(u); if not p then return nil end
+            local v=(p.threat or {})[member]
+            if v=='deny' then error('denied') end
+            return v
+        end
+        function UnitAffectingCombat(u) local p=plate(u); return p and p.combat end
+        function UnitIsUnit(a,b)
+            local p=plate(a:match('^(nameplate%d+)target$'))
+            if p.target=='secret' then return secret end
+            return p.target==b
+        end
+        function Count(setup)
+            group,plates,forever={},{},true; assert(loadstring(setup))(); now=now+1
+            return BlizzardAPI.GetEngagedEnemyCount()
+        end
+    """)
+    lua.execute(source[start:end])
+    count = lua.globals().Count
+    cases = [
+        ("plates[1]={hostile=true,threat={player=0}}", 1, "player threat counts as before"),
+        ("plates[1]={hostile=true,threat={player=0},combat=secret}", 1, "player threat needs no combat read"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,threat={pet=1}}", 1, "pet-held add"),
+        ("group.party1=true; plates[1]={hostile=true,combat=true,threat={party1=0}}", 1, "party-held add"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,target='pet'}", 1, "attacking pet, not yet on lists"),
+        ("plates[1]={hostile=true,combat=true,target='player'}", 1, "attacking the player"),
+        ("plates[1]={hostile=true,combat=true,target='raidX'}", 0, "another player's fight"),
+        ("group.pet=true; plates[1]={hostile=true,combat=false,threat={pet=1},target='pet'}", 0, "out of combat"),
+        ("group.pet=true; plates[1]={hostile=true,combat=secret,threat={pet=1}}", 0, "secret combat never adds"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,threat={pet=secret}}", 0, "secret group threat never adds"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,threat={pet='deny'}}", 0, "denied group threat never adds"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,target='secret'}", 0, "secret comparison never adds"),
+        ("group.pet=true; plates[1]={hostile=true,combat=true,threat={player='deny',pet=1}}", 1, "denied player read falls through"),
+        ("plates[1]={hostile=secret,combat=true,threat={player=0}}", 0, "secret hostility never adds"),
+        ("group.pet=true; plates[1]={hostile=false,combat=true,target='pet'}", 0, "friendly plate"),
+        ("group.pet=true; group.party1=true; plates[1]={hostile=true,combat=true,threat={pet=1,party1=0},target='player'};"
+         "plates[2]={hostile=true,threat={player=0}}; plates[3]={hostile=true,combat=true,target='raidX'}", 2,
+         "each plate counts once"),
+        ("plates[1]={hostile=true,combat=true,threat={pet=1}}", 0, "absent pet is not consulted"),
+        ("forever=false; group.pet=true; plates[1]={hostile=true,combat=true,threat={pet=1},target='pet'}", 0,
+         "Retail keeps the player-only count"),
+        ("forever=false; plates[1]={hostile=true,threat={player=0}}", 1, "Retail player threat counts as before"),
+    ]
+    for setup, expected, why in cases:
+        assert count(setup) == expected, why
+    lua.execute("""
+        group,plates,forever={pet=true},{},true
+        plates[1]={hostile=true,threat={player=0}}
+        plates[2]={hostile=true,combat=true,target='pet'}
+        plates[3]={hostile=true,combat=true,target='raidX'}
+        plates[4]={hostile=true,combat=secret}
+        plates[5]={hostile=secret}
+        plates[6]={hostile=false}
+        breakdown={}
+        total=BlizzardAPI.GetEngagedEnemyCount(breakdown)
+    """)
+    b = lua.globals().breakdown
+    assert lua.globals().total == 2
+    assert (b.plates, b.hostile, b.threat, b.widened, b.others, b.unknown) == (6, 4, 1, 1, 1, 2),         "the diagnostics breakdown comes from the same scan as the count"
+    lua.execute("group,plates={},{}; plates[1]={hostile=true,threat={player=0}}; now=now+1")
+    first = lua.eval("BlizzardAPI.GetEngagedEnemyCount()")
+    lua.execute("plates[2]={hostile=true,threat={player=0}}; now=now+0.1")
+    assert lua.eval("BlizzardAPI.GetEngagedEnemyCount()") == first == 1, "short cache"
+    print(f"efficiency: engaged-enemy count {len(cases)} cases: pet/party-held adds, other fights and unreadable reads")
+
+
 def main():
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -421,7 +512,7 @@ def main():
                 return missingWeapon~=id
             end,
             IsSpellUsable=function(id,failOpen) assert(failOpen==false); return usable[id] end,
-            SpellInRange=function(id) return ranges[id] end,
+            AbilityInRange=function(id) return ranges[id] end,
             IsSpellProcced=function() return proc end,
         }
         function Reset()
@@ -450,7 +541,7 @@ def main():
             SpellQueue._rotationIsCustom=false
             b={
                 profile={efficiencyMode='solo',efficiencyManaThreshold=40},
-                contextOrder='simc',inCombat=true,ctxDying=true,ctxArch='st',ctxEnemies=1,
+                contextOrder='simc',inCombat=true,ctxDying=false,ctxArch='st',ctxEnemies=1,
                 recommendedSpells={686,172,6603},spellCount=3,maxIcons=3,
                 blacklist={},addedSpellIDs={},
             }
@@ -458,9 +549,12 @@ def main():
     """)
     costs_start = source.index("local function CostsMana(")
     costs_end = source.index('\n--- "Too low on mana', costs_start)
+    placement_start = source.index("local function PlaceQueueSpell(")
+    placement_end = source.index("\nend", placement_start) + len("\nend")
     stage_start = source.index("local EFFICIENCY_ATTACKS")
     stage_end = source.index("\n--- Stage G", stage_start)
-    lua.execute(source[costs_start:costs_end] + "\n" + source[stage_start:stage_end])
+    lua.execute(source[costs_start:costs_end] + "\n"
+                + source[placement_start:placement_end] + "\n" + source[stage_start:stage_end])
     run = lua.eval("""
         function(setup)
             Reset()
@@ -546,7 +640,12 @@ def main():
         "invalid recovery NaN": "b.profile.efficiencyRecoverySeconds=0/0",
     }
     original_power = lua.globals().BlizzardAPI.IsUnitPowerBelow
-    for client in ("forever=true; nativePick=false\n", "forever=false; nativePick=true\n"):
+    # A dying target only replaces the mana test: every other safety check still blocks.
+    resource_only = {"mana boundary", "high mana", "unknown mana", "secret mana verdict",
+                     "fast regeneration", "full mana"}
+    blocked.update({"dying, " + label: "b.ctxDying=true; " + setup
+                    for label, setup in list(blocked.items()) if label not in resource_only})
+    for client in("forever=true; nativePick=false\n", "forever=false; nativePick=true\n"):
         for label, setup in blocked.items():
             lua.globals().BlizzardAPI.IsUnitPowerBelow = original_power
             lead, reason, before, after = run(client + setup)
@@ -556,6 +655,10 @@ def main():
     allowed = [
         ("", "6603,686,172"),
         ("b.ctxDying=false; targetHealth=90", "6603,686,172"),
+        # A dying normal target is finished with the free attack whatever the mana.
+        ("b.ctxDying=true; mana=90", "6603,686,172"),
+        ("b.ctxDying=true; BlizzardAPI.GetManaRecoveryEstimate=function() return 0,'readable',0 end",
+         "6603,686,172"),
         ("costs[686]={{type=3,cost=0},{type=0,cost=25}}", "6603,686,172"),
         ("health=80; mana=39", "6603,686,172"),
         ("b.profile.efficiencyManaThreshold=nil", "6603,686,172"),
@@ -598,7 +701,10 @@ def main():
             ("known[5019]=true; running[5019]=true; known[6603]=false", "-999999999,686,172", "wait for auto attack"),
             ("known[75]=true; running[75]=true; known[6603]=false", "-999999999,686,172", "wait for auto attack"),
             ("known[5019]=true; running[6603]=true", "5019,686,172", "conserve mana"),
-            ("known[5019]=true; running[5019]=true", "6603,686,172", "conserve mana"),
+            ("known[5019]=true; running[5019]=true", "-999999999,686,172", "wait for auto attack"),
+            ("known[5019]=true; running[5019]=true; running[6603]=true", "-999999999,686,172",
+             "wait for auto attack"),
+            ("known[5019]=true; running[5019]=true; ranges[5019]=false", "6603,686,172", "conserve mana"),
             ("running[6603]=true; b.maxIcons=1; b.spellCount=1; b.recommendedSpells={686}",
              "-999999999", "wait for auto attack"),
         ]:
@@ -649,6 +755,10 @@ def main():
     lua.execute("function UnitIsPVP() return pvp end")
     context_start = source.index("function SpellQueue._StageContext(")
     context_end = source.index("\n--- Stage F", context_start)
+    worthwhile_start = source.index("local function IsWorthwhileFight(")
+    worthwhile_end = source.index("\nend\n", worthwhile_start) + len("\nend\n")
+    lua.execute("IsLiveAttackableTarget = IsLiveAttackableTarget or function() return true end\n"
+                + source[worthwhile_start:worthwhile_end].replace("local function", "function", 1))
     lua.execute(source[context_start:context_end])
     for setup, expected in [
         ("", 6603),
@@ -720,6 +830,7 @@ def main():
     check_attack_equipment()
     check_eligibility_binding()
     check_recovery()
+    check_engaged_count()
     print(f"efficiency: {len(blocked)} fail-closed cases and {len(allowed)} promotions per client, denied API and Lua 5.1 compile passed")
     print("efficiency: real options builders preserve defaults, stored overrides, off and ForceUpdate")
     print("efficiency: actual context stage conserves before execute health, rejects packs and bosses")

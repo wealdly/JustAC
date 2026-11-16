@@ -25,6 +25,9 @@ local pcall = pcall
 local issecretvalue = issecretvalue
 local geterrorhandler = geterrorhandler
 local UnitIsVisible = UnitIsVisible
+local UnitGUID = UnitGUID
+local UnitAffectingCombat = UnitAffectingCombat
+local issecrettable = issecrettable
 
 local AURA_ERROR_THROTTLE = 30
 local auraErrorReportedAt = {}
@@ -370,11 +373,66 @@ end
 
 --- Drop the cache so the next query recomputes immediately (call on options changes).
 local preparationAuraCache = {}
+local targetDebuffIDs = {}
+local targetDebuffAt, targetDebuffGUID, targetDebuffKnown = -1, nil, false
+
+function PrecombatEngine.InvalidateTargetDebuffs()
+    targetDebuffAt = -1
+    targetDebuffGUID = nil
+    targetDebuffKnown = false
+    wipe(targetDebuffIDs)
+end
 
 function PrecombatEngine.ClearCache()
     cachedItemsAt = -1
     cachedClassBuffsAt = -1
     wipe(preparationAuraCache)
+    PrecombatEngine.InvalidateTargetDebuffs()
+end
+
+--- Presence / absence / unknown for a curated debuff family, out of combat only.
+function PrecombatEngine.GetTargetDebuffState(auraIDs)
+    local combat, combatKnown = SafeAuraCall(UnitAffectingCombat, "UnitAffectingCombat", "player")
+    local restricted, restrictionKnown = SafeAuraCall(
+        BlizzardAPI and BlizzardAPI.AreAurasSecret, "AreAurasSecret")
+    if not combatKnown or combat ~= false or not restrictionKnown or restricted ~= false then
+        PrecombatEngine.InvalidateTargetDebuffs()
+        return nil
+    end
+    local visible, visibleKnown = SafeAuraCall(UnitIsVisible, "UnitIsVisible", "target")
+    local guid, guidKnown = SafeAuraCall(UnitGUID, "UnitGUID", "target")
+    if not visibleKnown or visible ~= true or not guidKnown or type(guid) ~= "string" then
+        PrecombatEngine.InvalidateTargetDebuffs()
+        return nil
+    end
+    local now = GetTime()
+    if guid ~= targetDebuffGUID or now - targetDebuffAt >= 0.2 or targetDebuffAt < 0 then
+        PrecombatEngine.InvalidateTargetDebuffs()
+        targetDebuffAt, targetDebuffGUID = now, guid
+        local auras, known = SafeAuraList("target", "HARMFUL")
+        if not known or (issecrettable and issecrettable(auras)) then return nil end
+        local ok, complete = pcall(function()
+            for i = 1, #auras do
+                local aura = auras[i]
+                if IsSecret(aura) or type(aura) ~= "table"
+                   or (issecrettable and issecrettable(aura)) then return false end
+                local id = aura.spellId
+                if IsSecret(id) or type(id) ~= "number" then return false end
+                targetDebuffIDs[id] = true
+            end
+            return true
+        end)
+        if not ok then
+            ReportAuraReadError("target HARMFUL aura fields", complete)
+            return nil
+        end
+        targetDebuffKnown = complete
+    end
+    if not targetDebuffKnown then return nil end
+    for i = 1, #auraIDs do
+        if targetDebuffIDs[auraIDs[i]] then return true end
+    end
+    return false
 end
 
 -- Class maintained buffs (poisons, imbues) that need (re)applying, as spell IDs. For each

@@ -1382,15 +1382,15 @@ end
 --- Delegates directly to UIRenderer.ShowDefensiveIcon / HideDefensiveIcon so
 --- defensive icons on the overlay have full feature parity with the main panel
 --- (hotkeys, proc glow, assisted glow, fade animations).
-function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
+function UINameplateOverlay.RenderDefensives(addon, defensiveQueue, useCachedMetadata)
     if not currentNameplate then return end
     if #defIcons == 0 then return end
 
     -- Cache for RefreshDefensives (same-tick re-render from UpdateSpellQueue)
     cachedDefensiveQueue = defensiveQueue
 
-    local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local profile      = addon:GetProfile() or {}
+    local npo          = profile.nameplateOverlay or {}
     local npoGlowMode   = UIRenderer.ResolveGlowMode(profile, npo.defensiveGlowMode)
     local npoDefScale   = npo.defensiveIconScale or 1.0
     local opacity       = npo.opacity or 1.0
@@ -1402,7 +1402,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
             if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, entry.waiting, entry.precombat)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, entry.waiting, entry.precombat, useCachedMetadata)
             icon:SetAlpha(opacity)
             visibleCount = visibleCount + 1
         else
@@ -1591,13 +1591,13 @@ function UINameplateOverlay.InvalidateBarLayout()
     lastEnrageCount     = -1
 end
 
---- Re-render defensive icons using the last cached queue.
+--- Refresh live visuals using the last cached queue and its resolved icon metadata.
 --- Called from UpdateSpellQueue so defensive overlay refreshes on the same
 --- tick as the offensive overlay (eliminates visual delay from the slower
 --- defensive evaluation cadence).
 function UINameplateOverlay.RefreshDefensives(addon)
     if cachedDefensiveQueue then
-        UINameplateOverlay.RenderDefensives(addon, cachedDefensiveQueue)
+        UINameplateOverlay.RenderDefensives(addon, cachedDefensiveQueue, true)
     end
 end
 

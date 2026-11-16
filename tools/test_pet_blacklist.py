@@ -230,7 +230,6 @@ def test_aura_read_completeness():
             IsSecretValue = function(v) return v == secretValue end,
             Unsecret = function(v) if v ~= secretValue then return v end end,
             AreAurasSecret = function() return restricted end,
-            GetAuraTiming = function() return nil, nil end,
         }
         cachedAuras, trustedOutOfCombatCache = {}, {}
         instanceToSpellMap, instanceToTimingMap, instanceToNameMap = {}, {}, {}
@@ -557,7 +556,7 @@ def main():
         "local function AppendPrecombatPetRez(",
         "function AppendPrecombatPetRez(",
         1,
-    )
+    ).replace("local function AppendPrecombatPetFeed(", "function AppendPrecombatPetFeed(", 1)
     lua.execute(helper)
     lua.execute("""
         function spell_ids(spells, limit, respectBlacklist)
@@ -630,6 +629,51 @@ def main():
     ]
     assert len(pet_calls) == 2 and all(", true)" in line for line in pet_calls)
     assert "AppendPrecombatPetRez(addon, results, alreadyAdded, maxIcons)" in source
+    assert "AppendPrecombatPetFeed(addon, results, alreadyAdded, maxIcons)" in source
+
+    # Out-of-combat pet feeding: below happy (3), alive, not already eating, Feed Pet usable.
+    lua.execute("""
+        petStatus, happiness, eating = 'alive', 2, false
+        C_PetInfo = { GetPetHappiness = function() return happiness, 100, 10 end }
+        BlizzardAPI.IsSecretValue = function(v) return v == secret end
+        secret = {}
+        BlizzardAPI.GetAuraStackAtLeast = function(unit, id, n)
+            assert(unit == 'pet' and id == 1539 and n == 1)
+            return eating
+        end
+        blacklisted = {}
+        function Feed(maxIcons, added)
+            local results = {}
+            AppendPrecombatPetFeed(addon, results, added or {}, maxIcons or 3)
+            return results[1] and results[1].spellID, results[1] and results[1].precombat
+        end
+    """)
+    feed = [
+        ("", 6991, "content pet: feed for the happy damage bonus"),
+        ("happiness = 1", 6991, "unhappy pet: feed"),
+        ("happiness = 3", None, "happy pet: nothing to do"),
+        ("eating = true", None, "already eating: wait"),
+        ("eating = nil", 6991, "unknown eating state still reminds"),
+        ("happiness = nil", None, "no happiness (a warlock demon): never asks"),
+        ("happiness = secret", None, "hidden happiness: no guess"),
+        ("petStatus = 'dead'", None, "dead pet: revive first"),
+        ("petStatus = nil", None, "unknown pet state: no reminder"),
+        ("C_PetInfo = nil", None, "no happiness API (Retail): no reminder"),
+        ("C_PetInfo.GetPetHappiness = function() error('denied') end", None, "denied read: no reminder"),
+        ("blacklisted[6991] = true", None, "blacklisted Feed Pet stays off"),
+    ]
+    for setup, want, why in feed:
+        lua.execute("""
+            petStatus, happiness, eating = 'alive', 2, false
+            C_PetInfo = { GetPetHappiness = function() return happiness, 100, 10 end }
+            blacklisted = {}
+        """ + setup)
+        spell, precombat = lua.globals().Feed()
+        assert spell == want, (setup, spell, want, why)
+        assert spell is None or precombat is True, (setup, why)
+    lua.execute("petStatus, happiness, eating = 'alive', 2, false; blacklisted = {}")
+    assert lua.eval("Feed(3, {[6991] = true})")[0] is None, "never offered twice"
+    assert lua.eval("Feed(0)")[0] is None, "a full cluster adds nothing"
     test_precombat_visibility()
     test_petless_aura_cache()
     test_aura_read_completeness()

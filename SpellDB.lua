@@ -50,7 +50,7 @@ local HEALING_SPELLS = {}
 local CROWD_CONTROL_SPELLS = {}
 local UTILITY_SPELLS = {}
 local FOREVER_REAR_ATTACKS = {}
-local FOREVER_PULLS = {}
+local FOREVER_TARGET_SETUP = {}
 local FOREVER_RANGED_FILLERS = {}
 -- Curated interrupt/CC ability data lives in Data/InterruptAbilities.lua (registered below).
 -- Flat [spellID] = {kind, mech, reach, radius, pri}; see that file for the field contract.
@@ -61,6 +61,9 @@ local SOOTHE_ABILITIES    = {}  -- enrage-dispel abilities (Data/InterruptAbilit
 -- known ranges, used as distance probes: IsSpellInRange (a non-secret boolean - only the
 -- yardage is secret) on each KNOWN reference brackets the target's distance. See IsTargetWithin.
 local RANGE_REFERENCES = {}
+-- WoW Forever reference items for target distance: [yards] = { itemID, ... }. Registered
+-- only on Forever (Data/RangeReferences.lua). Every item in a tier must agree.
+local RANGE_ITEM_REFERENCES = {}
 
 -- Ranked health-restoring consumables (Data/HealingItems.lua); see GetBestHealingItem.
 local HEALING_ITEMS = {}
@@ -78,8 +81,8 @@ function SpellDB.RegisterCategories(t)
     if t.foreverRear then
         for id, requirement in pairs(t.foreverRear) do FOREVER_REAR_ATTACKS[id] = requirement end
     end
-    if t.foreverPull then
-        for id, policy in pairs(t.foreverPull) do FOREVER_PULLS[id] = policy end
+    if t.foreverTargetSetup then
+        for id, policy in pairs(t.foreverTargetSetup) do FOREVER_TARGET_SETUP[id] = policy end
     end
     if t.foreverRanged then
         for id in pairs(t.foreverRanged) do FOREVER_RANGED_FILLERS[id] = true end
@@ -88,9 +91,11 @@ end
 
 --- Populate the interrupt/CC ability list from Data/InterruptAbilities.lua. Merges into
 --- the existing local table so ResolveInterruptSpells/BuildInterruptTypeSpellIDs see it.
+--- `false` REMOVES an entry: WoW Forever retracts a retail id that is a different spell
+--- there (99 is Demoralizing Roar, not Incapacitating Roar).
 function SpellDB.RegisterInterruptAbilities(t)
     if type(t) ~= "table" then return end
-    for id, meta in pairs(t) do INTERRUPT_ABILITIES[id] = meta end
+    for id, meta in pairs(t) do INTERRUPT_ABILITIES[id] = meta or nil end
 end
 
 --- Populate the enrage-dispel ("soothe") ability list from Data/InterruptAbilities.lua.
@@ -107,6 +112,16 @@ end
 function SpellDB.RegisterRangeReferences(t)
     if type(t) ~= "table" then return end
     for id, yards in pairs(t) do RANGE_REFERENCES[id] = yards end
+end
+
+--- Populate the reference-item tiers ([yards] = { itemID, ... }) from Data/RangeReferences.lua.
+function SpellDB.RegisterRangeItems(t)
+    if type(t) ~= "table" then return end
+    for yards, ids in pairs(t) do
+        if type(yards) == "number" and type(ids) == "table" and #ids > 0 then
+            RANGE_ITEM_REFERENCES[yards] = ids
+        end
+    end
 end
 
 --- Populate the ranked healing-item list from Data/HealingItems.lua (best first).
@@ -271,9 +286,9 @@ function SpellDB.GetForeverRearRequirement(spellID)
     return StaticLookup(FOREVER_REAR_ATTACKS, spellID)
 end
 
-function SpellDB.GetForeverPullPolicy(spellID)
+function SpellDB.GetForeverTargetSetupPolicy(spellID)
     if not SpellDB.IsForever() then return nil end
-    return StaticLookup(FOREVER_PULLS, spellID)
+    return StaticLookup(FOREVER_TARGET_SETUP, spellID)
 end
 
 function SpellDB.IsForeverRangedFiller(spellID)
@@ -286,6 +301,13 @@ end
 
 function SpellDB.GetForeverTotemSlot(spellID)
     return SpellDB.FOREVER_TOTEM_SLOTS and StaticLookup(SpellDB.FOREVER_TOTEM_SLOTS, spellID) or nil
+end
+
+--- Damage that lands only after a long delay (Forever data: Bane of Doom), so it pays off in
+--- long fights only.
+function SpellDB.IsDelayedPayoff(spellID)
+    return SpellDB.FOREVER_DELAYED_PAYOFF ~= nil
+        and StaticLookup(SpellDB.FOREVER_DELAYED_PAYOFF, spellID) == true
 end
 
 function SpellDB.IsMaintainedProtection(spellID)
@@ -785,6 +807,36 @@ end
 local PlayerHasToy = PlayerHasToy
 local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
 
+-- Bag ownership memo for the consumable scans: [itemID] = true/false. The buff and
+-- recovery lists hold hundreds of items, and a scan asked GetItemCount for every one
+-- of them up to twice a second out of combat. Counts only change when the bags do, so
+-- the answer is kept until BAG_UPDATE_DELAYED (SpellDB.MarkConsumableBagsDirty) and,
+-- as a backstop against a missed event, for at most OWNED_ITEM_MAX_AGE seconds.
+-- Usability (level, zone) is still asked live, and only for items the player owns.
+local OWNED_ITEM_MAX_AGE = 30
+local ownedItemMemo = {}
+local ownedItemMemoAt = -1
+
+--- Mark the consumable ownership memo stale (call on BAG_UPDATE_DELAYED / zone-in).
+function SpellDB.MarkConsumableBagsDirty()
+    wipe(ownedItemMemo)
+    ownedItemMemoAt = -1
+end
+
+local function OwnsItem(itemID)
+    local now = GetTime()
+    if now - ownedItemMemoAt > OWNED_ITEM_MAX_AGE then
+        wipe(ownedItemMemo)
+        ownedItemMemoAt = now
+    end
+    local owned = ownedItemMemo[itemID]
+    if owned == nil then
+        owned = (C_Item.GetItemCount(itemID) or 0) > 0
+        ownedItemMemo[itemID] = owned
+    end
+    return owned
+end
+
 -- Does the player have this buff entry available to use right now? Source-aware:
 -- bag item (GetItemCount), toy (PlayerHasToy), or known spell (IsPlayerSpell).
 local function OwnsBuffEntry(e)
@@ -794,8 +846,7 @@ local function OwnsBuffEntry(e)
     elseif source == "spell" then
         return IsPlayerSpell and IsPlayerSpell(e.id)
     end
-    if source ~= "item" or (C_Item.GetItemCount(e.id) or 0) <= 0
-       or not C_Item.IsUsableItem then
+    if source ~= "item" or not OwnsItem(e.id) or not C_Item.IsUsableItem then
         return false
     end
     return C_Item.IsUsableItem(e.id) == true
@@ -849,7 +900,7 @@ function SpellDB.GetBestRecoveryItem(kind)
     local fallback
     for i = 1, #list do
         local e = list[i]
-        if (C_Item.GetItemCount(e.id) or 0) > 0 and C_Item.IsUsableItem(e.id) then
+        if OwnsItem(e.id) and C_Item.IsUsableItem(e.id) then
             if not e.wellfed then return e.id end
             fallback = fallback or e.id
         end
@@ -928,118 +979,310 @@ local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local IsSpellKnown = IsSpellKnown
 
 --- Is the current target within `yards`? Returns true / false / nil (unknown).
---- Brackets the target using the player's KNOWN reference abilities: a reference of range
---- ≤ yards that IS in range proves target ≤ yards (within); a reference of range ≥ yards
---- that is OUT of range proves target > yards (beyond). Distance in yards is a secret in
---- combat, but IsSpellInRange's boolean is not - this is built entirely on it.
---- Reliability scales with probe density near `yards`; nil when no probe brackets it.
--- Spec-filtered probe list + per-tick verdict memo: the naive version scanned all
--- ~65 references with an IsSpellKnown call each, twice per queue build (gap-closer
--- + melee-context checks in the same tick). The known set only changes on talent
--- swaps, so a short refresh window self-heals those; the memo collapses the
--- second same-tick call to a table read.
-local knownRangeProbes = {}      -- flat pairs: id1, ref1, id2, ref2, ...
+--- Uses curated on-target abilities, with readable range endpoints for the known rank,
+--- plus the swing-range check and, on WoW Forever, reference items and the interaction
+--- check (see the Forever notes below).
+--- A positive read proves within its maximum. A negative read proves beyond its maximum
+--- only when the minimum is zero, or when the target would already have attacked a
+--- player standing inside the minimum (see AggroImpliesDistance). Unknown maxima exclude
+--- a probe; unknown minima cannot prove beyond. Sources that contradict each other make
+--- every radius unknown for that snapshot.
+local knownRangeProbes = {}
 local knownRangeProbesTime = -math.huge
-local KNOWN_PROBE_REFRESH = 5    -- seconds
--- Per-tick verdict memo keyed by yards (the gap closer asks 5yd AND its near-band in
--- the same build, plus ContextRank's 5yd - a single-slot memo would thrash and re-poll
--- every probe). UNKNOWN stands in for a memoized nil verdict, which a table can't hold.
-local withinVerdicts = {}
-local lastWithinTime = -1
-local MELEE_YARDS = 5   -- the melee band the range references and the swing range both answer
-local WITHIN_UNKNOWN = {}
-function SpellDB.IsTargetWithin(yards)
-    if not C_Spell_IsSpellInRange then return nil end
-    local now = GetTime()
-    if now == lastWithinTime then
-        local v = withinVerdicts[yards]
-        if v ~= nil then
-            if v == WITHIN_UNKNOWN then return nil end
-            return v
-        end
-    else
-        wipe(withinVerdicts)
-        lastWithinTime = now
+local KNOWN_PROBE_REFRESH = 5
+local rangeSnapshotTime
+local withinBound, beyondBound, swingRange
+local MELEE_YARDS = 5
+local aggroRangeApplies, aggroRangeReason = false, "not evaluated"
+-- UnitReaction: 1 hated, 2 hostile. Unfriendly (3) and neutral (4) NPCs do not attack on sight.
+local AGGRESSIVE_REACTION_MAX = 2
+-- An aggressive NPC does not attack the instant a player arrives: a target selected while
+-- already in melee read as "beyond" until the pull (measured 2026-11-15, Forever 1.60.1).
+-- The failed reading must hold, observed continuously on the same target out of combat,
+-- before it means "too far". A gap between readings restarts the wait.
+local AGGRO_SETTLE_SECONDS = 1.5
+local AGGRO_OBSERVATION_GAP = 0.5
+local aggroSince, aggroObservedAt
+-- WoW Forever-only distance sources, measured 2026-11-16 on 1.60.1.70938
+-- (Documentation/FOREVER_COMBAT_SIGNALS.md, external range-source review):
+--   * Melee references report no live maximum (0) yet read plain, correct melee range
+--     (Wing Clip matched the 5-yard items on 157 of 159 samples). A curated 5-yard
+--     reference with a zero minimum and a zero or missing maximum is a melee probe there.
+--     Next-swing attacks read "in range" at any distance and never qualify.
+--   * Reference items answer plain true/false for a live hostile target in combat; every
+--     main-hand swing on a live target came with the 5-yard tier true.
+--   * CheckInteractDistance index 3 flipped exactly at Auto Shot's 8-yard minimum. Shorter
+--     racial variants (6, 7) mean true proves within 8 and false proves beyond melee only.
+--     With no target it returns false rather than nil, so a live target is required.
+-- Item and interaction reads count only for a live, attackable target.
+local C_Item_IsItemInRange = C_Item and C_Item.IsItemInRange
+local C_Item_IsItemDataCachedByID = C_Item and C_Item.IsItemDataCachedByID
+local C_Item_RequestLoadItemDataByID = C_Item and C_Item.RequestLoadItemDataByID
+local CheckInteractDistance = CheckInteractDistance
+local INTERACT_DUEL_INDEX = 3
+local INTERACT_WITHIN_YARDS = 8
+local INTERACT_BEYOND_YARDS = MELEE_YARDS
+local itemLoadRequested = {}
+local itemTierReady = {}       -- [yards] = true when every item in the tier has cached data
+local itemTierRead = {}        -- [yards] = last snapshot verdict (diagnostic)
+local interactRead             -- last snapshot interaction verdict (diagnostic)
+local contradiction = false    -- sources disagreed in the last snapshot
+
+-- quiet: a failed call is an expected "unknown" (restricted unit reads), not an error to report.
+local function ReadRangeValue(api, fn, quiet, ...)
+    if not fn then return nil end
+    local ok, value = pcall(fn, ...)
+    if not ok then
+        if not quiet then geterrorhandler()(value) end
+        return nil
     end
+    if api and api.IsSecretValue and api.IsSecretValue(value) then return nil end
+    return value
+end
 
+-- Plain true/false of a quiet read, or nil when unreadable.
+local function PlainBool(api, fn, ...)
+    local value = ReadRangeValue(api, fn, true, ...)
+    if value == nil then return nil end
+    return value and true or false
+end
+
+function SpellDB.InvalidateRangeCache(spellsChanged)
+    rangeSnapshotTime = nil
+    aggroSince, aggroObservedAt = nil, nil
+    if spellsChanged then knownRangeProbesTime = -math.huge end
+end
+
+-- Out of combat, an aggressive NPC target attacks a player who comes inside a minimum
+-- range, so a failed minimum-range probe means "beyond its maximum" rather than "too
+-- close". Every condition must be a plain positive read; anything unreadable, secret or
+-- failed keeps the reading ambiguous. Known blind spots: an aggro radius smaller than
+-- the minimum range on a non-trivial target, and crowd control applied out of combat
+-- without stealth. The pre-combat range research question watches for both.
+local function AggroImpliesDistance(api)
+    if PlainBool(api, UnitAffectingCombat, "player") ~= false then return false, "player in combat or unknown" end
+    if PlainBool(api, UnitIsDeadOrGhost, "player") ~= false then return false, "player dead or unknown" end
+    if PlainBool(api, IsStealthed) ~= false then return false, "player stealthed or unknown" end
+    if PlainBool(api, UnitIsFeignDeath, "player") ~= false then return false, "player feigning or unknown" end
+    if PlainBool(api, UnitExists, "target") ~= true then return false, "no target" end
+    if PlainBool(api, UnitIsDeadOrGhost, "target") ~= false then return false, "target dead or unknown" end
+    if PlainBool(api, UnitIsPlayer, "target") ~= false then return false, "target is a player or unknown" end
+    if PlainBool(api, UnitCanAttack, "target", "player") ~= true then return false, "target cannot attack or unknown" end
+    local reaction = ReadRangeValue(api, UnitReaction, true, "target", "player")
+    if type(reaction) ~= "number" then return false, "reaction unknown" end
+    if reaction > AGGRESSIVE_REACTION_MAX then return false, "target not aggressive" end
+    if PlainBool(api, UnitAffectingCombat, "target") ~= false then return false, "target in combat or unknown" end
+    if PlainBool(api, UnitIsTapDenied, "target") ~= false then return false, "target tapped by others or unknown" end
+    if PlainBool(api, UnitIsTrivial, "target") ~= false then return false, "target trivial or unknown" end
+    return true, "aggressive target out of combat"
+end
+
+-- Tighten the snapshot's proven bounds: within the smallest proven reach, beyond the
+-- largest proven miss.
+local function Within(yards)
+    if not withinBound or yards < withinBound then withinBound = yards end
+end
+local function Beyond(yards)
+    if not beyondBound or yards > beyondBound then beyondBound = yards end
+end
+
+local function RefreshRangeSnapshot()
+    local now = GetTime()
+    if rangeSnapshotTime == now then return end
     local api = GetBlizzardAPI()
-    local isSecret = api and api.IsSecretValue
-
+    local forever = SpellDB.IsForever and SpellDB.IsForever() or false
+    local nextSwing = SpellDB.NEXT_SWING_SPELLS
     if (now - knownRangeProbesTime) >= KNOWN_PROBE_REFRESH then
         knownRangeProbesTime = now
-        local n = 0
+        wipe(knownRangeProbes)
         RotationImport_ = RotationImport_ or LibStub("JustAC-RotationImport", true)
         for refID, ref in pairs(RANGE_REFERENCES) do
-            -- Forever ranks: probe with the rank the player has (the data names rank 1).
-            local id = (RotationImport_ and RotationImport_.RankChain(refID)
-                and RotationImport_.HighestKnownRank(refID)) or refID
-            -- Gate on KNOWN (form-independent), NOT castability: IsSpellAvailable would skip a
-            -- form-gated probe (a Druid's Mangle while shifted, anything on GCD/low resources),
-            -- which silently breaks detection. IsSpellInRange only needs the spell to be known.
-            if not IsSpellKnown or IsSpellKnown(id) then
-                knownRangeProbes[n + 1], knownRangeProbes[n + 2] = id, ref
-                n = n + 2
+            local id = refID
+            if RotationImport_ and RotationImport_.RankChain(refID) then
+                id = RotationImport_.HighestKnownRank(refID)
             end
-        end
-        for i = #knownRangeProbes, n + 1, -1 do knownRangeProbes[i] = nil end
-    end
-
-    local within, beyond
-    for i = 1, #knownRangeProbes, 2 do
-        local id, ref = knownRangeProbes[i], knownRangeProbes[i + 1]
-        local r = C_Spell_IsSpellInRange(id, "target")   -- "target" unit is required
-        if r ~= nil and not (isSecret and isSecret(r)) then
-            if r ~= false then
-                if ref <= yards then                     -- target ≤ ref ≤ yards
-                    within = true
-                    break  -- within outranks beyond: the verdict is already decided
+            -- Known, not castable: form, cooldown and resource gates do not change reach.
+            if id and (not IsSpellKnown or ReadRangeValue(api, IsSpellKnown, false, id) == true) then
+                local probe = { id = id, baseID = refID, ref = ref }
+                local info = ReadRangeValue(api, api and api.GetCachedSpellInfo, false, id)
+                if type(info) == "table" then
+                    local minRange, maxRange = info.minRange, info.maxRange
+                    if not (api and api.IsSecretValue and api.IsSecretValue(minRange))
+                       and type(minRange) == "number" and minRange >= 0 then
+                        probe.minRange = minRange
+                    end
+                    local maxSecret = api and api.IsSecretValue and api.IsSecretValue(maxRange)
+                    if not maxSecret and type(maxRange) == "number" and maxRange > 0 then
+                        probe.maxRange = maxRange
+                    elseif forever and not maxSecret and (maxRange == nil or maxRange == 0)
+                       and ref == MELEE_YARDS and probe.minRange == 0
+                       and not (nextSwing and (nextSwing[id] or nextSwing[refID])) then
+                        probe.maxRange = MELEE_YARDS
+                        probe.meleeReference = true
+                    end
                 end
-            elseif ref >= yards then
-                beyond = true                            -- target > ref ≥ yards
+                knownRangeProbes[#knownRangeProbes + 1] = probe
+            end
+        end
+        wipe(itemTierReady)
+        if forever and C_Item_IsItemInRange then
+            for yards, ids in pairs(RANGE_ITEM_REFERENCES) do
+                local ready = true
+                for i = 1, #ids do
+                    local itemID = ids[i]
+                    local cached = ReadRangeValue(api, C_Item_IsItemDataCachedByID, false, itemID)
+                    if cached ~= true then
+                        ready = false
+                        if not itemLoadRequested[itemID] and C_Item_RequestLoadItemDataByID then
+                            itemLoadRequested[itemID] = true
+                            ReadRangeValue(api, C_Item_RequestLoadItemDataByID, false, itemID)
+                        end
+                    end
+                end
+                itemTierReady[yards] = ready or nil
             end
         end
     end
 
-    local verdict
-    if within then verdict = true elseif beyond then verdict = false end
-    -- The game's own melee check settles the melee band outright (WoW Forever: the auto-attack
-    -- range event), including for a character with no short probe (a warrior below level 4).
-    local inSwing = api and api.IsTargetInSwingRange and api.IsTargetInSwingRange(0)
-    if inSwing == true and yards >= MELEE_YARDS then
-        verdict = true
-    elseif inSwing == false and yards <= MELEE_YARDS then
-        verdict = false
+    withinBound, beyondBound = nil, nil
+    aggroRangeApplies, aggroRangeReason = false, "no failed minimum-range probe"
+    local aggroChecked, aggroCandidate = false, false
+    for i = 1, #knownRangeProbes do
+        local probe = knownRangeProbes[i]
+        local r = ReadRangeValue(api, C_Spell_IsSpellInRange, false, probe.id, "target")
+        probe.r = nil
+        if type(r) == "boolean" then probe.r = r end
+        local maxRange = probe.maxRange
+        if maxRange and r == true and (not withinBound or maxRange < withinBound) then
+            withinBound = maxRange
+        elseif maxRange and r == false and probe.minRange == 0
+           and (not beyondBound or maxRange > beyondBound) then
+            beyondBound = maxRange
+        elseif maxRange and r == false and probe.minRange and probe.minRange > 0 then
+            if not aggroChecked then
+                aggroChecked = true
+                aggroCandidate, aggroRangeReason = AggroImpliesDistance(api)
+                if aggroCandidate then
+                    if not aggroObservedAt or now - aggroObservedAt > AGGRO_OBSERVATION_GAP then
+                        aggroSince = now
+                    end
+                    aggroObservedAt = now
+                    local held = now - aggroSince
+                    aggroRangeApplies = held >= AGGRO_SETTLE_SECONDS
+                    if not aggroRangeApplies then
+                        aggroRangeReason = string.format("settling %.1fs of %.1fs", held, AGGRO_SETTLE_SECONDS)
+                    end
+                end
+            end
+            if aggroRangeApplies and (not beyondBound or maxRange > beyondBound) then
+                beyondBound = maxRange
+            end
+        end
     end
-    withinVerdicts[yards] = (verdict == nil) and WITHIN_UNKNOWN or verdict
-    return verdict
+    if not aggroCandidate then aggroSince, aggroObservedAt = nil, nil end
+    swingRange = ReadRangeValue(api, api and api.IsTargetInSwingRange, false, 0)
+    if swingRange == true then Within(MELEE_YARDS) elseif swingRange == false then Beyond(MELEE_YARDS) end
+
+    wipe(itemTierRead)
+    interactRead = nil
+    if forever and (next(itemTierReady) or CheckInteractDistance)
+       and PlainBool(api, UnitExists, "target") == true
+       and PlainBool(api, UnitIsDeadOrGhost, "target") == false
+       and PlainBool(api, UnitCanAttack, "player", "target") == true then
+        for yards in pairs(itemTierReady) do
+            local ids, verdict = RANGE_ITEM_REFERENCES[yards], nil
+            for i = 1, #ids do
+                local r = ReadRangeValue(api, C_Item_IsItemInRange, false, ids[i], "target")
+                if type(r) ~= "boolean" or (verdict ~= nil and r ~= verdict) then
+                    verdict = nil
+                    break
+                end
+                verdict = r
+            end
+            itemTierRead[yards] = verdict
+            if verdict == true then Within(yards) elseif verdict == false then Beyond(yards) end
+        end
+        local r = ReadRangeValue(api, CheckInteractDistance, false, "target", INTERACT_DUEL_INDEX)
+        if type(r) == "boolean" then
+            interactRead = r
+            if r then Within(INTERACT_WITHIN_YARDS) else Beyond(INTERACT_BEYOND_YARDS) end
+        end
+    end
+
+    -- Within N and beyond M with N <= M cannot both hold: the sources disagree, so no
+    -- distance verdict is trusted until they agree again.
+    contradiction = withinBound ~= nil and beyondBound ~= nil and withinBound <= beyondBound
+    rangeSnapshotTime = now
+end
+
+--- Diagnostic: did the last range snapshot treat a failed minimum-range probe as
+--- "beyond", and why or why not.
+function SpellDB.GetAggroRangeState()
+    RefreshRangeSnapshot()
+    return aggroRangeApplies, aggroRangeReason
+end
+
+function SpellDB.IsTargetWithin(yards)
+    RefreshRangeSnapshot()
+    if contradiction then return nil end
+    if withinBound and withinBound <= yards then return true end
+    if beyondBound and beyondBound >= yards then return false end
+    return nil
 end
 
 --- Could a "within N yards" verdict ever be PROVEN for this character? True when some
 --- known probe reaches no further than N - only such a probe can answer "within". Callers
 --- use it to tell "the target is too far" apart from "this character owns no probe short
 --- enough to say", which are the same nil from IsTargetWithin but want opposite handling.
---- Short probes are melee attacks, so casters cannot prove the ~8yd radii at all.
+--- Short probes are melee attacks, so on retail casters cannot prove the ~8yd radii at all;
+--- on WoW Forever the reference items and interaction check give every class short probes.
 function SpellDB.CanProveWithin(yards)
-    local api = GetBlizzardAPI()
-    if yards >= MELEE_YARDS and api and api.IsTargetInSwingRange and api.IsTargetInSwingRange(0) ~= nil then
+    RefreshRangeSnapshot()
+    if yards >= MELEE_YARDS and type(swingRange) == "boolean" then
         return true
     end
-    for i = 2, #knownRangeProbes, 2 do
-        if knownRangeProbes[i] <= yards then return true end
+    -- Item tiers count only once every item's data is cached: before that they answer nil,
+    -- and claiming a proof is possible would turn "not loaded yet" into "too far".
+    for tierYards in pairs(itemTierReady) do
+        if tierYards <= yards then return true end
+    end
+    if CheckInteractDistance and SpellDB.IsForever and SpellDB.IsForever()
+       and INTERACT_WITHIN_YARDS <= yards then
+        return true
+    end
+    if not C_Spell_IsSpellInRange then return false end
+    for i = 1, #knownRangeProbes do
+        local maxRange = knownRangeProbes[i].maxRange
+        if maxRange and maxRange <= yards then return true end
     end
     return false
+end
+
+--- Diagnostic only (/jac inspect range): the Forever item and interaction sources and
+--- whether the last snapshot found the sources in disagreement.
+function SpellDB.DebugRangeSources()
+    RefreshRangeSnapshot()
+    local items = {}
+    for yards, ids in pairs(RANGE_ITEM_REFERENCES) do
+        items[#items + 1] = { yards = yards, ids = ids, ready = itemTierReady[yards] == true,
+            r = itemTierRead[yards] }
+    end
+    table.sort(items, function(a, b) return a.yards < b.yards end)
+    return { items = items, interact = interactRead, swing = swingRange,
+        within = withinBound, beyond = beyondBound, contradiction = contradiction }
 end
 
 --- Diagnostic only (/jac inspect range): every KNOWN range reference with its
 --- raw spell-path answer against the current target, so a wedged verdict can be
 --- traced to the probes that produced it.
 function SpellDB.DebugRangeProbes()
+    RefreshRangeSnapshot()
     local out = {}
-    if not C_Spell_IsSpellInRange then return out end
-    for id, ref in pairs(RANGE_REFERENCES) do
-        if not IsSpellKnown or IsSpellKnown(id) then
-            out[#out + 1] = { id = id, ref = ref, r = C_Spell_IsSpellInRange(id, "target") }
-        end
+    for i = 1, #knownRangeProbes do
+        local p = knownRangeProbes[i]
+        out[i] = { id = p.id, baseID = p.baseID, ref = p.ref,
+            minRange = p.minRange, maxRange = p.maxRange, r = p.r,
+            meleeReference = p.meleeReference }
     end
     return out
 end
