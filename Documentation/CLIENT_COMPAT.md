@@ -18,7 +18,11 @@ not the plan.
    are merged into, never replaced, and retail never builds `<CLASS>_F` keys.
 4. **Retail behaviour stays exactly as before unless a change is meant for both.** Universal
    changes must be intentional; client-specific changes are gated.
-5. **Every leak is a test.** `tools/test_forever_defaults.py` loads the real SpellDB,
+5. **The same id can be a different spell.** Shared tables keyed by Retail ids (interrupts,
+   soothes) apply on Forever too: 99 is Demoralizing Roar there, 5938 Shiv has no dispel,
+   and the GCD dummy 61304 does not exist. Retract or replace such ids in the Forever
+   defaults, and check a shared id against the Forever data before relying on it.
+6. **Every leak is a test.** `tools/test_forever_defaults.py` loads the real SpellDB,
    RotationImport, Forever lists and Forever defaults as retail and asserts nothing Forever
    registers there. `tools/test_forever_dots.py` checks the DoT tracker's retail half.
 

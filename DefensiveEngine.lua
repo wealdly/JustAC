@@ -981,6 +981,29 @@ local function AppendPrecombatPetRez(addon, results, alreadyAdded, maxIcons)
     alreadyAdded[m.storedID] = true
 end
 
+-- Hunter pet happiness (C_PetInfo.GetPetHappiness: plain on Forever, measured on a hunter pet;
+-- 1 unhappy = 75% pet damage, 2 content = 100%, 3 happy = 125%). Out of combat a pet below
+-- happy is worth feeding; while it is already eating the reminder waits. Pets without
+-- happiness (a warlock's demon) read nil and never ask. Blacklisting Feed Pet turns it off.
+local FEED_PET, FEED_PET_EFFECT, PET_HAPPY = 6991, 1539, 3
+local feedPetList = { FEED_PET }
+local function AppendPrecombatPetFeed(addon, results, alreadyAdded, maxIcons)
+    if #results >= maxIcons or alreadyAdded[FEED_PET] then return end
+    if not (C_PetInfo and C_PetInfo.GetPetHappiness) then return end
+    if not (BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus() == "alive") then return end
+    local ok, happiness = pcall(C_PetInfo.GetPetHappiness)
+    if not ok or BlizzardAPI.IsSecretValue(happiness) or type(happiness) ~= "number"
+       or happiness >= PET_HAPPY then return end
+    if BlizzardAPI.GetAuraStackAtLeast
+       and BlizzardAPI.GetAuraStackAtLeast("pet", FEED_PET_EFFECT, 1) == true then return end
+    local spells = GetUsableDefensiveSpells(addon, feedPetList, 1, alreadyAdded, true)
+    local m = spells[1]
+    if not m then return end
+    local entry = PushEntry(results, m.spellID, false, false, m.unusable, m.noResources, true)
+    entry.storedID = m.storedID
+    alreadyAdded[m.spellID] = true
+end
+
 -- Reorder a defensive list by health band, stable within each tier so the user's
 -- configured order is preserved as the tiebreaker. One ordering per band, which is
 -- the whole point of grading the health read: what leads the cluster should be what
@@ -1380,6 +1403,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         -- other class buffs. It uses the configured list and the same blacklist rules
         -- as the in-combat reminder.
         AppendPrecombatPetRez(addon, results, alreadyAdded, maxIcons)
+        AppendPrecombatPetFeed(addon, results, alreadyAdded, maxIcons)
         -- Class maintained buffs (poisons, imbues) as spell entries, gated by IsPlayerSpell.
         -- These deliberately BYPASS dpsQueueExclusions: this queue wins the tie. The offer
         -- here is clickable and the offensive one is not, so out of combat the buff belongs

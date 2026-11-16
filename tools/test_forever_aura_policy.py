@@ -100,10 +100,14 @@ def main():
         assert tracker.GetTargetAuraState(14914, True) is None, miss
         assert build() == [sid]
 
-    # CDM overrides the estimate; target changes do not transfer the timer.
+    # CDM overrides the estimate once the cast-to-icon bridge window has passed; target
+    # changes do not transfer the timer.
     tracker.Reset()
     tracker.OnCastSucceeded(14914)
     obs.execute("tracked[14914]=false")
+    assert tracker.GetTargetAuraState(14914, True) is True, "icon trails the cast"
+    assert tracker.GetTargetAuraState(14914, False) is None, "pending is not presence evidence"
+    obs.globals().now = obs.globals().now + 2.1
     assert tracker.GetTargetAuraState(14914, True) is False
     obs.execute("tracked[14914]=true")
     assert tracker.GetTargetAuraState(14914, False) is True

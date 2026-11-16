@@ -43,6 +43,17 @@ Ground rules for reading this file:
 
 ## Warrior - Arms
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/arms-warrior-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Single target: keep Battle Shout, five Sunder Armor stacks (if the armor debuff is yours) and Demoralizing Shout when needed; then Overpower when enabled, Mortal Strike (pool 30 rage as it comes off cooldown), Execute below 20%, Slam when you can finish the cast, Spearing Strike (top priority on Giants, Dragonkin and mounted enemies), Hamstring with spare rage to fish for procs, Heroic Strike only with excess rage.
+- Overpower and Mortal Strike stay ahead of Execute: repeated Executes drain the rage those need.
+- No Rend in the single-target list. Reckless Swings when rage is short and health allows.
+- AoE: Sweeping Strikes (Battle Stance, 2+ enemies that will live), Whirlwind (Berserker Stance, 3+ enemies, hits up to four), Overpower, Mortal Strike, Execute, Slam, Rend on the main target, Spearing Strike, Cleave instead of Heroic Strike with a second enemy. Against two long-lived enemies Rend and Cleave rise (more Bloodthrill procs).
+- Stay in Battle Stance; switch to Berserker only for Whirlwind or an interrupt, spending rage above the Tactical Mastery retention first.
+
 **Sources** (plus W-BLZ, W-DEV, W-IVO, W-MOO, W-KLC, W-MTH, W-WT, W-PUG, W-FB above)
 
 | site | URL | guide type | stated date / level | fetch |
@@ -104,6 +115,15 @@ Disagreements:
 ---
 
 ## Warrior - Fury
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/fury-warrior-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Single target: buffs and debuffs (Battle Shout, Sunder Armor if yours; Demoralizing Shout and Thunder Clap only when needed and uncovered), then Whirlwind whenever ready (also in execute), Bloodthirst (pool 30 rage without delaying Whirlwind), Execute below 20%, Overpower (switch to Battle Stance under 25 rage), Spearing Strike if talented, Rend in Battle Stance, Hamstring with spare rage, Heroic Strike only with excess rage.
+- Execute phase: Bloodthirst ahead of Execute only above 2,000 attack power; otherwise Execute first.
+- AoE: Whirlwind, Bloodthirst between Whirlwinds, Execute without delaying Whirlwind, Cleave instead of Heroic Strike with a second enemy.
 
 **Sources** (plus W-BLZ, W-DEV, W-IVO, W-MOO, W-KLC, W-WT, W-PUG, W-FB)
 
@@ -251,6 +271,15 @@ No official Blizzard Rogue deep dive exists yet. The series has covered Hunter, 
 
 ## Rogue - Assassination
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/assassination-rogue-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Keep poisons (Instant main hand, Deadly off hand), Expose Armor if no stronger armor debuff, Slice and Dice and Rupture up.
+- Open from stealth with Garrote. Shank on cooldown for Venom uptime, but not near the energy cap. Mutilate builds; at 5 combo points Eviscerate only when Slice and Dice and Rupture are up and Shank is on cooldown.
+- No AoE: Assassination has nothing that hits several targets.
+
 **Sources** (plus R-DEV, R-IVO, R-MOO, R-MTH, R-WT, R-PUG, R-ZK)
 
 | site | URL | guide type | stated date / level | fetch |
@@ -303,6 +332,13 @@ Disagreements:
 ---
 
 ## Rogue - Combat
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/combat-rogue-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Same shape as Assassination: maintain buffs, debuffs and Rupture; Garrote opener from stealth; Shank on cooldown unless it would cap energy; Sinister Strike builds (Backstab for the dagger variant); Eviscerate at 5 combo points when Slice and Dice and Rupture are up and Shank is on cooldown.
 
 **Sources** (plus R-DEV, R-IVO, R-MOO, R-MTH, R-WT, R-PUG, R-ZK)
 
@@ -357,6 +393,15 @@ Disagreement on Slice and Dice while leveling: Icy and wowtbc say keep it up. Ol
 ---
 
 ## Rogue - Subtlety
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/subtlety-rogue-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Energy pooling is central. Maintain poisons, Rupture at 5 combo points and Death Mark as much as possible.
+- Cooldowns: Shank on cooldown only at 0-3 combo points (Boot Knife would waste a point at 4+); Ghostly Strike on cooldown, followed by Garrote.
+- Builders: Ambush from stealth as the opener, Hemorrhage as the main builder.
 
 **Sources** (plus R-DEV, R-IVO, R-MOO, R-WT, R-PUG, R-ZK)
 

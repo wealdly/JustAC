@@ -230,6 +230,7 @@ def test_rites_and_preparation_priority():
         P.GetMissingClassBuffs=function() return {465,20154} end
         P.GetMissingBuffItems=function() return {1001,1002,1003} end
         function AppendPrecombatPetRez() end
+        function AppendPrecombatPetFeed() end
         function PushEntry(results,id,_,_,_,_,precombat,topoff)
             assert(precombat==true)
             if id==639 then assert(topoff==true) end
@@ -294,6 +295,29 @@ def test_paladin_blessing_upkeep():
     assert seq(query()) == [19834], "upkeep resolves the learned blessing rank"
     lua.execute("auraByID[19834]={duration=300,expirationTime=now+200}")
     assert seq(query()) == [], "the active learned rank satisfies blessing upkeep"
+
+def test_shaman_shield_default():
+    lua, _ = new_runtime(precombat=False)
+    lua.execute("""
+        playerClass="SHAMAN";known={[324]=true,[408510]=true}
+        tree="elemental"
+        LibStub("JustAC-RotationImport").GetForeverTree=function() return tree end
+    """)
+    lua.execute((ROOT / "PrecombatEngine.lua").read_text(encoding="utf-8"))
+    lua.execute("""
+        P=LibStub("JustAC-PrecombatEngine")
+        function Query() P.ClearCache();return P.GetMissingClassBuffs(false,80,false) end
+    """)
+    query = lua.globals().Query
+    assert seq(query()) == [408510], "Elemental prefers known Water Shield"
+    lua.execute("known[408510]=false")
+    assert seq(query()) == [324], "Lightning Shield remains the leveling fallback"
+    lua.execute("known[408510]=true;tree='enhancement'")
+    assert seq(query()) == [324], "Enhancement retains its Lightning Shield default"
+    for active in (324, 408510):
+        lua.execute(f"tree='elemental';auraByID={{[{active}]={{duration=600,expirationTime=now+590}}}}")
+        assert seq(query()) == [], "An active shield is never replaced with the default"
+
 
 def test_upkeep_family_gaps():
     for cls, spell in (("PRIEST", 14752), ("PRIEST", 976), ("DRUID", 467),
@@ -876,6 +900,7 @@ def main():
     test_rites_and_preparation_priority()
     test_learned_rank_preparation()
     test_paladin_blessing_upkeep()
+    test_shaman_shield_default()
     test_upkeep_family_gaps()
     test_critical_preparation_context()
     test_preparation_queue_exclusivity()

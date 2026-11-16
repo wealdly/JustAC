@@ -30,6 +30,14 @@ Cross-class facts that matter for a suggestion engine:
 
 ## Hunter - Beast Mastery
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/beast-mastery-hunter-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Single target: Hunter's Mark before combat, pet attacks first, maintain Serpent Sting, Summon Hawk on cooldown keeping two hawks, Aimed Shot on cooldown, Arcane Shot when two hawks will stay up 6+ seconds, Immolation Trap in melee range.
+- 2-7 targets: Multi-Shot and Explosive Trap on cooldown, hawks, Arcane Shot as above, Volley. 8+: Explosive Trap, Volley, Multi-Shot while moving.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetch |
@@ -126,6 +134,14 @@ state it).
 
 ## Hunter - Marksmanship
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/marksmanship-hunter-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Single target: Hunter's Mark, Sniper Shot, Aimed Shot, Serpent Sting, Arcane Shot (each on cooldown), Immolation Trap in melee range.
+- 2-7 targets: Multi-Shot, Explosive Trap, Sniper Shot, Arcane Shot (only at 3 or fewer), Volley. 8+: Explosive Trap, Volley, Multi-Shot while moving.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetch |
@@ -197,6 +213,14 @@ Rapid Killing proc window handling not in any priority list.
 
 ## Hunter - Survival
 
+### Launch rotation (Icy Veins, added 2026-11-06)
+
+Source: https://www.icy-veins.com/wow-forever/survival-hunter-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Ranged: Hunter's Mark, Serpent Sting (do not reapply early), Aimed Shot and Arcane Shot on cooldown; multi-target Multi-Shot, Explosive Trap, Volley.
+- Melee: Hunter's Mark, pre-cast Aimed Shot before running in, Serpent Sting on the way, Immolation Trap once in melee and on cooldown, Summon Hawk keeping two, then Raptor Strike, Mongoose Bite and Strider Kick on cooldown.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetch |
@@ -263,6 +287,14 @@ Strikes) appear to be an older build of the same talents.
 ---
 
 ## Mage - Arcane
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/arcane-mage-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Arcane Fire single target: open with Pyroblast; Pyroblast at 3 Heating Up, Fire Blast on cooldown until then, Arcane Wrath on cooldown, Arcane Missiles with Missile Barrage, Arcane Blast filler.
+- AoE: open with Flamestrike, Blink in, Arcane Explosion on cooldown, Presence of Mind Flamestrike when the first one ends, then Arcane Explosion.
 
 **Sources**
 
@@ -337,6 +369,15 @@ covered by IV/MOB.
 
 ## Mage - Fire
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/fire-mage-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Frostfire Bolt build: open with Pyroblast, Scorch to 5 Improved Scorch (Pyroblast earlier on 3 Heating Up), Pyroblast at 3 Heating Up, Fire Blast on cooldown until then, Frostfire Bolt filler, Scorch to maintain the debuff.
+- Deep Fire (Combustion) build: the same opener; Arcane Blast kept up, Arcane Missiles with Missile Barrage, Fireball filler, Scorch upkeep.
+- AoE (both, only without aggro): open with Flamestrike, Blink in, Blast Wave on cooldown, Cone of Cold, a new Flamestrike before the last one's 8 seconds end, Arcane Explosion.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetch |
@@ -405,6 +446,15 @@ Fireball-vs-Scorch filler data; Combustion at 60 only from WGG (older build).
 ---
 
 ## Mage - Frost
+
+### Launch rotation (Icy Veins, updated 2026-11-09)
+
+Source: https://www.icy-veins.com/wow-forever/frost-mage-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Pre-pull: Arcane Intellect, Ice or Mage Armor, Ice Barrier, pre-cast Frostbolt.
+- Single target: Cone of Cold batched with Frostbolt at 5 Winter's Chill, Ice Lance batched at 1 Fingers of Frost (or on frozen targets with Frostbite), Ice Barrier when Frigid Power has 3 seconds or less, otherwise Frostbolt.
+- 3+ targets: Cone of Cold on cooldown, Cold Snap to reset it, Blizzard filler.
 
 **Sources**
 
@@ -487,6 +537,14 @@ in groups).
 ---
 
 ## Warlock - Affliction
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/affliction-warlock-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Bane of Doom if the target lives 60+ seconds, otherwise Bane of Agony; Corruption, Siphon Life and Immolate kept up with refreshes timed to expiry; Shadow Bolt only on Nightfall procs; Life Tap when needed (ideally while moving); Wrack as the channelled filler, interrupted for refreshes and Nightfall.
+- AoE sections not extracted (tabbed content).
 
 **Sources**
 
@@ -572,6 +630,14 @@ level not stated by any spec guide.
 
 ## Warlock - Demonology
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/demonology-warlock-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Bane as for Affliction; Searing Pain when Demonic Brand is missing from the demon's target; Immolate and Corruption timed to expiry; Life Tap when needed; Shadow Bolt filler.
+- AoE sections not extracted (tabbed content).
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetch |
@@ -647,6 +713,14 @@ Link choice at 60 unresolved.
 ---
 
 ## Warlock - Destruction
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/destruction-warlock-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Bane as for Affliction; Immolate and Corruption timed to expiry; Conflagrate on cooldown while Immolate is up; Shadowburn only when the Shadow and Flame fire-damage buff is missing or under 3 seconds (not an execute); Incinerate filler; Life Tap when health allows.
+- AoE sections not extracted (tabbed content).
 
 **Sources**
 

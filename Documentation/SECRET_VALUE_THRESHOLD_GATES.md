@@ -210,6 +210,17 @@ Every consumer already fails to these; nothing needs rewriting to degrade.
 
 ## Unadopted: the LuaDurationObject predicate surface
 
+**2026-11-14 applicability check:** the zero-gate remains useful for health,
+power and permitted duration objects, but does not grant aura-access permission.
+Tracked-bar raw expiration/duration cannot simply be assumed usable as secret
+arguments to `SetTimeFromEnd` or numeric `Curve:Evaluate`; both declare
+`AllowedWhenUntainted` in Forever 1.60.1 (70938). The Research capture now compares
+the aura-duration route with `Bar:GetTimerDuration()` and existing fixed duration
+thresholds independently. The reviewed bar code uses manual `SetValue`, so an
+empty native timer is a possible false positive, not evidence of live timing.
+See [controls and limits](FOREVER_COMBAT_SIGNALS.md#tracked-bar-timing-and-caster-pushback-investigation-2026-11-14).
+No new gameplay consumer is enabled until live controls validate the route.
+
 Found 2026-08-11. All of this work used only the object's `Evaluate*` methods; it also
 carries predicates that may be **simpler than any of the above**:
 

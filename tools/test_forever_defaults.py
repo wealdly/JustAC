@@ -34,7 +34,8 @@ def load(forever):
         # Rank chains as RotationImport would hold them (Holy Strike 679 -> 678 rank 2).
         lua.execute("""LibStub:NewLibrary("JustAC-RotationImport").RankBase =
             function(id) if id == 678 then return 679 end return id end""")
-    files = ["SpellDB.lua", "Data/ChanneledSpells.lua", "Data/Forever/Defaults.lua", "Data/CCBreakers.lua"]
+    files = ["SpellDB.lua", "Data/InterruptAbilities.lua", "Data/ChanneledSpells.lua",
+             "Data/Forever/Defaults.lua", "Data/CCBreakers.lua"]
     if not forever:
         # Retail also loads the real RotationImport and the Forever lists (the TOC lists them
         # for both clients): nothing in them may register there.
@@ -63,6 +64,8 @@ def main():
           "Elune's Grace is in Priest defensive defaults")
     check(sdb.GetForeverAbilityRole(402927) == "mixed",
           "Victory Rush keeps its offensive and defensive roles")
+    check(list(sdb.CLASS_BURST_TRIGGER_DEFAULTS.SHAMAN_F.values()) == [16166, 425336],
+          "Shaman burst cues include Lightning Mastery and Rage of the Farseer")
     check(sdb.IsForever() is True, "Forever client detected")
     check(sdb.GetSpecKey()[0] == "WARRIOR_F", "spec key on Forever is CLASS_F")
     gap = sdb.ResolveDefaults(sdb.CLASS_GAPCLOSER_DEFAULTS)
@@ -107,6 +110,7 @@ def main():
           "Forever target-aura observation policy does not register on retail")
     check(r.GetSpecKey()[0] == "WARRIOR_1", "retail spec key unchanged")
     check(r.CLASS_GAPCLOSER_DEFAULTS.WARRIOR_F is None, "no Forever keys on retail")
+    check(r.CLASS_BURST_TRIGGER_DEFAULTS.SHAMAN_F is None, "Forever Shaman burst defaults do not leak to retail")
     check(r.CLASS_TOPOFF_HEALS.PRIEST[1] == 2061, "retail class lists untouched")
     check(r.ROGUE_POISON_CAST_IDS[315584] is True, "retail poison index intact")
     check(r.RAID_BUFF_SPELLS[6673] is True and r.CLASS_MAINTAINED_BUFFS.WARRIOR is not None,
@@ -120,6 +124,21 @@ def main():
     check(r.StaticLookup(rt.eval("{[772] = 'x'}"), 6546) is None, "retail: a Forever rank id finds nothing")
     check(rt.eval('LibStub("JustAC-CCBreakers")').GetBreakers(12)[1259718] is None,
           "retail: the retail CC-break table, not Forever's")
+
+    # Interrupt/CC table: Forever retracts a retail id that is another spell there, and adds
+    # its own interrupts and crowd control; retail keeps the shared table unchanged.
+    check(sdb.GetInterruptAbility(99) is None, "Forever: 99 is Demoralizing Roar, not a crowd control")
+    check(sdb.GetInterruptAbility(12809).kind == "cc" and sdb.GetInterruptAbility(72).kind == "interrupt"
+          and sdb.IsInterruptTypeSpell(8042) is True, "Forever: Concussion Blow, Shield Bash, Earth Shock")
+    check(sdb.IsCrowdControlSpell(12809) is True, "Forever: Concussion Blow is crowd control, not damage")
+    for sid, name in ((72, "Shield Bash"), (1238122, "Feral Charge"), (8042, "Earth Shock")):
+        check(sdb.GetForeverAbilityRole(sid) == "utility",
+              f"Forever: {name} is reserved from automatic damage queues")
+    check(sdb.IsDelayedPayoff(603) is True and sdb.IsDelayedPayoff(980) is False,
+          "Forever: Bane of Doom pays off only in long fights; Bane of Agony ticks at once")
+    check(r.IsDelayedPayoff(603) is False, "retail: no Forever delayed-payoff data")
+    check(r.GetInterruptAbility(99).kind == "cc" and r.GetInterruptAbility(12809) is None,
+          "retail: Incapacitating Roar kept, no Forever-only entries")
 
     for why in bad:
         print("  FAIL", why)

@@ -43,7 +43,6 @@ local C_Spell_GetSpellChargeDuration = C_Spell and C_Spell.GetSpellChargeDuratio
 local C_DurationUtil_CreateDuration = C_DurationUtil and C_DurationUtil.CreateDuration
 
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
-local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
 local C_Spell_IsCurrentSpell = C_Spell and C_Spell.IsCurrentSpell
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
@@ -120,8 +119,8 @@ local function NormalizeHotkey(hotkey)
     return n
 end
 
--- Stock action-bar range glyph: an unbound button shows this dot, red, only while out of range.
-local RANGE_INDICATOR = RANGE_INDICATOR or "\226\151\143"  -- "●"
+-- Use an ASCII dot: the stock range glyph is missing from some hotkey fonts.
+local RANGE_INDICATOR = "."
 
 --- Central hotkey-label visibility (profile.textOverlays.hotkey.show, default on).
 local function ShowHotkeys(overlays)
@@ -373,6 +372,13 @@ local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartT
 -- allocation per icon per cooldown tick.
 local itemCooldownScratch  = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 
+-- False only when the player's GCD is known idle (one read per frame, shared by every
+-- icon); unknown (no GCD source, e.g. WoW Forever) keeps the per-spell query.
+local function MayBeOnGCD()
+    if not BlizzardAPI.IsGlobalCooldownRunning then return true end
+    return BlizzardAPI.IsGlobalCooldownRunning() ~= false
+end
+
 -- Release stage for an EMPOWERED cast, as a Roman numeral, or nil.
 --
 -- Roman rather than arabic because this shares the charge-count corner, and a bare "1"
@@ -593,9 +599,12 @@ local function UpdateButtonCooldowns(button)
             -- true exactly during a pure GCD window; never for off-GCD abilities)
             -- gates rendering the GCD from the spell's own duration object instead
             -- of clearing - so macro/off-bar icons keep the GCD sweep.
+            -- The global GCD state is read once per frame; while it is known idle no icon
+            -- can be on it, so the per-spell query is skipped (nil = unknown: ask the spell).
             local gcdShown = false
             if cooldownID and C_Spell_GetSpellCooldownDuration
-               and BlizzardAPI.IsSpellOnGCD and BlizzardAPI.IsSpellOnGCD(cooldownID) then
+               and BlizzardAPI.IsSpellOnGCD and MayBeOnGCD()
+               and BlizzardAPI.IsSpellOnGCD(cooldownID) then
                 local ok, durObj = pcall(C_Spell_GetSpellCooldownDuration, cooldownID)
                 if ok and durObj then
                     button.cooldown:SetCooldownFromDurationObject(durObj)
@@ -683,22 +692,13 @@ local VS_WAITING = 8
 -- ─────────────────────────────────────────────────────────────────────────────
 
 --- Check whether a spell is confirmed out of range (fail-open: only a definite false).
---- @param icon table  Icon button table
 --- @param spellID number
---- @param directSlot number|nil  Action bar slot (preferred, NeverSecret)
+--- @param directSlot number|nil  Direct item slot; spells resolve through AbilityInRange.
+--- @param isItemEntry boolean|nil
 --- @return boolean isOutOfRange
-local function CheckSpellRange(icon, spellID, directSlot)
-    local inRange
-    if BlizzardAPI.IsMeleeSwingSpell(spellID) then
-        inRange = BlizzardAPI.SpellInRange(spellID)
-    elseif directSlot and C_ActionBar_IsActionInRange then
-        inRange = C_ActionBar_IsActionInRange(directSlot, "target")
-        if inRange ~= nil and BlizzardAPI.IsSecretValue(inRange) then inRange = nil end
-    elseif BlizzardAPI.SpellInRange then
-        inRange = BlizzardAPI.SpellInRange(spellID)   -- tri-state; owns the unit-arg finding
-    end
-    -- Fail open: only a confirmed false shows the red state.
-    return inRange == false
+local function CheckSpellRange(spellID, directSlot, isItemEntry)
+    if isItemEntry then return BlizzardAPI.ActionInRange(directSlot) == false end
+    return BlizzardAPI.AbilityInRange(spellID) == false
 end
 
 --- Update hotkey text color based on out-of-range state (stock action-bar style: the text
@@ -708,7 +708,7 @@ end
 --- @param hotkeyColor table|nil  {r,g,b,a} from profile hotkey color
 local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
     local text = icon.hotkeyText:GetText() or ""
-    if text == "" or text == RANGE_INDICATOR then
+    if not icon.hotkeyShown or not icon.cachedHotkey or icon.cachedHotkey == "" then
         local want = isOutOfRange and RANGE_INDICATOR or ""
         if text ~= want then icon.hotkeyText:SetText(want) end
     end
@@ -1902,7 +1902,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     local to = profile.textOverlays
     local showHotkeys = ShowHotkeys(to)
     SetIconHotkey(icon, icon.cachedHotkey or LookupHotkey(displayID), showHotkeys)
-    UpdateRangeHotkeyColor(icon, CheckSpellRange(icon, displayID, nil),
+    UpdateRangeHotkeyColor(icon, CheckSpellRange(displayID),
         profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
 
     -- TWO stages, same blue, escalating: marching ants at the refresh threshold (~3s before
@@ -1974,61 +1974,87 @@ end
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
 -- waiting: held-back emergency heal (above low-health threshold) - render desaturated
 -- with a centered WAIT tag and no glow, instead of showing it as a live suggestion.
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, waiting, isPrecombatEntry)
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, waiting, isPrecombatEntry, useCachedMetadata)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture
     -- Hoisted: the move-cast marker below needs spellInfo.castTime, not just the icon.
     local defSpellInfo
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
-
-    -- Clear identity before anything can bail out below. These slots are pooled, so a
-    -- bail-out otherwise leaves the icon still claiming its PREVIOUS occupant - and
-    -- everything that reads these fields (tooltip, hotkey handler, and the out-of-combat
-    -- click layer, which binds a real cast to them) would act on a spell this slot no
-    -- longer offers. The success path re-assigns all four a few lines down.
-    defensiveIcon.currentID = nil
-    defensiveIcon.spellID = nil
-    defensiveIcon.itemID = nil
-    defensiveIcon.isItem = nil
-
-    if isItem then
-        if C_Item and C_Item.GetItemIconByID then
-            iconTexture = C_Item.GetItemIconByID(id)
-        end
-        -- Into a temp, not straight onto iconTexture: GetItemInfo returns nil for an item
-        -- the client hasn't cached yet, which would erase the icon GetItemIconByID already
-        -- resolved from the ID alone and send us down the bail-out path for nothing.
-        local cachedIcon = select(10, C_Item.GetItemInfo(id))
-        iconTexture = cachedIcon or iconTexture
-        if not iconTexture then
-            iconTexture = C_Item.GetItemIconByID(id)
-        end
-        if not iconTexture then
-            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-            return
-        end
-    else
-        -- Cached read: the raw C_Spell.GetSpellInfo allocates a fresh info table per
-        -- call, and this runs per defensive icon per render pass on both surfaces.
-        defSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
-        if not defSpellInfo then
-            -- Not-yet-resolvable spell info (right after a reload, talent-override ids in
-            -- particular) - the bail-out used to eat this render silently, leaving the
-            -- slot at alpha 0 until the NEXT build, and out of combat that is the 1s
-            -- idle timer, which on a fresh load did not tick until ~2.3s: the defensive
-            -- cluster appeared seconds after the rotation. Mark dirty so the retry is
-            -- next tick; nil is not cached, so the retry can succeed.
-            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-            return
-        end
-        iconTexture = defSpellInfo.iconID
+    local hasCachedMetadata = useCachedMetadata and not idChanged
+        and defensiveIcon.cachedMetadataID == id
+        and defensiveIcon.cachedMetadataIsItem == isItem
+    -- Same-queue overlay refreshes reuse static icon data; live state below is still refreshed.
+    if useCachedMetadata and not hasCachedMetadata then
+        idChanged = true
     end
-    
-    defensiveIcon.currentID = id
-    defensiveIcon.spellID = not isItem and id or nil
-    defensiveIcon.itemID = isItem and id or nil
-    defensiveIcon.isItem = isItem
+    if hasCachedMetadata then
+        iconTexture = defensiveIcon.cachedMetadataIcon
+        defSpellInfo = defensiveIcon.cachedMetadataSpellInfo
+        if not iconTexture or (not isItem and not defSpellInfo) then
+            hasCachedMetadata = false
+        end
+    end
+
+    if not hasCachedMetadata then
+        -- Clear identity before anything can bail out below. These slots are pooled, so a
+        -- bail-out otherwise leaves the icon still claiming its PREVIOUS occupant - and
+        -- everything that reads these fields (tooltip, hotkey handler, and the out-of-combat
+        -- click layer, which binds a real cast to them) would act on a spell this slot no
+        -- longer offers. The success path re-assigns all four a few lines down.
+        defensiveIcon.currentID = nil
+        defensiveIcon.spellID = nil
+        defensiveIcon.itemID = nil
+        defensiveIcon.isItem = nil
+        defensiveIcon.cachedMetadataID = nil
+        defensiveIcon.cachedMetadataIsItem = nil
+        defensiveIcon.cachedMetadataIcon = nil
+        defensiveIcon.cachedMetadataSpellInfo = nil
+
+        if isItem then
+            if C_Item and C_Item.GetItemIconByID then
+                iconTexture = C_Item.GetItemIconByID(id)
+            end
+            -- Into a temp, not straight onto iconTexture: GetItemInfo returns nil for an item
+            -- the client hasn't cached yet, which would erase the icon GetItemIconByID already
+            -- resolved from the ID alone and send us down the bail-out path for nothing.
+            local cachedIcon = select(10, C_Item.GetItemInfo(id))
+            iconTexture = cachedIcon or iconTexture
+            if not iconTexture then
+                iconTexture = C_Item.GetItemIconByID(id)
+            end
+            if not iconTexture then
+                if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+                return
+            end
+        else
+            -- Cached read: the raw C_Spell.GetSpellInfo allocates a fresh info table per
+            -- call, and this runs per defensive icon per render pass on both surfaces.
+            defSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
+            if not defSpellInfo then
+                -- Not-yet-resolvable spell info (right after a reload, talent-override ids in
+                -- particular) - the bail-out used to eat this render silently, leaving the
+                -- slot at alpha 0 until the NEXT build, and out of combat that is the 1s
+                -- idle timer, which on a fresh load did not tick until ~2.3s: the defensive
+                -- cluster appeared seconds after the rotation. Mark dirty so the retry is
+                -- next tick; nil is not cached, so the retry can succeed.
+                if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+                return
+            end
+            iconTexture = defSpellInfo.iconID
+        end
+
+        defensiveIcon.currentID = id
+        defensiveIcon.spellID = not isItem and id or nil
+        defensiveIcon.itemID = isItem and id or nil
+        defensiveIcon.isItem = isItem
+        defensiveIcon.cachedMetadataID = id
+        defensiveIcon.cachedMetadataIsItem = isItem
+        defensiveIcon.cachedMetadataIcon = iconTexture
+        defensiveIcon.cachedMetadataSpellInfo = defSpellInfo
+    end
+
+    local profile = addon.db and addon.db.profile
     
     -- Item → cast-spell mapping is static per item; re-query on identity change,
     -- plus retry while nil - GetItemSpell returns nothing until the client has the
@@ -2049,7 +2075,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     --   move-cast - a defensive you can use while repositioning is exactly the one you want
     --              when the fight is making you run, so it belongs here as much as on the queue.
     -- Re-evaluated every render because proc state is live, unlike the static off-GCD data.
-    local profile = addon.db and addon.db.profile
     local markable = not isItem and not waiting and not isPrecombatEntry
     ApplyCueDot(defensiveIcon,
         markable and MoveCastDotEnabled(profile) and IsMoveCastableNow(id, defSpellInfo),
@@ -2075,9 +2100,9 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     end
 
     -- Hotkey visibility and key-press flash are central settings (both surfaces).
-    local defOverlays = addon.db and addon.db.profile and addon.db.profile.textOverlays
+    local defOverlays = profile and profile.textOverlays
     local showHotkeys = ShowHotkeys(defOverlays)
-    local showFlash = addon.db and addon.db.profile and addon.db.profile.showFlash ~= false
+    local showFlash = profile and profile.showFlash ~= false
     local hotkey = ""
     if showHotkeys or showFlash then
         hotkey = LookupHotkey(id, isItem, defensiveIcon.itemCastSpellID)
@@ -2098,9 +2123,8 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
 
-    local profileForGlow = addon.db and addon.db.profile
-    local defGlowMode = UIRenderer.ResolveGlowMode(profileForGlow, glowModeOverride
-        or (profileForGlow and profileForGlow.defensives and profileForGlow.defensives.glowMode))
+    local defGlowMode = UIRenderer.ResolveGlowMode(profile, glowModeOverride
+        or (profile and profile.defensives and profile.defensives.glowMode))
 
     defensiveIcon.defGlowMode = defGlowMode
     defensiveIcon.defShowGlow = showGlow
@@ -2139,6 +2163,10 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         defensiveIcon.currentID = nil
         defensiveIcon.isPrecombatBuff = nil
         defensiveIcon.isWaiting = nil
+        defensiveIcon.cachedMetadataID = nil
+        defensiveIcon.cachedMetadataIsItem = nil
+        defensiveIcon.cachedMetadataIcon = nil
+        defensiveIcon.cachedMetadataSpellInfo = nil
         defensiveIcon.previousNormalizedHotkey = nil
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
@@ -2309,7 +2337,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             -- self-centred CC has no range to ask about, so the tracker says when it picked
             -- one it cannot prove reaches (EvaluateInterrupt's last resort).
             UpdateRangeHotkeyColor(intIcon,
-                CheckSpellRange(intIcon, intSpellID, nil) or intResult.unreachable == true, ctx.hotkeyColor)
+                CheckSpellRange(intSpellID) or intResult.unreachable == true, ctx.hotkeyColor)
 
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.
@@ -2391,7 +2419,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             end
             -- Grey the reminder (interrupt or CC) while it's on the GCD; off-GCD
             -- interrupts stay full-color since IsSpellOnGCD is false for them.
-            local intDesat = BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0
+            local intDesat = (MayBeOnGCD() and BlizzardAPI.IsSpellOnGCD(intSpellID)) and 1.0 or 0
             if intIcon.lastIntDesat ~= intDesat then
                 intIcon.lastIntDesat = intDesat
                 intIcon.iconTexture:SetDesaturation(intDesat)
@@ -2791,7 +2819,7 @@ local function RenderQueueIcon(icon, i, ctx)
         end
 
         -- Range is hotkey-text only, stock action-bar style; always evaluated (cheap).
-        UpdateRangeHotkeyColor(icon, CheckSpellRange(icon, spellID, directSlot), ctx.hotkeyColor)
+        UpdateRangeHotkeyColor(icon, CheckSpellRange(spellID, directSlot, isItemEntry), ctx.hotkeyColor)
 
         local baseDesaturation = (i > 1) and ctx.queueDesaturation or 0
         local isChanneledSpell, isCastedSpell
@@ -2807,12 +2835,9 @@ local function RenderQueueIcon(icon, i, ctx)
         local queuedSwing, swingStart, swingEnd, offStart, offEnd = false, nil, nil, nil, nil
         local shotReady = false
         local autoSwing = not isItemEntry and BlizzardAPI.RunningAutoSwing(spellID)
-        if not isItemEntry and SpellDB and SpellDB.NEXT_SWING_SPELLS[spellID] and C_Spell_IsCurrentSpell then
-            local queued = C_Spell_IsCurrentSpell(spellID)
-            if queued and not BlizzardAPI.IsSecretValue(queued) then
-                isCastedSpell, queuedSwing = true, true
-                swingStart, swingEnd = BlizzardAPI.GetSwingWindow(0)
-            end
+        if autoSwing == 0 and SpellDB and SpellDB.NEXT_SWING_SPELLS[spellID] then
+            isCastedSpell, queuedSwing = true, true
+            swingStart, swingEnd = BlizzardAPI.GetSwingWindow(0)
         elseif autoSwing then
             -- Attack / Auto Shot / wand already running: the same "it will fire" display on its
             -- own swing (a hunter sees when to stand still for the shot), the off hand too.

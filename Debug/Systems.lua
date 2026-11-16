@@ -1103,11 +1103,9 @@ end
 -- AoE-context probe
 --------------------------------------------------------------------------------
 --- /jac inspect range - settle which range API answers against the CURRENT target.
---- The SPELL path (C_Spell.IsSpellInRange) feeds IsTargetWithin - so the gap closer,
---- the melee sink, and off-bar hotkey reds. The SLOT path (C_ActionBar.IsActionInRange)
---- feeds on-bar hotkey reds. Run it three times: on a fresh target while the gap
---- closer shows, after it wedges, and right after retargeting - whichever column
---- changes between runs is the culprit.
+--- AbilityInRange owns queue/UI reach: verified action slot, then spell fallback,
+--- except Forever swing abilities, which use melee evidence. IsTargetWithin owns
+--- generic distance brackets. Show the raw inputs beside the effective verdict.
 function DebugCommands.RangeProbe(addon)
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -1120,6 +1118,15 @@ function DebugCommands.RangeProbe(addon)
         return
     end
     local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
+    local function read(fn, ...)
+        if not fn then return nil end
+        local ok, value = pcall(fn, ...)
+        if not ok then
+            geterrorhandler()(value)
+            return nil
+        end
+        return value
+    end
     local function fmt(v)
         if v == nil then return "|cff888888nil|r" end
         if isSecret and isSecret(v) then return "|cffff00ffSECRET|r" end
@@ -1144,6 +1151,17 @@ function DebugCommands.RangeProbe(addon)
         end
         addon:Print("  IsTargetWithin: " .. table.concat(parts, "  "))
     end
+    if SpellDB and SpellDB.DebugRangeSources then
+        local s = SpellDB.DebugRangeSources()
+        local items = {}
+        for _, tier in ipairs(s.items) do
+            items[#items + 1] = tier.yards .. "yd=" .. (tier.ready and fmt(tier.r) or "|cff888888loading|r")
+        end
+        addon:Print(string.format("  Sources: items[%s] interact8=%s swing=%s within=%s beyond=%s%s",
+            #items > 0 and table.concat(items, " ") or "none", fmt(s.interact), fmt(s.swing),
+            tostring(s.within), tostring(s.beyond),
+            s.contradiction and "  |cffff6666CONTRADICTION: all radii unknown|r" or ""))
+    end
 
     -- 2. Every known range reference, raw spell-path answer.
     if SpellDB and SpellDB.DebugRangeProbes then
@@ -1151,26 +1169,36 @@ function DebugCommands.RangeProbe(addon)
         addon:Print("  References (" .. #probes .. " known):")
         for i = 1, #probes do
             local p = probes[i]
-            addon:Print(string.format("    %s (%d, %dyd): %s", nameOf(p.id), p.id, p.ref, fmt(p.r)))
+            addon:Print(string.format("    %s (%d, base %d): %s  min=%s max=%s reference=%dyd%s",
+                nameOf(p.id), p.id, p.baseID, fmt(p.r), tostring(p.minRange),
+                tostring(p.maxRange), p.ref, p.meleeReference and " (melee)" or ""))
         end
     end
 
     -- 3. Current queue spells: spell path vs slot path side by side.
     local queue = SpellQueue and SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue() or {}
-    addon:Print("  Queue (spell path / slot path):")
+    addon:Print("  Queue (raw spell / slot / effective ability):")
     for i = 1, math.min(#queue, 6) do
         local sid = queue[i]
         if sid and sid > 0 then
-            local spellR = C_Spell and C_Spell.IsSpellInRange and C_Spell.IsSpellInRange(sid, "target")
+            local spellR = read(C_Spell and C_Spell.IsSpellInRange, sid, "target")
             local slot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell
                 and ActionBarScanner.GetDirectSlotForSpell(sid)
             local slotR
             if slot and C_ActionBar and C_ActionBar.IsActionInRange then
-                slotR = C_ActionBar.IsActionInRange(slot, "target")
+                slotR = read(C_ActionBar.IsActionInRange, slot, "target")
             end
-            addon:Print(string.format("    %d. %s: spell=%s  slot=%s%s", i, nameOf(sid), fmt(spellR),
+            local source = "spell fallback"
+            if BlizzardAPI.IsMeleeSwingSpell(sid) then
+                source = "melee evidence"
+            elseif not (isSecret and isSecret(slotR)) and type(slotR) == "boolean" then
+                source = "action slot"
+            end
+            addon:Print(string.format("    %d. %s: spell=%s  slot=%s%s  ability=%s (%s)",
+                i, nameOf(sid), fmt(spellR),
                 slot and fmt(slotR) or "|cff888888no direct slot|r",
-                slot and (" (#" .. slot .. ")") or ""))
+                slot and (" (#" .. slot .. ")") or "",
+                fmt(BlizzardAPI.AbilityInRange(sid)), source))
         end
     end
 
@@ -1184,7 +1212,7 @@ function DebugCommands.RangeProbe(addon)
             local set = {}
             GapCloser.MarkGapCloserSpellIDs(addon, set)
             for id in pairs(set) do
-                local ownR = BlizzardAPI and BlizzardAPI.SpellInRange and BlizzardAPI.SpellInRange(id)
+                local ownR = BlizzardAPI and BlizzardAPI.AbilityInRange and BlizzardAPI.AbilityInRange(id)
                 local ready = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(id)
                 addon:Print(string.format("    candidate %s (%d): own-range=%s  ready=%s",
                     nameOf(id), id, ownR == nil and "|cff888888nil|r" or fmt(ownR), tostring(ready)))
@@ -1492,8 +1520,8 @@ function DebugCommands.MaintenanceLog(addon, arg)
 end
 
 --- /jac inspect enemies - why does the direct enemy count read what it reads?
---- GetEngagedEnemyCount skips a nameplate unit when ANY of three reads comes back secret,
---- which turns a hidden read into a silent, permanent zero. This prints each read per
+--- GetEngagedEnemyCount never counts a nameplate unit whose reads come back secret,
+--- which turns a hidden read into a silent zero. This prints each read per
 --- plate with its secrecy, so the one that fails is visible. Run it IN COMBAT with a pack.
 function DebugCommands.EnemyCountProbe(addon)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)

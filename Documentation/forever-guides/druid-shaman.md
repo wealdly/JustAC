@@ -40,6 +40,15 @@ transfer between targets**; form attacks scale with weapon DPS; consumables usab
 
 ## Druid - Balance
 
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/balance-druid-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Pre-cast Wrath to land on the pull (each Wrath grants two Eclipse charges that shorten Starfire).
+- Keep Insect Swarm and Moonfire up without early refreshes; fill with one Wrath then two Starfires.
+- AoE: DoTs on every target; Hurricane at 5+ enemies; at 2-4 the single-target pattern with more DoT upkeep.
+
 **Sources**
 
 | site | URL | guide type | date / level | fetched |
@@ -105,6 +114,14 @@ Starfire cast count untested; Moonkin Form level unknown; Hurricane thresholds s
 ---
 
 ## Druid - Feral (cat DPS)
+
+### Launch rotation (Icy Veins, added 2026-11-04)
+
+Source: https://www.icy-veins.com/wow-forever/feral-druid-melee-dps-and-tank-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Keep Mark of the Wild, Thorns and Faerie Fire. Ferocious Bite only with Rip at 3-4+ seconds left, 5 combo points and 70+ energy (35-40+ with Omen of Clarity). Shifting Power at about 50 energy or less. Spend Omen of Clarity on Shred. Rip at 5 combo points if missing; Rake if missing; build with Claw (or Shred in the Shred variant).
+- AoE: the same, spreading Faerie Fire and switching targets only after spending combo points.
 
 **Sources**
 
@@ -283,7 +300,51 @@ read); exact downrank penalty curve unknown.
 
 ---
 
+## Shaman - current guide adaptations (2026-11-14)
+
+These updates supersede the October Shaman rotation research below. Priorities are
+paraphrased; the generator's Shaman adaptation owns the resulting defaults.
+
+| source | author | updated | scope |
+|---|---|---|---|
+| [Enhancement rotation](https://www.icy-veins.com/wow-forever/enhancement-shaman-melee-dps-pve-rotation-cooldowns-abilities) | Wordup | 2026-11-13 | Single target, AoE, totems, Maelstrom safety |
+| [Elemental rotation](https://www.icy-veins.com/wow-forever/elemental-shaman-ranged-dps-pve-rotation-cooldowns-abilities) | Seksixeny | 2026-11-07 | Up to two targets versus 3+, cooldowns and mana |
+| [Elemental leveling](https://www.icy-veins.com/wow-forever/elemental-shaman-leveling) | Seksixeny | 2026-11-04 | Water Shield once talented |
+
+- Enhancement maintains a fire totem and Flame Shock, ranks Rage of the Farseer before
+  Stormstrike, spends Lightning Bolt only at five Maelstrom stacks, and otherwise uses
+  Earth Shock and Fire Nova. In AoE, Nova moves ahead of the other damage buttons.
+  Below five stacks, Bolt can reset the swing timer.
+- The default queue reserves Earth Shock for interrupts instead of following the guide's
+  damage use, except as a short-cooldown fallback after observed cast pushback. It is not
+  used as damage while the target casts or after a cast has been observed on that target.
+  A target not seen casting may still be a caster; Flame and Frost Shock also share Earth
+  Shock's six-second cooldown. Custom queues can still include it.
+- Elemental uses Searing on up to two targets, maintains Flame Shock and ranks Lightning
+  Mastery before its nukes. Chain Lightning is an ordinary damage button, not dependent on
+  learning its Clearcasting proc aura. During a confirmed Mastery window, single-target
+  Bolt takes precedence; packs retain Chain Lightning.
+- Elemental switches to Magma and adds Nova at 3+. Both DPS trees use only confirmed-empty
+  totem slots and preserve existing utility totems. Nova requires an occupied fire slot;
+  that occupancy does not prove which totem it is or whether enemies are in its range.
+- Searing follows Magma as a learned/affordable fallback. This does not predict encounter
+  length or reserve mana for a future fight. Long mana-limited encounters can call for
+  fewer casts than the general priority; no hidden fight-length budget is invented.
+- The default Enhancement shield remains Lightning Shield. Elemental prefers Water Shield
+  if learned, without replacing an active alternative or changing player overrides.
+- The five-stack combat requirement needs affirmative evidence, including when a proc
+  overlay is present. Ordinary unreadable stack preferences retain their old behavior;
+  the existing pre-pull Lightning Bolt hardcast exception is preserved.
+
 ## Shaman - Elemental
+
+### Launch rotation (Icy Veins, updated 2026-11-07)
+
+Source: https://www.icy-veins.com/wow-forever/elemental-shaman-ranged-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Single target (up to two targets or a priority target): pre-place totems with Call of the Elements (Searing last), Flame Shock and refresh on expiry, Lightning Mastery and other cooldowns, Chain Lightning outside the Lightning Mastery window (only on Clearcasting in long fights), Lightning Bolt filler.
+- Multi-target (3+, no priority target): Magma Totem last before the pull, cooldowns, Chain Lightning and Fire Nova on cooldown, Flame Shock on targets without it, Lightning Bolt. Skip Flame Shock and Lightning Bolt when mana will not last.
 
 **Sources**
 
@@ -345,6 +406,15 @@ Burst cooldown not stated by any source.
 ---
 
 ## Shaman - Enhancement
+
+### Launch rotation (Icy Veins, updated 2026-11-13 (post-launch hotfixes))
+
+Source: https://www.icy-veins.com/wow-forever/enhancement-shaman-melee-dps-pve-rotation-cooldowns-abilities (read 2026-11-16).
+Paraphrased priority; the beta-era notes below are historical.
+
+- Before combat: Windfury Weapon, totems via Call of the Elements, Lightning Shield.
+- Single target: Magma Totem if missing (Searing when mana is short), Flame Shock if missing, Rage of the Farseer with trinkets, Stormstrike, Lightning Bolt at 5 Maelstrom Weapon, Earth Shock, Fire Nova with a fire totem.
+- AoE: Magma Totem, Fire Nova, Flame Shock cycled across targets, Rage of the Farseer, Stormstrike, Lightning Bolt at 5 stacks, Earth Shock.
 
 **Sources**
 

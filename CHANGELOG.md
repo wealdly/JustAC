@@ -3,6 +3,90 @@
 
 ## [Unreleased]
 
+## [6.2.2] - 2026-11-16
+
+### Range and positioning
+- Range indicators, interrupt suggestions and queue priorities share one range and distance
+  estimate, including after target changes. Melee abilities no longer show out of range when a
+  ranged attack is merely too close, and unbound out-of-range abilities use the range dot.
+- Before a pull, a ranged attack that stays out of range against an aggressive enemy counts as
+  too far away, so gap closers and melee ordering respond sooner. Stealthed, feigning, neutral
+  or low-level targets, and enemies already fighting someone else, keep the cautious reading.
+- Forever: melee range is checked from more sources in combat, for every class. Melee abilities
+  such as Hamstring, Sinister Strike, Wing Clip, Claw and Holy Strike now count as range checks,
+  and your target's distance is also read from the game's item and interaction range checks.
+  When these checks disagree, the distance is treated as unknown rather than guessed.
+- Forever: abilities that only hit enemies around you (Holy Nova, Consecration, Frost Nova,
+  Thunder Clap, Whirlwind, Demoralizing Shout and Roar) step aside when your target is known to
+  be out of their reach.
+- Forever: queued next-swing attacks move behind abilities you can use now and return after
+  their cooldown when range or near-melee positioning supports them, including on pulls started
+  with melee swings. Unknown shooting range no longer hides Attack.
+
+### Forever queue behavior
+- Free wand shots or melee filler already in reach are preferred until a cast offers at least
+  20% more estimated damage per second. The estimate counts the time to regenerate the spell's
+  mana and, while enemies are hitting you, the extra time pushback adds to casts. A running wand
+  or Auto Shot is no longer replaced by melee while finishing a nearly dead enemy.
+- The damage queue keeps a steady order during a fight: an ability ready again within a global
+  cooldown keeps its place, and a chosen wand or melee attack stays chosen between shots until
+  the target changes, you leave combat, or it goes out of range. Wand shots, the end of a cast
+  and running shot cycles no longer shuffle the queue or show WAIT on their own.
+- After a cast is pushed back, ready short-cooldown instant damage can take the lead.
+  Interrupts such as Earth Shock remain a last resort against enemies seen casting.
+- Every class opens a pull with its strongest cast-time spell at current ranks and spell
+  power, such as Pyroblast, Starfire, Shadow Bolt, Holy Fire, Mind Blast or Smite. Instant
+  attacks, damage over time and your weapon take over once combat starts.
+- Against a nearly dead normal enemy, spells longer than the global cooldown step behind instant
+  attacks. In a group, damage over time that does little up front is skipped on ordinary
+  enemies that will die quickly.
+- A damage-over-time spell you just cast, such as Serpent Sting, leaves the first slot while its
+  debuff icon catches up, and returns at once if a miss or resist is reported.
+- Eligible pre-pull target debuffs such as Hunter's Mark lead the queue when ready and confirmed
+  missing.
+- Multi-target and cleave priorities count enemies held by your pet or party and enemies
+  targeting your group, but not enemies in other players' fights.
+- Abilities saved for long fights (major cooldowns, Bane of Doom) are released after 20 seconds
+  on the same target. Bane of Doom otherwise waits for bosses, elites and packs.
+- The interrupt slot suggests Concussion Blow; Demoralizing Roar is no longer treated as crowd
+  control, the enrage cue no longer suggests Shiv, and Shield Bash and Feral Charge stay out of
+  the damage queue so they are ready to interrupt.
+
+### Forever class priorities
+- Warrior: Arms uses Mortal Strike and Execute before Slam, keeps Rend for multiple enemies, adds
+  Sweeping Strikes and uses Heroic Strike to spend near-capped rage on one target. Fury leads
+  with Whirlwind. Both keep Demoralizing Shout behind their attacks and use Victory Rush while
+  it is available. Warriors without talents keep Rend at the end of single-target priorities.
+- Rogue: Assassination and Combat open with Garrote and keep Rupture up, Subtlety waits for four
+  combo points before Rupture, and Riposte leads while usable.
+- Hunter: Beast Mastery keeps its hawks up before Aimed Shot, Beast Mastery and Marksmanship save
+  Multi-Shot for packs and can fall back to Raptor Strike and Mongoose Bite in melee. Survival
+  sets Immolation Trap and hawks before Raptor Strike, uses Aimed Shot, Arcane Shot and
+  Multi-Shot when out of melee, and leads with Counterattack while usable. Out of combat you are
+  reminded to Feed Pet when your pet is not happy; blacklist Feed Pet to turn this off.
+- Mage: Frost no longer leads with Ice Barrier. On packs of three or more, Arcane opens with
+  Flamestrike and uses Arcane Explosion, and Fire uses Flamestrike, Blast Wave, Cone of Cold and
+  Arcane Explosion. Fire fills with Frostfire Bolt when talented.
+- Warlock: Affliction and Destruction fill with Wrack and Incinerate once learned. Destruction
+  saves Shadowburn for targets below 20% health unless Shadow and Flame is talented.
+- Priest: Shadow keeps Vampiric Embrace up. Default Shadow priorities include Smite while
+  leveling.
+- Paladin: Retribution uses Consecration before Holy Strike and adds Holy Shock. Hammer of Wrath
+  ranks with other execute abilities on targets below 20% health.
+- Shaman: updated single-target and pack priorities, including safer Maelstrom use, Fire Nova and
+  offensive cooldowns, fire-totem fallbacks and Elemental's default shield. Without the Maelstrom
+  Weapon rune, Lightning Bolt is offered as a normal cast in combat.
+
+### General
+- Mana Conservation can finish a nearly dead normal enemy with your wand, ranged or melee attack
+  instead of spending mana. It starts on (Solo Only) for new Forever profiles; Retail keeps it
+  off by default.
+- Running wand shots show their queued checkmark with direct buttons or attack-only macros.
+  Auto-attack hotkey detection ignores macros that also cast spells or use items, but keeps
+  attack-only `/use` macros such as `/use !Shoot`.
+- Fewer bag, item-count, cooldown and buff checks, especially out of combat, without changing
+  priorities or recovery settings.
+
 ## [6.2.1] - 2026-11-13
 
 - Forever Feral: Shifting Power now waits for confirmed Energy below 50 to avoid wasting Energy and Mana.

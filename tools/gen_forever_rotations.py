@@ -19,6 +19,7 @@
 #
 # Usage: python tools/gen_forever_rotations.py [--print|--coverage]
 # --coverage emits a report-only JSON inventory without writing generated Lua.
+import functools
 import json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -86,8 +87,35 @@ AOE_LEAD_TIERS = ["cleave", "aoe"]
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
 # move: the ability is already on the sim list - reposition that entry instead of adding a
 # second one. Set gates to replace its source conditions when the adaptation calls for it.
+# A gate may also be a raw gate dict. drop: remove the ability from the tree's list.
+# copy: add an entry even though the ability is already listed (a tier-specific placement).
+# A sim may list an ability twice (an AoE-only or proc copy): move takes every copy, and an
+# anchor is the copy tier_lists keeps (its last ungated entry, else its first).
 EXTRA = {
-    "warrior": [dict(spell="demoralizing_shout", tiers=["cleave", "aoe"], at="front", gates=["dot"])],
+    # Reactive melee attacks (usable only after a dodge, parry or kill) lead when lit; until then
+    # the game reports them unusable and they trail. The sims omit them or keep them defensive.
+    # Launch guides: Demoralizing Shout is upkeep only when nobody else covers it (a missing
+    # debuff); damage trees keep it behind their attacks, the tank leads with it.
+    "warrior": [dict(spell="demoralizing_shout", trees=["protection"], tiers=["cleave", "aoe"],
+                     at="front", gates=["dot"]),
+                dict(spell="demoralizing_shout", trees=["arms", "fury"], tiers=["cleave", "aoe"],
+                     at="end", gates=["dot"]),
+                dict(spell="victory_rush", trees=["arms", "fury"], at="front"),
+                # Arms: Overpower > Mortal Strike > Execute > Slam; Rend only with a second
+                # enemy; Sweeping Strikes leads multi-target play.
+                dict(spell="mortal_strike", trees=["arms"], at="after:overpower", move=True),
+                dict(spell="execute", trees=["arms"], at="after:mortal_strike", move=True),
+                dict(spell="rend", trees=["arms"], tiers=["cleave", "aoe"], at="after:slam", move=True),
+                # Untalented warriors use this list: below level 20 (no Slam, no Mortal Strike)
+                # Rend is one of the few damaging buttons, so single target keeps it last.
+                dict(spell="rend", trees=["arms"], tiers=["st"], at="end", gates=["dot"], copy=True),
+                dict(spell="sweeping_strikes", trees=["arms"], tiers=["cleave", "aoe"],
+                     at="before:battle_stance"),
+                # Fury (low attack power, i.e. levelling): Whirlwind > Execute > Bloodthirst >
+                # Overpower > Rend.
+                dict(spell="whirlwind", trees=["fury"], at="before:execute", move=True),
+                dict(spell="bloodthirst", trees=["fury"], at="after:execute", move=True),
+                dict(spell="rend", trees=["fury"], at="after:overpower", move=True)],
     # Serpent Sting opens: its DoT lands at once, and it is cast WITH Auto Shot, which is off the
     # GCD and follows it as the hunter's main damage; once running Auto Shot sinks with its timer.
     "hunter": [dict(spell="serpent_sting", at="front", move=True),
@@ -99,12 +127,36 @@ EXTRA = {
                # Its imported fight-duration mana gate is unavailable; spell usability still
                # determines whether Sniper Shot itself can be cast.
                dict(spell="sniper_shot", trees=["marksmanship"], at="before:aimed_shot",
-                    move=True, gates=[])],
+                    move=True, gates=[]),
+               # The Survival sim is melee only. Its guides keep the ranged shots for a target
+               # out of melee (Arcane Shot, Multi-Shot on packs); last, so melee leads in range.
+               dict(spell="counterattack", trees=["survival"], at="after:mongoose_bite"),
+               dict(spell="multi_shot", trees=["survival"], tiers=["aoe"], at="end"),
+               dict(spell="arcane_shot", trees=["survival"], at="end"),
+               # Launch guides (read 2026-11-16). Beast Mastery keeps two hawks up ahead of
+               # Aimed Shot; Multi-Shot is a multi-target shot for BM and MM.
+               dict(spell="summon_hawk", trees=["beast_mastery"], at="before:aimed_shot", move=True),
+               dict(spell="multi_shot", trees=["beast_mastery", "marksmanship"],
+                    tiers=["cleave", "aoe"], at="after:aimed_shot", move=True),
+               # Survival melee: Immolation Trap and hawks before Raptor Strike; Aimed Shot
+               # joins the ranged shots for a target out of melee.
+               dict(spell="immolation_trap", trees=["survival"], at="before:raptor_strike", move=True),
+               dict(spell="summon_hawk", trees=["survival"], at="before:raptor_strike"),
+               dict(spell="aimed_shot", trees=["survival"], at="before:arcane_shot")],
+    # Launch Retribution guides: Consecration before Holy Strike; Holy Shock (Shockadin) on
+    # cooldown after it. Exorcism and Holy Wrath need a creature-type signal and stay out.
+    "paladin": [dict(spell="consecration", trees=["retribution"], at="before:holy_strike", move=True),
+                dict(spell="holy_shock", trees=["retribution"], at="after:holy_strike")],
     # Backstab is absent from the selected upstream APLs. Prefer it to Sinister Strike when
     # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
     # Spell usability handles the rear requirement; no position signal is inferred here.
-    "rogue": [dict(spell="cheap_shot", at="front", gates=["stealth"]),
-              dict(spell="garrote", at="front", gates=["stealth", "dot"]),
+    # Launch guides open with Garrote; Cheap Shot stays as the opener when Garrote cannot be used.
+    "rogue": [dict(spell="garrote", at="front", gates=["stealth", "dot"]),
+              dict(spell="cheap_shot", at="front", gates=["stealth"]),
+              # Assassination and Combat keep Rupture up and Eviscerate only once it runs.
+              dict(spell="rupture", trees=["assassination", "combat"], at="before:eviscerate",
+                   gates=[{"t": "resource", "res": "combo_points", "op": ">=", "n": 5}, "dot"]),
+              dict(spell="riposte", at="front"),
               dict(spell="backstab", trees=["combat"], at="before:sinister_strike"),
               # Shank is the primary energy-gated attack before the Combat finisher.
               dict(spell="shank", trees=["combat"], at="before:eviscerate", move=True),
@@ -116,16 +168,37 @@ EXTRA = {
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
               dict(spell="wrath", trees=["balance"], at="end")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate"),
+                # Launch fillers (level 40): Wrack (Affliction), Incinerate (Destruction);
+                # Shadow Bolt stays behind them for lower levels.
+                dict(spell="wrack", trees=["affliction"], at="before:shadow_bolt"),
+                dict(spell="incinerate", trees=["destruction"], at="before:shadow_bolt"),
                 dict(spell="shoot", at="end")],
     # Caster leveling guides describe wanding as a low-health/finishing fallback; keep Shoot last
     # so listed spells take precedence and spell usability hides it without a usable wand.
     "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
              dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end"),
+             # The Arcane and Fire sims list no AoE spell. Guide AoE (forever-guides/): Fire
+             # Flamestrike > Blast Wave > Arcane Explosion, Arcane Explosion at 3+ for Arcane.
+             dict(spell="flamestrike", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
+             dict(spell="blast_wave", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
+             dict(spell="arcane_explosion", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
+             dict(spell="arcane_explosion", trees=["arcane"], tiers=["aoe"], at="after:evocation"),
+             # Launch guides: Arcane AoE opens with Flamestrike; Fire AoE adds Cone of Cold;
+             # the Frostfire Bolt build (level 40 talent) fills with it instead of Fireball.
+             dict(spell="flamestrike", trees=["arcane"], tiers=["aoe"], at="before:arcane_explosion"),
+             dict(spell="cone_of_cold", trees=["fire"], tiers=["aoe"], at="after:blast_wave"),
+             dict(spell="frostfire_bolt", trees=["fire"], at="before:fireball"),
              dict(spell="shoot", at="end")],
     # Wanding is a documented leveling damage fallback across Priest trees; it is only usable
     # when the character has an appropriate wand equipped.
     "priest": [dict(spell="shoot", at="end"),
-               dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
+               # Shadow is also the untalented default; Smite fills before Shadow attacks
+               # are learned rather than yielding to the listed wand fallback.
+               dict(spell="smite", trees=["shadow"], at="before:shoot"),
+               dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front"),
+               # Launch Shadow priority keeps Vampiric Embrace up after Shadow Word: Death.
+               dict(spell="vampiric_embrace", trees=["shadow"], at="after:shadow_word_death",
+                    gates=["dot"])],
 }
 
 
@@ -135,12 +208,18 @@ EXTRA = {
 #            a fixed mana line misses a low-level caster whose filler costs a fifth of the bar.
 #   health:  only with health above this percent - it costs health (Life Tap, Bloodrage) or
 #            burns the caster too (Hellfire).
-#   near:    only when close enough for point-blank damage (Cone of Cold, Hellfire).
+#   near:    only when close enough for point-blank damage the data cannot show (Hellfire
+#            burns from a self aura; core rule 5 derives the rest).
+#   execute: only while the target is below this percent (Shadowburn spends a soul shard;
+#            the Forever guides keep it for a dying target, which refunds the shard).
+#   or_known: ...or whenever this talent is known: with Shadow and Flame the launch
+#            Destruction guide uses Shadowburn on cooldown (good enough without timing its
+#            buff, whose id is not in the data).
 REGATE = {
     "warlock": {"life_tap": dict(starved=True, health=50),
-                "hellfire": dict(health=50, near=10)},
-    "mage": {"evocation": dict(starved=True),
-             "cone_of_cold": dict(near=10)},
+                "hellfire": dict(health=50, near=10),
+                "shadowburn": dict(execute=20, or_known=426316)},
+    "mage": {"evocation": dict(starved=True)},
     "druid": {"innervate": dict(starved=True)},
     "warrior": {"bloodrage": dict(health=50)},
 }
@@ -160,12 +239,181 @@ def regate(cls, entries, chains):
                 gates.insert(0, {"t": "any", "g": power + [{"t": "starved"}]} if power else {"t": "starved"})
             if spec.get("health"):
                 gates.append({"t": "health", "op": ">", "pct": float(spec["health"])})
+            if spec.get("execute"):
+                execute = {"t": "execute", "op": "<", "pct": spec["execute"]}
+                gates = [g for g in gates if g != execute]
+                if spec.get("or_known"):
+                    gates.append({"t": "any", "g": [execute, {"t": "known", "id": spec["or_known"]}]})
+                else:
+                    gates.append(execute)
             if spec.get("near"):
                 near = {"t": "near", "n": spec["near"]}
                 if near not in gates:
                     gates.append(near)
             e["gates"], e["w"] = gates, True
 
+
+# ---------------------------------------------------------------------------------------------
+# CORE RULES. Simple, data-driven damage principles applied to every tree after the class
+# adaptations above (EXTRA / REGATE / generalize_entries hold the class and spec quirks).
+# Sources: forever-guides/ (finishers at full points, ranged specs stay ranged, spend before the
+# cap) and the 2026-11-15 priority audit.
+#   1. A combo-point finisher that applies damage over time to the target spends at least
+#      FINISHER_MIN_POINTS unless its source already gates on points (Rupture at 1 point is a
+#      weak bleed). Direct finishers keep the runtime's per-target point policy; maintenance
+#      buffs (Slice and Dice) are self auras and exempt.
+#   2. In a ranged tree, attacks that need melee range trail the tree's ranged attacks: they
+#      remain as the fallback when an enemy is on top of the player.
+#   3. Outside tank trees an absorb shield is a defensive, never a damage lead: it moves to the
+#      end of the list with its source gates (the defensive queue owns emergency use).
+#   4. (In Conv.cmp) a rage/energy threshold above NOMINAL_POWER_MAX reads as "near the cap".
+#   5. A point-blank attack (no range; caster-centred enemy area or cone) is offered only with
+#      the target inside its radius. The game reports no range for it, so the out-of-range
+#      sink never moves it; an unproven distance still never blocks.
+#   6. A spell the game restricts to targets below 20% health (Execute, Hammer of Wrath)
+#      carries the execute gate, so it ranks with the other execute-range spells.
+#   7. A stack requirement on a buff whose every effect only shortens cast time or cost
+#      (Maelstrom Weapon) is marked castOnly: before a pull a cast cannot be pushed back, so
+#      the runtime may open with the spell without those stacks.
+# ---------------------------------------------------------------------------------------------
+FINISHER_MIN_POINTS = 4
+NOMINAL_POWER_MAX = 100
+NEAR_CAP_POWER = 90
+MELEE_RANGE_MAX = 5           # yards: SpellRange maximum of a melee attack
+COMBO_POINTS_POWER = 4        # SpellPower.PowerType on Forever
+SCHOOL_ABSORB_AURA = 69
+WAND_FALLBACK = {5019}        # Shoot (wand)
+TARGET_ENEMY_UNIT = 6         # ImplicitTarget: the chosen enemy
+CASTER_ORIGINS = {18, 22}     # ImplicitTarget: area centred on the caster
+ENEMY_AREAS = {15, 16}        # ImplicitTarget: enemies in that area
+ENEMY_CONE = 24               # ImplicitTarget: enemies in a cone in front of the caster
+AURA_STATE_HEALTH_BELOW_20 = 2  # SpellAuraRestrictions.TargetAuraState (Execute)
+EXECUTE_PCT = 20
+SPELL_MODIFIER_AURAS = {107, 108}  # flat / percent spell modifier
+MOD_CAST_TIME, MOD_COST = 10, 14
+RANGED_TREES = {"hunter": {"beast_mastery", "marksmanship"}}
+TANK_TREES = {"warrior": {"protection"}, "druid": {"feral_bear"}, "paladin": {"protection"}}
+
+@functools.lru_cache(maxsize=None)
+def _combo_point_spenders():
+    return frozenset(r["SpellID"] for r in cfa.rows("SpellPower")
+                     if r["PowerType"] == str(COMBO_POINTS_POWER) and int(r["ManaCost"] or 0) > 0)
+
+
+@functools.lru_cache(maxsize=None)
+def _hostile_max_ranges():
+    ranges = {r["ID"]: float(r["RangeMax_0"] or 0) for r in cfa.rows("SpellRange")}
+    return {r["SpellID"]: ranges[r["RangeIndex"]] for r in cfa.rows("SpellMisc")
+            if r["DifficultyID"] == "0" and r["RangeIndex"] in ranges}
+
+
+def costs_combo_points(sid):
+    return str(sid) in _combo_point_spenders()
+
+
+def hostile_max_range(sid):
+    """SpellRange maximum (hostile) of sid in yards, or None when the data has no range."""
+    return _hostile_max_ranges().get(str(sid))
+
+
+def applies_target_dot(sid):
+    return any(eff == APPLY_AURA and aura in DMG_AURAS and targets & ENEMY_TARGETS
+               for eff, aura, _, targets, _ in effects_of(sid))
+
+
+def is_absorb_shield(sid):
+    return on_self(sid) and not deals_damage(sid) and any(
+        eff == APPLY_AURA and aura == SCHOOL_ABSORB_AURA for eff, aura, *_ in effects_of(sid))
+
+
+def is_melee(sid):
+    reach = hostile_max_range(sid)
+    return reach is not None and 0 < reach <= MELEE_RANGE_MAX
+
+
+@functools.lru_cache(maxsize=None)
+def _point_blank_radii():
+    """SpellID -> largest radius of its caster-centred enemy areas and cones, for spells with
+    no effect aimed at a chosen enemy (those use their range, not a radius)."""
+    radii = {r["ID"]: float(r["Radius"] or 0) for r in cfa.rows("SpellRadius")}
+    found, aimed = {}, set()
+    for r in cfa.rows("SpellEffect"):
+        if r["DifficultyID"] != "0":
+            continue
+        first, second = int(r["ImplicitTarget_0"] or 0), int(r["ImplicitTarget_1"] or 0)
+        if TARGET_ENEMY_UNIT in (first, second):
+            aimed.add(r["SpellID"])
+        if (first in CASTER_ORIGINS and second in ENEMY_AREAS) or first == ENEMY_CONE:
+            radius = max(radii.get(r["EffectRadiusIndex_0"], 0), radii.get(r["EffectRadiusIndex_1"], 0))
+            if radius > 0:
+                found[r["SpellID"]] = max(found.get(r["SpellID"], 0), radius)
+    return {sid: radius for sid, radius in found.items() if sid not in aimed}
+
+
+@functools.lru_cache(maxsize=None)
+def _execute_only():
+    return frozenset(r["SpellID"] for r in cfa.rows("SpellAuraRestrictions")
+                     if r["TargetAuraState"] == str(AURA_STATE_HEALTH_BELOW_20))
+
+
+def point_blank_radius(sid):
+    """Radius in yards of a point-blank attack (no range of its own), else None."""
+    if hostile_max_range(sid):
+        return None
+    return _point_blank_radii().get(str(sid))
+
+
+def gates_on_points(gates):
+    return any((g.get("t") == "resource" and g.get("res") == "combo_points")
+               or (g.get("t") in ("any", "all") and gates_on_points(g["g"])) for g in gates)
+
+
+def apply_core_rules(cls, tree, entries):
+    for e in entries:
+        if costs_combo_points(e["id"]) and applies_target_dot(e["id"]) and not gates_on_points(e["gates"]):
+            e["gates"] = list(e["gates"]) + [
+                {"t": "resource", "res": "combo_points", "op": ">=", "n": FINISHER_MIN_POINTS}]
+    if tree in RANGED_TREES.get(cls, ()):
+        melee = [e for e in entries if is_melee(e["id"])]
+        kept = [e for e in entries if not is_melee(e["id"])]
+        last = max((i for i, e in enumerate(kept) if deals_damage(e["id"])), default=None)
+        if melee and last is not None:
+            entries[:] = kept[:last + 1] + melee + kept[last + 1:]
+    if tree not in TANK_TREES.get(cls, ()):
+        shields = [e for e in entries if is_absorb_shield(e["id"])]
+        rest = [e for e in entries if not is_absorb_shield(e["id"])]
+        # The wand stays the final fallback (a caster convention every list keeps).
+        tail = len(rest)
+        while tail > 0 and rest[tail - 1]["id"] in WAND_FALLBACK:
+            tail -= 1
+        entries[:] = rest[:tail] + shields + rest[tail:]
+
+
+@functools.lru_cache(maxsize=None)
+def is_cast_only_aura(aid):
+    effects = effects_of(aid)
+    return bool(effects) and all(
+        eff == APPLY_AURA and aura in SPELL_MODIFIER_AURAS and misc in (MOD_CAST_TIME, MOD_COST)
+        for eff, aura, _, _, misc in effects) and any(e[4] == MOD_CAST_TIME for e in effects)
+
+
+def is_cast_only_gate(g):
+    return g.get("t") == "stack" and is_cast_only_aura(g.get("id"))
+
+
+def apply_core_gates(lists):
+    """Rules 5 to 7. They run after tier_lists, which tells a general fallback (no gates)
+    from a special branch, so a derived gate never changes which entry a tier keeps."""
+    for e in {id(e): e for lines in lists.values() for e in lines}.values():
+        radius = point_blank_radius(e["id"])
+        near = radius and {"t": "near", "n": int(radius)}
+        if near and near not in e["gates"]:
+            e["gates"], e["w"] = list(e["gates"]) + [near], True
+        execute = {"t": "execute", "op": "<", "pct": EXECUTE_PCT}
+        if str(e["id"]) in _execute_only() and execute not in e["gates"]:
+            e["gates"] = list(e["gates"]) + [execute]
+        if any(is_cast_only_gate(g) for g in e["gates"]):
+            e["gates"] = [dict(g, castOnly=True) if is_cast_only_gate(g) else g for g in e["gates"]]
 
 def add_extras(cls, tree, entries, chains, unresolved):
     """Place the class's EXTRA abilities into one tree's entries (in place)."""
@@ -176,6 +424,25 @@ def add_extras(cls, tree, entries, chains, unresolved):
             return None
         return rank1(chain)
     fronts = []
+
+    def place(x, items, default):
+        at = x.get("at", default)
+        if at == "front":
+            fronts.extend(items)
+            return
+        if at.startswith(("after:", "before:")):
+            where, name = at.split(":", 1)
+            anchor = r1_of(name)
+            hits = [n for n, y in enumerate(entries) if y["id"] == anchor]
+            if hits:
+                plain = [n for n in hits if not entries[n]["gates"]]
+                i = plain[-1] if plain else hits[0]
+                if where == "after":
+                    i += 1
+                entries[i:i] = items
+                return
+        entries.extend(items)
+
     for x in EXTRA.get(cls, []):
         if x.get("trees") and tree not in x["trees"]:
             continue
@@ -183,6 +450,10 @@ def add_extras(cls, tree, entries, chains, unresolved):
         if not sid:
             continue
         mine = next((e for e in entries if e["id"] == sid), None)
+        if x.get("drop"):
+            if mine:
+                entries.remove(mine)
+            continue
         if mine and x.get("move"):
             if x.get("tiers"):
                 mine["tiers"] = list(x["tiers"])
@@ -192,42 +463,25 @@ def add_extras(cls, tree, entries, chains, unresolved):
             if "gates" in x:
                 mine["gates"] = list(x["gates"])
                 mine["delegated"] = False
-            entries.remove(mine)
-            at = x.get("at", "front")
-            if at == "front":
-                fronts.append(mine)
-            elif at.startswith(("after:", "before:")):
-                where, name = at.split(":", 1)
-                anchor = r1_of(name)
-                i = next((n for n, y in enumerate(entries) if y["id"] == anchor), None)
-                if i is None:
-                    entries.append(mine)
-                else:
-                    entries.insert(i + 1 if where == "after" else i, mine)
-            else:
-                entries.append(mine)
+            # A tier-limited move retiers one entry; otherwise every copy moves.
+            moving = [mine] if x.get("tiers") else [e for e in entries if e["id"] == sid]
+            for e in moving:
+                entries.remove(e)
+            place(x, moving, "front")
             continue
-        if mine:
+        if mine and not x.get("copy"):
             continue
         gates = []
         for g in x.get("gates", []):
-            gates.append({"t": "debuff", "id": sid, "neg": True, "refresh": True}
-                         if g == "dot" else {"t": "stealth"})
+            if isinstance(g, dict):
+                gates.append(dict(g))
+            elif g == "dot":
+                gates.append({"t": "debuff", "id": sid, "neg": True, "refresh": True})
+            else:
+                gates.append({"t": "stealth"})
         e = {"id": sid, "delegated": False, "tiers": list(x.get("tiers") or [t for t, _ in TIERS]),
              "gates": gates}
-        at = x.get("at", "end")
-        if at == "front":
-            fronts.append(e)
-        elif at.startswith(("after:", "before:")):
-            where, name = at.split(":", 1)
-            anchor = r1_of(name)
-            i = next((n for n, y in enumerate(entries) if y["id"] == anchor), None)
-            if i is None:
-                entries.append(e)
-            else:
-                entries.insert(i + 1 if where == "after" else i, e)
-        else:
-            entries.append(e)
+        place(x, [e], "end")
     entries[0:0] = fronts
 
 
@@ -404,13 +658,12 @@ class Conv:
             return g
         if key == "cmp":
             return self.cmp(val)
-        if key == "auraIsActive":
+        if key in ("auraIsActive", "auraIsInactive"):
             aid = self.rank1(sid_of(val.get("auraId")))
             if not aid:
                 return UNK
-            if aura_on_target(val, aid):
-                return {"t": "debuff", "id": aid}
-            return self.buff(aid)
+            gate = {"t": "debuff", "id": aid} if aura_on_target(val, aid) else self.buff(aid)
+            return self.negate(gate) if key == "auraIsInactive" else gate
         if key == "dotIsActive":
             sid = sid_of(val.get("spellId"))
             return {"t": "debuff", "id": self.rank1(sid)} if sid else UNK
@@ -474,6 +727,10 @@ class Conv:
             # ponytail: end-of-fight dumps never fire; a real time-to-die needs secret health.
             return TRUE if op in (">", ">=") else (FALSE if op in ("<", "<=") else UNK)
         if name in POWER:
+            # Core rule: a rage/energy spender gated above the bar's nominal maximum would
+            # never fire, so the resource could sit capped. Read it as "near the cap".
+            if POWER[name] in ("rage", "energy") and op in (">", ">=") and n > NOMINAL_POWER_MAX:
+                n = NEAR_CAP_POWER
             return {"t": "power", "res": POWER[name], "op": op, "n": n}
         if name == "currentManaPercent":
             return {"t": "power", "res": "mana", "op": op, "n": n, "ispct": True}
@@ -620,6 +877,44 @@ def lua(v):
 
 def generalize_entries(cls, tree, entries, chains):
     """Adapt specialized execution into stable defaults before selecting each context."""
+    if cls == "shaman" and tree in ("elemental", "enhancement"):
+        # Current guide adaptations and deliberate limits: forever-guides/druid-shaman.md.
+        if tree == "enhancement":
+            orders = {
+                "st": ["strength_of_earth_totem", "magma_totem", "searing_totem", "flame_shock",
+                       "rage_of_the_farseer", "stormstrike", "lightning_bolt", "fire_nova"],
+                "aoe": ["strength_of_earth_totem", "magma_totem", "searing_totem", "fire_nova",
+                        "flame_shock", "rage_of_the_farseer", "stormstrike", "lightning_bolt"],
+            }
+        else:
+            orders = {
+                "st": ["searing_totem", "flame_shock", "lightning_mastery", "chain_lightning", "lightning_bolt"],
+                "aoe": ["magma_totem", "searing_totem", "lightning_mastery", "chain_lightning",
+                        "fire_nova", "flame_shock", "lightning_bolt"],
+            }
+        out = []
+        for context, order in orders.items():
+            for name in order:
+                sid = rank1(chains[name])
+                gates = []
+                if name in ("magma_totem", "searing_totem", "strength_of_earth_totem"):
+                    gates = [{"t": "totem", "slot": 2 if name == "strength_of_earth_totem" else 1, "neg": True}]
+                elif name == "fire_nova":
+                    gates = [{"t": "totem", "slot": 1}]
+                elif name == "flame_shock":
+                    gates = [{"t": "debuff", "id": sid, "neg": True, "refresh": True}]
+                elif name == "lightning_bolt" and tree == "enhancement":
+                    gates = [{"t": "stack", "id": 408505, "op": ">=", "n": 5, "required": True}]
+                elif name == "chain_lightning" and context == "st":
+                    gates = [Conv({}).buff(rank1(chains["lightning_mastery"]), True)]
+                if tree == "elemental" and name in ("magma_totem", "fire_nova"):
+                    gates.append({"t": "targets", "op": ">=", "n": 3})
+                entry = {"id": sid, "gates": gates, "delegated": False,
+                         "tiers": ["st", "cleave"] if context == "st" else ["aoe"]}
+                if name == "fire_nova" or (name == "lightning_bolt" and tree == "enhancement"):
+                    entry["w"] = True
+                out.append(entry)
+        entries[:] = out
     if cls == "paladin":
         seals = sorted({rank1(chain) for name, chain in chains.items()
                         if name.startswith("seal_of_")})
@@ -770,7 +1065,8 @@ def combat_buff(sid):
 # (Backstab, Holy Wrath, a wand or bow shot, a damage spell whose slow or root is a side effect),
 # but not when its job is something other than damage, even if it hits too:
 #   an interrupt on a cooldown longer than INTERRUPT_DPS_CD (Kick, Pummel, Shield Bash are kept
-#   for the interrupt slot; Earth Shock at 6s stays a damage press);
+#   for the interrupt slot; Earth Shock at 6s stays eligible for custom queues but its
+#   Forever utility role reserves it from the automatic queue);
 #   crowd control or a taunt (Gouge, Scatter Shot, Pounce, Mind Control, Death Coil, Mocking Blow);
 #   a movement, stealth or mount buff that deals no damage (Sprint, Dash, Stealth, Divine Steed);
 #   NOT_DPS: what the data cannot tell from a combat buff or a damage spell.
@@ -778,6 +1074,7 @@ def combat_buff(sid):
 INTERRUPT, TAUNT_EFFECT = 68, 114
 TAUNT_AURA, STEALTH_AURA, SPEED_AURA, MOUNT_AURA = 11, 16, 31, 78
 INTERRUPT_DPS_CD = 8
+PUSHBACK_MAX_CD = 10
 # SpellMechanic: charm, disoriented, fleeing, asleep, stunned, incapacitated, polymorphed,
 # banished, shackled, turned, horrified, sapped
 HARD_CC = {1, 2, 5, 10, 12, 14, 17, 18, 20, 23, 24, 30}
@@ -834,6 +1131,67 @@ def not_dps(sid, damage):
     return None
 
 
+def direct_damage_estimates(spell_ids):
+    """Simple single-target, non-scaling rank damage; omit formulas we cannot model."""
+    effects, levels, schools, durations = {}, {}, {}, {}
+    duration_ms = {r["ID"]: int(r["Duration"]) for r in cfa.rows("SpellDuration")}
+    for row in cfa.rows("SpellEffect"):
+        if row["SpellID"].isdigit() and int(row["SpellID"]) in spell_ids:
+            effects.setdefault(int(row["SpellID"]), []).append(row)
+    for row in cfa.rows("SpellLevels"):
+        if row["DifficultyID"] == "0":
+            levels[int(row["SpellID"])] = row
+    for row in cfa.rows("SpellMisc"):
+        if row["DifficultyID"] == "0":
+            schools[int(row["SpellID"])] = int(row["SchoolMask"])
+            durations[int(row["SpellID"])] = duration_ms.get(row["DurationIndex"], 0)
+    result = {}
+    for sid, rows in effects.items():
+        damage = [r for r in rows if r["Effect"] == "2"]
+        if len(damage) != 1 or any(r["DifficultyID"] != "0" for r in rows):
+            continue
+        r = damage[0]
+        if r["ImplicitTarget_0"] != "6" or r["ImplicitTarget_1"] != "0":
+            continue
+        if any(float(r[k]) != 0 for k in (
+                "ScalingClass", "Coefficient", "ResourceCoefficient", "EffectPointsPerResource",
+                "BonusCoefficientFromAP", "EffectTriggerSpell")):
+            continue
+        # A trailing damage-over-time on the same target (Holy Fire, Fireball) keeps the hit
+        # priceable, flagged partial: the hit alone is not the spell's whole damage.
+        others = [o for o in rows if o is not r]
+        partial = bool(others) and all(
+            o["Effect"] == str(APPLY_AURA) and o["EffectAura"] == "3" and o["EffectTriggerSpell"] == "0"
+            and o["ImplicitTarget_0"] == "6" for o in others)
+        if not partial and any(
+                o["EffectTriggerSpell"] != "0" or int(o["EffectAura"]) in DMG_AURAS for o in rows):
+            continue
+        level, school = levels.get(sid), schools.get(sid, 0)
+        if not level or school not in (2, 4, 8, 16, 32, 64):
+            continue
+        base = float(r["EffectBasePointsF"])
+        if base <= 0:
+            continue
+        result[sid] = [
+            base, float(r["EffectRealPointsPerLevel"]), int(level["SpellLevel"]),
+            int(level["MaxLevel"]), float(r["EffectBonusCoefficient"]), school.bit_length(),
+        ]
+        if partial:
+            result[sid].append(1)
+            # Full damage over time: every tick of the aura's duration. Unknown when the
+            # duration or a period is missing, then the spell's total stays unknown.
+            duration = durations.get(sid, 0)
+            periods = [int(o["EffectAuraPeriod"]) for o in others]
+            if duration > 0 and all(period > 0 for period in periods):
+                ticks = [duration // period for period in periods]
+                result[sid] += [
+                    sum(float(o["EffectBasePointsF"]) * n for o, n in zip(others, ticks)),
+                    sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(others, ticks)),
+                    sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(others, ticks)),
+                ]
+    return result
+
+
 def entry_lua(e, names):
     parts = [f"id={e['id']}", "gates=" + lua(e["gates"])]
     if e["delegated"]:
@@ -874,6 +1232,12 @@ def condition_coverage(gates, path=""):
 def main():
     names = {r["ID"]: r["Name_lang"] for r in cfa.rows("SpellName")}
     secs = {r["ID"]: int(r["Duration"] or 0) / 1000 for r in cfa.rows("SpellDuration")}
+    charge_recovery = {r["ID"]: int(r["ChargeRecoveryTime"] or 0) / 1000
+                       for r in cfa.rows("SpellCategory")}
+    charge_categories = {}
+    for r in cfa.rows("SpellCategories"):
+        if int(r["ChargeCategory"] or 0):
+            charge_categories.setdefault(r["SpellID"], set()).add(r["ChargeCategory"])
     for r in cfa.rows("SpellMisc"):
         d = secs.get(r["DurationIndex"], 0)
         if d > 0 and r["SpellID"].isdigit():
@@ -882,11 +1246,13 @@ def main():
     catalog = json.load(open(os.path.join(SRC, "presets", "catalog.json"), encoding="utf-8"))
     catalog_source = catalog["source"]
     catalog_commit = catalog_source["commit"]
-    body, chains_out, report, unresolved, abilities = [], {}, [], [], {}
+    body, chains_out, report, unresolved, abilities, pushback_damage = [], {}, [], [], {}, {}
+    learned_ids = set()
     coverage = []
     for cls in sorted(TREES):
         default, trees = TREES[cls]
         chains, by_id = cfa.class_chains(cfa.CLASS_MASK[cls])
+        learned_ids.update(int(sid) for chain in chains.values() for sid, _ in chain)
         # EVERY learnable chain of the class, not just the list entries: the runtime
         # resolves any curated id (defensives, gap closers, interrupts...) to the rank the
         # player presses through these.
@@ -906,6 +1272,19 @@ def main():
             damage = any(deals_damage(i) for i, _ in chain)
             if (damage or combat_buff(sid)) and not_dps(sid, damage) is None:
                 pool.add(sid)
+            # Direct-damage candidates only. Runtime additionally checks instant cast,
+            # range, usability, DoTs, interrupt state and the player's settings.
+            if (any(eff in DMG_EFFECTS for eff, *_ in effects_of(sid))
+                    and not any(aura in DMG_AURAS for i, _ in chain
+                                for _, aura, *_ in effects_of(i))):
+                cooldown = max(spell_meta(i)[1] for i, _ in chain)
+                charges = {category for i, _ in chain for category in charge_categories.get(str(i), ())}
+                if all(charge_recovery.get(category, 0) > 0 for category in charges):
+                    cooldown = max([cooldown] + [charge_recovery[category] for category in charges])
+                else:
+                    cooldown = PUSHBACK_MAX_CD
+                if cooldown < PUSHBACK_MAX_CD:
+                    pushback_damage[sid] = cooldown
         for name in NOT_DPS.get(cls, []) + NOT_DPS_ALL:
             if name in chains:
                 pool.discard(rank1(chains[name]))
@@ -932,8 +1311,10 @@ def main():
             for sid in reversed(AOE_LEAD.get(cls, [])):
                 if not any(e["id"] == sid for e in entries):
                     entries.insert(0, {"id": sid, "delegated": False, "tiers": list(AOE_LEAD_TIERS), "gates": []})
+            apply_core_rules(cls, tree, entries)
             entries.sort(key=lambda e: 0 if keeps_own_buff(e) else 1)   # stable: sim order otherwise
             lists = tier_lists(entries)
+            apply_core_gates(lists)
             pool |= {e["id"] for e in entries}
             body.append(f"    {tree} = {{  -- {src}")
             for t, _ in TIERS:
@@ -1009,6 +1390,15 @@ def main():
         *rank_lines,
         "}, {",
         *[f'  ["{c.upper()}_F"] = {lua(v)},' for c, v in sorted(abilities.items())],
+        "}, {",
+        *[f"  [{sid}] = {seconds:g},  -- {names.get(str(sid), '?')}"
+          for sid, seconds in sorted(pushback_damage.items())],
+        "}, {",
+        "  -- Exact rank -> average base damage, per-level gain, spell/max level, SP coefficient, school,",
+        "  -- then 1 when a damage over time follows the hit, and that",
+        "  -- damage over time's full-duration base, per-level gain and SP coefficient when known.",
+        *[f"  [{sid}] = {{{','.join(f'{v:g}' for v in values)}}},"
+          for sid, values in sorted(direct_damage_estimates(learned_ids).items())],
         "})",
         "",
     ])

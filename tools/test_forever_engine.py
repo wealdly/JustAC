@@ -55,7 +55,7 @@ RI.RegisterForever({
   },
 }, { [78] = {78, 284, 285} }, {
   WARRIOR_F = { 78, 772, 23881, 20554 },   -- class abilities (rank 1) + a damage racial
-})
+}, { [78] = 6, [772] = 0 })
 return RI
 """
 
@@ -79,6 +79,8 @@ def main():
     rec = RI.GetEntry(284, "st")
     check(rec is not None and rec.rank == 1, "rank 2 shares rank-1's priority")
     check(RI.RankBase(285) == 78 and RI.RankBase(999) == 999, "RankBase maps ranks, passes others")
+    check(RI.GetPushbackDamageCooldown(285) == 6 and RI.GetPushbackDamageCooldown(772) == 0
+          and RI.GetPushbackDamageCooldown(999) is None, "pushback cooldown resolves ranks and unknowns")
     # Highest KNOWN rank, not highest existing.
     g.known = lua.eval("{[78]=true,[284]=true}")
     check(RI.HighestKnownRank(78) == 284, "highest known rank")
@@ -128,6 +130,12 @@ def main():
     # Unregistered key: retail behaviour untouched.
     g.specKey = "MONK_1"
     check(RI.HasRotation() is False, "no data -> no rotation")
+
+    generated = SRC.parent / "Data" / "Forever" / "Rotations.lua"
+    lua.execute(generated.read_text(encoding="utf-8"))
+    check(RI.GetPushbackDamageCooldown(8042) == 6 and RI.GetPushbackDamageCooldown(8044) == 6,
+          "generated Earth Shock cooldown resolves both ranks")
+    check(RI.GetPushbackDamageCooldown(120) is None, "ten-second cooldown remains excluded")
 
     for why in bad:
         print("  FAIL", why)

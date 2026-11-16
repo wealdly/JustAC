@@ -83,6 +83,7 @@ def check_automatic_burst():
         function IsLiveAttackableTarget() return target end
         SpellDB={
             IsPureSelfAura=function() return selfBuff end,
+            IsDelayedPayoff=function() return delayed end,
             GetSpecKey=function() return 'ROGUE_F' end,
         }
         BlizzardAPI={
@@ -93,7 +94,8 @@ def check_automatic_burst():
             GetDisplaySpellID=function(id) return id end,
         }
         secret={}
-    """ + extract("HoldAutomaticBurst", SRC.read_text(encoding="utf-8")))
+    """ + extract("IsWorthwhileFight", SRC.read_text(encoding="utf-8"))
+        + "\n" + extract("HoldAutomaticBurst", SRC.read_text(encoding="utf-8")))
     cases = [
         ("", True),
         ("classification='trivial'", True),
@@ -116,17 +118,129 @@ def check_automatic_burst():
         ("seconds=0", False), ("seconds=secret", False),
         ("BlizzardAPI.PeekBaseCooldownSeconds=function() error('denied') end", False),
         ("b.profile.burstTriggers={ROGUE_F={1259799}}", False),
+        # Damage that lands only after a long delay (Bane of Doom) waits for the same fights,
+        # whatever its cooldown or aura shape.
+        ("delayed=true;selfBuff=false;seconds=0", True),
+        ("delayed=true;selfBuff=false;classification='elite'", False),
+        ("delayed=true;selfBuff=false;boss=true", False),
+        ("delayed=true;selfBuff=false;b.ctxEnemies=2", False),
+        ("delayed=true;selfBuff=false;SpellQueue._rotationIsCustom=true", False),
+        ("delayed=true;selfBuff=false;b.contextOrder='off'", False),
+        # A normal target fought this long is no quick trash kill.
+        ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=81", True),
+        ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80", False),
+        ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80;b.inCombat=false", True),
+        ("seconds=180;b.now=100;targetFightStartedAt=60", False),
     ]
     for setup, expected in cases:
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
-            boss=false;classification='normal';selfBuff=true;seconds=180
+            boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false
+            LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
             pick=false;target=true;SpellQueue._rotationIsCustom=false
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
         """ + setup)
         assert lua.eval("HoldAutomaticBurst(1259799,b)") == expected, setup
     print("Automatic burst hold: %d cases passed" % len(cases))
     return 0
+
+
+def check_dying_long_casts():
+    """WoW Forever, target below 20%: a cast longer than the global cooldown sinks."""
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    source = SRC.read_text(encoding="utf-8")
+    lua.execute("""
+        RANK_SINK, ARCH_UNK, ARCH_MISS, GEOM_PEN, ROLE_PEN, LONG_CAST_MS = 9, 3, 4, 1, 1, 1500
+        castTimes, pick, secret = {}, false, {}
+        BlizzardAPI = {
+            HasGamePick = function() return pick end,
+            IsSecretValue = function(v) return v == secret end,
+            GetCachedSpellInfo = function(id) return {castTime = castTimes[id]} end,
+        }
+        SpellDB = {}
+        function ResolveBurstTriggers() return nil end
+        function pattern() return nil end
+    """ + extract("IsLongCast", source) + "\n" + extract("ContextRank", source))
+    cases = [
+        ("castTimes[1]=2000", True, 9, "long cast on a dying target sinks"),
+        ("castTimes[1]=2000", False, 3, "long cast on a healthy target keeps its rank"),
+        ("castTimes[1]=1500", True, 3, "a cast no longer than the GCD keeps its rank"),
+        ("castTimes[1]=0", True, 3, "an instant keeps its rank"),
+        ("castTimes[1]=secret", True, 3, "a hidden cast time is not a long cast"),
+        ("castTimes[1]=nil", True, 3, "an unknown cast time is not a long cast"),
+        ("castTimes[1]=2000; pick=true", True, 3, "retail (game pick): unchanged"),
+    ]
+    bad = 0
+    for setup, dying, want, why in cases:
+        lua.execute("castTimes, pick = {}, false; " + setup)
+        got = lua.eval("ContextRank(1, nil, nil, nil, false, false, %s)" % ("true" if dying else "false"))
+        if got != want:
+            bad += 1
+            print("  FAIL dying long cast: got %s, want %s  (%s)" % (got, want, why))
+    print("Dying long casts: %d cases, %d failure(s)" % (len(cases), bad))
+    return bad
+
+
+def check_forever_lockout_readiness():
+    """WoW Forever: isActive with isOnGCD unset after a wand shot is a lockout, not a cooldown."""
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    text = (SRC.parent / "BlizzardAPI" / "CooldownTracking.lua").read_text(encoding="utf-8")
+    start = text.index("function BlizzardAPI.IsSpellReady(")
+    end = text.index("\nend\n", start) + len("\nend\n")
+    lua.execute("""
+        BlizzardAPI = {}
+        forever, ownCooldown, cdInfo = true, false, nil
+        C_Spell = { GetSpellCooldownDuration = function() end }
+        function C_Spell_GetSpellCooldown() return cdInfo end
+        function Unsecret() return nil end
+        function ReadyByGCDEnd() return false end
+        function GetTime() return 0 end
+        BlizzardAPI.IsForever = function() return forever end
+        BlizzardAPI.IsSpellOnCooldown = function() return ownCooldown end
+    """ + text[start:end])
+    cases = [
+        ("", True, "Forever lockout without an own cooldown: ready"),
+        ("ownCooldown = true", False, "Forever own cooldown under the lockout: not ready"),
+        ("forever = false", False, "retail: isActive still means a real cooldown"),
+        ("C_Spell.GetSpellCooldownDuration = nil", False, "no ignore-GCD read: unchanged"),
+        ("cdInfo = {isActive = false}", True, "nothing active: ready"),
+    ]
+    bad = 0
+    for setup, want, why in cases:
+        lua.execute("""forever, ownCooldown = true, false
+            C_Spell.GetSpellCooldownDuration = function() end
+            cdInfo = {isActive = true}
+        """ + setup)
+        got = lua.eval("(BlizzardAPI.IsSpellReady(585))")
+        if got != want:
+            bad += 1
+            print("  FAIL lockout readiness: got %s, want %s  (%s)" % (got, want, why))
+    print("Forever lockout readiness: %d cases, %d failure(s)" % (len(cases), bad))
+    # One threshold question on the duration object: "does it end within N seconds?"
+    start = text.index("function BlizzardAPI.CooldownEndsWithin(")
+    end = text.index("\nend\n", start) + len("\nend\n")
+    lua.execute("""
+        active, below = false, nil
+        function DurationObjectActive() return active end
+        BlizzardAPI.IsDurationBelowSeconds = function() return below end
+        C_Spell.GetSpellCooldownDuration = function() return {} end
+    """ + text[start:end])
+    within = [
+        ("active = false", True, "no cooldown of its own"),
+        ("active, below = true, true", True, "ends within the window"),
+        ("active, below = true, false", False, "a longer cooldown"),
+        ("active, below = true, nil", None, "unanswerable stays unknown"),
+        ("C_Spell.GetSpellCooldownDuration = nil", None, "no duration read"),
+    ]
+    for setup, want, why in within:
+        lua.execute("""active, below = false, nil
+            C_Spell.GetSpellCooldownDuration = function() return {} end
+        """ + setup)
+        got = lua.eval("BlizzardAPI.CooldownEndsWithin(585, 1.5)")
+        if got != want:
+            bad += 1
+            print("  FAIL cooldown ends within: got %s, want %s  (%s)" % (got, want, why))
+    return bad
 
 
 def check_coverage():
@@ -147,6 +261,7 @@ def main():
     lua.execute(PRELUDE)
     lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
+    lua.execute("castOnlyBuffSeen = {}")
     run = lua.eval("function(src) return assert(load(src))() end")
     lua.execute("""
         enemies, occupied = 0, nil
@@ -287,6 +402,53 @@ BlizzardAPI.IsTargetBoss = function() return isBoss end
         if got != want:
             bad += 1
             print("  FAIL dot below=%s boss=%s pick=%s got %s, want %s  (%s)" % (below, boss, pick, got, want, why))
+    # A short group fight (grouped, normal target, no pack): no over-time DoT on a healthy
+    # target, while one with a big upfront hit still goes out.
+    lua.execute("""SpellDB = { IsFrontalDot = function(id) return id == 8921 end }
+targetBelow, isBoss, hasPick = {[35]=false}, false, false""")
+    group = [
+        ("true", 772, False, "short group fight: Rend skipped"),
+        ("true", 8921, None, "short group fight: Moonfire's hit still lands"),
+        ("false", 772, None, "solo or worthwhile fight: no opinion"),
+    ]
+    for short, sid, want, why in group:
+        lua.execute("shortGroupFight = %s" % short)
+        got = run('return GateVerdict({t="dot",id=%d}, ctx)' % sid)
+        if got != want:
+            bad += 1
+            print("  FAIL group dot %s: got %s, want %s  (%s)" % (sid, got, want, why))
+    lua.execute("shortGroupFight, SpellDB = false, nil")
+    # A cast-only stack requirement (Maelstrom Weapon) applies once the buff has been seen this
+    # session; a player who cannot gain it (no rune) keeps a normal full-length cast.
+    lua.execute("""
+castOnlyBuffSeen, playerStacks = {}, 0
+function StackAtLeast(unit, id, k)
+    if unit == "player" and playerStacks ~= nil then return playerStacks >= k end
+    return nil
+end
+function StackHolds(unit, g) return StackAtLeast(unit, g.id, g.n) end
+BlizzardAPI.GetAuraStackAtLeast = function() return true end
+""")
+    maelstrom = '{t="stack",id=408505,op=">=",n=5,required=true,castOnly=true}'
+    cast_only = [
+        ("playerStacks = 0", maelstrom, True, "never seen: no rune, a normal cast"),
+        ("playerStacks = 2", maelstrom, False, "seen: the five-stack requirement applies"),
+        ("playerStacks = 0", maelstrom, False, "seen earlier this session: still required"),
+        ("playerStacks = 5", maelstrom, True, "five stacks: instant cast"),
+        ("castOnlyBuffSeen, playerStacks = {}, 0",
+         '{t="stack",id=408505,op=">=",n=5,required=true}', False, "not cast-only: never waived"),
+        ("castOnlyBuffSeen, playerStacks = {}, nil",
+         maelstrom, False, "unreadable stacks: the requirement stays"),
+        ("castOnlyBuffSeen, playerStacks = {}, 0",
+         '{t="stack",id=408505,op=">=",n=5,required=true,castOnly=true,tgt=true}', False,
+         "a target stack is never waived"),
+    ]
+    for setup, gate, want, why in cast_only:
+        lua.execute(setup)
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        if got != want:
+            bad += 1
+            print("  FAIL cast-only %s: got %s, want %s  (%s)" % (setup, got, want, why))
     lua.execute("BlizzardAPI.IsUnitHealthBelow = nil")
     # Life Tap's "starved" leaf (Forever): among the build's known mana spells none usable and
     # one short of mana. NoteManaStarved is the real function, the game's answers are stubbed.
@@ -340,6 +502,8 @@ BlizzardAPI.IsSpellUsable = function(id) local u = usableOf[id] or {true, false}
             print("  FAIL cd %s got %s, want %s  (%s)" % (gate, got, want, why))
     bad += check_coverage()
     bad += check_automatic_burst()
+    bad += check_dying_long_casts()
+    bad += check_forever_lockout_readiness()
     print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved) + len(cd), bad))
     return 1 if bad else 0
 

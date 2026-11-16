@@ -143,6 +143,7 @@ function DotTracker.OnCastSucceeded(spellID)
         local e = GetEntry(id)
         e.expiry = now + (dur or FALLBACK_WINDOW)
         e.pandemicPoint = pandemicPoint
+        e.castAt, e.cdmSeen = now, nil
         -- A fresh application after a confirmed drop must trust the window again:
         -- hadInstance means "confirmed since the last cast that found no instance",
         -- not "ever confirmed" (which sank the first application only).
@@ -300,6 +301,14 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
         else
             trackedReason = "module-unavailable"
         end
+        if tracked == true and e then e.cdmSeen = true end
+        -- The icon trails our cast (server round trip, projectile travel). Until it has
+        -- shown once, "inactive" inside the bridge window means "not applied yet", so the
+        -- just-cast DoT stays sunk through the GCD. A miss/immune result still wins.
+        if tracked == false and e and e.castAt and not e.cdmSeen
+           and GetTime() - e.castAt < BRIDGE_WINDOW then
+            return true, "cast-pending", tracked, trackedReason
+        end
         if tracked ~= nil then return tracked, "cooldown-manager", tracked, trackedReason end
     end
     if not e then return false, "untracked", tracked, trackedReason end
@@ -353,7 +362,8 @@ function DotTracker.GetTargetAuraState(spellID, allowEstimate, readCache)
        or source == "instance-removed" or source == "engine-refresh" then
         return active
     end
-    if allowEstimate and (source == "cast-estimate" or source == "estimated-refresh"
+    if allowEstimate and (source == "cast-estimate" or source == "cast-pending"
+        or source == "estimated-refresh"
         or source == "estimated-expiry" or source == "immune-policy") then
         return active
     end

@@ -1,7 +1,9 @@
 # WoW Forever guide references
 
 Researched 2026-10-07 during the level-30 beta. These paraphrased guide summaries are
-historical evidence, not confirmation of launch behavior. Recheck current client data and
+historical evidence, not confirmation of launch behavior. Each DPS tree now opens with a
+"Launch rotation" summary from the launch-era Icy Veins guides (read 2026-11-16); the
+beta notes under it remain for history. Recheck current client data and
 sources before using them to change a priority; never copy guide text into the addon.
 
 | File | Covers |
@@ -11,6 +13,26 @@ sources before using them to change a priority; never copy guide text into the a
 | [druid-shaman.md](druid-shaman.md) | Balance, Feral cat, Feral bear, Restoration; Elemental, Enhancement, Restoration |
 | [hunter-mage-warlock.md](hunter-mage-warlock.md) | Beast Mastery, Marksmanship, Survival; Arcane, Fire, Frost; Affliction, Demonology, Destruction |
 | [cross-class.md](cross-class.md) | Blizzard notes, combat-mechanic changes, healing, consumables, simulators, builds at the cap |
+
+## Scope
+
+JustAC aims for good-enough damage in most situations, not optimal output in every
+scenario. When adapting a guide, keep the general priority and skip what depends on the
+player's situational judgment: kiting and slows, positioning, crowd-control timing,
+encounter or target-type specifics, and fine thresholds the client cannot confirm (for
+example a guide's attack-power breakpoint: pick the branch that fits most play, usually
+levelling). Record what was left out in the tree's notes rather than encoding it.
+
+## Refreshing the launch summaries
+
+Each DPS tree's "Launch rotation" block cites one Icy Veins page. The pages follow
+`https://www.icy-veins.com/wow-forever/<spec>-<role>-pve-rotation-cooldowns-abilities`
+(role `melee-dps`, `ranged-dps`, `melee-dps-and-tank`); the changelog date is on the page.
+A plain fetch is refused (HTTP 403); a browser session can read them, and same-origin
+requests from one open page can extract every tree's rotation headings and lists in a few
+calls. Paraphrase into the block, update its date, and leave tabbed sections that did not
+extract marked as missing. Then compare with `python tools/forever_queue_dump.py` and follow
+[changing a Forever priority list](../DEV_TOOLING.md#changing-a-forever-priority-list).
 
 ## Priority-list sources
 

@@ -11,7 +11,17 @@ local ProbeLogEmit = DebugCommands._Capture.ProbeLogEmit
 local LogProxy = DebugCommands._Capture.LogProxy
 
 
+-- Chat output stays short: the session's own state, warnings and the next step.
+-- Recorders a session starts for itself report to the probe log, not chat.
 function DebugCommands.DiagnosticReport(addon)
+    local REPORT_KEYS = {"build", "researchAvailable", "class", "level", "spec", "instanceType", "mapID", "powerType",
+        "healthThreshold", "healthBelow", "healthSource", "healUrgencyBelow50",
+        "powerBelow50", "recoveryHealthThreshold", "recoveryHealthBelow",
+        "recoveryManaThreshold", "recoveryManaBelow", "leadMode",
+        "efficiencyMode", "efficiencyManaThreshold", "efficiencyRecoverySeconds",
+        "efficiencyReason", "efficiencyID", "efficiencyRecovery", "efficiencyCandidates",
+        "efficiencyManaBelow", "efficiencyEnemies", "pushbackComparison", "weaponComparison",
+        "queueContext", "targetContext", "enemyProvenance"}
     local s = DebugCommands._diagnosticSession or DebugCommands._lastDiagnosticSession
         or (_G.JustACGlobal and _G.JustACGlobal.diagnosticSummary)
     if not s then
@@ -21,44 +31,51 @@ function DebugCommands.DiagnosticReport(addon)
         end
         return
     end
-    addon:Print(string.format("diagnostics: %d samples, %d changes, %d combat entries, %d probe failures",
-        s.samples, s.changes, s.pulls, s.failures))
-    addon:Print("  session=" .. s.id .. "; context is recorded at baseline, combat edges and context events.")
-    addon:Print("  rolling log entries discarded during session: " .. tostring(s.dropped or 0)
-        .. "; initial baseline is stored separately when available.")
+    local question = s.question
+    if type(question) == "table" then question = question.id end
+    addon:Print(string.format("diagnostics: session %s (%s) - %d samples, %d changes, %d pulls, %d marks, %d read failures",
+        s.id, tostring(question or "all"), s.samples, s.changes, s.pulls, s.marks or 0, s.failures))
     if (s.dropped or 0) > 0 then
-        addon:Print("  WARNING: detailed capture is incomplete; older rows were discarded.")
+        addon:Print(string.format("  WARNING: detailed capture is incomplete; %d older log rows were discarded.", s.dropped))
     end
     if s.sampleMs then
         addon:Print(string.format("  sampler ms: total=%.2f mean=%.3f max=%.3f; audit ms: total=%.2f count=%d max=%.3f",
             s.sampleMs, s.sampleMs / math.max(s.samples, 1), s.sampleMaxMs,
             s.batteryMs or 0, s.batteries or 0, s.batteryMaxMs or 0))
-    else
-        addon:Print("  timing: unavailable")
     end
-    for _, key in ipairs({"build", "researchAvailable", "class", "level", "spec", "instanceType", "mapID", "powerType",
-        "healthThreshold", "healthBelow", "healthSource", "healUrgencyBelow50",
-        "powerBelow50", "recoveryHealthThreshold", "recoveryHealthBelow",
-        "recoveryManaThreshold", "recoveryManaBelow", "leadMode",
-        "efficiencyMode", "efficiencyManaThreshold", "efficiencyRecoverySeconds",
-        "efficiencyReason", "efficiencyID", "efficiencyRecovery", "efficiencyCandidates",
-        "efficiencyManaBelow", "efficiencyEnemies", "queueContext", "targetContext", "enemyProvenance"}) do
-        addon:Print("  " .. key .. "=" .. (s.last[key] or "untested"))
+    for _, key in ipairs(REPORT_KEYS) do
+        if s.last[key] then addon:Print("  " .. key .. "=" .. s.last[key]) end
     end
-    addon:Print("  Observations only: passing gates do not prove correct offers. Missing/secret reads are not absence.")
-    addon:Print("  powerBelow50 tests current resource; recoveryManaBelow explicitly tests mana. Recovery offers are OOC-only.")
-    addon:Print("  Summary and detailed log persist in JustACGlobal; /reload or logout flushes current changes to disk.")
+    addon:Print("  Observations only: missing or secret reads are not absence. /reload saves; analyze with tools\\analyze_probe.py.")
 end
 
 function DebugCommands.DiagnosticStatus(addon)
     local s = DebugCommands._diagnosticSession
-    addon:Print("diagnostics: " .. (s and "ON" or "OFF"))
-    addon:Print("  audit=" .. tostring(DebugCommands._probeSession ~= nil)
-        .. " errors=" .. tostring(DebugCommands._errorCapture ~= nil))
-    if s then
-        addon:Print("  owned audit=" .. tostring(s.ownsAudit) .. " errors=" .. tostring(s.ownsErrors))
+    if not s then
+        addon:Print("diagnostics: OFF")
+        local last = DebugCommands._lastDiagnosticSession
+            or (_G.JustACGlobal and _G.JustACGlobal.diagnosticSummary)
+        if last then addon:Print("  last session " .. last.id .. "; /jac inspect report for details") end
+    else
+        local elapsed = GetTime() - s.started
+        addon:Print(string.format("diagnostics: ON (%s) session %s, %dm%02ds of %dm, %d samples, %d pulls, %d marks",
+            s.mode or "general", s.id, math.floor(elapsed / 60), math.floor(elapsed % 60), s.limit / 60,
+            s.samples, s.pulls, s.marks or 0))
+        if (s.dropped or 0) > 0 then
+            addon:Print(string.format("  WARNING: %d older log rows discarded so far.", s.dropped))
+        end
+        if s.sampleMs then
+            addon:Print(string.format("  sampler ms: mean=%.3f max=%.3f", s.sampleMs / math.max(s.samples, 1),
+                s.sampleMaxMs))
+        end
     end
-    DebugCommands.DiagnosticReport(addon)
+    -- Recorders started outside a session keep running independently; say so.
+    local session = s
+    local audit = DebugCommands._probeSession ~= nil and not (session and session.ownsAudit)
+    local errors = DebugCommands._errorCapture ~= nil and not (session and session.ownsErrors)
+    if audit or errors then
+        addon:Print("  also running: audit=" .. tostring(audit) .. " errors=" .. tostring(errors))
+    end
 end
 
 function DebugCommands.StopDiagnostics(addon)
@@ -68,11 +85,14 @@ function DebugCommands.StopDiagnostics(addon)
     s.frame:UnregisterAllEvents()
     s.frame:SetScript("OnEvent", nil)
     s.ticker:Cancel()
-    s.signalReads, s.signalEvent = nil, nil
-    if s.ownsAudit and DebugCommands._probeSession == s.audit then DebugCommands.ProbeSession(addon, "off") end
-    if s.ownsErrors and DebugCommands._errorCapture == s.errors then DebugCommands.ErrorCapture(addon, "off") end
-    ProbeLogEmit(string.format("DIAGNOSTICS STOP session=%s samples=%d changes=%d pulls=%d failures=%d",
-        s.id, s.samples, s.changes, s.pulls, s.failures))
+    if s.focusTicker then s.focusTicker:Cancel(); s.focusTicker = nil end
+    if s.signalCleanup then s.signalCleanup() end
+    s.signalReads, s.signalEvent, s.signalCleanup = nil, nil, nil
+    local logOnly = LogProxy(addon)
+    if s.ownsAudit and DebugCommands._probeSession == s.audit then DebugCommands.ProbeSession(logOnly, "off") end
+    if s.ownsErrors and DebugCommands._errorCapture == s.errors then DebugCommands.ErrorCapture(logOnly, "off") end
+    ProbeLogEmit(string.format("DIAGNOSTICS STOP session=%s samples=%d changes=%d pulls=%d failures=%d t=%.3f marks=%d",
+        s.id, s.samples, s.changes, s.pulls, s.failures, GetTime(), s.marks or 0))
     if s.sampleMs then
         ProbeLogEmit(string.format("DIAGNOSTICS TIMING session=%s samplerMs=%.3f samplerMaxMs=%.3f auditMs=%.3f auditCount=%d auditMaxMs=%.3f",
             s.id, s.sampleMs, s.sampleMaxMs, s.batteryMs or 0, s.batteries or 0, s.batteryMaxMs or 0))
@@ -81,26 +101,64 @@ function DebugCommands.StopDiagnostics(addon)
     if not _G.JustACGlobal then _G.JustACGlobal = {} end
     local summary = {last={}}
     for _, key in ipairs({"id", "samples", "changes", "pulls", "failures", "sampleMs",
-        "sampleMaxMs", "batteryMs", "batteries", "batteryMaxMs", "dropped"}) do
+        "sampleMaxMs", "batteryMs", "batteries", "batteryMaxMs", "dropped", "marks"}) do
         summary[key] = s[key]
     end
+    summary.question = s.question and s.question.id or "all"
     for key, value in pairs(s.last) do summary.last[key] = value end
     _G.JustACGlobal.diagnosticSummary = summary
-    addon:Print("diagnostics: OFF")
-    DebugCommands.DiagnosticReport(addon)
+    local elapsed = GetTime() - s.started
+    addon:Print(string.format("diagnostics: OFF - session %s, %dm%02ds, %d pulls, %d marks",
+        s.id, math.floor(elapsed / 60), math.floor(elapsed % 60), s.pulls, s.marks or 0))
+    if (s.dropped or 0) > 0 then
+        addon:Print(string.format("  WARNING: detailed capture is incomplete; %d older log rows were discarded.", s.dropped))
+    end
+    local errorLog = _G.JustACGlobal.errorLog
+    local newErrors = (errorLog and #errorLog or 0) - (s.errorsAtStart or 0)
+    if newErrors > 0 then
+        addon:Print(string.format("  %d new Lua/taint error(s) captured; /jac inspect errors show", newErrors))
+    end
+    addon:Print("  Next: /reload to save, then python tools\\analyze_probe.py (/jac inspect report for a summary)")
 end
 
 --------------------------------------------------------------------------------
 function DebugCommands.StartDiagnostics(addon, arg)
-    if arg and arg ~= "" then
-        addon:Print("Usage: /jac inspect start (shared health, power, pet, queue, audit and error capture)")
-        return
-    end
     if DebugCommands._diagnosticSession then addon:Print("diagnostics: already ON"); return end
+    -- Three modes. The default general capture records every key and row with the
+    -- change-only audit samplers but without the audit battery's aura sweeps, so a
+    -- normal play session fits the rolling log and can be compared against a saved
+    -- baseline. "full" adds the battery. A question id records only that question.
+    local LIGHT_LIMIT_SECONDS, FULL_LIMIT_SECONDS = 1200, 600
+    local GENERAL_AUDIT = { "edge", "dot", "auraRoute", "curse" }
+    local question
+    local full = arg ~= nil and arg:lower() == "full"
+    if arg and arg ~= "" and not full then
+        if not DebugCommands.FindResearchQuestion then
+            addon:Print("diagnostics: focused captures need the optional JustAC_Research companion.")
+            addon:Print("Usage: /jac inspect start [full] (general capture; full adds the audit battery)")
+            return
+        end
+        question = DebugCommands.FindResearchQuestion(arg:lower())
+        if not question then
+            addon:Print("diagnostics: unknown question '" .. arg .. "'. /jac inspect questions lists them.")
+            return
+        end
+        if question.needs then
+            addon:Print("diagnostics: '" .. question.id .. "' is not instrumented yet (needs "
+                .. question.needs .. ").")
+            return
+        end
+    end
     DebugCommands._diagnosticSerial = (DebugCommands._diagnosticSerial or 0) + 1
     local s = { samples=0, changes=0, pulls=0, failures=0, last={}, started=GetTime(),
         id=date("%Y%m%d-%H%M%S") .. "-" .. DebugCommands._diagnosticSerial,
-        ownsAudit=DebugCommands._probeSession == nil, ownsErrors=not DebugCommands._errorCapture }
+        question=question, epoch=0, marks=0, mode=(question and "question") or (full and "full") or "general",
+        ownsAudit=full and DebugCommands._probeSession == nil,
+        ownsErrors=not DebugCommands._errorCapture }
+    if question then
+        s.rowKinds = {}
+        for _, kind in ipairs(question.rows or {}) do s.rowKinds[kind] = true end
+    end
     DebugCommands._diagnosticSession = s
         local B = LibStub("JustAC-BlizzardAPI", true)
         local DE = LibStub("JustAC-DefensiveEngine", true)
@@ -111,8 +169,7 @@ function DebugCommands.StartDiagnostics(addon, arg)
         local RI = LibStub("JustAC-RotationImport", true)
         local profile, pre
         local ROTATION_ENTRY_LIMIT = 12
-        local nameplateUnits = {}
-        for i = 1, 40 do nameplateUnits[i] = "nameplate" .. i end
+        local breakdown = {}
         local function compact(fn)
             local status, text = ProbeRead(fn)
             if status == "plain" or status == "nil" then return text end
@@ -184,38 +241,18 @@ function DebugCommands.StartDiagnostics(addon, arg)
                     SafeSecret(ctx.dying), SafeSecret(ctx.execute), SafeSecret(ctx.pickID))
             end,
             enemyProvenance=function()
-                local threatRead = _G.UnitThreatSituation
-                local plates, hostile, threat, noThreat, unknown = 0, 0, 0, 0, 0
-                for i = 1, #nameplateUnits do
-                    local unit = nameplateUnits[i]
-                    local present = exists(unit)
-                    if present == nil then
-                        unknown = unknown + 1
-                    elseif present then
-                        plates = plates + 1
-                        local attackable = UnitCanAttack("player", unit)
-                        if IsSecret(attackable) then
-                            unknown = unknown + 1
-                        elseif attackable then
-                            hostile = hostile + 1
-                            if not threatRead then
-                                unknown = unknown + 1
-                            else
-                                local ok, situation = pcall(threatRead, "player", unit)
-                                if not ok or IsSecret(situation) then
-                                    unknown = unknown + 1
-                                elseif situation == nil then
-                                    noThreat = noThreat + 1
-                                else
-                                    threat = threat + 1
-                                end
-                            end
-                        end
-                    end
-                end
-                return string.format("plates=%d hostile=%d threat=%d noThreat=%d unknown=%d threatApi=%s helper=%s",
-                    plates, hostile, threat, noThreat, unknown, tostring(threatRead ~= nil),
-                    compact(function() return B and B.GetEngagedEnemyCount and B.GetEngagedEnemyCount() end))
+                -- The engaged count and its per-plate reasons come from the queue's own scan.
+                if not (B and B.GetEngagedEnemyCount) then return nil end
+                local count = B.GetEngagedEnemyCount(breakdown)
+                return string.format("plates=%d hostile=%d threat=%d unknown=%d helper=%d widened=%d inCombatOthers=%d",
+                    breakdown.plates, breakdown.hostile, breakdown.threat, breakdown.unknown, count,
+                    breakdown.widened, breakdown.others)
+            end,
+            aggroRange=function()
+                if not (SDB and SDB.GetAggroRangeState and SDB.IsTargetWithin) then return nil end
+                local applies, reason = SDB.GetAggroRangeState()
+                return string.format("applies=%s reason=%s within5=%s",
+                    tostring(applies), tostring(reason), compact(function() return SDB.IsTargetWithin(5) end))
             end,
             rotationEligibility=function()
                 if not (RI and RI.GetRotationGated and B) then return nil end
@@ -281,6 +318,20 @@ function DebugCommands.StartDiagnostics(addon, arg)
             manualMode=function() return profile and profile.isManualMode end,
             leadMode=function() return SQ and SQ.LeadMode and SQ.LeadMode(profile) end,
             efficiencyMode=function() return profile and (profile.efficiencyMode or "off") end,
+            pushbackComparison=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                if not ctx then return nil end
+                return string.format("reason=%s chosen=%s",
+                    SafeSecret(ctx.pushbackReason), SafeSecret(ctx.pushbackID))
+            end,
+            weaponComparison=function()
+                local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
+                if not ctx then return nil end
+                return string.format("basis=precombat-baseline minSpellGain=1.20x reason=%s spell=%s fillerChoice=%s spellDPS=%s weaponDPS=%s hitRate=%s manaRegen=%s",
+                    SafeSecret(ctx.weaponReason), SafeSecret(ctx.weaponLead), SafeSecret(ctx.weaponID),
+                    SafeSecret(ctx.weaponSpellDPS), SafeSecret(ctx.weaponDPS),
+                    SafeSecret(ctx.weaponHitRate), SafeSecret(ctx.weaponManaRegen))
+            end,
             efficiencyManaThreshold=function() return profile and (profile.efficiencyManaThreshold or 40) end,
             efficiencyRecoverySeconds=function() return profile and (profile.efficiencyRecoverySeconds or 10) end,
             efficiencyRecovery=function()
@@ -431,26 +482,43 @@ function DebugCommands.StartDiagnostics(addon, arg)
             end,
         }
         if DebugCommands.CombatSignalReads then
-            s.signalReads, s.signalEvent = DebugCommands.CombatSignalReads()
+            s.signalReads, s.signalEvent, s.signalCleanup =
+                DebugCommands.CombatSignalReads(reads.displayed)
         else
             s.signalReads = {}
         end
         reads.researchAvailable = function() return DebugCommands.CombatSignalReads ~= nil end
         for key, read in pairs(s.signalReads) do reads[key] = read end
         local keys = {}
-        for key in pairs(reads) do keys[#keys+1] = key end
+        local missing = {}
+        if question then
+            local wanted = {}
+            for _, key in ipairs(DebugCommands.RESEARCH_CORE_KEYS or {}) do wanted[key] = true end
+            for _, key in ipairs(question.keys or {}) do
+                wanted[key] = true
+                if not reads[key] then missing[#missing+1] = key end
+            end
+            for key in pairs(wanted) do
+                if reads[key] then keys[#keys+1] = key end
+            end
+        else
+            for key in pairs(reads) do keys[#keys+1] = key end
+        end
         table.sort(keys)
+        table.sort(missing)
     local immutable = {build=true, interface=true, project=true, forever=true, addonVersion=true, class=true}
     local metadata = {}
+    local function header(tag)
+        local now = GetTime()
+        ProbeLogEmit(string.format("DIAG session=%s sample=%d elapsed=%.2f t=%.3f epoch=%d %s pull=%d",
+            s.id, s.samples, now - s.started, now, s.epoch, tag, s.pulls))
+    end
     local function observe(tag)
         s.samples = s.samples + 1
         profile = addon:GetProfile()
         pre = profile and profile.precombatBuffs
         local emitted = tag ~= "SAMPLE"
-        if emitted then
-            ProbeLogEmit(string.format("DIAG session=%s sample=%d elapsed=%.2f %s pull=%d",
-                s.id, s.samples, GetTime() - s.started, tag, s.pulls))
-        end
+        if emitted then header(tag) end
         for _, key in ipairs(keys) do
             local cell = metadata[key]
             local status
@@ -467,8 +535,7 @@ function DebugCommands.StartDiagnostics(addon, arg)
                     if status == "err" then s.failures = s.failures + 1 end
                 end
                 if not emitted then
-                    ProbeLogEmit(string.format("DIAG session=%s sample=%d elapsed=%.2f %s pull=%d",
-                        s.id, s.samples, GetTime() - s.started, tag, s.pulls))
+                    header(tag)
                     emitted = true
                 end
                 ProbeLogEmit("  " .. key .. "=" .. cell)
@@ -507,15 +574,25 @@ function DebugCommands.StartDiagnostics(addon, arg)
         s.frame:RegisterUnitEvent(event, "target")
     end
     if s.signalEvent then
+        s.frame:RegisterUnitEvent("UNIT_COMBAT", "player")
         for _, event in ipairs({"ACTION_RANGE_CHECK_UPDATE", "SPELL_RANGE_CHECK_UPDATE",
             "UI_ERROR_MESSAGE", "DAMAGE_METER_COMBAT_SESSION_UPDATED",
-            "DAMAGE_METER_CURRENT_SESSION_UPDATED", "DAMAGE_METER_RESET"}) do
+            "DAMAGE_METER_CURRENT_SESSION_UPDATED", "DAMAGE_METER_RESET",
+            "ACTIONBAR_SLOT_CHANGED", "SPELLS_CHANGED", "PLAYER_EQUIPMENT_CHANGED", "CVAR_UPDATE"}) do
             s.frame:RegisterEvent(event)
         end
-        for _, event in ipairs({"UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED",
+        if B and B.IsForever and B.IsForever() then
+            s.frame:RegisterEvent("PLAYER_SWING")
+            if C_SwingTimer then s.frame:RegisterEvent("PLAYER_SWING_RANGE_UPDATE") end
+        end
+        for _, event in ipairs({"UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_DELAYED",
             "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_FAILED_QUIET"}) do
             s.frame:RegisterUnitEvent(event, "player")
         end
+        -- Re-registering replaces the unit list: keep the target and add the player's starts.
+        s.frame:RegisterUnitEvent("UNIT_SPELLCAST_START", "target", "player")
+        -- Lockout auras (Weakened Soul, Forbearance) come and go on the player.
+        s.frame:RegisterUnitEvent("UNIT_AURA", "player")
     end
     for _, event in ipairs({"PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE",
         "PLAYER_TARGET_CHANGED", "UPDATE_SHAPESHIFT_FORM", "UNIT_PET", "PLAYER_LEVEL_UP"}) do
@@ -524,35 +601,91 @@ function DebugCommands.StartDiagnostics(addon, arg)
     s.frame:SetScript("OnEvent", function(_, event, unit, a, b, c, d)
         if DebugCommands._diagnosticSession ~= s then return end
         if event == "UNIT_PET" and unit ~= "player" then return end
+        if event == "PLAYER_TARGET_CHANGED" then s.epoch = s.epoch + 1 end
         if s.signalEvent then s.signalEvent(event, unit, a, b, c, d) end
-        if event == "SPELL_UPDATE_COOLDOWN" or event:match("^UNIT_SPELLCAST_")
+        if event == "SPELL_UPDATE_COOLDOWN" or event == "UNIT_COMBAT" or event:match("^UNIT_SPELLCAST_")
            or event == "ACTION_RANGE_CHECK_UPDATE" or event == "SPELL_RANGE_CHECK_UPDATE"
-           or event:match("^DAMAGE_METER_") or event == "UI_ERROR_MESSAGE" then return end
+           or event == "PLAYER_SWING" or event == "PLAYER_SWING_RANGE_UPDATE" or event == "CVAR_UPDATE"
+           or event:match("^DAMAGE_METER_") or event == "UI_ERROR_MESSAGE" or event == "UNIT_AURA" then
+            return
+        end
         if event == "PLAYER_REGEN_DISABLED" then s.pulls = s.pulls + 1 end
         sample(event)
+        -- One line per combat edge so a running capture is never forgotten.
+        if event == "PLAYER_REGEN_DISABLED" then
+            addon:Print(string.format("|cffffcc00probe active|r - recording pull %d", s.pulls))
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            local elapsed = GetTime() - s.started
+            addon:Print(string.format("|cffffcc00probe active|r - pull %d recorded (%dm of %dm); /jac inspect stop when done",
+                s.pulls, math.floor(elapsed / 60), s.limit / 60))
+        end
     end)
+    local limit = LIGHT_LIMIT_SECONDS
+    if full then limit = FULL_LIMIT_SECONDS end
     s.ticker = C_Timer.NewTicker(0.25, function()
         if DebugCommands._diagnosticSession ~= s then return end
         sample("SAMPLE")
-        if GetTime() - s.started >= 600 and DebugCommands._diagnosticSession == s then
-            addon:Print("diagnostics: ten-minute sampling limit reached")
+        if GetTime() - s.started >= limit and DebugCommands._diagnosticSession == s then
+            addon:Print(string.format("diagnostics: %d-minute sampling limit reached", limit / 60))
             DebugCommands.StopDiagnostics(addon)
         end
     end)
-    if s.ownsErrors then DebugCommands.ErrorCapture(addon, "on") end
-    if s.ownsAudit then DebugCommands.ProbeSession(addon, "on") end
+    s.limit = limit
+    s.errorsAtStart = _G.JustACGlobal and _G.JustACGlobal.errorLog and #_G.JustACGlobal.errorLog or 0
+    local logOnly = LogProxy(addon)
+    if s.ownsErrors then DebugCommands.ErrorCapture(logOnly, "on") end
+    if s.ownsAudit then DebugCommands.ProbeSession(logOnly, "on") end
     s.audit, s.errors = DebugCommands._probeSession, DebugCommands._errorCapture
-    sample("BASELINE")
-    if DebugCommands._diagnosticSession == s then
-        addon:Print("diagnostics: ON - play normally; /jac inspect stop, then /reload to save")
-        addon:Print("  Power check: current resource below 50%; untested until you spend/recover across it.")
-        if DebugCommands.CombatSignalReads then
-            addon:Print("  Temporary signal research ON: 1s reads; up to 120 GCD changes per phase.")
-            addon:Print("  Research log capacity: 32000 rows; ten-minute session limit.")
+    -- Self-describing capture: the analyzer scores against these rows, not the
+    -- registry it happens to find on disk later.
+    ProbeLogEmit(string.format("DIAGNOSTICS START session=%s t=%.3f question=%s mode=%s limit=%d",
+        s.id, GetTime(), question and question.id or "all", s.mode, limit))
+    ProbeLogEmit("DIAGNOSTICS KEYS session=" .. s.id .. " keys=" .. table.concat(keys, ","))
+    if #missing > 0 then
+        ProbeLogEmit("DIAGNOSTICS MISSING session=" .. s.id .. " keys=" .. table.concat(missing, ","))
+    end
+    if DebugCommands.EmitQuestionDefinitions then
+        if question then
+            DebugCommands.EmitQuestionDefinitions(s.id, {question})
         else
-            addon:Print("  Research unavailable: optional JustAC_Research companion is not loaded; standard diagnostics only.")
+            DebugCommands.EmitQuestionDefinitions(s.id, DebugCommands.InstrumentedResearchQuestions())
         end
     end
+    local auditNames
+    if question then auditNames = question.audit elseif not full then auditNames = GENERAL_AUDIT end
+    if auditNames and DebugCommands.AuditSignalSamples then
+        local samples = DebugCommands.AuditSignalSamples(function() return s.epoch end, auditNames)
+        s.focusTicker = C_Timer.NewTicker(1.0, function()
+            if DebugCommands._diagnosticSession ~= s then return end
+            for _, read in ipairs(samples) do
+                local ok, err = pcall(read)
+                if not ok then
+                    ProbeLogEmit("FOCUS SAMPLE ERROR: " .. SafeSecret(err))
+                    s.focusTicker:Cancel()
+                    s.focusTicker = nil
+                    return
+                end
+            end
+        end)
+    end
+    sample("BASELINE")
+    if DebugCommands._diagnosticSession ~= s then return end
+    local minutes = limit / 60
+    if question then
+        addon:Print(string.format("diagnostics: ON (question '%s', up to %d min): %s", question.id, minutes, question.title))
+        DebugCommands.PrintQuestionGuide(addon, question)
+        if #missing > 0 then
+            addon:Print("  WARNING: keys unavailable on this client: " .. table.concat(missing, ", "))
+        end
+    elseif full then
+        addon:Print(string.format("diagnostics: ON (full capture with audit battery, up to %d min)", minutes))
+    else
+        addon:Print(string.format("diagnostics: ON (general capture, up to %d min); 'start full' adds the audit battery", minutes))
+    end
+    if not DebugCommands.CombatSignalReads then
+        addon:Print("  Research unavailable: JustAC_Research is not loaded; standard keys only.")
+    end
+    addon:Print("  Play, then /jac inspect stop and /reload.")
 end
 
 
@@ -565,7 +698,7 @@ function DebugCommands.ProbeSession(addon, arg)
             _G.JustACGlobal.probeLog = nil
             _G.JustACGlobal.probeLogDropped = nil
         end
-        addon:Print("audit: |cffffff00log cleared|r")
+        addon:Print("audit: log cleared")
         return
     end
     if arg == "off" or (not arg and DebugCommands._probeSession) then
@@ -585,8 +718,8 @@ function DebugCommands.ProbeSession(addon, arg)
         if f and f.ownsSelfCast and DebugCommands._selfCast == f.selfCast then
             DebugCommands.SelfCastProbe(LogProxy(addon))
         end
-        addon:Print(string.format("audit: |cffff6600OFF|r - %d log lines held.", #ProbeLogStore()))
-        addon:Print("|cff888888/reload to flush to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua (JustACGlobal.probeLog)|r")
+        addon:Print(string.format("audit: OFF - %d log lines held; /reload to save (JustACGlobal.probeLog)",
+            #ProbeLogStore()))
         return
     end
 
@@ -636,8 +769,8 @@ function DebugCommands.ProbeSession(addon, arg)
         else
             DebugCommands.RunProbeBattery(addon, "COMBAT-EXIT#" .. cycles)
             if cycles >= 20 then
-                addon:Print("audit: 20 combat cycles captured - auto-stopping.")
-                DebugCommands.ProbeSession(addon, "off")
+                ProbeLogEmit("audit: 20 combat cycles captured; stopping")
+                DebugCommands.ProbeSession(LogProxy(addon), "off")
             end
         end
     end)
@@ -669,16 +802,44 @@ function DebugCommands.ProbeSession(addon, arg)
     if f.ownsSelfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
     f.loc, f.selfCast = DebugCommands._locWatch, DebugCommands._selfCast
     if not DebugCommands.AuditSignalSamples then
-        addon:Print("audit: standard validation only; optional JustAC_Research companion is not loaded.")
+        addon:Print("audit: ON - standard validation only (JustAC_Research not loaded)")
         return
     end
-    addon:Print("|cff00ff00=== audit ARMED ===|r Baseline captured. Now just fight: enter/exit combat a few times,")
-    addon:Print("get CC'd/dazed if you can, cast + channel, get hurt, cap a resource. Snapshots are automatic.")
-    addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
-    addon:Print("|cff888888  For the DoT leg: keep several bleeds rolling on one target, refresh them early,|r")
-    addon:Print("|cff888888  and swap targets at least once so the tracker has to start over.|r")
-    addon:Print("|cff888888  Apply a bleed OUT of combat too - the out-of-combat line is the control.|r")
-    addon:Print("|cff888888  For curses: track their AURA entries in Cooldown Manager Tracked Buffs; cast, replace,|r")
-    addon:Print("|cff888888  let expire, and swap targets. CURSE snapshots record true/false/unknown plus viewer/category evidence.|r")
-    addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
+    addon:Print("audit: ON - baseline captured; combat snapshots are automatic")
+    addon:Print("  /jac inspect audit off, then /reload to save")
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect mark <label>: timestamp a scenario control the probe cannot observe
+-- itself (a heal landing on you, a debuff dispelled, stepping into melee). Bind it
+-- to a macro to mark mid-fight. The analyzer scores marks against the session's
+-- question definitions; a mark outside a session is logged but never scored.
+--------------------------------------------------------------------------------
+local MARK_LABEL_MAX = 40
+
+function DebugCommands.MarkScenario(addon, arg)
+    local label = arg and arg:lower():gsub("[^%w%-_]+", "-"):gsub("^%-+", ""):gsub("%-+$", "") or ""
+    label = label:sub(1, MARK_LABEL_MAX)
+    local s = DebugCommands._diagnosticSession
+    if label == "" then
+        addon:Print("Usage: /jac inspect mark <label>")
+        local question = s and s.question
+        if question and question.marks then
+            addon:Print("  Labels for '" .. question.id .. "': " .. table.concat(question.marks, ", "))
+        end
+        return
+    end
+    local epoch = "none"
+    if s then
+        s.marks = (s.marks or 0) + 1
+        epoch = tostring(s.epoch or 0)
+    end
+    local now = GetTime()
+    ProbeLogEmit(string.format("MARK session=%s t=%.3f epoch=%s combat=%s label=%s",
+        s and s.id or "none", now, epoch, tostring(UnitAffectingCombat("player") and true or false), label))
+    if s then
+        addon:Print(string.format("mark: %s @ %.1f", label, now))
+    else
+        addon:Print("mark: " .. label .. " logged, but no session is running, so it will not be scored")
+    end
 end

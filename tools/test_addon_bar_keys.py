@@ -44,6 +44,11 @@ LibStub = setmetatable({
 libs["JustAC-BlizzardAPI"] = {
     GetAddon = function() return { db = { profile = {} } } end,
     GetActionInfo = function(slot) if BAR[slot] then return "spell", BAR[slot] end end,
+    GetBarSpells = function()
+        local entries={}
+        for slot in pairs(BAR) do entries[#entries+1]={slot=slot} end
+        return entries
+    end,
     IsSecretValue = function() return false end,
 }
 function AddButtonLib(major, list)
@@ -91,7 +96,75 @@ def hotkey(bar, binds, button_libs, spell):
     return scanner.GetSpellHotkey(spell)
 
 
+def check_autoattack_macros():
+    cases = (
+        (5019, "#showtooltip\n/use !Shoot", "/cast Smite", "1"),
+        (5019, "/use [mod:alt] !Shoot; !Shoot", "/cast Smite", "1"),
+        (5019, "/use !Shoot\n/use 13", "/use !Shoot", "2"),
+        (5019, "/use [mod:alt] Smite; !Shoot", "/use !Shoot", "2"),
+        (6603, "/use Attack", "/cast Smite", "1"),
+        (75, "/use !Auto Shot", "/cast Smite", "1"),
+        (6603, "/startattack\n/cast Smite", "/startattack", "2"),
+        (5019, "/cast Smite\n/cast !Shoot", "#showtooltip Shoot\n/cast !Shoot", "2"),
+        (5019, "/cast !Shoot\n/use 13", "/cast !Shoot", "2"),
+        (5019, "/cast [mod:alt] Smite; !Shoot", "/cast !Shoot", "2"),
+        (5019, "/castsequence !Shoot, Smite", "/cast !Shoot", "2"),
+        (5019, "/cast !Shoot\n/run print('x')", "/cast !Shoot", "2"),
+        (5019, "/cast !Shoot\n/click OtherButton", "/cast !Shoot", "2"),
+        (5019, "/cast !Shoot\n/stopcasting", "/cast !Shoot", "2"),
+        (5019, "/cast !Shoot\n/startattack", "/cast Smite", ""),
+        (6603, "/startattack", "/cast Smite", "1"),
+        (5019, "/cast !Shoot", "/cast Smite", "1"),
+    )
+    for spell, first, second, expected in cases:
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("""
+            SPELLS={[6603]='Attack',[5019]='Shoot',[75]='Auto Shot',[585]='Smite'}
+            BAR={[1]=5019,[2]=5019}
+            BINDS={ACTIONBUTTON1='1',ACTIONBUTTON2='2'}
+        """)
+        lua.execute(PRELUDE)
+        lua.globals().bodies = lua.table_from({1: first, 2: second})
+        lua.execute("""
+            C_SpecializationInfo={GetSpecialization=function() return 0 end}
+            MAX_ACCOUNT_MACROS=120
+            C_Spell.GetOverrideSpell=function() end
+            function GetActionInfo(slot) return "macro",slot end
+            function GetActionText(slot) return "M"..slot end
+            function GetMacroInfo(index)
+                if type(index)=="number" and bodies[index] then return "M"..index,nil,bodies[index] end
+            end
+            function GetNumMacros() return 2,0 end
+            LibStub.libs["JustAC-BlizzardAPI"].GetDebugMode=function() return false end
+            LibStub.libs["JustAC-BlizzardAPI"].GetActionInfo=function(slot)
+                if BAR[slot] then return "macro",slot,"spell",BAR[slot] end
+            end
+        """)
+        lua.execute((SRC.parent / "MacroParser.lua").read_text(encoding="utf-8"))
+        lua.execute(SRC.read_text(encoding="utf-8"))
+        scanner = lua.eval('LibStub.libs["JustAC-ActionBarScanner"]')
+        scanner.RebuildKeybindCache()
+        actual = scanner.GetSpellHotkey(spell)
+        assert actual == expected, (spell, first, second, actual, expected)
+        expected_slot = int(expected) if expected else None
+        assert scanner.GetAutoAttackSlotForSpell(spell) == expected_slot, (spell, first, second)
+        assert scanner.GetDirectSlotForSpell(spell) is None, "macros never become direct cooldown slots"
+    lua.execute("""
+        function GetActionInfo() return "macro",5019,"spell" end
+        function GetActionText() return "Shared" end
+        function GetMacroInfo(index)
+            if type(index)=="number" and bodies[index] then return "Shared",nil,bodies[index] end
+        end
+        LibStub.libs["JustAC-MacroParser"].InvalidateMacroCache()
+        LibStub.libs["JustAC-ActionBarScanner"].InvalidateHotkeyCache()
+    """)
+    assert scanner.GetSpellHotkey(5019) == "", "ambiguous same-name macros cannot prove attack-only"
+    assert scanner.GetAutoAttackSlotForSpell(5019) is None, "ambiguous checked macro is not a running Shoot"
+    print("Autoattack hotkeys: pure start/cast/use macros preferred; mixed actions excluded")
+
+
 def main():
+    check_autoattack_macros()
     bad = []
     for name, bar, binds, button_libs, spell, want in CASES:
         got = hotkey(bar, binds, button_libs, spell)

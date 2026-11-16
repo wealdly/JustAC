@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 14
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 15
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -71,40 +71,118 @@ end
 --------------------------------------------------------------------------------
 -- Engaged-enemy count (secret-safe, AC-independent AoE signal)
 --------------------------------------------------------------------------------
--- Counts hostile nameplate units that have the player on their threat table -
--- enemies actually fighting YOU. Validated in 12.0 as: camera-immune (combat
--- nameplates are pinned), group-correct (excludes mobs tanked by others), and
--- secret-safe (every read is issecretvalue-tested before use). Cached briefly so
--- the per-frame queue build stays cheap. Nameplate frames are restricted, so we
--- go through the unit TOKENS, not C_NamePlate.GetNamePlates().
+-- Counts hostile nameplate units fighting the player's side: the player is on the
+-- plate's threat list, or (Forever only, where it was measured) the plate is plainly in
+-- combat and either has a pet/party member on its threat list or is targeting one of
+-- us. Retail keeps the player-only threat count unchanged. Pet-held adds never put the
+-- player on their threat list, so the player-only read missed them (measured on
+-- Forever: about half of combat time with engaged enemies). Plates in another
+-- group's fight have neither and are not counted. Every read is secret-tested;
+-- an unreadable value never adds to the count. Cached briefly so the per-frame
+-- queue build stays cheap. Nameplate frames are restricted, so we go through the
+-- unit TOKENS, not C_NamePlate.GetNamePlates().
 local UnitCanAttack       = UnitCanAttack
 local UnitThreatSituation = _G.UnitThreatSituation
-local NAMEPLATE_UNITS = {}
-for i = 1, 40 do NAMEPLATE_UNITS[i] = "nameplate" .. i end
+local UnitAffectingCombat = _G.UnitAffectingCombat
+local NAMEPLATE_UNITS, NAMEPLATE_TARGETS = {}, {}
+for i = 1, 40 do
+    NAMEPLATE_UNITS[i] = "nameplate" .. i
+    NAMEPLATE_TARGETS[i] = "nameplate" .. i .. "target"
+end
+local GROUP_UNITS = { "pet" }
+for i = 1, 4 do
+    GROUP_UNITS[#GROUP_UNITS + 1] = "party" .. i
+    GROUP_UNITS[#GROUP_UNITS + 1] = "partypet" .. i
+end
+local presentGroup = {}
 local engagedCount, engagedCountAt = 0, -1
 
---- @return number enemies currently engaged with the player (0 if unknowable)
-function BlizzardAPI.GetEngagedEnemyCount()
-    local now = GetTime()
-    if now - engagedCountAt < 0.25 then return engagedCount end
+local function PlainTrue(value)
+    return not IsSecretValue(value) and value and true or false
+end
+
+local function OnGroupThreatList(unit, groupCount)
+    for g = 1, groupCount do
+        local ok, situation = pcall(UnitThreatSituation, presentGroup[g], unit)
+        if ok and not IsSecretValue(situation) and situation ~= nil then return true end
+    end
+    return false
+end
+
+local function TargetsGroup(index, groupCount)
+    if not UnitIsUnit then return false end
+    local token = NAMEPLATE_TARGETS[index]
+    if not PlainTrue(UnitExists(token)) then return false end
+    local ok, same = pcall(UnitIsUnit, token, "player")
+    if ok and PlainTrue(same) then return true end
+    for g = 1, groupCount do
+        ok, same = pcall(UnitIsUnit, token, presentGroup[g])
+        if ok and PlainTrue(same) then return true end
+    end
+    return false
+end
+
+-- One scan serves the queue and the diagnostics. `out`, when given, receives per-plate
+-- reasons: plates, hostile, threat (player on the list), widened (Forever: counted through
+-- pet/party threat or targeting), others (plainly in combat, not counted: another fight)
+-- and unknown (a hostile or present plate with an unreadable read).
+local function ScanEngaged(out)
     local n = 0
-    if UnitThreatSituation then
-        for i = 1, 40 do
-            local u = NAMEPLATE_UNITS[i]
-            local ex = UnitExists(u)
-            if not IsSecretValue(ex) and ex then
-                local ca = UnitCanAttack("player", u)
-                if not IsSecretValue(ca) and ca then
-                    local ts = UnitThreatSituation("player", u)
-                    if not IsSecretValue(ts) and ts ~= nil then
-                        n = n + 1
+    local widened = BlizzardAPI.IsForever and BlizzardAPI.IsForever()
+    if out then
+        out.plates, out.hostile, out.threat, out.widened, out.others, out.unknown = 0, 0, 0, 0, 0, 0
+    end
+    if not UnitThreatSituation then return n end
+    local groupCount = 0
+    for g = 1, #GROUP_UNITS do
+        if PlainTrue(UnitExists(GROUP_UNITS[g])) then
+            groupCount = groupCount + 1
+            presentGroup[groupCount] = GROUP_UNITS[g]
+        end
+    end
+    for i = 1, 40 do
+        local u = NAMEPLATE_UNITS[i]
+        local exists = UnitExists(u)
+        local unread = IsSecretValue(exists)
+        if not unread and exists then
+            if out then out.plates = out.plates + 1 end
+            local hostile = UnitCanAttack("player", u)
+            unread = IsSecretValue(hostile)
+            if not unread and hostile then
+                if out then out.hostile = out.hostile + 1 end
+                local ok, ts = pcall(UnitThreatSituation, "player", u)
+                unread = not ok or IsSecretValue(ts)
+                if not unread and ts ~= nil then
+                    n = n + 1
+                    if out then out.threat = out.threat + 1 end
+                elseif widened and UnitAffectingCombat then
+                    local okCombat, fighting = pcall(UnitAffectingCombat, u)
+                    if not okCombat or IsSecretValue(fighting) then
+                        unread = true
+                    elseif fighting then
+                        if OnGroupThreatList(u, groupCount) or TargetsGroup(i, groupCount) then
+                            n = n + 1
+                            if out then out.widened = out.widened + 1 end
+                        elseif out then
+                            out.others = out.others + 1
+                        end
                     end
                 end
             end
         end
+        if unread and out then out.unknown = out.unknown + 1 end
     end
-    engagedCount, engagedCountAt = n, now
     return n
+end
+
+--- @param breakdown table|nil filled with the scan's per-plate reasons (diagnostics; uncached)
+--- @return number enemies currently engaged with the player's side (0 if unknowable)
+function BlizzardAPI.GetEngagedEnemyCount(breakdown)
+    if breakdown then return ScanEngaged(breakdown) end
+    local now = GetTime()
+    if now - engagedCountAt < 0.25 then return engagedCount end
+    engagedCount, engagedCountAt = ScanEngaged(nil), now
+    return engagedCount
 end
 
 --------------------------------------------------------------------------------
@@ -429,8 +507,24 @@ function BlizzardAPI.SpellInRange(spellID, unit)
         return BlizzardAPI.IsTargetInSwingRange and BlizzardAPI.IsTargetInSwingRange(0)
     end
     if not C_Spell_IsSpellInRange then return nil end
-    local r = C_Spell_IsSpellInRange(spellID, unit or "target")
-    if r == nil or (IsSecretValue and IsSecretValue(r)) then return nil end
+    local ok, r = pcall(C_Spell_IsSpellInRange, spellID, unit or "target")
+    if not ok then
+        geterrorhandler()(r)
+        return nil
+    end
+    if (IsSecretValue and IsSecretValue(r)) or type(r) ~= "boolean" then return nil end
+    return r
+end
+
+--- Tri-state range for a verified direct action slot, including item slots.
+function BlizzardAPI.ActionInRange(slot, unit)
+    if not slot or not C_ActionBar or not C_ActionBar.IsActionInRange then return nil end
+    local ok, r = pcall(C_ActionBar.IsActionInRange, slot, unit or "target")
+    if not ok then
+        geterrorhandler()(r)
+        return nil
+    end
+    if (IsSecretValue and IsSecretValue(r)) or type(r) ~= "boolean" then return nil end
     return r
 end
 
@@ -442,20 +536,15 @@ end
 --- 5yd by spell at every distance its 25yd stealth teleport covers, which made the gap-closer
 --- engine reject it always. An absent or unreadable button falls back to spell range.
 function BlizzardAPI.AbilityInRange(spellID, unit)
-    local r = BlizzardAPI.SpellInRange(spellID, unit)
     if not spellID then return nil end
-    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then return r end
+    if BlizzardAPI.IsMeleeSwingSpell(spellID) and (unit == nil or unit == "target") then
+        return BlizzardAPI.SpellInRange(spellID, unit)
+    end
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
-    if slot and C_ActionBar and C_ActionBar.IsActionInRange then
-        local ok, s = pcall(C_ActionBar.IsActionInRange, slot, unit or "target")
-        if not ok then
-            geterrorhandler()(s)
-        elseif not (IsSecretValue and IsSecretValue(s)) and type(s) == "boolean" then
-            return s
-        end
-    end
-    return r
+    local r = BlizzardAPI.ActionInRange(slot, unit)
+    if r ~= nil then return r end
+    return BlizzardAPI.SpellInRange(spellID, unit)
 end
 
 --------------------------------------------------------------------------------
@@ -884,6 +973,15 @@ function BlizzardAPI.GetManaRecoveryEstimate()
     end
     if casting == 0 then return nil, "no combat regeneration", baseFull end
     return castingFull, "readable", baseFull
+end
+
+--- Mana regenerated per second outside the five-second rule: GetManaRegen's base rate
+--- (per second; the character stat tooltip multiplies it by 5). nil when unreadable or zero.
+function BlizzardAPI.GetBaseManaRegen()
+    if not GetManaRegen then return nil end
+    local ok, base = pcall(GetManaRegen)
+    if not ok or not PlainRecoveryNumber(base) or base <= 0 then return nil end
+    return base
 end
 
 --- Which band does this unit's health fall in? `boundaries` is an ASCENDING
@@ -1605,13 +1703,32 @@ end
 --- the wasted-cooldown guard declines to suppress. Never the reverse - a mob
 --- wrongly called a boss would let CC through; a boss wrongly called trash would
 --- suppress cooldowns during a real execute phase, which is far worse.
-function BlizzardAPI.IsTargetBoss()
-    if UnitClassification("target") == "worldboss" then return true end
-    if UnitIsBossMob and UnitIsBossMob("target") then return true end
-    for i = 1, 5 do
-        if BlizzardAPI.SafeUnitIsUnit("target", BOSS_UNITS[i], false) then return true end
+-- The answer costs up to eight API calls and many queue stages ask it every build, so it is
+-- kept until the target changes, combat starts or ends, or an encounter assigns boss frames.
+local targetBossMemo
+if CreateFrame then
+    local bossMemoFrame = CreateFrame("Frame")
+    for _, event in ipairs({"PLAYER_TARGET_CHANGED", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
+                            "INSTANCE_ENCOUNTER_ENGAGE_UNIT"}) do
+        pcall(bossMemoFrame.RegisterEvent, bossMemoFrame, event)
     end
-    return false
+    bossMemoFrame:SetScript("OnEvent", function() targetBossMemo = nil end)
+end
+
+function BlizzardAPI.IsTargetBoss()
+    if targetBossMemo ~= nil then return targetBossMemo end
+    local boss = false
+    if UnitClassification("target") == "worldboss" then
+        boss = true
+    elseif UnitIsBossMob and UnitIsBossMob("target") then
+        boss = true
+    else
+        for i = 1, 5 do
+            if BlizzardAPI.SafeUnitIsUnit("target", BOSS_UNITS[i], false) then boss = true; break end
+        end
+    end
+    targetBossMemo = boss
+    return boss
 end
 
 --- Is the target immune to crowd control? Without `mech`: only the blanket answer (bosses,
@@ -1901,6 +2018,7 @@ end
 local targetCastInterruptible = true   -- fail-open default
 local targetCastInterruptKnown = false -- true once event provides definitive state
 local targetCastActive = false         -- true when a cast/channel is in progress
+local targetHasCast = false            -- observed on the current target since selection
 -- Bumped whenever the cast being tracked becomes a DIFFERENT cast (new cast, new target).
 -- Lets a delayed check tell "the cast I was watching is still running" from "a cast is
 -- running", which are the same boolean and opposite conclusions.
@@ -1957,6 +2075,7 @@ local function ProbeTargetCast()
         end
     end
     targetCastActive = true
+    targetHasCast = true
     targetCastSerial = targetCastSerial + 1   -- a probed cast is a different cast
     local resolved = ResolveSecretBool(notInt)
     if resolved ~= nil then
@@ -2074,6 +2193,7 @@ local function InitTargetCastTracking()
             -- casts. Read notInterruptible from the API immediately; a secret reads as
             -- unknown (fail-open; addon-agnostic: no cast bar frame needed).
             targetCastActive = true
+            targetHasCast = true
             -- Only cast STARTS bump the serial. An end sets targetCastActive false, which
             -- the delayed check already treats as "not still casting"; the serial exists
             -- solely so a REPLACEMENT cast can't be mistaken for the one we were watching.
@@ -2107,6 +2227,7 @@ local function InitTargetCastTracking()
             -- detect mid-cast interruptibility without depending on a visible
             -- cast bar frame (addon-agnostic).
             targetCastActive = false
+            targetHasCast = false
             targetCastInterruptKnown = false
             targetCastInterruptible = true
             ProbeTargetCast()
@@ -2146,6 +2267,11 @@ end
 ---                   (false = initial cast start, event hasn't fired yet)
 function BlizzardAPI.GetTargetCastInterruptState()
     return targetCastActive, targetCastInterruptible, targetCastInterruptKnown
+end
+
+--- Positive evidence only; false does not mean the target cannot cast.
+function BlizzardAPI.HasTargetCastSinceSelected()
+    return targetHasCast
 end
 
 --------------------------------------------------------------------------------

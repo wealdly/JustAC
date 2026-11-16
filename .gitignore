@@ -37,6 +37,8 @@ gh_tmp.json
 # Lua output is committed, not these multi-MB source CSVs)
 Documentation/wow_spell_csv/
 Documentation/wow_spell_csv_forever/
+Documentation/wow_spell_csv*.staging/
+Documentation/wow_spell_csv*.previous/
 
 # Duplicate nested Ace3 lib folders (packaging artifact)
 Libs/AceAddon-3.0/AceAddon-3.0/
@@ -47,3 +49,6 @@ Libs/AceEvent-3.0/AceEvent-3.0/
 Libs/AceTimer-3.0/AceTimer-3.0/
 Libs/CallbackHandler-1.0/CallbackHandler-1.0/
 Libs/LibStub/LibStub/
+
+# Local analyzer baselines (tools/analyze_probe.py --accept); per-machine captures.
+/.probe-baselines/

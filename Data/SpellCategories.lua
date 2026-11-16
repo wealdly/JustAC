@@ -626,8 +626,9 @@ SpellDB.RegisterCategories({
     cc        = CROWD_CONTROL_SPELLS,
     utility   = UTILITY_SPELLS,
     foreverRear = FOREVER_REAR_ATTACKS,
-    foreverPull = {
-        [403] = { spec = "SHAMAN_F", waive = { t = "stack", id = 408505, op = ">=", n = 5 } },
+    -- Explicit non-pulling target setup, not inferred from an ability's damage.
+    foreverTargetSetup = {
+        [1130] = { auraIDs = { 1130, 14323, 14324, 14325 } }, -- Hunter's Mark
     },
     foreverRanged = {
         [75] = true, [2480] = true, [2764] = true, [5019] = true,

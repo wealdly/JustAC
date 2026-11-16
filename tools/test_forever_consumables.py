@@ -84,7 +84,9 @@ def main():
             bad.append(why)
 
     lua, sdb = load(True)
-    own = lambda ids: lua.execute("owned = {" + ",".join(f"[{i}]=1" for i in ids) + "}")
+    # A bag change fires BAG_UPDATE_DELAYED, which drops the ownership memo.
+    own = lambda ids: lua.execute("owned = {" + ",".join(f"[{i}]=1" for i in ids) + "}"
+                                  + '; LibStub("JustAC-SpellDB").MarkConsumableBagsDirty()')
 
     own([159, 5350])          # Refreshing Spring Water (756), Conjured Water (756)
     check(sdb.GetBestRecoveryItem("drink") in (159, 5350), "a drink the player carries")

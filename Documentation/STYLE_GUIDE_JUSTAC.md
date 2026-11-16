@@ -5,54 +5,6 @@ Pattern reference, not a current module/API inventory. Start with
 current registration versions, constants, exports and cache invalidation.
 Read only the section needed for the task.
 
----
-
-## Priority Levels
-
-- **MUST** - Critical rules, violations break functionality or cause conflicts
-- **SHOULD** - Important conventions, follow unless there's good reason
-- **MAY** - Optional guidelines, use for consistency
-
----
-
-## Quick Rules Summary
-
-### Critical (MUST)
-```
-✓ All variables MUST be local unless explicitly global
-✓ MUST use LibStub module registration pattern
-✓ MUST use 4 spaces for indentation (no tabs)
-✓ MUST wrap WoW API calls that can fail in pcall()
-✓ MUST check module availability with LibStub("Module", true)
-✓ MUST validate nil on all module retrievals and API calls
-✓ MUST use early returns over deep nesting (max 3 levels)
-✓ MUST filter "assistedcombat" string actionType from action bars
-```
-
-### Important (SHOULD)
-```
-✓ Functions SHOULD be lowercase-started to avoid WoW API conflicts
-✓ Constants SHOULD use UPPER_SNAKE_CASE
-✓ Variables SHOULD use camelCase (JustAC standard)
-✓ Module names SHOULD use PascalCase
-✓ SHOULD return early to reduce nesting
-✓ SHOULD use trailing commas in multi-line tables
-✓ SHOULD cache repeated table lookups in locals
-✓ SHOULD use ipairs() for arrays, pairs() for dictionaries
-✓ SHOULD cache expensive WoW API results (forms, bindings, macros)
-✓ SHOULD invalidate caches on relevant events only
-```
-
-### Optional (MAY)
-```
-✓ MAY prefix private functions with local
-✓ MAY use boolean prefixes (is/has/should/can)
-MAY use and/or selection only when the middle value cannot be nil or false.
-Otherwise use an explicit if/else.
-```
-
----
-
 ## Module System (LibStub)
 
 ### Module Registration Pattern
@@ -338,7 +290,12 @@ edit - the whole codebase currently sits below the warning line.
   referenced inside a function costs one slot. When adding functionality to a
   large function, hang new helpers/state off the module table it already
   captures (`SpellQueue.Foo(...)`, `SpellQueue._field`) instead of new
-  file-locals - module-table access reuses the existing upvalue.
+  file-locals - module-table access reuses the existing upvalue. Scalars the
+  function sets for a helper to read belong in one state table (`rankState`
+  for the queue build's rank context), not in a row of file-locals. The
+  queue build `CategorizeAndAssembleRotation` reached 60 again in 2026-11 and
+  was brought back to 49 this way. `tools/test_lua_limits.py` fails at the
+  55 warning line for every file the TOC loads, so the margin is enforced.
 - **200 local variables per scope** - same failure mode; large files sit far
   below this today.
 - The client error (enable `scriptErrors`) names the true line:
@@ -768,53 +725,26 @@ snapshot from this guide into code; the implementation is authoritative.
 
 ---
 
-## Module Checklist
+## Lua Change Checklist
 
-When creating or editing a module, verify:
+For any Lua change, verify:
 
 ```
-□ LibStub registration with version number
-□ Early return if module already loaded
-□ Module dependencies checked with true parameter
-□ All variables declared local
-□ Public functions use ModuleName.FunctionName
-□ Private functions use local function
-□ Constants in UPPER_SNAKE_CASE
-□ Variables in camelCase
-□ Early returns used (max 3 nesting levels)
-□ WoW API calls wrapped in pcall when needed
-□ Caches have invalidation strategy
-□ Expensive operations cached
-□ Comments explain WHY not WHAT
-□ Debug mode printing available
+□ 4-space indentation (no tabs)
+□ Early returns used
+□ Variables are local; naming and table iteration follow the conventions above
+□ Fallible WoW calls are protected, and module/API results are checked before use
+□ "assistedcombat" pseudo-actions are filtered through the shared helper
+□ Cache invalidation and bounds match the data lifetime
+□ Repeated hot-path lookups and function creation in loops are avoided
+□ Comments explain non-obvious reasons; public APIs are documented where needed
+□ Relevant regression tests and the repository's Lua check pass
 ```
 
 ---
 
-## Code Review Checklist
-
-```
-□ Module registered with LibStub
-□ Dependencies checked for nil
-□ All variables declared local
-□ 4-space indentation (no tabs)
-□ Descriptive function names
-□ Constants in UPPER_SNAKE_CASE
-□ Trailing commas in multi-line tables
-□ Spaces around operators
-□ Space after commas
-□ Space after -- in comments
-□ Comments explain WHY not WHAT
-□ Public functions documented
-□ WoW API calls wrapped in pcall
-□ Early returns used
-□ No function creation in loops
-□ Table lookups cached
-□ ipairs for arrays, pairs for dicts
-□ Caches have limits/invalidation
-□ Assisted combat action filtered
-□ Debug mode checks present
-```
+For a new module, also verify LibStub registration/versioning, dependency checks,
+and the public/private function pattern in [Module System](#module-system-libstub).
 
 ---
 
@@ -875,4 +805,7 @@ When creating or editing a module, verify:
 
 ---
 
-**Usage Note:** This guide is a reference for development on JustAC. Always verify WoW API behavior with `/script` commands before implementation.
+Use the matching client's generated API docs and caller code to establish API
+contracts. Use saved in-game evidence for behavior the sources do not establish.
+`/script` probes are for specific runtime questions, not a required step for
+every change; record the client, build and context for any result.

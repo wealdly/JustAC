@@ -89,14 +89,18 @@ def main():
         count += 1
 
     check('SpellDB.GetForeverAbilityRole(8154) == "protection"')
+    check('SpellDB.GetInterruptAbility(8042).kind == "interrupt"')
+    check('SpellDB.GetInterruptAbility(8044).kind == "interrupt"')
+    check("SpellDB.IsOffensiveSpell(8042) and SpellDB.IsOffensiveSpell(8044)")
     check("SpellDB.GetForeverTotemSlot(8154) == 2")
     check("SpellDB.IsMaintainedProtection(8154)")
-    for sid in (8071, 5277, 22812, 5384, 543, 6143, 6197, 5675, 2565):
+    for sid in (8071, 5277, 22812, 5384, 543, 6143, 6197, 5675, 2565, 8042, 8044):
         check(f"not Filter({sid}, profile)")
-    for sid in (689, 6789, 1311606, 15237, 20925, 20230, 402927, 8042, 403):
+    for sid in (689, 6789, 1311606, 15237, 20925, 20230, 402927, 8050, 8056, 403):
         check(f"Filter({sid}, profile)")
     lua.execute("SpellQueue._rotationIsCustom = true; Next()")
     check("Filter(8071, profile)")
+    check("Filter(8042, profile) and Filter(8044, profile)")
     lua.execute("SpellQueue._rotationIsCustom = false; Next()")
     check("Filter(8075, profile)")
     check("#Queue(false, true) == 1 and Queue(false, true)[1].spellID == 8071")
@@ -152,7 +156,7 @@ def main():
     check("#profile.defensives.classSpells.SHAMAN_F.defensiveSpells == 2")
 
     lua.execute("BlizzardAPI.IsForever = function() return false end; occupied[2] = true; Next()")
-    check("Filter(8071, profile) and Filter(8075, profile)")
+    check("Filter(8071, profile) and Filter(8075, profile) and Filter(8042, profile)")
 
     retail = load(False)
     for field in ("FOREVER_ABILITY_ROLES", "FOREVER_TOTEM_SLOTS", "FOREVER_MAINTAINED_PROTECTION"):

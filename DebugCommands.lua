@@ -17,7 +17,9 @@ if not DebugCommands then return end
 -- new ones next to the thing they diagnose rather than at the end.
 --------------------------------------------------------------------------------
 local INSPECT_TOPICS = {
-    { "start",       "StartDiagnostics",         nil, "Start the shared diagnostic session on either client" },
+    { "start",       "StartDiagnostics",         "[question]", "Start the shared diagnostic session; a research question id focuses it" },
+    { "questions",   "ResearchQuestions",        "[id]", "Research questions, their controls and marks (Research companion)" },
+    { "mark",        "MarkScenario",             "<label>", "Timestamp a scenario control in the running diagnostic session" },
     { "stop",        "StopDiagnostics",          nil, "Stop session-owned captures; preserve results for /reload" },
     { "status",      "DiagnosticStatus",         nil, "Show diagnostic session state and recorder ownership" },
     { "report",      "DiagnosticReport",         nil, "Summarize the latest diagnostic session" },
@@ -53,7 +55,7 @@ local INSPECT_TOPICS = {
     { "cdmlayout",   "CdmLayoutProbe",           "[add <spellID>|add all]", "Forever: can JustAC add the rotation's critical buffs to the Cooldown Manager? (decode/round-trip/active layout; add writes them, then /reload)" },
     { "foreverauras", "ForeverAuraProbe",        nil,  "Forever: every aura route on player/target/pet, plus auras remembered from out of combat" },
     { "forever",     "ForeverProbe",             "[arm|off|toggle]", "Forever: snapshot of every signal; arm/off/toggle = one switch for a whole probe session (recorder + errors + audit)" },
-    { "validate",    "ValidateAssumptions",      "[arm]", "START HERE if something stopped working: every secrecy/API assumption plus a self-test of each technique the addon rides on; arm = diff on combat enter/exit" },
+    { "validate",    "ValidateAssumptions",      "[arm|show]", "START HERE if something stopped working: every secrecy/API assumption plus a self-test of each technique the addon rides on; arm = quiet combat enter/exit comparison, show = print it" },
     { "errors",      "ErrorCapture",             "[off|clear|show]", "Capture taint/secret errors (run after a fight)" },
     { "secrecy",     "SecrecyProbe",             nil,  "Measure which combat values read plain vs secret (in AND out of combat)" },
     { "secrecymap",  "SecrecyMapProbe",          nil,  "One-shot OOC: per-spell/power SecrecyLevel exemption dump" },

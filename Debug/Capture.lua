@@ -91,14 +91,14 @@ function DebugCommands.ErrorCapture(addon, arg)
 
     if arg == "clear" then
         if _G.JustACGlobal then _G.JustACGlobal.errorLog = nil end
-        addon:Print("errors: |cffffff00log cleared|r")
+        addon:Print("errors: log cleared")
         return
     end
 
     if arg == "show" then
         local log = ErrorLogStore()
         if #log == 0 then addon:Print("errors: none captured.") return end
-        addon:Print(string.format("errors: |cffffff00%d distinct|r", #log))
+        addon:Print(string.format("errors: %d distinct", #log))
         for i = 1, math.min(#log, 10) do
             local e = log[i]
             addon:Print(string.format("|cffff6600%d.|r [%s x%d%s] %s",
@@ -118,8 +118,8 @@ function DebugCommands.ErrorCapture(addon, arg)
         -- restoring a stale handler would clobber whatever installed itself after us.
         -- The flag below is what actually gates recording.
         DebugCommands._errorCaptureOn = false
-        addon:Print(string.format("errors: |cffff6600OFF|r - %d distinct entries held.", #ErrorLogStore()))
-        addon:Print("|cff888888/reload to flush to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua (JustACGlobal.errorLog)|r")
+        addon:Print(string.format("errors: OFF - %d distinct entries held; /reload to save (JustACGlobal.errorLog)",
+            #ErrorLogStore()))
         return
     end
 
@@ -152,9 +152,8 @@ function DebugCommands.ErrorCapture(addon, arg)
             string.format("%s tried to call %s", tostring(addonName), tostring(funcName)))
     end)
 
-    addon:Print("errors: |cff00ff00ON|r - capturing Lua errors and taint blocks.")
-    addon:Print("|cff888888Fight, then '/jac inspect errors off' and /reload. '/jac inspect errors show' for a quick look.|r")
-    addon:Print("|cff888888Repeats are collapsed into a count, so a flood shows as one line xN.|r")
+    addon:Print("errors: ON - capturing Lua errors and taint blocks (repeats collapsed)")
+    addon:Print("  /jac inspect errors show for a quick look; errors off, then /reload to save")
 end
 
 DebugCommands._Capture = {

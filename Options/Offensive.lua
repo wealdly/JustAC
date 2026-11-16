@@ -47,7 +47,13 @@ local function queueContentGroup(addon)
             }),
             efficiencyMode = W.select(addon, "efficiencyMode", {
                 name = L["Efficiency Mode"], desc = L["Efficiency Mode desc"],
-                order = 4, width = "normal", default = "off",
+                order = 4, width = "normal",
+                default = (function()   -- the profile default (per client, JustAC.lua)
+                    local defaults = addon.db.defaults
+                    local mode = defaults and defaults.profile and defaults.profile.efficiencyMode
+                    if mode == nil then mode = "off" end
+                    return mode
+                end)(),
                 values = {off = L["Efficiency Off"], solo = L["Efficiency Solo"], always = L["Efficiency Always"]},
                 onSet = function() addon:ForceUpdate() end,
                 disabled = manaConservationDisabled,

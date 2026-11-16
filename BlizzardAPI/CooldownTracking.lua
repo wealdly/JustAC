@@ -261,6 +261,18 @@ function BlizzardAPI.IsSpellOnCooldown(spellID)
     return ok and DurationObjectActive(dur) or false
 end
 
+--- Does the spell's own cooldown (GCD excluded) end within `seconds`? true / false, nil when
+--- unanswerable. One threshold question on the duration object, never the remaining time.
+function BlizzardAPI.CooldownEndsWithin(spellID, seconds)
+    if not (spellID and C_Spell and C_Spell.GetSpellCooldownDuration and BlizzardAPI.IsDurationBelowSeconds) then
+        return nil
+    end
+    local ok, dur = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
+    if not ok then return nil end
+    if not DurationObjectActive(dur) then return true end
+    return BlizzardAPI.IsDurationBelowSeconds(dur, seconds)
+end
+
 -- Our own casts, [spell id] = GetTime(). Player buffs are SECRET in combat (measured: the
 -- aura lookup returns nil for a buff that is up), so inside a fight the only thing that knows
 -- a buff window opened is the cast that opened it.
@@ -310,6 +322,37 @@ end
 --------------------------------------------------------------------------------
 local SWING_MH, SWING_OH, SWING_RANGED = 0, 1, 2   -- Enum.PlayerSwingType
 local swingLast, swingDur, swingBase = {}, {}, {}
+local meleeActivityAt, meleeActivityTargetEpoch
+local meleeTargetEpoch = 0
+
+local function ReadTargetBoolean(fn, ...)
+    if not fn then return nil end
+    local ok, value = pcall(fn, ...)
+    if not ok then
+        geterrorhandler()(value)
+        return nil
+    end
+    if IsSecretValue(value) or type(value) ~= "boolean" then return nil end
+    return value
+end
+
+local function HasLiveMeleeTarget()
+    return ReadTargetBoolean(UnitExists, "target") == true
+        and ReadTargetBoolean(UnitCanAttack, "player", "target") == true
+        and ReadTargetBoolean(UnitIsDeadOrGhost, "target") == false
+end
+
+--- Last melee swing event in the current observed-target context, not a hit/range verdict.
+--- The caller owns freshness. Combat entry preserves an immediately preceding opening swing.
+function BlizzardAPI.GetMeleeActivityTime()
+    if not BlizzardAPI.IsForever() or not meleeActivityAt then return nil end
+    if meleeActivityTargetEpoch ~= meleeTargetEpoch or not HasLiveMeleeTarget()
+       or BlizzardAPI.RunningAutoSwing(6603) ~= SWING_MH then
+        meleeActivityAt, meleeActivityTargetEpoch = nil, nil
+        return nil
+    end
+    return meleeActivityAt
+end
 -- An attack-speed gain at or above this reads as "boosted": every buff modelled
 -- (SpellDB.HASTE_BUFFS) is 20% or more, gear-proc noise rarely reaches it.
 local HASTE_BOOSTED = 1.08
@@ -332,19 +375,204 @@ function BlizzardAPI.GetSwingWindow(swingType)
     return last, last + swingDur[swingType]
 end
 
---- Forever: the swing a running auto-attack is on - 0 for Attack (main hand), 2 for an
---- auto-repeat (Auto Shot, wand Shoot) - or nil when spellID is not one that is running.
+local function IsAttackChecked(read, id)
+    if not read then return false end
+    local ok, active = pcall(read, id)
+    if not ok then
+        geterrorhandler()(active)
+        return false
+    end
+    return not IsSecretValue(active) and active == true
+end
+
+--- Forever: 0 for running Attack or a queued next-swing ability, 2 for an active
+--- auto-repeat (Auto Shot, wand Shoot), or nil without a confirmed pending swing.
 --- Only a plain true counts. nil on retail: no swing timer there to show.
 function BlizzardAPI.RunningAutoSwing(spellID)
     if not BlizzardAPI.IsForever() then return nil end
     local on, swingType
-    if spellID == 6603 then
-        on, swingType = C_Spell.IsCurrentSpell(6603), 0
+    if spellID == 6603 or (SpellDB and SpellDB.NEXT_SWING_SPELLS and SpellDB.NEXT_SWING_SPELLS[spellID]) then
+        on, swingType = IsAttackChecked(C_Spell and C_Spell.IsCurrentSpell, spellID), 0
     else
-        on, swingType = C_Spell.IsAutoRepeatSpell(spellID), 2
+        on, swingType = IsAttackChecked(C_Spell and C_Spell.IsAutoRepeatSpell, spellID), 2
     end
-    if IsSecretValue(on) or on ~= true then return nil end
-    return swingType
+    if on then return swingType end
+    -- Repeat shots can expose their checked state on the action button instead.
+    if spellID == 75 or spellID == 5019 then
+        local scanner = LibStub("JustAC-ActionBarScanner", true)
+        local findSlot = scanner and (scanner.GetAutoAttackSlotForSpell or scanner.GetDirectSlotForSpell)
+        local slot = findSlot and findSlot(spellID)
+        if slot and C_ActionBar then
+            if IsAttackChecked(C_ActionBar.IsCurrentAction, slot)
+               or IsAttackChecked(C_ActionBar.IsAutoRepeatAction, slot) then
+                return swingType
+            end
+        end
+    end
+    return nil
+end
+
+local damageBaseline, damageBaselineAt
+local DAMAGE_BASELINE_REFRESH = 1
+
+local function PlainDamageNumber(value)
+    return not IsSecretValue(value) and type(value) == "number"
+        and value == value and value > -math.huge and value < math.huge
+end
+
+local function ReadDamageNumber(fn, ...)
+    if not fn then return nil end
+    local ok, value = pcall(fn, ...)
+    if not ok then
+        geterrorhandler()(value)
+        return nil
+    end
+    if PlainDamageNumber(value) then return value end
+end
+
+-- Estimate row: base, per-level gain, spell level, max level, SP coefficient, school;
+-- then partial=1 when a damage over time follows the hit, and that damage over
+-- time's full-duration base, per-level gain and SP coefficient when the data has them.
+local function ScaledDamage(e, baseline, base, perLevel, coefficient)
+    if baseline and not damageBaseline then return nil end
+    local level
+    if baseline then
+        level = damageBaseline.level
+    else
+        level = ReadDamageNumber(UnitLevel, "player")
+    end
+    if not level or level < e[3] then return nil end
+    if e[4] > 0 then level = math.min(level, e[4]) end
+    local damage = base + math.max(0, level - e[3]) * perLevel
+    if coefficient ~= 0 then
+        local bonus
+        if baseline then
+            bonus = damageBaseline.bonuses[e[6]]
+        else
+            bonus = ReadDamageNumber(GetSpellBonusDamage, e[6])
+        end
+        if not bonus then return nil end
+        damage = damage + bonus * coefficient
+    end
+    if PlainDamageNumber(damage) and damage > 0 then return damage end
+    return nil
+end
+
+local rotationImport
+local function DamageEstimate(spellID)
+    if not BlizzardAPI.IsForever() then return nil end
+    rotationImport = rotationImport or LibStub("JustAC-RotationImport", true)
+    local RI = rotationImport
+    return RI and RI.GetDirectDamageEstimate and RI.GetDirectDamageEstimate(spellID)
+end
+
+--- Baseline direct hit of one cast, not a simulator: excludes talents, crit and mitigation.
+--- wholeSpell adds the full damage over time that follows the hit (nil when that total is
+--- unknown); otherwise the hit alone. baseline=true uses captured pre-combat stats.
+function BlizzardAPI.GetDirectSpellHit(spellID, baseline, wholeSpell)
+    local e = DamageEstimate(spellID)
+    if not e then return nil end
+    local hit = ScaledDamage(e, baseline, e[1], e[2], e[5])
+    if not hit or not wholeSpell or not e[7] then return hit end
+    if not e[8] then return nil end
+    local dot = ScaledDamage(e, baseline, e[8], e[9], e[10])
+    if not dot then return nil end
+    return hit + dot
+end
+
+--- Baseline direct spell DPS, not a simulator: excludes talents, crit and target mitigation.
+--- baseline=true uses the explicitly captured pre-combat stats, not live combat stats.
+--- A hit followed by a damage over time (e[7]) is not the spell's whole damage: unknown.
+--- Cast time only: Forever global cooldown timing under haste is unmeasured, so this is an
+--- upper bound for a cast shorter than its global cooldown.
+function BlizzardAPI.GetDirectSpellDPS(spellID, castSeconds, baseline)
+    local e = DamageEstimate(spellID)
+    if not e or e[7] then return nil end
+    if castSeconds == nil then
+        if not BlizzardAPI.GetSpellInfo then return nil end
+        local ok, info = pcall(BlizzardAPI.GetSpellInfo, spellID)
+        if not ok then geterrorhandler()(info); return nil end
+        if IsSecretValue(info) or type(info) ~= "table" or not PlainDamageNumber(info.castTime) then return nil end
+        castSeconds = info.castTime / 1000
+    end
+    if not PlainDamageNumber(castSeconds) or castSeconds <= 0 then return nil end
+    local damage = ScaledDamage(e, baseline, e[1], e[2], e[5])
+    if not damage then return nil end
+    local dps = damage / castSeconds
+    if PlainDamageNumber(dps) and dps > 0 then return dps end
+    return nil
+end
+
+--- Equipped-weapon DPS; baseline=true returns the captured pre-combat estimate.
+function BlizzardAPI.GetAutoAttackDPS(spellID, baseline)
+    if not BlizzardAPI.IsForever() then return nil end
+    if baseline then return damageBaseline and damageBaseline.weapons[spellID] end
+    local ok, speed, low, high
+    if spellID == 5019 or spellID == 75 then
+        if not UnitRangedDamage or not UnitAttackSpeed then return nil end
+        ok, speed, low, high = pcall(UnitRangedDamage, "player")
+        if not ok then geterrorhandler()(speed); return nil end
+        local mainSpeed, offSpeed
+        ok, mainSpeed, offSpeed, speed = pcall(UnitAttackSpeed, "player")
+        if not ok then geterrorhandler()(mainSpeed); return nil end
+    elseif spellID == 6603 then
+        if not UnitAttackSpeed or not UnitDamage then return nil end
+        local offSpeed, offLow, offHigh
+        ok, speed, offSpeed = pcall(UnitAttackSpeed, "player")
+        if not ok then geterrorhandler()(speed); return nil end
+        ok, low, high, offLow, offHigh = pcall(UnitDamage, "player")
+        if not ok then geterrorhandler()(low); return nil end
+        if not PlainDamageNumber(speed) or speed <= 0
+           or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
+        local dps = (low + high) / (2 * speed)
+        if IsSecretValue(offSpeed) then return nil end
+        if offSpeed ~= nil then
+            if not PlainDamageNumber(offSpeed) or offSpeed <= 0
+               or not PlainDamageNumber(offLow) or not PlainDamageNumber(offHigh)
+               or offLow < 0 or offHigh < offLow then return nil end
+            dps = dps + (offLow + offHigh) / (2 * offSpeed)
+        end
+        if PlainDamageNumber(dps) and dps > 0 then return dps end
+        return nil
+    else
+        return nil
+    end
+    if not PlainDamageNumber(speed) or speed <= 0
+       or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
+    local dps = (low + high) / (2 * speed)
+    if PlainDamageNumber(dps) and dps > 0 then return dps end
+    return nil
+end
+
+--- Base mana regeneration per second captured with the pre-combat damage baseline, or nil.
+function BlizzardAPI.GetBaselineManaRegen()
+    return damageBaseline and damageBaseline.manaRegen
+end
+
+function BlizzardAPI.InvalidateDamageBaseline()
+    damageBaseline, damageBaselineAt = nil, nil
+end
+
+--- Called by live hostile-target queue builds only; never refresh hidden combat stats.
+function BlizzardAPI.RefreshDamageBaseline()
+    if not BlizzardAPI.IsForever() or InCombatLockdown() then return end
+    local now = GetTime()
+    if damageBaselineAt and now - damageBaselineAt < DAMAGE_BASELINE_REFRESH then return end
+    local ranged = BlizzardAPI.GetAutoAttackDPS(5019)
+    local snapshot = {
+        level = ReadDamageNumber(UnitLevel, "player"),
+        bonuses = {},
+        weapons = {
+            [5019] = ranged,
+            [75] = ranged,
+            [6603] = BlizzardAPI.GetAutoAttackDPS(6603),
+        },
+        -- Base regeneration read nil in combat in a 2026-11-16 capture; Spirit rarely changes
+        -- mid-fight, so the comparison charges mana at the pre-combat rate like its damage.
+        manaRegen = BlizzardAPI.GetBaseManaRegen and BlizzardAPI.GetBaseManaRegen(),
+    }
+    for school = 1, 7 do snapshot.bonuses[school] = ReadDamageNumber(GetSpellBonusDamage, school) end
+    damageBaseline, damageBaselineAt = snapshot, now
 end
 
 -- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, checksRange), plain in combat and
@@ -424,10 +652,18 @@ do
         pcall(f.RegisterEvent, f, "START_AUTOREPEAT_SPELL")  -- ... and on: seed the first shot
         f:SetScript("OnEvent", function(_, event, duration, swingType, checksRange)
             if event == "PLAYER_SWING" then
-                if type(swingType) == "number" and type(duration) == "number"
-                   and not IsSecretValue(duration) and duration > 0 then
+                if not IsSecretValue(swingType) and not IsSecretValue(duration)
+                   and type(swingType) == "number" and type(duration) == "number" and duration > 0 then
                     swingLast[swingType], swingDur[swingType] = GetTime(), duration
                     if swingType == SWING_RANGED then rangedShotAt = swingLast[swingType] end
+                    if swingType == SWING_MH or swingType == SWING_OH then
+                        meleeActivityTargetEpoch = nil
+                        meleeActivityAt = nil
+                        if HasLiveMeleeTarget() then
+                            meleeActivityAt = swingLast[swingType]
+                            meleeActivityTargetEpoch = meleeTargetEpoch
+                        end
+                    end
                 end
             elseif event == "START_AUTOREPEAT_SPELL" then
                 SeedRangedWindow()
@@ -435,6 +671,7 @@ do
                 -- Stopped: the last swing no longer times anything, so no bar shows a stale
                 -- sweep when it is switched back on; the next real swing restarts it.
                 swingLast[SWING_MH], swingLast[SWING_OH] = nil, nil
+                meleeActivityAt, meleeActivityTargetEpoch = nil, nil
             elseif event == "STOP_AUTOREPEAT_SPELL" then
                 swingLast[SWING_RANGED] = nil
             elseif event == "PLAYER_SWING_RANGE_UPDATE" then
@@ -446,7 +683,14 @@ do
                 end
             elseif event == "PLAYER_TARGET_CHANGED" then
                 wipe(swingInRange)
+                meleeTargetEpoch = meleeTargetEpoch + 1
+                meleeActivityAt, meleeActivityTargetEpoch = nil, nil
             else
+                if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_EQUIPMENT_CHANGED"
+                   or event == "PLAYER_REGEN_ENABLED" then
+                    BlizzardAPI.InvalidateDamageBaseline()
+                    meleeActivityAt, meleeActivityTargetEpoch = nil, nil
+                end
                 -- The range event fires only for swing types with a range check enabled. Once
                 -- per world entry: every call resets the check (and fires a "no target" update).
                 if event == "PLAYER_ENTERING_WORLD" and C_SwingTimer and C_SwingTimer.EnableRangeCheck then
@@ -578,7 +822,12 @@ do
     f:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     f:RegisterEvent("PLAYER_TALENT_UPDATE")
     f:RegisterEvent("TRAIT_CONFIG_UPDATED")
-    f:SetScript("OnEvent", function() wipe(baseCdSecondsCache) end)
+    f:RegisterEvent("PLAYER_LEVEL_UP")
+    f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+    f:SetScript("OnEvent", function()
+        wipe(baseCdSecondsCache)
+        BlizzardAPI.InvalidateDamageBaseline()
+    end)
 end
 
 --- Returns true when a charge-based spell has 0 charges remaining. Engine truth: the main
@@ -684,6 +933,32 @@ local function IsOffGCD(spellID)
 end
 BlizzardAPI.IsOffGCDSpell = IsOffGCD
 
+--- Is the player's global cooldown running? true / false, or nil when unknown: the GCD
+--- dummy is absent from the client's spell data (WoW Forever) or the read failed. Read
+--- from the dummy's duration object (the same evidence GCDLookahead uses), memoized for
+--- one frame so per-icon callers can skip their own per-spell GCD query while no GCD
+--- runs. Callers must treat nil as "ask the spell itself".
+local gcdRunningAt, gcdRunning = -1, nil
+local gcdDummyExists  -- resolved once: static spell data
+function BlizzardAPI.IsGlobalCooldownRunning()
+    local now = GetTime()
+    if now == gcdRunningAt then return gcdRunning end
+    gcdRunningAt, gcdRunning = now, nil
+    if gcdDummyExists == nil then
+        local okExists, exists = false, nil
+        if C_Spell and C_Spell.DoesSpellExist then
+            okExists, exists = pcall(C_Spell.DoesSpellExist, GCD_DUMMY_SPELL)
+        end
+        gcdDummyExists = okExists and exists == true
+    end
+    if not gcdDummyExists or not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
+    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, GCD_DUMMY_SPELL)
+    if not ok then return nil end
+    -- With the dummy present, no duration object means no GCD (as GCDLookahead reads it).
+    gcdRunning = DurationObjectActive(gcd)
+    return gcdRunning
+end
+
 --- Will this ability's own cooldown be over by the time the GCD ends?
 local function ReadyByGCDEnd(spellID)
     local secs = GCDLookahead()
@@ -760,5 +1035,15 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- isActive is ground truth from Blizzard's state machine; no further
     -- fallback chain needed - local tracking / charge tracking / usability
     -- checks would all be redundant here.
+    --
+    -- WoW Forever differs: right after a wand shot every GCD spell read isActive with
+    -- isOnGCD unset (capture 2026-11-16: Smite and Shadow Word: Pain), a shared lockout
+    -- rather than their own cooldown, and the queue thrashed as they all sank at once.
+    -- The ignore-GCD duration object (documented on Forever) says whether a cooldown of
+    -- the spell's own is running.
+    if cd.isActive and BlizzardAPI.IsForever() and C_Spell and C_Spell.GetSpellCooldownDuration
+       and not BlizzardAPI.IsSpellOnCooldown(spellID) then
+        return true, "isActive without own cooldown (Forever)"
+    end
     return not cd.isActive, "isActive (in combat)"
 end

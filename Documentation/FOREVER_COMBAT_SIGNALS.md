@@ -20,6 +20,253 @@ or combat validation.
 **Display-only** means the engine can render the answer but Lua cannot branch on it.
 Earlier measurements remain tied to their recorded client/build.
 
+### Tracked-bar timing and caster pushback investigation (2026-11-14)
+
+Additional source review uses Forever **1.60.1 (70938)**, revision
+`bebcb6bf309cf41b41bd74f8ca651e6a105b2676`; the Retail comparator above is unchanged.
+These are source contracts and offline probe tests, **not new live measurements**.
+
+The existing health/power threshold curves and zero-gate can answer bounded
+questions without recovering exact values. Target below 20% is already available
+to the queue. Mana thresholds can supply conservation context. Neither alone
+proves that a melee swing will finish a target or that casting is inefficient.
+
+The same duration predicates require a usable duration object. A plain CDM aura
+instance does not override `GetAuraDuration`'s `RequiresUnitAuraAccess`.
+`LuaDurationObject:SetTimeFromEnd` and numeric `LuaCurveObject:Evaluate` both
+declare `SecretArguments = AllowedWhenUntainted`: do not assume addon code can
+feed raw secret bar timing into them. An ordinary duration object holding secret
+contents is different from passing secret numbers as arguments.
+
+`signal.viewers` now compares independent routes per tracked item:
+
+- Static spell/override identity from `GetCooldownInfo`, never `GetSpellID`.
+- Viewer shown/visible/editing and item active/visible/preview states.
+- Raw expiration/duration, bar value/max and timer/application text, each classified.
+- Aura-instance duration access beside native `Bar:GetTimerDuration()` access.
+- Object predicates, raw remaining/total classification, bridged activity, the
+  existing scratch activity test, and fixed below-25%-remaining / below-1-second
+  questions. These are bounded decisions, not a reconstruction of remaining time.
+
+The reviewed bar mixin uses `SetMinMaxValues` / `SetValue`, not `SetTimerDuration`.
+Consequently, a returned native timer object might be empty or unrelated.
+Require active-above-threshold, near-expiry, refreshed and expired controls before
+trusting either route. A constant true below-1-second answer on an empty timer is
+not success. Hidden viewers, Edit Mode previews and absent entries are not live
+timing evidence. This capture never refreshes, writes to or rearranges Blizzard
+viewers; each buff viewer remains bounded to 12 items.
+
+`signal.player.pushback` records actual player `UNIT_SPELLCAST_DELAYED` and WOUND
+events, cast/base cast times, the existing target-below-20% predicate, target melee
+range, target-of-target context and an already-running melee swing. Nameplates
+targeting the player are explicitly **not confirmed hit sources**; WOUND counts
+are damage events, not distinct melee attackers. Damage amounts are not read.
+Event evidence is capped at 120 per kind per combat phase. Incoming hits do not
+trigger full-session synchronous sampling. These registrations exist only during
+a Research-enabled capture and are removed by the normal stop lifecycle.
+
+Ordinary Forever filler is selected during categorization, not promoted by a
+second weapon stage. Prefer the best learned, usable, confirmed-in-range automatic
+attack until a supported cast offers at least 1.20 times its baseline DPS. This
+single fixed margin favors free attacks without mana scoring, running-state
+thresholds or sticky timers. Melee must already have confirmed shared melee reach;
+equal weapons favor the wand. Meaningful normal priorities, procs, DoTs, channels,
+required-stack casts, custom lists and exact ordering remain protected.
+
+The spell baseline comes from the current Forever CSVs, indexed by exact learned
+rank: simple single-target direct damage, capped per-level gain and its spell-power
+coefficient. Triggered, periodic, resource/AP-scaled and unsupported scaling
+formulas are omitted. Plain level, school spell-power and equipped-weapon DPS
+are captured out of combat while a live hostile target is selected. Refresh is
+limited to once per second across queue builds. Weapon damage ranges come from
+`UnitRangedDamage` or `UnitDamage`, including both hands; attack intervals come
+from `UnitAttackSpeed` (third return for ranged), following the client's damage-panel
+formula but retaining raw rather than rounded display bounds. Do not reapply
+damage bonuses, percentages or the offhand penalty. One-/two-handed and unarmed
+melee use the main-hand rate; dual wield adds the separately timed offhand rate.
+A shield or held offhand with no attack interval adds no damage. Wands, bows,
+guns and crossbows use the ranged rate only with a supported repeat attack and
+the required equipment, live usability and confirmed range. Manual shots and
+thrown attacks are not treated as sustained repeats.
+The snapshot is retained in memory through combat as an explicitly
+labelled pre-combat baseline, not a reading or reconstruction of hidden current
+stats. Combat buffs/debuffs can make actual damage differ. Equipment changes,
+world entry, combat exit, form, level and talent changes invalidate the snapshot.
+An invalidated or missing snapshot keeps the usual order until another readable
+out-of-combat hostile-target pass. Nothing is persisted across reloads.
+
+The divisor is the same spell's observed pushed-back cast duration, or its fresh
+`GetSpellInfo` cast time for the normal comparison. Every positive readable cast
+duration is eligible, including hasted casts below 1.5 seconds. Ignoring a longer
+GCD overestimates spell DPS, so a cast must clear the 20% margin even with that
+optimistic estimate; this does not invent a GCD. Zero-time instants remain outside
+the comparison. Instant, on-next-swing and unsupported physical/AP/weapon-scaled
+abilities can add damage alongside autoattacks and retain their normal priorities,
+not a blanket weapon-versus-ability replacement test. These
+are baseline estimates, not predictions of crits, talents, target armor/resistance
+or final damage. Never recover secret numbers or present the stored baseline as
+current combat stats.
+
+The comparison requires a live hostile PvE target and, in combat, one confirmed
+enemy. A confirmed running ranged repeat can retain filler selection while the
+initial enemy count is still zero; zero is not treated as proof of single-target
+combat. Confirmed packs, boss/PvP and AoE/cleave contexts keep normal ordering.
+Supported zero-base-cooldown filler stays in a stable filler bucket through
+temporary shot-cycle readiness pulses. Real range, resource, gate, hold and
+loss-of-control failures still sink it. A usable, confirmed-in-range running
+automatic attack is ongoing damage and cannot alone justify WAIT.
+
+The observed-pushback response retains its five-second window and short-cooldown
+instant preference, but no longer selects weapons separately. The filler comparison
+charges each cast its cast time, plus expected pushback, plus its mana cost divided by
+`GetManaRegen` base regeneration (per second) captured with the pre-combat damage baseline
+(the live read was nil in combat on 2026-11-16). Expected pushback comes from the rate of
+player `UNIT_COMBAT` WOUND hits without the ABSORB flag over the last 3 seconds and the
+measured per-cast steps (1.0, 0.8, 0.6, 0.4 s, the first capped by cast progress); see the
+measured section below. Pushback resistance is not seen. Measured `delayTimeMs` was rejected
+as the input: it arrives after the pushed cast and stops while wanding. A pushed cast moves
+start and end together, so `endMS - startMS` never shows the delay.
+An unreadable cost or regeneration leaves the mana part out.
+`weaponComparison` records its baseline, fixed margin, comparable spell, filler
+choice and damage rates. It describes the filler bucket, not an override of a
+protected priority ahead of it. `pushbackComparison` records the instant-response
+decision and choice. Unknown inputs leave the usual priority intact. Automatic
+attack hotkeys accept direct buttons and macros containing only that attack,
+including `/use !Shoot` as well as `/cast !Shoot`.
+Mixed casts/items, sequences and opaque commands do not qualify; explicit hotkey
+overrides remain authoritative. Proven attack-only macros can also supply running
+action state without weakening the direct-slot-only cooldown query.
+Live controls must include weak/strong wand,
+in/out-of-melee reach, pushed/non-pushed casts, equipment swaps, and unreadable
+stats before treating these estimates as validated client behavior.
+
+For a focused live control, manually place a currently learned short buff in
+Tracked Bars, keep that viewer shown and leave Edit Mode. After `/reload`, run
+`/jac inspect start`; capture absent, active, refreshed/consumed and expired states,
+including in combat. Also capture caster pulls with observed pushback, single
+versus multiple enemies attacking, and low-health targets with melee already
+running. Finish with `/jac inspect stop`, then `/reload` to flush SavedVariables.
+Record which controls actually occurred. No new finishing policy, automatic
+attacks, cast cancellation or recommendation suppression is enabled by this work.
+
+#### Stoneform capture: older loaded probe (2026-11-14 12:02)
+
+Session `20261114-120226-1`, Forever **1.60.1.70938**, recorded 23 samples,
+zero combat pulls and zero sampler failures. Stoneform `20594` succeeded at
+elapsed approximately 2.3 seconds. Tracked-bar item `200189` changed from
+inactive/hidden to active/visible with source `player`; this is consistent with
+the reported Stoneform placement, but this probe did not record static spell
+identity. The spell cooldown duration object independently changed from inactive
+to active, with non-secret contents. That is cooldown evidence, not buff timing.
+
+The capture still used the older loaded Research probe: viewer rows lack static
+identity, raw timing, `auraDuration` and `barDuration`, and the new pushback channel
+is absent. The installed source/runtime hashes matched when checked afterward,
+so no replacement deployment was needed. Reload before the next capture.
+This short out-of-combat recording ended before a buff-expiration transition;
+it does not establish aura-duration access, native timer liveness, threshold
+crossings or combat secrecy. Repeat through buff expiration, ideally with an
+in-combat control, using the updated probe before adopting a timing route.
+
+#### Stoneform capture: combat and expiration (2026-11-14 12:05)
+
+Session `20261114-120529-1`, the same Forever build, used the updated probe:
+131 samples, one combat pull and zero sampler failures. The viewer was shown,
+with no item preview. Static spell/override `20594` identified bar item `200189`.
+Stoneform succeeded about 10.3 seconds into the capture; the item was active at
+11.28 seconds and inactive by 19.29 seconds, still during combat.
+
+- Item active/visible and source `player` were plain while the buff was up.
+- Aura instance, expiration, duration, bar value/max and timer text were secret.
+  The aura-duration route reported a secret instance and was not called; this
+  capture does not establish whether that API would authorize access.
+- `Bar:GetTimerDuration()` returned nil before, during and after the buff.
+  The native timer route therefore supplies no usable duration object here.
+  Bar value/max remained secret even after the buff became inactive.
+- The **spell cooldown** duration object had secret contents in combat, but its
+  activity bridge and scratch test changed false to true after casting; its
+  below-1-second predicate changed true to false. After combat, total duration
+  read 180 seconds while the buff was already gone. These working bounded
+  predicates concern the cooldown, not the aura, and cannot time buff renewal.
+- Incoming WOUND counts reached nine; delayed-cast counts remained zero.
+  The target-below-20%, melee range and already-running Attack context were
+  readable before the target swap, but swing remaining was nil. No observed
+  pushback or swing-timing control supports a new finishing policy yet.
+
+Conclusion for this measured build/scenario: retain tracked-bar activity as
+up/down evidence. Merely moving a buff to Tracked Bars does not supply a usable
+buff-duration object for the existing health/mana-style threshold technique.
+No recommendation change follows from this capture.
+
+#### Portrait overlay: BetterBlizzFrames and AuraContainer (2026-11-14)
+
+The installed BetterBlizzFrames v2.2.1b Forever module supplies this portrait
+overlay through its Big Debuffs feature, not through Cooldown Manager.
+Saved settings enable both Big Debuffs and extra buffs; its extra-buff list
+includes Stoneform `20594`. Qualifying active auras occupy overlapping portrait
+slots, with crowd control and other higher-layer categories able to cover an
+ordinary extra buff. Tracking Stoneform in CDM is not what enables this overlay.
+
+Source tracing found a distinct candidate, not another measured timing signal:
+
+- BetterBlizzFrames uses Blizzard's `CustomAuraContainerTemplate`, supplies a
+  portrait icon/cooldown and lets Blizzard populate the aura display.
+- Blizzard's AuraButton keeps a stable duration object and updates its secret
+  timing internally. Its `GetAuraDuration` / `GetAuraInstance` methods belong to
+  the private partition, not the public inbound mixin. Do not treat these as
+  addon-callable getters merely because their Lua source exists.
+- The public `CustomAuraButton:SetDurationBar` API accepts an addon-provided
+  StatusBar. Blizzard then calls `SetTimerDuration` with that internal object,
+  unlike CDM's measured manual `SetValue` path.
+- The experiment configured an owned, single-spell player-buff slot and duration
+  bar to test `GetTimerDuration()` and fixed thresholds. No BetterBlizzFrames
+  widgets were queried or modified.
+
+Capture `20261114-121506-1` exercised Stoneform in combat through expiration,
+but the initial probe wrongly required secure-environment mixin globals. Its
+`unavailable:duration-bar API` result reflects that guard, not an API denial:
+Blizzard loads those Lua mixins in a secure environment while exporting the XML
+template globally. A corrected subsequent capture tested the actual template;
+the tracked-bar control again switched active then inactive.
+
+#### Owned Stoneform duration bar: combat denial (2026-11-14 12:19)
+
+Session `20261114-121958-1`, Forever **1.60.1.70938**, ran 93 samples, one
+combat pull and zero sampler failures. The owned slot initialized successfully
+out of combat; its empty timer reported inactive and below one second. During
+combat, the container remained shown, visible and enabled, but addon reads of
+the button, bar value and `GetTimerDuration()` failed with forbidden-object
+errors. That failure remained the last observed state throughout the Stoneform
+cast and expiration. The independently tracked CDM item went active after the
+cast and inactive approximately eight seconds later.
+
+On leaving combat, the timer was accessible again, had secret contents, and
+reported inactive / below one second; the buff had already expired. Thus this
+capture does not validate an active or near-expiration timer verdict, and it
+**rules out this addon-owned descendant read route in this combat context**.
+No inference about other clients or all possible aura access routes is implied.
+Cleanup completed without a reported error. The failed experiment and its
+session lifecycle wiring were removed after this capture.
+
+The same pull recorded one real player `UNIT_SPELLCAST_DELAYED` for Lightning
+Bolt, with six incoming WOUND events and one nameplate targeting the player.
+The sampled cast start/end each moved one second later across the delay; melee
+range was unknown. This demonstrates that the delay event can be observed in
+this case, not that targeting counts identify attackers or that a finisher
+threshold is justified.
+
+The Forever queue now uses this event for a five-second, refreshable preference for
+confirmed ready, in-range direct-damage instants with base cooldown and charge
+recovery under ten seconds, over an unprotected hardcast or unavailable lead.
+Otherwise the instant can appear behind the existing lead, including when a
+stack-gated hardcast or auto attack leads the queue. Existing priority conditions,
+custom queues, exact order, DoTs and user holds remain respected. Short-cooldown
+damage interrupts are fallback-only, excluded for bosses and player-controlled
+targets, and reserved when the target is casting or has been observed casting
+since selection. Absence of such evidence
+does not prove a target cannot cast, and other attackers may cast. This is a
+heuristic, not a measured DPS or kill-time calculation; Retail is unchanged.
+
 ### Temporary capture routine
 
 The shared `/jac inspect start` session now includes the `signal.*` research
@@ -40,6 +287,11 @@ CVars, tracked spells or saved player settings.
 4. `/jac inspect stop`, then `/reload`. Read
    `JustACGlobal.probeLog` and `diagnosticSummary` from the client's SavedVariables.
 
+Plain `/jac inspect start` omits the audit battery; `start full` restores it. After
+the flush, `python tools\analyze_probe.py` scores the questions and compares the
+session with the client's saved baseline, so changed behavior surfaces first. See
+[behavior baseline and the analyzer](DEV_TOOLING.md#behavior-baseline-and-the-analyzer).
+
 Heavy candidates run once per second with independently classified results,
 change-only logging and cache invalidation on context events. The existing
 ten-minute session limit and bounded rolling log still apply. GCD reads are also
@@ -56,6 +308,10 @@ per combat phase, with one cap notice and `signal.cast.dropped` thereafter.
 and cast-on-player verdicts. `signal.player.locDetails`, `signal.player.control`
 and per-unit charm samples cover player control-state candidates. Unavailable
 APIs fail independently; no candidate changes the active interrupt/CC cascade.
+`player.groupHealers` and `target.groupHealers` compare raw incoming-heal zero
+state with a separate prediction calculator for each present party healer, or
+the first eight raid unit tokens. The calculator's `netDebtZero` is scoped to
+that one healer, not an aggregate; raid truncation is explicit.
 
 #### Priority-condition coverage
 
@@ -280,8 +536,9 @@ event history. Prefer shorter controlled captures over unlimited output.
 [CompactUnitFrame][audit-threat] explicitly distinguishes being on the player's
 threat list from the role-dependent aggro warning. A readable non-nil threat
 state can include a DPS player below the tank on threat; it does not mean the
-enemy is attacking the player. `GetEngagedEnemyCount` counts that membership,
-not all enemies near the player or all members of a group pull.
+enemy is attacking the player. `GetEngagedEnemyCount` counts membership plus
+in-combat plates engaged with the pet or party (see below), not all enemies near
+the player or all members of a group pull.
 
 Candidate group evidence is confirmed threat membership for a party member
 against the same nameplate token, deduplicated by that token. It needs live
@@ -291,6 +548,57 @@ not a membership replacement. Keep observed player/group membership separate
 from ability-specific range; never infer Consecration coverage from either
 count alone. Compare solo/group-tanked pulls, before/after player damage,
 unrelated nearby fights, missing nameplates and unreadable threat.
+
+Captures through 2026-11-15 (Forever 1.60.1.70938, solo hunter): every player
+threat read was plain, and the player was never on more than one plate's list.
+Extra hostile plates in combat (up to seven) were not shown to be engaged, so
+these captures neither confirm nor rule out an undercount. `enemyProvenance`
+now also records, per hostile plate counted once, threat membership for the pet,
+party members and their pets: `group`, `petOnly`, `partyOnly`, `groupUnknown`
+(unreadable member reads) and `members` (present). The `partythreat` research
+question scores it.
+
+Measured 2026-11-15 15:06 (hunter 11, pet out, two marked pet-held adds): all
+member reads were plain, but the pet was absent from a 27-second pet-tanked
+target's threat list for the whole fight and joined the other only about nine
+seconds after the mark. Threat membership therefore misses pet-held enemies and
+does not qualify for widening the count; the player-only count read zero for 92%
+of combat time while hostile plates were present.
+
+The next candidate asks two different questions per hostile plate: is it in
+combat (`UnitAffectingCombat` on the plate) and is its target one of us
+(`UnitIsUnit` of the plate's target against the player, pet and party, which on
+Forever is contracted `RequiresComparableUnitTokens` and
+`SecretWhenUnitComparisonRestricted`, so denied and secret comparisons stay
+unknown). `enemyProvenance` adds `inCombat`, `inCombatUnknown`, `onUs`,
+`onUsUnknown`, `engaged` (in combat and on our threat lists or attacking us) and
+`inCombatOthers` (plainly in combat with neither: another fight). The
+`enemycount` question scores it. Adoption criteria for `GetEngagedEnemyCount`:
+plate reads plain in combat, `engaged` follows marked pet-held adds and packs
+within seconds, and a marked nearby fight shows up as `inCombatOthers`, not
+`engaged`. A plate that switches targets between members still counts once; a
+mob fleeing or attacking a non-group player is not ours.
+
+Measured 2026-11-15 15:15 (hunter 12, 113 seconds of combat, six marks): plate
+combat and target reads were never unknown; `engaged` picked up every pull,
+including three pet-held adds, within one to four seconds and read 2 for both
+2-mob packs; plates in other players' fights stayed `inCombatOthers`, including
+one already engaged by someone else until the player hit it. The player-only
+count missed engaged enemies for 49% of combat time. A mob that stops targeting
+the group (fleeing at low health) drops out a few seconds early: an undercount,
+never an overcount. On Forever `GetEngagedEnemyCount` now uses this definition:
+the player on the plate's threat list, or the plate plainly in combat with a
+pet/party member on its threat list or targeting the player, pet or party.
+Unreadable or denied reads never add to the count. Retail, where none of this
+was measured, keeps the player-only count. With fight-wide mark windows the
+`enemycount` question scores this capture CONTROLS MET.
+
+Current state (after consolidation): `enemyProvenance` formats the breakdown from
+the queue helper's own scan (`GetEngagedEnemyCount(breakdown)`): `plates`,
+`hostile`, `threat`, `unknown`, `helper` (the count), `widened` (counted through
+pet/party threat or targeting) and `inCombatOthers`. The research-only fields
+above were retired, and `partythreat` and `enemycount` merged into the `enemies`
+question, so the probe can no longer measure a different rule from the one that ships.
 
 ### Combat log and built-in damage meter
 
@@ -373,6 +681,440 @@ Implementation: [StateHelpers](../BlizzardAPI/StateHelpers.lua),
 Contracts: [swing API][swing], [cooldown fields][spellshared],
 [action usability events][action], [overlay events][overlay].
 
+Range consumers use `BlizzardAPI.AbilityInRange`: a verified direct action slot,
+then the same ability's spell-range fallback. Item slots use `ActionInRange`.
+Forever Attack and next-swing abilities retain their measured exception: raw
+spell/action positives cannot replace confirmed melee evidence. Unknown remains
+unknown; targeted interrupts may fail open, while player-centered AoE still needs
+distance proof. `SpellDB.IsTargetWithin` is a separate distance-bracket reader,
+using vetted on-target references with readable min/max metadata for the known
+rank. All radii share one frame snapshot, invalidated on target and spell changes.
+On Forever the snapshot also adds, from the 2026-11-16 measurements below:
+curated 5-yard references whose live maximum is 0 or missing (zero minimum, not
+next-swing) as melee probes; the `RegisterRangeItems` tiers (5 and 10 yards, two
+items each, used once cached, both must agree); and `CheckInteractDistance`
+index 3 (true proves within 8, false proves beyond melee). Item and interaction
+reads require a live attackable target. Swing range folds into the same bounds,
+and any within/beyond contradiction makes every radius unknown for that snapshot.
+`/jac inspect range` prints the sources and any contradiction.
+`/jac inspect range` shows raw and effective reads plus resolved probe endpoints.
+Automatic ranked priorities normally require confirmed melee reach for next-swing
+abilities. When that reach is unknown, losing a known ranged weapon's range within
+three seconds of a positive reading can cue a ready next-swing ability. Fresh,
+continuous out-of-shooting-range observations maintain that cue through queued
+swings and cooldowns, so the ability can lead again when ready. A gap longer than
+three seconds expires it; negative readings alone cannot restart an expired cue.
+A compatible current range bracket within that weapon's maximum can also support
+and renew the cue. This is an ordering hint, not proof of movement direction,
+melee reach or castability: the target could instead have retreated past maximum
+range. It never changes range colouring or `AbilityInRange`, and a confirmed melee
+or beyond-maximum verdict takes precedence. Unknown weapon range, restored shooting
+range, invalid targets, target/combat/spell/spec changes and explicit ordering
+settings clear the hint. Queue diagnostics label it `nearMeleeHint`.
+Fresh main-hand or off-hand `PLAYER_SWING` activity can independently supply an
+ordering cue for melee-start pulls. The shared tracker binds activity to the
+current target-change epoch, requires a live hostile target and an enabled melee
+autoattack when queried, and clears on target/world/equipment changes, attack stop
+or combat exit. It preserves an opening swing delivered just before combat entry.
+This observes the selected target, not an attributed victim.
+The activity cue expires three seconds after the last event; unchanged negative
+shooting reads cannot latch or renew it. Fresh events can renew it through queued
+and cooldown cycles. Confirmed non-melee/beyond-maximum range or restored shooting
+range takes precedence. Without a ranged weapon, or with unknown shooting range,
+fresh activity alone can support this ordering cue. Diagnostics record
+`source=melee-activity` and `activityAge` separately from the shooting-range cue.
+`RunningAutoSwing` also recognizes their native `IsCurrentSpell` queued state, so
+queue sorting and the swing-bar display agree. A queued next-swing ability trails
+actionable attacks and does not by itself suppress WAIT when nothing can be pressed.
+The positioning hint adds no estimated next-swing queue window and does not rewrite
+custom lists or settings.
+
+### Pre-pull target setup
+
+Automatic ranked Forever queues promote curated non-pulling target debuffs before
+damaging openers. Hunter's Mark is the initial policy; all of its ranks share one
+debuff family. The queue is not class- or spell-specific: additional verified
+policies register their cast ID and equivalent aura IDs through the
+`foreverTargetSetup` input to `SpellDB.RegisterCategories`, with rank-aware lookup.
+Non-damage alone does not establish that a debuff is safe before a pull.
+The ability must pass the normal filters, gates, holds, lockout,
+readiness and resource checks and have confirmed range to a live hostile target.
+The promotion reserves slot 1 before queue truncation, including one-icon displays
+and a pre-filled opener slot. Custom lists, exact ordering and disabling
+Unavailable last retain their existing ordering. Combat priorities are unchanged.
+
+`PrecombatEngine.GetTargetDebuffState` requires an out-of-combat, visible target,
+readable GUID, unrestricted auras and a complete readable `HARMFUL` enumeration.
+Any caster's matching rank satisfies the policy. Denied calls, hidden identities,
+secret tables, partial indexed scans and unavailable APIs return unknown, never
+missing. It does not interpret an untracked cast or a by-spell nil as absence.
+The 0.2-second snapshot is invalidated on target aura updates, target changes,
+combat edges and checklist cache resets. This is target setup in the DPS queue,
+not a self-buff in Preparation.
+
+### Forever melee-range source audit (2026-11-15)
+
+Scope: Forever **1.60.1 (70938)**, revision
+`bebcb6bf309cf41b41bd74f8ca651e6a105b2676`, plus the pinned Forever
+**1.60.1.70888** spell CSVs. No source refresh or new live measurement.
+The observation-bounded queue hint above is implemented. The candidates below
+are now observable in the local Research companion, not used as new production
+range predicates.
+
+**Highest-value new lead: swing-range subscription ownership.**
+[Blizzard's swing UI][melee-swing-ui] calls
+`C_SwingTimer.EnableRangeCheck(swingType, shouldCheckRange)` when its registration
+state changes. `ShouldCheckRange` depends on `showSwingTimer`, Edit Mode visibility
+and equipment. JustAC enables its checks at world entry. A later UI disable call
+is therefore worth correlating with native nil/invalid range transitions.
+The Lua call sites do not prove how native ownership works or that this caused the
+latest Hunter capture. The probe now passively records future enable/disable
+calls, caller, target epoch and valid range updates alongside the frame state.
+Do not repeatedly re-enable checks, change player settings or treat a mock as proof
+that a native subscription was disabled.
+
+**The swing frame is not an independent range oracle.** Executing the exact
+source methods offline reproduced these distinctions:
+
+- `UpdateRangeState` stores `isOutOfRange=false` when the native result is nil,
+  or when the frame's range check is disabled.
+- An event with `checksRange=false` also becomes `isOutOfRange=false`.
+- `IsOutOfRange()` suppresses the warning during an active swing or Edit Mode,
+  even when the underlying out-of-range field is true.
+- Registration changes can issue `EnableRangeCheck(..., false)`.
+
+Consequently, a bright/green bar, full alpha, `IsOutOfRange()==false` or a false
+`isOutOfRange` field cannot prove melee reach. A frame's negative presentation also
+does not add information beyond its underlying native check. The
+[native swing contract][melee-swing-api] still requires a valid check.
+
+| Avenue | Source-backed finding | Follow-up / limit |
+|---|---|---|
+| Native item range | [C_Item.IsItemInRange][melee-item-api] takes an item and target and returns a nullable boolean. Potentially class-independent. | Find a real hostile-target short-range item, verify its spell/radius and ownership requirements, then control target eligibility, combat denial and actual crossings. No specific universal 5-yard item was established. A quest-item rejection is not distance proof. |
+| Direct interaction predicate | [UnitIsInInteractRange][melee-interact-api] is separate from `CheckInteractDistance`. [Gamepad interaction icons][melee-gamepad-ui] branch on it. | New candidate, not established combat availability or melee semantics. The attack action branch does not use this predicate. Test live hostile targets separately from friendly NPCs and corpses; false may mean non-interactable. |
+| Native geometric distance | [UnitDistanceSquared][melee-distance-api] returns distance plus `checkedDistance`; the generated contract has no explicit secret-return annotation. | Candidate only if a hostile target produces a valid, readable live result. Guard both returns and availability. Center distance is not combat reach; never turn a failed check into zero, compare secret numbers or reconstruct distance from UI geometry. |
+| Spellbook-index query | [IsSpellBookItemInRange][melee-spellbook-api] supplies an alternate spellbook-identity path with explicit invalid/nil semantics. | Cross-check a learned genuine melee spell against spell/action paths. It is not evidence that Attack or next-swing modifiers acquire real range, nor a substitute for an unlearned Wing Clip. |
+| Action-button colour / state | The action range event already supplies `checksRange`; the renderer consumes that same event. | Existing signal, not independent evidence. Attack and next-swing positives retain their measured exception. |
+| Nameplate range / fade | [Enemy nameplate defaults][melee-plate-options] set `fadeOutOfRange=false`. [Compact-frame distance][melee-compact-ui] uses a 250-yard threshold; its range fade comes from `UnitInRange`, whose return is explicitly secret in this client. | Plate existence, alpha, selection, threat or `inDistance` cannot identify melee. No 5-yard nameplate predicate was found in the reviewed callers. |
+| Soft-target / gamepad attack icon | The gamepad attack icon selects Attack versus Auto Shot from repeat-attack state. Soft-enemy selection supplies a subject, not a measured melee verdict. | No independent range result was found. Do not change targeting CVars or infer distance from the icon or selected unit alone. |
+| Swing / combat / failed-cast events | `PLAYER_SWING` has duration/type but no target or hit result. `UNIT_COMBAT` identifies the affected unit, not the attacker. Existing failure capture can record an out-of-range error. | Useful timing/context or retrospective failure evidence, not continuous current-target reach. A queued Raptor Strike success is not a completed melee hit. Do not reopen the denied combat-log path. |
+
+**Auras and area effects:** the nine-class early-ability sweep checked normal
+difficulty, acquisition/rank chains and both `EffectRadiusIndex` columns against
+`SpellRadius`. Examples were Thunder Clap (8 yards), Confounding Flash (8),
+Frost Nova (10) and Demoralizing Roar (10). These apply effects at cast time and
+do not establish a continuously enforced 5-yard relationship. Their debuffs can
+remain after either unit moves. Friendly Paladin auras and totem buffs have the
+wrong subject for a generic hostile-target melee test; a ground effect also need
+not remain centered on the moving player.
+
+A future aura candidate needs a verified continuously updated radius, the correct
+emitter/recipient relationship to the player and current target, and allowed,
+readable identity/presence in the tested context. No generic early 5-yard emitter
+was established. There is no range predicate in the reviewed aura API contract.
+Keep aura call permission separate from result secrecy; do not scan secret lists
+or try to read identity/presence back from an AuraContainer display.
+
+Priority: observe native swing-check lifecycle first; then investigate a vetted
+item and the direct interaction/distance candidates with explicit validity
+controls. Record far, shooting, dead-zone and melee positions, target swaps,
+death, equipment and existing UI settings. Only a new positive/negative result
+should promote any candidate into shared range detection.
+
+### Range capture follow-up
+
+With the local Research companion enabled, `/jac inspect start` includes:
+
+- `signal.range.hint`: the queue's last near-melee decision, source, weapon, last
+  shooting verdict and hint/observation/activity ages on each 0.25-second sample.
+- `signal.range.target`: native interaction and squared-distance candidates.
+  Raw distance and `checkedDistance` are recorded separately; an unchecked,
+  secret, denied or invalid distance never becomes a valid measurement.
+  `interactDist{1..5}` records raw `CheckInteractDistance("target", index)` per
+  index without assuming yardage. `position{...}` records whether player and
+  target `UnitPosition` reads are plain, secret or nil, and a center-to-center
+  ground distance only when both are plain and on one map.
+- `signal.range.references`: every known `RangeReferences` probe as
+  `SpellDB.DebugRangeProbes` resolved it (live min/max and the raw read the
+  snapshot used). Compare 5-yard probes with `interactDist` index 3.
+- `signal.range.refItems`: LibRangeCheck-3.0's Era/Forever 5- and 10-yard
+  hostile reference items, with cache state and raw `C_Item.IsItemInRange`.
+  Uncached item data is requested once per item. Only `true` counts as evidence;
+  LibRangeCheck itself treats a false item read as unknown.
+- `signal.range.swing`: all three native swing checks, helper results, swing
+  frame registration/presentation fields and the existing `showSwingTimer` value.
+- `signal.range.activity.mainHand`, `.offHand`, `.ranged` and `.unknown`:
+  latest `PLAYER_SWING` evidence, separated by hand/type and reset on target,
+  world and combat changes. Each event records its timestamp, target epoch,
+  raw duration/type, observed target identity/liveness, interaction/native swing
+  range, autoattack-running state, displayed queue and up to six candidates'
+  raw spell range, readiness and queued state. These small reads run immediately,
+  without the one-second candidate cache or a full synchronous diagnostic sample.
+  The observed target is not an attributed victim. Swing timing, enabled attacks
+  and queued abilities never become a confirmed hit or current melee verdict.
+- `signal.range.spells`: up to six distinct resolved spells, prioritizing the
+  current rotation context, then the learned class spell pool, then direct bar
+  spells. Uses the shared display/rank resolver, without changing selected ranks
+  or player settings. Each row records its source, requested/resolved identity,
+  matching direct slot if present, min/max metadata, raw spell and action range,
+  effective range, readiness, queued state and spellbook slot/bank/identity/range
+  cross-checks. Rotation and learned candidates do not require direct spell
+  buttons; macro-only bindings do not exclude them. Other signal topics keep
+  their existing bar-based sampling.
+- `signal.range.items`: up to six distinct direct item actions on the first
+  180 action slots, ownership count and native/action range. Put an item candidate
+  on a bar to sample it. Macros and bag-only items are not enumerated; no item's
+  yardage or target eligibility is assumed from its boolean result.
+- `signal.range.subscription`, `signal.range.swingEvent` and bounded `EVIDENCE`
+  rows: future subscription calls with caller stacks and swing events with raw
+  result, validity and target epoch. Identical swing verdicts are suppressed;
+  validity and target changes remain distinct. Equipment and relevant CVar
+  changes provide context.
+
+Candidate polls are cached for one second. Subscription and swing-event evidence
+are capped at 120 rows per kind per combat phase; activity has a separate cap for
+each hand/type, checked before collecting context. The single passive post-hook
+does nothing outside an active diagnostic capture and is reused across restarts;
+it never invokes `EnableRangeCheck`, changes CVars or enables action range checks.
+Calls before capture/hook installation remain unobserved, not assumed enabled.
+On Retail these Forever candidate polls report unavailable.
+Action-range cross-checks require a currently matching direct spell/item slot;
+a changed identity is unknown rather than another ability's range.
+
+Run far, shooting, dead-zone and melee controls, then `/jac inspect stop` and
+`/reload` before disk analysis. A successful next-swing queue is still not a hit,
+and consistent near-melee hints still do not turn unknown range into proof.
+
+For activity controls, compare normal melee, facing away, moving backward out of
+reach with autoattack still enabled, stopping attacks and swapping targets.
+Include observed misses/parries, ranged-only attacks and another attacker while
+the player stops. Do not equate timer events, target health loss or unattributed
+`UNIT_COMBAT` feedback with the player's successful hit. These controls must be
+performed in game; mock coverage cannot establish live event semantics.
+
+### External range-source review (2026-11-16)
+
+Scope: Forever API docs at `bebcb6bf`, the pinned 1.60.1.70938 spell CSVs and
+the public source of Forever range addons. External claims are addon-author
+measurements, not JustAC measurements. Sources: [forever-addon-kit][ext-kit]
+(build 1.60.1.69913 and later beta), [ForeverDeadZone][ext-fdz] (69913),
+[SuperSwingTimer][ext-sst], [Range Lens][ext-lens] and
+[LibRangeCheck-3.0][ext-lrc].
+
+| Candidate | Evidence | Status |
+|---|---|---|
+| Combat Range melee probes | Raptor Strike, Wing Clip, Kick, Pummel, Kidney Shot, Sinister Strike, Backstab, Mortal Strike, Slam, Shred and Stormstrike all use `SpellRange` index 2 ("Combat Range", 0-5, melee flag). Raptor Strike read true at 8+ yards here; two external authors report melee abilities in general read in range at any distance. | Rejected 2026-11-16 (see measurements below): Wing Clip reads correctly; only next-swing attacks read true at any distance. Combat Range spells report no live `maxRange`, so they are dropped as probes rather than misleading. |
+| `CheckInteractDistance` | Plain `bool`, no secrecy annotation. Two external reports: plain on hostile targets in open-world combat; index 3 flips at Auto Shot's 8-yard edge, index 4 is about 28 yards. Yardage is race-dependent in LibRangeCheck (Tauren 6, Undead 7 on index 3). | Strongest new class-independent bracket. Cannot separate 5 from 8 yards. Captured in `interactDist`. |
+| Swing range for addons | Both external beta reports: `IsTargetWithinSwingRange` nil and `checksRange=false` for addons; JustAC measured plain reads on 70245. The kit notes the enable flag is shared with Blizzard's swing bars. | Consistent with the subscription-ownership lead above. Only ever enable. |
+| 5-yard reference items | LibRangeCheck lists Era/Forever 5-yard hostile items (8149 and others). The kit saw only 20/30/35-yard items answer, without preloading item data. | Captured in `signal.range.refItems` with preloading. True-only evidence. |
+| `UnitPosition("target")` | No secrecy annotation; `#noinstance`. Blizzard's tutorial subtracts player and target positions on a hostile quest creature. No external confirmation for hostile open-world targets. | Captured in `position{}`. Center distance, not combat reach. |
+| `ClosestUnitPosition(UnitCreatureID("target"))` | `SecretReturns`; `Curve:Evaluate` accepts secret input only when untainted; `TruncateWhenZero` only separates under 1 yard. Measures the nearest creature with that ID, not the target. | Dead end for decisions. Reading a status bar fill back would reconstruct a hidden number. |
+| `UnitDistanceSquared` on a hostile target | SuperSwingTimer users measured `0, false`. | Dead end; matches the unchecked-distance rule above. |
+
+**Measured 2026-11-16 (Forever 1.60.1.70938, Priest 9, open world, session
+`20261116-083358-1`, 204 samples, 39 s in combat, beast and humanoid targets
+level 5-6):**
+
+- Reference items with preloaded data answered plain `true`/`false` for live
+  hostile targets in and out of combat. All six 5-yard items always agreed with
+  each other, as did the four 10-yard items. Every 5-yard `true` came with
+  10-yard `true` and all `interactDist` indices `true`. 5-yard `false` occurred
+  with index 3 `true` (7 samples) and with 10-yard `true` but index 3 `false`
+  (8 samples), so the brackets nested without contradiction: 5-yard item, then
+  index 3, then 10-yard item, then index 4. Before data loaded, items read nil.
+- Dead target: interaction indices all `true`; only 8149 among the 5-yard items
+  and three of four 10-yard items answered, the rest nil.
+- No target: `CheckInteractDistance` returns `false` for every index, not nil.
+  A consumer must require a live target before reading it.
+- `UnitPosition("target")` returned nil on every sample: dead end for hostile
+  targets in the open world.
+- `UnitIsInInteractRange` was `true` only when the 5-yard items were also `true`
+  (90 of 100 such samples), never outside them.
+- Earlier Hunter 12 capture `20261115-151324-1`: Raptor Strike rank 2 (14260)
+  reported live `minRange=0 maxRange=0` through `GetCachedSpellInfo` on all 16
+  samples. If other Combat Range spells match, `RefreshRangeSnapshot` already
+  drops them as probes (`maxRange > 0` is required), and 5-yard verdicts rest on
+  swing range alone. `signal.range.references` on a melee class confirms this.
+- The Combat Range probe hypothesis is otherwise untested: a Priest knows no such probe.
+
+**Measured 2026-11-16 (Hunter 12, session `20261116-084241-1`, 255 samples,
+41.5 s in combat, 13 main-hand swings), live hostile targets only (159 samples):**
+
+| Auto Shot (8-35) | 5-yard items | `interactDist` 3 | Wing Clip raw | Samples |
+|---|---|---|---|---|
+| true | false | false | false | 69 |
+| false | true | true | true | 68 |
+| false | false | true | false | 20 (dead zone) |
+| false | true | true | false | 2 (transition) |
+
+- `CheckInteractDistance` index 3 agreed with Auto Shot's 8-yard minimum on all
+  159 samples: true exactly when Auto Shot was out of range below its minimum.
+  Index 4 went false only while Auto Shot was still true (beyond about 28 yards).
+- 5-yard items: every main-hand swing on a live target (11 of 13; two coincided
+  with the target dying) had the items `true` in the sample after the swing, and
+  in the sample before for 10 of 11. The exception was a walk-in transition read
+  through the one-second probe cache. No swing landed with the items `false` on
+  both sides. They never read `true` while Auto Shot was in range.
+- Wing Clip (2974, Combat Range, not a next-swing attack) read raw spell range
+  `true` in melee and `false` at shooting range, matching the 5-yard items on
+  157 of 159 samples. The external "melee abilities read in range at any
+  distance" claim does not hold for it. Its live `maxRange` is nil, so
+  `RefreshRangeSnapshot` discards it as a probe. Raptor Strike (14260,
+  next-swing) still read raw `true` on every sample with a target, including at
+  shooting range, so the next-swing exception remains correct.
+- The swing-range read is not sampled in combat by this capture, so these rows do
+  not show how often production 5-yard verdicts were unknown.
+
+**In-combat call restriction (2026-11-16):** the error capture recorded 90
+`ADDON_ACTION_BLOCKED` events for `CheckInteractDistance` from the Research probe,
+all in combat, when it read the target without a hostility check. That matches
+LibRangeCheck's rule: in combat the interaction and item range calls are refused
+for any unit the player cannot attack. The generated docs carry no protection
+marker for either call. Production reads both only for a live attackable target
+and recorded no block; the probe now applies the same rule. In the same live test
+the production swing-range read stayed nil throughout combat while the new sources
+kept `IsTargetWithin(5)` known in melee, the dead zone and shooting range.
+  No melee swing occurred (wand shots only), so the 5-yard item edge is not yet
+  compared with real melee reach. Next control: a melee class, auto attack on,
+  walking in and out, comparing `refItems` 5-yard with main-hand
+  `PLAYER_SWING` activity and `signal.range.references`.
+
+[ext-kit]: https://github.com/Thunderz96/forever-addon-kit
+[ext-fdz]: https://github.com/Thunderz96/ForeverDeadZone
+[ext-sst]: https://github.com/ssdeanx/SuperSwingTimer-WoW
+[ext-lens]: https://github.com/jonlipin/range-lens
+[ext-lrc]: https://github.com/WeakAuras/LibRangeCheck-3.0
+
+### Pre-combat minimum-range inference (2026-11-15)
+
+`SpellDB.IsTargetWithin` treats a failed minimum-range probe as "beyond its maximum"
+out of combat when the target is an aggressive (hated or hostile), attackable,
+non-player, non-trivial NPC that is not in combat or tapped by others, and the player
+is alive, unstealthed and not feigning. Any unreadable condition keeps the reading
+unknown.
+
+Measured on Forever 1.60.1.70938 (hunter 11 against humanoids level 6 and 7): both
+applications in one session were the first sample after selecting a target already in
+melee range. The pull followed about 0.25 seconds later, and a melee swing followed
+within 1.3 seconds in one case. Raw Raptor Strike range read true in every sample,
+including 17 where Arcane Shot confirmed at least 8 yards, so next-swing raw range is
+not melee evidence. `UnitIsInInteractRange` read plain out of combat but false at both
+failures.
+
+The inference therefore also requires the failed reading to hold for 1.5 seconds,
+observed continuously (gaps over 0.5 seconds restart it) on one target out of combat.
+The 1.5 seconds is an estimate of aggro reaction time, not a measurement. The `prepull`
+research question tests it with an independent check: a melee swing within 2 seconds
+of a "beyond" verdict is a contradiction.
+
+### Swing interactions: open questions (2026-11-15)
+
+Forever changes how several abilities meet the auto-attack, and two of them decide queue
+rules that are not yet written:
+
+- **Slam and the swing timer.** The official deep dive says Improved Slam stops Slam
+  delaying the swing, which implies baseline Slam still resets it; one medium-confidence
+  source says the reset is gone. Arms lists Slam ungated. If the reset is real, Slam belongs
+  right after a white hit unless Improved Slam is known.
+- **Reckless Swings and next-swing attacks.** Reckless Swings adds rage to the next melee
+  attacks; a Heroic Strike or Cleave swing generates no rage. Whether such a swing spends a
+  charge decides whether Heroic Strike should wait while the buff runs. Source-backed
+  candidate: the aura has 4 proc charges with proc mask 0x4 (done melee auto attack) and
+  triggers 1329554, so a next-swing ability, a melee spell, should neither proc nor spend one.
+
+The `swing` research question measures both. Main-hand `EVIDENCE` swing rows carry the gap
+since the previous swing, its ratio to the swing duration, and the rank-1 id and age of
+the player cast that preceded it. A reset shows as a ratio above 1 with the cast about one
+weapon speed before the swing; no reset keeps a ratio near 1.
+
+Rage is not measured. Its threshold verdicts work like mana's, but the scope rule allows
+questions, not amounts, so per-swing rage gain is out of reach by design. Instead, each
+Reckless Swings cast opens a window that closes, as one `EVIDENCE procWindow` row, at the
+first main-hand swing that no longer finds the buff. Presence is the single threshold
+question (`GetAuraStackAtLeast(player, id, 1)`); the charge count is never read. The row
+counts the swings the buff survived, the next-swing casts and the trigger casts in between.
+If next-swing swings spend no charge, windows that contain one outlast plain windows. The
+analyzer's `stats` check reports min, median and max per case. Nothing in the queue reads
+these rows; they settle the two rules before either is written.
+
+### Ability lockouts: open question (2026-11-16)
+
+Forever's data shows two lockout shapes. Mechanic immunity: Power Word: Shield is a
+`shielded` spell and Weakened Soul (6788, 15s) grants immunity to that mechanic; Divine
+Shield, Divine Protection and Blessing of Protection are `invulnerable` and Forbearance
+(25771, 60s) blocks them. Explicit restrictions (`SpellAuraRestrictions`): Forbearance
+for those spells and Templar's Bulwark, Tangled Causality for Ice Block, Shadowform for
+Penance. Which cast applies Weakened Soul or most Forbearance is server-scripted, not in
+the data. Unknown: whether `IsSpellUsable` already refuses a locked spell, whether the
+lockout aura reads in combat, and whether a cast's target reads. `/jac inspect start
+lockout` records one `EVIDENCE lockout` row per change of each known pair (raw aura
+lookup, stack helper, addon and game usability, readiness, combat) and, per cast of a
+watched spell, only whether the target was the player.
+
+### Wand lead alternation: open question (2026-11-16)
+
+A priest capture (2026-11-16 07:27) showed the lead trading places around casts and wand
+shots. One cause is fixed: on Forever, spells read `isActive` with `isOnGCD` unset right
+after a wand shot, so `IsSpellReady` now asks the ignore-GCD duration object there. The
+rest is the wand itself: it read `ready=false` (`isOnGCD` false, its auto-repeat timer)
+and a running auto-repeat is deliberately never asked for again, so the lead still trades
+between the wand and a spell. `/jac inspect start wand` records one `EVIDENCE wandState`
+row per change of the wand's reads (`RunningAutoSwing`, `IsAutoRepeatSpell`, readiness
+with its reason, usability, cooldown flags) beside the cast in progress, the displayed
+lead and the weapon comparison, so the queue can treat a running auto-repeat as one
+steady state.
+
+### Which hits push a cast back: measured (2026-11-16 08:32, priest level 8, Smite 1.739s)
+
+Capture `20261116-083206-1`, 17 pushbacks on 9 Smite casts, one then two attackers:
+
+- Every unabsorbed WOUND school seen pushes: physical (1) and nature (8). Five absorbed
+  hits (`flags=ABSORB`) landed mid-cast with `castDelayMS=0`: absorbed hits do not push.
+- Pushback per cast diminishes: 1.0, 0.8, 0.6, 0.4 s for hits 1 to 4 (three casts reached
+  1.8 to 2.8 s). A fifth hit was not observed.
+- Each push is capped by the cast's progress so far: first pushes of 0.28 to 0.95 s each
+  equal the time since the cast (or the previous push) started. One attacker averaged
+  0.67 s per Smite (about 39%); two attackers reached 1.9 to 2.8 s (110 to 160%).
+- A physical WOUND arrives 0.29 to 0.80 s after its `UNIT_SPELLCAST_DELAYED`; a nature
+  WOUND arrived in the same frame.
+- `weaponComparison` read `manaRegen=nil` in combat and 14.75 out of combat: base mana
+  regeneration was unreadable in combat in this capture (secret or zero not yet separated).
+
+### Which hits push a cast back: probe (2026-11-16)
+
+`/jac inspect start pushback` records every player combat result (`action`, `flags`,
+`school`) with the cast or channel in progress, that cast's `castDelayMS` and `sinceDelay`
+since the last pushback, beside each pushback's total `delayMS`. Still unobserved: a fifth
+push on one cast, damage over time ticks, partial absorbs and pushback resistance. The
+combat log is `HasRestrictions` in Forever's docs and was removed on Retail 12.0; it is not
+registered, since a blocked registration could raise a forbidden-action warning.
+
+### Global cooldown under haste: open question (2026-11-15)
+
+Unknown: whether haste shortens the global cooldown on Forever. A capture showed Smite
+hasted to a 1.304s cast; spell data gives Smite a 1.5s global cooldown. The weapon
+comparison divides a hit by cast time alone, an upper bound for any cast shorter than its
+global cooldown, and a global cooldown floor stays out until this is measured.
+
+Source-backed candidate, not measured: Icy Veins' Forever Balance Druid stat page (Voulk,
+updated 2026-11-04 for launch, https://www.icy-veins.com/wow-forever/balance-druid-ranged-dps-pve-stat-priority)
+states that haste reduces the global cooldown to a minimum of 1 second and does not affect
+spell cooldowns. RankedBoost's combat rules page (updated 2026-11-11) still lists the rule as
+not announced. If the guide is right, a hasted cast and its global cooldown shrink together,
+so a spell whose data cast time is at least its global cooldown never falls below it: cast
+time alone is then exact for every current filler, and a floor matters only for a data cast
+shorter than its global cooldown or a hasted cast under 1 second.
+
+Method (`/jac inspect start gcd`): `EVIDENCE gcd` rows record, at the start of each player
+cast (instants: at success), the GCD dummy spell 61304's duration, the spell's live cast
+time and `GetHaste()`, with hidden or missing reads printed as `secret` or `unknown`.
+Forever's spell data has no 61304, so rows also carry the cast spell's own cooldown
+(`spellCd`, with `onGcd`); for a spell without a cooldown of its own that should be the
+global cooldown, which the `unhastedSpellGcd` and `hastedSpellGcd` checks summarize. If the
+hasted out-of-combat rows show a GCD below the spell data value, the scale against
+`haste` answers the question; equal values mean the GCD is fixed. Combat rows show whether
+the reads are hidden there.
+
 ## Best additional experiments
 
 Priority is expected utility versus uncertainty, not implementation approval.
@@ -401,11 +1143,13 @@ Passing the resulting **numeric amount** through the existing zero-gate is a new
 unverified composition. It is not a claim that the calculator's `clamped`
 **boolean** is plain or can use that numeric gate.
 
-Use an addon-owned calculator, refresh it with
+Use addon-owned calculators, refresh each with
 `UnitGetDetailedHealPrediction(unit, healerUnit, calculator)`, and explicitly set
-the calculation modes relevant to the question. Nil healer means healer-specific
-values are zero, not "all healers". `HasSecretValues()` is NeverSecret but only
-reports secrecy, not successful/live population.
+the calculation modes relevant to the question. The existing prediction row uses
+the player as healer; the new group-healer rows test each present source separately.
+Nil healer means healer-specific values are zero, not "all healers".
+`HasSecretValues()` is NeverSecret but only reports secrecy, not successful/live
+population.
 
 Controls: no incoming heal, another player's heal, own heal, cancellation,
 heal landing, debt without incoming heals, debt smaller/larger than predicted
@@ -518,7 +1262,7 @@ enemy count or confirmed incoming damage from the highlight.
 |---|---|---|
 | `UnitHasEffectivelyTankAura("player")` | Better tank context alongside assigned role | [Blizzard's role helper][tank] uses it first. Identity secrecy applies; measure form/stance/aura transitions. Never override player configuration. |
 | `C_Spell.IsActiveSpell(id, unit)` | Direct active-toggle state, possibly replacing a heuristic | [Contract][toggle] explicitly covers toggles and carries aura/identity secrecy. Not a general buff-presence API or bypass. |
-| Pet happiness and food compatibility | Out-of-combat hunter feeding reminder | [Pet UI][pet] uses `GetPetHappiness` on `UNIT_HAPPINESS`/`UNIT_PET`; test hunter vs non-hunter pets, unavailable data, diet and inventory. Separate from pet healing/revival. |
+| Pet happiness and food compatibility | Out-of-combat hunter feeding reminder | Implemented 2026-11-16 (`DefensiveEngine` `AppendPrecombatPetFeed`): saved hunter captures read `C_PetInfo.GetPetHappiness` plain (level 3 at 125% damage, 1 at 75%), and nil without a hunter pet. Feed Pet is offered out of combat below happy, not while the pet eats (effect 1539). Still open: diet and inventory (no check that suitable food is in the bags). |
 | `UnitHealthPercent(..., usePredicted=true, curve)` | Compare a behavior-specific predicted-health threshold with the existing actual-health gate | Source exposes the switch but does not define the prediction horizon/composition here. Current JustAC deliberately passes false. Do not call this incoming-heal coverage or replace current health bands without measurement. |
 | Duration predicates | Potentially simplify the scratch-Cooldown reader | `HasSecretValues` is contracted NeverSecret; `IsActive`/`HasExpired` are not. Existing Retail evidence records secret `IsZero`. Re-test only a concrete client/build difference, not absence of annotations. |
 | Event-timed `isOnGCD` | More reliable readiness evidence | [Field documentation][spellshared] says not to trust it except when responding to `SPELL_UPDATE_COOLDOWN`. Compare event-time and ticker-time transitions before changing shared readiness. |
@@ -702,6 +1446,15 @@ this research. Documentation remains excluded from the release package.
 [audit-meter-timer]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_DamageMeter/DamageMeterSessionWindow.lua#L292
 [audit-toggle]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_GamepadActionBars/FlyoutRadial.lua#L171
 [audit-wpp]: https://github.com/TrinityCore/WowPacketParser/tree/e46644410866709c82ed8c19353587c5b0507f08
+[melee-swing-ui]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_SwingTimer/Blizzard_SwingTimer.lua#L397
+[melee-swing-api]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_APIDocumentationGenerated/SwingTimerDocumentation.lua#L10
+[melee-item-api]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_APIDocumentationGenerated/ItemDocumentation.lua#L1550
+[melee-interact-api]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_APIDocumentationGenerated/UnitDocumentation.lua#L2072
+[melee-distance-api]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_APIDocumentationGenerated/UnitDocumentation.lua#L1108
+[melee-spellbook-api]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_APIDocumentationGenerated/SpellBookDocumentation.lua#L616
+[melee-gamepad-ui]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_GamepadActionBars/MainActionBarFrame.lua#L208
+[melee-compact-ui]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_UnitFrame/Shared/CompactUnitFrame.lua#L1043
+[melee-plate-options]: https://github.com/Gethe/wow-ui-source/blob/bebcb6bf309cf41b41bd74f8ca651e6a105b2676/Interface/AddOns/Blizzard_NamePlates/Blizzard_NamePlateFrameOptions.lua#L83
 [swing]: https://github.com/Gethe/wow-ui-source/blob/9dc84f0d3bbae1768ac3405b3716000bd93eda06/Interface/AddOns/Blizzard_APIDocumentationGenerated/SwingTimerDocumentation.lua#L10
 [spellshared]: https://github.com/Gethe/wow-ui-source/blob/9dc84f0d3bbae1768ac3405b3716000bd93eda06/Interface/AddOns/Blizzard_APIDocumentationGenerated/SpellSharedDocumentation.lua#L19
 [action]: https://github.com/Gethe/wow-ui-source/blob/9dc84f0d3bbae1768ac3405b3716000bd93eda06/Interface/AddOns/Blizzard_APIDocumentationGenerated/ActionBarFrameDocumentation.lua#L1035

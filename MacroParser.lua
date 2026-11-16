@@ -626,6 +626,31 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     return false, nil
 end
 
+local function AutoAttackOnly(macroBody, targetSpellID, targetSpellName)
+    if targetSpellID ~= 6603 and targetSpellID ~= 5019 and targetSpellID ~= 75 then return nil end
+    for line in string_gmatch(macroBody, "[^\r\n]+") do
+        local lower = GetLowercase(line)
+        local attackArgs = string_match(lower, "^%s*/startattack(.*)$")
+        local attackOnly = targetSpellID == 6603 and attackArgs
+            and string_match(attackArgs:gsub("%b[]", ""), "^%s*$")
+        if not string_match(lower, "^%s*#") and not string_match(lower, "^%s*$")
+           and not string_match(lower, "^%s*/cast%s+")
+           and not string_match(lower, "^%s*/use%s+")
+           and not attackOnly then
+            return false
+        end
+    end
+    local targetSpells = GetSpellAndOverride(targetSpellID, targetSpellName)
+    local found, other = false, false
+    ForEachCommandLine(macroBody, false, function(_, _, entries)
+        for _, clause in ipairs(entries) do
+            if DoesSpellMatch(clause.spellPart, targetSpells) then found = true
+            else other = true end
+        end
+    end)
+    return found and not other
+end
+
 function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
     if not slot or not targetSpellID or not targetSpellName or targetSpellName == "" then
         return nil
@@ -646,7 +671,8 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
     if not actionText or actionText == "" then return nil end
 
     local name, body, modifiers
-    for _, c in ipairs(MacroCandidates(slot, actionText)) do
+    local candidates = MacroCandidates(slot, actionText)
+    for _, c in ipairs(candidates) do
         local ok, mods = MacroParser.ParseMacroForSpell(c.body, targetSpellID, targetSpellName)
         if ok then
             name, body, modifiers = c.name, c.body, mods
@@ -660,11 +686,21 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
 
     local targetSpells = GetSpellAndOverride(targetSpellID, targetSpellName)
     local qualityScore = CalculateMacroSpecificityScore(name, body, targetSpells, GetDebugMode())
+    local autoAttackOnly = AutoAttackOnly(body, targetSpellID, targetSpellName)
+    if autoAttackOnly then
+        for _, candidate in ipairs(candidates) do
+            if not AutoAttackOnly(candidate.body, targetSpellID, targetSpellName) then
+                autoAttackOnly = false
+                break
+            end
+        end
+    end
     
     local entry = {
         found = true,
         modifiers = modifiers,
         qualityScore = qualityScore,
+        autoAttackOnly = autoAttackOnly,
     }
     
     parsedMacroCache[cacheKey] = entry

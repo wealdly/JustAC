@@ -178,6 +178,11 @@ layout fights a four-corner anchor.
 
 ## The hard limit: display only, permanently
 
+**2026-11-14 follow-up:** the owned Stoneform duration-bar experiment was denied
+access to its button and `GetTimerDuration` during combat on Forever 1.60.1.70938.
+The experimental probe was removed; see [capture evidence](FOREVER_COMBAT_SIGNALS.md#owned-stoneform-duration-bar-combat-denial-2026-11-14-1219).
+The restrictions below and existing gameplay consumers are unchanged.
+
 There is no read path back out, by design:
 
 - `CustomAuraButtonPrivateMixin:ApplyVisibility` is literally

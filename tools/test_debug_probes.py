@@ -55,7 +55,9 @@ def runtime(runtime_type=LuaRuntime):
         }
         function CreateFrame()
             local f = {
-                scripts = {}, RegisterEvent = function() end, RegisterUnitEvent = function() end,
+                scripts = {}, events = {},
+                RegisterEvent = function(self, event) self.events[event]=true end,
+                RegisterUnitEvent = function(self, event, unit) self.events[event]=unit end,
                 UnregisterAllEvents = function(self) self.unregistered=true end,
                 SetScript = function(self, key, fn) self.scripts[key]=fn end,
             }
@@ -235,15 +237,20 @@ def test_loaded_modules():
                 if external:
                     dc.ErrorCapture(lua.globals().addon, "on")
                     dc.ProbeSession(lua.globals().addon, "on")
-                dc.StartDiagnostics(lua.globals().addon)
+                dc.StartDiagnostics(lua.globals().addon, "full")
                 s = dc._diagnosticSession
                 assert s is not None, lines(lua)
                 assert s.ownsAudit == (not external) and s.ownsErrors == (not external)
                 assert s.last.forever == f"plain:{str(forever).lower()}"
                 assert s.last.researchAvailable == f"plain:{str(research).lower()}"
+                for event in ("UNIT_COMBAT", "UNIT_SPELLCAST_DELAYED"):
+                    assert s.frame.events[event] == ("player" if research else None)
                 if research:
                     assert s.last["signal.priorityGates"] is not None
                     assert s.last["signal.rogueArchetype"] is not None
+                    samples = s.samples
+                    s.frame.scripts.OnEvent(s.frame, "UNIT_COMBAT", "player", "WOUND", "", 100, 1)
+                    assert s.samples == samples, "incoming hits must not trigger full-session sampling"
                 else:
                     assert s.last["signal.priorityGates"] is None
                     assert s.last["signal.rogueArchetype"] is None
@@ -258,7 +265,7 @@ def test_loaded_modules():
                 assert calls.ForeverProbe == (1 if forever and research else None)
                 assert calls.ForeverAuraProbe == (1 if forever and research else None)
                 timer_count = len(lua.globals().timers)
-                dc.StartDiagnostics(lua.globals().addon)
+                dc.StartDiagnostics(lua.globals().addon, "full")
                 assert len(lua.globals().timers) == timer_count
                 audit, errors = dc._probeSession, dc._errorCapture
                 lua.globals().audit = audit
@@ -284,6 +291,146 @@ def test_loaded_modules():
                 assert dc._locWatch is None and dc._selfCast is None
                 assert all(timer.cancelled for timer in lua.globals().timers.values())
                 dc.DiagnosticReport(lua.globals().addon)
+
+
+def test_focused_session_and_marks():
+    import sys
+    sys.path.insert(0, str(ROOT / "tools"))
+    import analyze_probe
+
+    lua = loaded_runtime(True, research=False)
+    dc = lua.globals().DebugCommands
+    dc.StartDiagnostics(lua.globals().addon, "execute")
+    assert dc._diagnosticSession is None and "JustAC_Research companion" in lines(lua)
+    if not RESEARCH_FILES:
+        return
+
+    lua = loaded_runtime(True)
+    dc = lua.globals().DebugCommands
+    addon = lua.globals().addon
+    for arg, expected in (("nope", "unknown question"), ("stalecd", "not instrumented")):
+        dc.StartDiagnostics(addon, arg)
+        assert dc._diagnosticSession is None and expected in lines(lua)
+
+    instrumented = dc.InstrumentedResearchQuestions()
+    for index in range(1, len(instrumented) + 1):
+        question = instrumented[index]
+        dc.StartDiagnostics(addon, question.id)
+        s = dc._diagnosticSession
+        assert s is not None and s.question.id == question.id, lines(lua)
+        assert s.ownsAudit is False and dc._probeSession is None, "focused sessions skip the audit battery"
+        log = list(lua.globals().JustACGlobal.probeLog.values())
+        assert not any("DIAGNOSTICS MISSING" in row and s.id in row for row in log), \
+            [row for row in log if "DIAGNOSTICS MISSING" in row]
+        if s.focusTicker:
+            s.focusTicker.fn()
+        dc.StopDiagnostics(addon)
+        assert not any("FOCUS SAMPLE ERROR" in row for row in lua.globals().JustACGlobal.probeLog.values())
+
+    dc.StartDiagnostics(addon, "EXECUTE")
+    s = dc._diagnosticSession
+    assert s.rowKinds.failure is True and s.rowKinds.range is None
+    assert s.last.queueContext is not None and s.last.combat is not None
+    assert s.last.rotationEligibility is None, "unrelated keys are not sampled"
+    assert s.last["signal.priorityGates"] is None, "unrelated row emitters are not sampled"
+    s.frame.scripts.OnEvent(s.frame, "PLAYER_TARGET_CHANGED")
+    assert s.epoch == 1
+    dc.MarkScenario(addon, " Healed Target! ")
+    dc.MarkScenario(addon, "")
+    assert "Labels for 'execute': healed-target" in lines(lua)
+    dc.StopDiagnostics(addon)
+    summary = lua.globals().JustACGlobal.diagnosticSummary
+    assert summary.question == "execute" and summary.marks == 1
+    dc.MarkScenario(addon, "late")
+    assert "will not be scored" in lines(lua)
+    log = list(lua.globals().JustACGlobal.probeLog.values())
+    session_rows = [row for row in log if s.id in row]
+    assert any(row.startswith("DIAGNOSTICS START") and "question=execute" in row for row in session_rows)
+    assert any(row.startswith("DIAGNOSTICS KEYS") and "queueContext" in row for row in session_rows)
+    assert any(row.startswith("DIAG ") and " t=" in row and "epoch=1" in row for row in session_rows)
+    assert any(row.startswith("MARK ") and "label=healed-target" in row and "epoch=1" in row
+               for row in session_rows)
+    assert any(row.startswith("DIAGNOSTICS STOP") and "marks=1" in row for row in session_rows)
+    assert any(row.startswith("MARK session=none") and "label=late" in row for row in log)
+
+    # The analyzer decodes exactly what the Lua registry encoded.
+    session = next(x for x in analyze_probe.split_sessions(log) if x.id == s.id)
+    definitions = analyze_probe.parse_definitions(session.rows)
+    assert list(definitions) == ["execute"]
+    names = [c["name"] for c in definitions["execute"]["controls"]]
+    lua_controls = dc.FindResearchQuestion("execute").controls
+    assert names == [lua_controls[i].name for i in range(1, len(lua_controls) + 1)]
+    events = analyze_probe.build_timeline(session)
+    assert any(e[0] == "mark" and e[3] == "healed-target" and e[2] == 1 for e in events)
+    result = analyze_probe.score_question(definitions["execute"], events)
+    healed = next(c for c in result["controls"] if c["name"] == "healedTarget")
+    assert healed["count"] == 1 and healed["optional"]
+
+    dc.StartDiagnostics(addon)
+    s = dc._diagnosticSession
+    log = list(lua.globals().JustACGlobal.probeLog.values())
+    session = next(x for x in analyze_probe.split_sessions(log) if x.id == s.id)
+    definitions = analyze_probe.parse_definitions(session.rows)
+    assert set(definitions) == {q.id for q in instrumented.values()}, "full sessions carry every question"
+    lacks = next(c for c in definitions["prepull"]["controls"] if c["name"] == "ruleBlocked")["lacks"]
+    assert lacks == ["no failed minimum-range probe", "reason=no target"], "encoded spaces survive the round trip"
+    assert s.rowKinds is None and s.ownsAudit is False and dc._probeSession is None
+    assert s.mode == "general" and s.focusTicker is not None, "general capture runs change-only samplers"
+    s.focusTicker.fn()
+    log = list(lua.globals().JustACGlobal.probeLog.values())
+    assert any(row.startswith("DIAGNOSTICS START") and s.id in row and "mode=general" in row for row in log)
+    assert not any("FOCUS SAMPLE ERROR" in row for row in log)
+    dc.StopDiagnostics(addon)
+    dc.StartDiagnostics(addon, "FULL")
+    s = dc._diagnosticSession
+    assert s.mode == "full" and s.ownsAudit is True and dc._probeSession is not None and s.focusTicker is None
+    dc.StopDiagnostics(addon)
+    assert dc._probeSession is None
+
+
+def test_combat_edges_stay_quiet():
+    lua = loaded_runtime(True)
+    lua.execute("""
+        local cf = CreateFrame
+        function CreateFrame(kind, ...)
+            local f = cf(kind, ...)
+            f.Hide = function() end
+            return f
+        end
+        UIParent = {CreateTexture=function() return {Hide=function() end} end}
+        now = 10
+        function GetTime() return now end
+        -- Any client API the validation sweep touches answers nil.
+        local stub
+        stub = setmetatable({}, {__call=function() return nil end, __index=function() return stub end})
+        setmetatable(_G, {__index=function(_, k)
+            if type(k) == "string" and k:match("^[A-Z]") then return stub end
+        end})
+    """)
+    dc = lua.globals().DebugCommands
+    addon = lua.globals().addon
+    dc.ValidateAssumptions(addon, "show")
+    assert "no combat comparison held" in lines(lua)
+    dc.ValidateAssumptions(addon, "arm")
+    frame = dc._validate
+    assert "validate show" in lines(lua)
+    lua.execute("output={}; combat=true")
+    frame.scripts.OnEvent(None, "PLAYER_REGEN_DISABLED")
+    lua.execute("now=11")
+    frame.scripts.OnUpdate(None)
+    lua.execute("now=16")
+    frame.scripts.OnUpdate(None)
+    lua.execute("combat=false")
+    frame.scripts.OnEvent(None, "PLAYER_REGEN_ENABLED")
+    assert len(lua.globals().output) == 0, lines(lua)
+    assert dc._validate is None, "the comparison completes on combat exit"
+    held = list(dc._validateHeld.values())
+    assert any("in-combat capture" in line for line in held)
+    assert any("combat ended" in line for line in held)
+    log = list(lua.globals().JustACGlobal.probeLog.values())
+    assert any("combat ended" in row for row in log), "held lines are also written to the probe log"
+    dc.ValidateAssumptions(addon, "show")
+    assert len(lua.globals().output) == len(held)
 
 
 def test_log_capacity():
@@ -375,7 +522,13 @@ def test_rotation_target_enemy_context():
             return true,false
         end}
         local B=libraries['JustAC-BlizzardAPI']
-        B.GetEngagedEnemyCount=function() return 1 end
+        B.GetEngagedEnemyCount=function(breakdown)
+            if breakdown then
+                breakdown.plates, breakdown.hostile, breakdown.threat = 4, 3, 1
+                breakdown.widened, breakdown.others, breakdown.unknown = 0, 1, 1
+            end
+            return 1
+        end
         B.IsSpellUsable=function(id,failOpen)
             assert(failOpen==true)
             if id==678 then return false,true end
@@ -416,9 +569,11 @@ def test_rotation_target_enemy_context():
     assert s.last.targetContext == "plain:type=Undead typeID=6 classification=elite level=7"
     assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679"
     assert s.last.enemyProvenance == (
-        "plain:plates=4 hostile=3 threat=1 noThreat=1 unknown=1 threatApi=true helper=1"
-    )
+        "plain:plates=4 hostile=3 threat=1 unknown=1 helper=1 widened=0 inCombatOthers=1"
+    ), "provenance reports the queue helper's own breakdown (behaviour: test_efficiency)"
     dc.StopDiagnostics(lua.globals().addon)
+    assert "enemyProvenance" not in lines(lua), "stop prints a short summary, not the report"
+    dc.DiagnosticReport(lua.globals().addon)
     assert "enemyProvenance=plain:plates=4" in lines(lua)
 
 
@@ -931,11 +1086,11 @@ def test_shared_session():
         for name in ("DiagnosticReport", "DiagnosticStatus", "StopDiagnostics", "StartDiagnostics"):
             lua.execute(method(name))
         dc = lua.globals().DebugCommands
-        dc.StartDiagnostics(lua.globals().addon)
+        dc.StartDiagnostics(lua.globals().addon, "full")
         s = dc._diagnosticSession
         assert s.ownsAudit == (not existing)
         assert s.ownsErrors == (not existing)
-        dc.StartDiagnostics(lua.globals().addon)
+        dc.StartDiagnostics(lua.globals().addon, "full")
         assert len(lua.globals().timers) == 1
         assert "nil:" in s.last.powerBelow50
         assert "123" in s.last.displayed
@@ -993,6 +1148,12 @@ def test_shared_session():
         lua.execute("combat=true; hurt=true; lowPower=true")
         s.frame.scripts.OnEvent(s.frame, "PLAYER_REGEN_DISABLED")
         assert s.pulls == 1 and "true" in s.last.healthBelow
+        assert "probe active|r - recording pull 1" in lines(lua)
+        lua.execute("output={}; combat=false")
+        s.frame.scripts.OnEvent(s.frame, "PLAYER_REGEN_ENABLED")
+        assert "probe active|r - pull 1 recorded" in lines(lua) and "/jac inspect stop" in lines(lua)
+        assert len(lua.globals().output) == 1, "one line per combat edge"
+        lua.execute("combat=true")
         lua.execute("mapID=2339; form=1")
         s.frame.scripts.OnEvent(s.frame, "ZONE_CHANGED_NEW_AREA")
         assert s.last.mapID == "plain:2339" and s.last.form == "plain:1"
@@ -1011,7 +1172,8 @@ def test_shared_session():
         log = list(lua.globals().JustACGlobal.probeLog.values())
         assert any(f"session={session_id}" in row and "sample=" in row and "elapsed=" in row for row in log)
         dc.DiagnosticStatus(lua.globals().addon)
-        assert "errors=true" in lines(lua)
+        assert "diagnostics: ON (full) session " + session_id in lines(lua)
+        assert ("also running: audit=true errors=true" in lines(lua)) == existing
         assert "sampler ms:" in lines(lua)
         lua.execute("for i=1,32100 do ProbeLogEmit('fill '..i) end")
         assert s.dropped > 0 and lua.globals().JustACGlobal.probeLogDropped > 0
@@ -1050,14 +1212,14 @@ def test_shared_session():
         assert s.samples == samples, "stale ticker callback must not record"
         dc.StopDiagnostics(lua.globals().addon)
         assert "already OFF" in lines(lua)
-        dc.StartDiagnostics(lua.globals().addon)
+        dc.StartDiagnostics(lua.globals().addon, "full")
         s = dc._diagnosticSession
         assert s.id != session_id
         s.started = -590
         s.ticker.fn()
         assert dc._diagnosticSession is None
         assert "sampling limit" in lines(lua)
-        dc.StartDiagnostics(lua.globals().addon)
+        dc.StartDiagnostics(lua.globals().addon, "full")
         s = dc._diagnosticSession
         lua.execute("addon.GetProfile=function() error('profile failed') end")
         s.ticker.fn()
@@ -1252,8 +1414,9 @@ def test_battery_failures():
         lua.globals().forever = forever
         lua.execute("LibStub=function() return {IsForever=function() return forever end} end")
         lua.globals().DebugCommands.RunProbeBattery(lua.globals().addon, "TEST", False)
-        assert f"{expected} failures" in lines(lua)
         log = lua.globals().JustACGlobal.probeLog
+        assert any(f"{expected} failures" in msg for msg in log.values())
+        assert not any("snapshot" in msg for msg in lines(lua).splitlines()), "combat-edge snapshots stay out of chat"
         assert sum("PROBE ERROR" in msg for msg in log.values()) == expected
     lua.execute("""
         clock=0
@@ -1562,14 +1725,21 @@ def test_combat_signal_reads():
         lua = runtime()
         lua.globals().forever = forever
         lua.execute("""
-            now=0; incoming=nil; debt=0; predicted=false
+            now=0; incoming=nil; partyIncoming=nil; debt=0; predicted=false
+            inRaid=false; raidCount=10
             secret={}; secretFalse={}
             function issecretvalue(v) return v==secret or v==secretFalse end
             function secretwrap(v) if v then return secret else return secretFalse end end
             function GetTime() return now end
             function UnitExists(u) return u~='pet' end
             function UnitIsDeadOrGhost() return false end
-            function UnitGetIncomingHeals() return incoming end
+            function UnitCanAssist() return true end
+            function IsInRaid() return inRaid end
+            function GetNumGroupMembers() return raidCount end
+            function UnitGetIncomingHeals(_,healer)
+                if healer=='party1' then return partyIncoming end
+                return incoming
+            end
             function UnitGetTotalHealAbsorbs() return debt end
             zeroCalls=0
             B={
@@ -1600,13 +1770,22 @@ def test_combat_signal_reads():
             function calc:ResetPredictedValues() self.populated=false end
             function calc:HasSecretValues() assert(self.populated); return true end
             function calc:GetHealAbsorbs() assert(self.populated); return debt,secret end
-            function calc:GetIncomingHeals() assert(self.populated); return incoming,0,0,secret end
-            function CreateUnitHealPredictionCalculator() return calc end
-            denied=false
+            function calc:GetIncomingHeals()
+                assert(self.populated)
+                local value=incoming
+                if self.healer=='party1' then value=partyIncoming end
+                return value,0,0,secret
+            end
+            function CreateUnitHealPredictionCalculator()
+                return setmetatable({}, {__index=calc})
+            end
+            denied=false; deniedOther=false
             function UnitGetDetailedHealPrediction(_,healer,c)
-                assert(healer=='player')
+                assert(healer=='player' or healer:match('^party[1-4]$') or healer:match('^raid[1-8]$'))
                 if denied then error('prediction denied') end
+                if deniedOther and healer=='party1' then error('other healer denied') end
                 c.populated=true
+                c.healer=healer
             end
             C_CurveUtil={CreateCurve=function()
                 return {
@@ -1681,6 +1860,20 @@ def test_combat_signal_reads():
         assert reads["signal.player.incomingZero"]() == "plain:unknown:nil input"
         assert lua.globals().zeroCalls == 0
         assert reads["signal.player.healDebtZero"]() == "plain:true"
+        lua.globals().partyIncoming = lua.globals().secret
+        party = reads["signal.player.groupHealers"]()
+        assert "party1{rawZero=plain:false" in party
+        assert "netDebtZero=plain:true incomingZero=plain:false" in party
+        assert "context=party" in party
+        lua.execute("deniedOther=true; now=2")
+        party = reads["signal.player.groupHealers"]()
+        assert "party1{rawZero=plain:false calcError=" in party and "other healer denied" in party
+        assert "party2{rawZero=plain:unknown:nil input" in party, "one healer denial must not stop sibling probes"
+        lua.execute("inRaid=true; now=3")
+        raid = reads["signal.player.groupHealers"]()
+        assert "context=raid truncated=10" in raid
+        assert "raid8{" in raid and "raid9{" not in raid
+        lua.execute("inRaid=false; deniedOther=false; now=4")
         assert reads["signal.player.tankAura"]() == "secret:<secret>"
         calibration = reads["signal.booleanCalibration"]()
         assert "true=plain:true false=plain:false" in calibration
@@ -1697,6 +1890,105 @@ def test_combat_signal_reads():
         assert "crowdControlList=plain:2" in reads["signal.target.nameplate"]()
         assert "visible=plain:false" in reads["signal.viewers"]()
         assert "pandemic=plain:unknown:no marker" in reads["signal.viewers"]()
+        lua.execute("""
+            bar={
+                GetValue=function() return secret end,
+                GetMinMaxValues=function() return 0,secret end,
+                GetTimerDuration=function() return dur end,
+            }
+            barItem={
+                cooldownID=790,IsActive=function() return true end,
+                GetCooldownInfo=function() return {spellID=403,overrideSpellID=529} end,
+                GetAuraDataUnit=function() return 'player' end,
+                GetAuraSpellInstanceID=function() return 77 end,
+                GetCooldownValues=function() return secret,secret,1,false end,
+                GetBarFrame=function() return bar end,
+                GetDurationFontString=function() return {GetText=function() return secret end} end,
+                GetApplicationsFontString=function() return {GetText=function() return secret end} end,
+                IsVisible=function() return true end,HasEditModeData=function() return false end,
+            }
+            BuffBarCooldownViewer={
+                IsShown=function() return true end,IsVisible=function() return true end,isEditing=false,
+                itemFramePool={EnumerateActive=function()
+                    local done=false
+                    return function() if not done then done=true;return barItem end end
+                end},
+            }
+            C_UnitAuras={GetAuraDuration=function() error('aura duration denied') end}
+            dur.GetRemainingDuration=function() return secret end
+            dur.GetTotalDuration=function() return secret end
+        """)
+        lua.globals().event("UPDATE_SHAPESHIFT_FORM")
+        bars = reads["signal.viewers"]()
+        assert "spell=plain:403 override=plain:529 active=plain:true" in bars
+        assert "instance=plain:77" in bars and "preview=plain:false" in bars
+        assert "expires=secret:<secret> duration=secret:<secret>" in bars
+        assert "barValue=secret:<secret> barMax=secret:<secret>" in bars
+        assert "timerText=secret:<secret> stackText=secret:<secret>" in bars
+        assert "auraDuration{err:" in bars and "aura duration denied" in bars
+        assert "barDuration{plain:HasSecretValues=plain:true" in bars
+        assert "remaining=secret:<secret> total=secret:<secret>" in bars
+        assert "activeBridge=plain:true" in bars and "below1s=plain:false" in bars
+        lua.execute("barItem.GetAuraSpellInstanceID=function() return secret end")
+        lua.globals().event("UPDATE_SHAPESHIFT_FORM")
+        bars = reads["signal.viewers"]()
+        assert "instance=secret:<secret>" in bars and "auraDuration{secret:<secret>}" in bars
+        assert "barDuration{plain:HasSecretValues=plain:true" in bars, \
+            "A denied instance route must not suppress the independent timer route"
+        lua.execute("""
+            BuffBarCooldownViewer.IsShown=function() return false end
+            BuffBarCooldownViewer.isEditing=true
+            barItem.HasEditModeData=function() return true end
+            B.IsDurationBelowSeconds=function(value,seconds)
+                assert(value==dur and seconds==1);return true
+            end
+        """)
+        lua.globals().event("UPDATE_SHAPESHIFT_FORM")
+        bars = reads["signal.viewers"]()
+        assert "BuffBarCooldownViewer shown=plain:false" in bars and "editing=plain:true" in bars
+        assert "preview=plain:true" in bars and "below1s=plain:true" in bars
+        lua.execute("BuffBarCooldownViewer=nil")
+        lua.execute("""
+            originalCast=UnitCastingInfo
+            function UnitCastingInfo(unit)
+                if unit=='player' then return 'Bolt',nil,nil,1000,3500,false,nil,false,403,44,800 end
+                return originalCast(unit)
+            end
+            C_Spell.GetSpellInfo=function(id) assert(id==403);return {castTime=2500} end
+            B.IsUnitHealthBelow=function(unit,pct) assert(unit=='target' and pct==20);return true end
+            B.SafeUnitIsUnit=function(unit) return unit=='targettarget' or unit=='nameplate1target' end
+            B.RunningAutoSwing=function(id) assert(id==6603);return 0 end
+            B.GetSwingRemaining=function(hand) assert(hand==0);return 0.3 end
+            originalLibStub=LibStub
+            LibStub=function(name)
+                if name=='JustAC-SpellDB' then return {IsTargetWithin=function() return true end} end
+                return originalLibStub(name)
+            end
+        """)
+        lua.globals().event("UNIT_COMBAT", "target", "WOUND", "", lua.globals().secret, 1)
+        assert "damageEvents=0" in reads["signal.player.pushback"]()
+        lua.globals().event("UNIT_COMBAT", "player", "WOUND", "", lua.globals().secret, 1)
+        lua.globals().event("UNIT_SPELLCAST_DELAYED", "player", lua.globals().secret, 403, 44)
+        pressure = reads["signal.player.pushback"]()
+        assert "delays=1 damageEvents=1" in pressure and "delayAge=plain:0" in pressure
+        assert "spell=plain:403 startMS=plain:1000 endMS=plain:3500 delayMS=plain:800 castMS=plain:2500" in pressure
+        assert "targetBelow20=plain:true targetMelee=plain:true targetOnPlayer=plain:true" in pressure
+        assert "targetsOnPlayer=plain:1 unknown=0 targeting-not-hit-sources" in pressure
+        assert "meleeRunning=plain:0 swingRemaining=plain:0.3" in pressure
+        row = list(lua.globals().JustACGlobal.probeLog.values())[-1]
+        assert "EVIDENCE pushback" in row and "cast=secret:<secret> barID=plain:44" in row
+        hits = [line for line in lua.globals().JustACGlobal.probeLog.values() if "EVIDENCE pressure " in line]
+        assert "damageEvents=1 action=plain:WOUND flags=plain: school=plain:1 casting=plain:403" in hits[-1], hits
+        assert "castDelayMS=plain:800" in hits[-1] and hits[-1].endswith("sinceDelay=none"), hits[-1]
+        lua.execute("clock = (clock or 0) + 0.4")
+        lua.globals().event("UNIT_COMBAT", "player", "WOUND", "ABSORB", lua.globals().secret, 4)
+        lua.globals().event("UNIT_COMBAT", "player", "DODGE", "", lua.globals().secret, 1)
+        hits = [line for line in lua.globals().JustACGlobal.probeLog.values() if "EVIDENCE pressure " in line]
+        assert "damageEvents=2 action=plain:WOUND flags=plain:ABSORB school=plain:4" in hits[-2], hits
+        assert re.search(r"sinceDelay=\d+\.\d{3}$", hits[-2]), hits[-2]
+        assert "damageEvents=2 action=plain:DODGE" in hits[-1], "avoids are recorded but not counted as damage"
+        lua.globals().event("PLAYER_REGEN_DISABLED")
+        assert "delays=0 damageEvents=0" in reads["signal.player.pushback"]()
         assert reads["signal.pet.prediction"]() == "plain:unavailable:no unit"
         lua.execute("incoming=secret; debt=secret; predicted=true; now=1")
         lua.execute("castActive=true")
@@ -1863,6 +2155,733 @@ def test_spell_bound_aura_capture():
     rows = list(lua.globals().JustACGlobal.probeLog.values())[-2:]
     assert "ref=1" in rows[0] and "bySpell=denied" in rows[0]
     assert "ref=2" in rows[1] and "duration denied" in rows[1]
+
+
+def test_range_signal_capture():
+    for forever in (False, True):
+        lua = loaded_runtime(forever, True)
+        lua.execute("""
+            clock=10
+            function GetTime() return clock end
+            secret=setmetatable({}, {__index=function() error('secret field access') end})
+            function issecretvalue(value) return rawequal(value,secret) end
+            B=libraries['JustAC-BlizzardAPI']
+            B.GetRotationSpells=nil
+            B.GetBarSpells=function() return {
+                {id=2973,slot=1},{id=75,slot=2},{id=1130,slot=3},{id=3044,slot=4},
+                {id=1111,slot=5},{id=2222,slot=6},{id=9999,slot=7},
+            } end
+            B.GetCachedSpellInfo=function(id)
+                if id==75 then return {minRange=8,maxRange=35} end
+                return {minRange=0,maxRange=100}
+            end
+            B.AbilityInRange=function(id) if id~=2973 then return true end end
+            B.IsSpellReady=function() return true end
+            B.IsTargetInSwingRange=function() end
+            actionReads=0;firstItem=9001
+            B.GetActionInfo=function(slot)
+                actionReads=actionReads+1
+                if slot>=10 and slot<=16 then return 'item',firstItem+slot-10 end
+            end
+            queueProbeEnabled=false
+            SQ={_b={nearMeleeHint=true},
+                SetQueueProbeEnabled=function(enabled)
+                    local previous=queueProbeEnabled
+                    queueProbeEnabled=enabled
+                    return previous
+                end,
+                GetQueueProbeEntry=function(id)
+                    assert(queueProbeEnabled)
+                    return 'bucket=normal ready=true usable=true notEnough=false meleeUnconfirmed=false nearMeleeHint=true'
+                end,
+                _nearMeleeState={id=75,inRange=false,hintAt=9.9,observedAt=9.9}}
+            libraries['JustAC-SpellQueue']=SQ
+            libraries['JustAC-SpellDB']={NEXT_SWING_SPELLS={[2973]=true},
+                DebugRangeProbes=function() return {
+                    {id=1766,minRange=0,maxRange=5,r=true},{id=2094,minRange=0,maxRange=10},
+                } end}
+            function CheckInteractDistance(unit,index) assert(unit=='target');return index~=3 end
+            positions={player={10,20,0,1},target={13,24,0,1}}
+            function UnitPosition(unit) local p=positions[unit];return p[1],p[2],p[3],p[4] end
+            loadRequests=0
+            priorRangeRI=libraries['JustAC-RotationImport']
+            libraries['JustAC-RotationImport']={GetRotationGated=function()
+                return {{id=2973}}
+            end}
+            distance,checked=49,true
+            function UnitDistanceSquared(unit) assert(unit=='target');return distance,checked end
+            function UnitIsInInteractRange(unit) assert(unit=='target');return true end
+            C_Spell={IsSpellInRange=function() return true end,
+                IsCurrentSpell=function(id) return id==2973 end}
+            C_ActionBar={IsActionInRange=function() return false end,
+                EnableActionRangeCheck=function() error('must not enable action range') end}
+            C_SpellBook={
+                FindSpellBookSlotForSpell=function(id) return id,0 end,
+                GetSpellBookItemInfo=function(index) return {spellID=index} end,
+                IsSpellBookItemInRange=function(index,bank,unit)
+                    assert(bank==0 and unit=='target');return true
+                end,
+            }
+            itemReads=0
+            C_Item={GetItemCount=function() return 2 end,
+                IsItemInRange=function(_,unit) assert(unit=='target');itemReads=itemReads+1 end,
+                IsItemDataCachedByID=function(id) return id==8149 end,
+                RequestLoadItemDataByID=function() loadRequests=loadRequests+1 end}
+            hooks,nativeEnables,nativeReads,stacks=0,0,0,0
+            C_SwingTimer={
+                EnableRangeCheck=function() nativeEnables=nativeEnables+1 end,
+                IsTargetWithinSwingRange=function() nativeReads=nativeReads+1 end,
+            }
+            function hooksecurefunc(object,key,callback)
+                assert(object==C_SwingTimer and key=='EnableRangeCheck')
+                hooks=hooks+1
+                local original=object[key]
+                object[key]=function(...) original(...);callback(...) end
+            end
+            function debugstack(start, top, bottom)
+                assert(start==3 and top==20 and bottom==0)
+                stacks=stacks+1
+                return string.rep('Interface/AddOns/JustAC_Research/Signals.lua:1900\\n',8)
+                    .. 'Interface/AddOns/JustAC/Debug/Common.lua:96\\n'
+                    .. 'Blizzard_SwingTimer.lua:400\\n[C]: EnableRangeCheck'
+            end
+            function SetCVar() error('must not change player settings') end
+            C_CVar={GetCVarBool=function() return false end}
+            SwingTimerMainHandFrame={isRangeCheckEnabled=false,isOutOfRange=false,
+                IsShown=function() return true end,IsOutOfRange=function() return false end}
+            reads,event,cleanup=DebugCommands.CombatSignalReads()
+            DebugCommands._diagnosticSession={id='range-test',signalEvent=event}
+        """)
+        reads, event = lua.globals().reads, lua.globals().event
+        assert lua.globals().queueProbeEnabled is forever
+        if forever:
+            assert "bucket=normal" in reads["signal.range.nextSwingEligibility"]()
+        lua.execute("libraries['JustAC-RotationImport']=priorRangeRI")
+        hint = reads["signal.range.hint"]()
+        assert "ordering-only active=plain:true" in hint
+        assert "shootingRange=plain:false" in hint and "observationAge=0.10" in hint
+        lua.execute("clock=10.1;SQ._b.nearMeleeHint=false")
+        assert "active=plain:false" in reads["signal.range.hint"](), "hint decisions are not cached for a second"
+        assert lua.globals().nativeEnables == 0, "installing a passive observer must not invoke its subject"
+        if forever:
+            assert lua.globals().hooks == 1
+            target = reads["signal.range.target"]()
+            assert "interact=plain:true" in target and "validSquared=plain:49" in target
+            assert "interactDist{1=plain:true 2=plain:true 3=plain:false 4=plain:true 5=plain:true}" in target
+            assert "position{plain:player=plain target=plain distance=5.0}" in target
+            refs = reads["signal.range.references"]()
+            assert "1766 min=plain:0 max=plain:5 r=plain:true" in refs and "2094 min=plain:0 max=plain:10 r=nil:nil" in refs
+            ref_items = reads["signal.range.refItems"]()
+            assert "5yd:8149 cached=plain:true native=nil:nil" in ref_items and "10yd:17626" in ref_items
+            assert "true-only" in ref_items and lua.globals().loadRequests == 9, "uncached items are requested once"
+            lua.execute("clock=clock+1.1")
+            reads["signal.range.refItems"]()
+            assert lua.globals().loadRequests == 9, "load requests are not repeated"
+            lua.execute("""
+                clock=clock+1.1;combat=true;interactCalls=0
+                savedCID,savedCanAttack,savedExists=CheckInteractDistance,UnitCanAttack,UnitExists
+                CheckInteractDistance=function(...) interactCalls=interactCalls+1;return savedCID(...) end
+                UnitCanAttack=function() return false end
+            """)
+            assert "1=plain:unavailable:no target in combat" in reads["signal.range.target"]()
+            lua.execute("clock=clock+1.1;UnitExists=function() return true end")
+            before = lua.globals().itemReads
+            assert "1=plain:unavailable:restricted in combat (not attackable)" in reads["signal.range.target"]()
+            assert "restricted in combat" in reads["signal.range.refItems"]()
+            assert lua.globals().interactCalls == 0 and lua.globals().itemReads == before, \
+                "blocked range calls are never made in combat on a non-attackable target"
+            lua.execute("clock=clock+1.1;UnitCanAttack=function() return true end")
+            assert "3=plain:false" in reads["signal.range.target"]() and lua.globals().interactCalls == 5
+            lua.execute("clock=clock+1.1;combat=false;CheckInteractDistance=savedCID;"
+                        "UnitCanAttack=savedCanAttack;UnitExists=savedExists")
+            for setup, expected in (
+                ("positions.target={13,24,0,2}", "distance=unknown:map differs"),
+                ("positions.target={secret,24,0,1}", "target=secret distance=unknown"),
+                ("positions.target={}", "target=nil distance=unknown"),
+                ("UnitPosition=function() error('position denied') end", "position denied"),
+                ("CheckInteractDistance=function() error('interact denied') end", "1=err:"),
+            ):
+                lua.execute("clock=clock+1.1;" + setup)
+                row = reads["signal.range.target"]()
+                assert expected in row, (setup, row)
+            swing = reads["signal.range.swing"]()
+            assert "native=nil:nil" in swing and "frameOut=plain:false" in swing
+            assert "warning=plain:false" in swing, "a bright frame remains separate from an unknown native result"
+            spells = reads["signal.range.spells"]()
+            assert "2973 min=plain:0" in spells and "effective=nil:nil ready=plain:true queued=plain:true" in spells
+            assert "slot=2973 bank=0 spell=plain:2973 range=plain:true" in spells
+            assert "9999" not in spells and "max=6" in spells
+            items = reads["signal.range.items"]()
+            assert "item=9001 count=plain:2 native=nil:nil action=plain:false" in items
+            assert "9007" not in items and "no-assumed-yardage" in items
+            before = lua.globals().actionReads
+            lua.execute("clock=clock+1.1")
+            reads["signal.range.items"]()
+            assert lua.globals().actionReads == before + 6, "cached items only revalidate their six direct slots"
+            before = lua.globals().nativeReads
+            lua.execute("combat=true")
+            event("CVAR_UPDATE", "SHOW_SWING_TIMER", "0")
+            swing = reads["signal.range.swing"]()
+            assert "MainHand{native=plain:n/a in combat" in swing
+            assert lua.globals().nativeReads == before, "combat range reads must not invoke the native API"
+            lua.execute("combat=false")
+            event("CVAR_UPDATE", "SHOW_SWING_TIMER", "1")
+            lua.execute("firstItem=9101")
+            lua.execute("clock=clock+1.1")
+            assert "unknown:slot identity changed" in reads["signal.range.items"]()
+            event("ACTIONBAR_SLOT_CHANGED", 10)
+            assert "item=9101" in reads["signal.range.items"]()
+            for setup, expected in (
+                ("distance=0;checked=false", "validSquared=plain:unknown:unchecked"),
+                ("distance=secret;checked=true", "validSquared=secret:<secret>"),
+                ("distance=0;checked=secret", "checked=secret:<secret>"),
+                ("distance=-1;checked=true", "validSquared=plain:unknown:invalid number"),
+                ("UnitDistanceSquared=function() error('distance denied') end", "distance denied"),
+                ("UnitDistanceSquared=nil", "unavailable:API"),
+            ):
+                lua.execute("clock=clock+1.1;" + setup)
+                row = reads["signal.range.target"]()
+                assert expected in row and "interact=plain:true" in row, (setup, row)
+            lua.execute("clock=clock+1.1;C_SpellBook.FindSpellBookSlotForSpell=function() return secret,0 end")
+            assert "book{secret:<secret>}" in reads["signal.range.spells"]()
+            lua.execute("clock=clock+1.1;C_SpellBook.FindSpellBookSlotForSpell=function() error('book denied') end")
+            assert "book denied" in reads["signal.range.spells"]()
+            lua.execute("clock=clock+1.1;C_Item.IsItemInRange=function() error('item denied') end")
+            assert "item denied" in reads["signal.range.items"]()
+            lua.execute("C_SwingTimer.EnableRangeCheck(0,false)")
+            assert lua.globals().nativeEnables == 1
+            assert "enabled=plain:false" in reads["signal.range.subscription"]()
+            assert "Blizzard_SwingTimer.lua" in reads["signal.range.subscription"]()
+            assert "JustAC_Research" not in reads["signal.range.subscription"]()
+            event("PLAYER_SWING_RANGE_UPDATE", 0, True, False)
+            assert "verdict=plain:unknown:no check" in reads["signal.range.swingEvent"]()
+            before = len(lua.globals().JustACGlobal.probeLog)
+            event("PLAYER_SWING_RANGE_UPDATE", 0, True, False)
+            assert len(lua.globals().JustACGlobal.probeLog) == before
+            event("PLAYER_SWING_RANGE_UPDATE", 0, True, True)
+            assert "verdict=plain:true" in reads["signal.range.swingEvent"]()
+            event("PLAYER_TARGET_CHANGED")
+            event("PLAYER_SWING_RANGE_UPDATE", 0, True, True)
+            assert "epoch=1" in reads["signal.range.swingEvent"]()
+            event("PLAYER_SWING_RANGE_UPDATE", 0, True, lua.globals().secret)
+            assert "verdict=secret:<secret>" in reads["signal.range.swingEvent"]()
+            before = len(lua.globals().JustACGlobal.probeLog)
+            event("CVAR_UPDATE", "unrelatedSetting", "1")
+            assert len(lua.globals().JustACGlobal.probeLog) == before
+            event("CVAR_UPDATE", "SHOW_SWING_TIMER", "0")
+            event("PLAYER_EQUIPMENT_CHANGED", 18)
+            rows = list(lua.globals().JustACGlobal.probeLog.values())
+            assert "CVAR_UPDATE name=showSwingTimer value=plain:0" in rows[-2]
+            assert "PLAYER_EQUIPMENT_CHANGED slot=plain:18" in rows[-1]
+            for i in range(125):
+                event("PLAYER_SWING_RANGE_UPDATE", 0, bool(i % 2), True)
+            rows = list(lua.globals().JustACGlobal.probeLog.values())
+            assert sum("EVIDENCE swingRange " in row for row in rows) == 120
+            lua.execute("for i=1,125 do C_SwingTimer.EnableRangeCheck(0,i%2==0) end")
+            rows = list(lua.globals().JustACGlobal.probeLog.values())
+            assert sum("EVIDENCE swingSubscription " in row for row in rows) == 120
+            assert lua.globals().stacks == 120 and reads["signal.evidence.dropped"]() > 0
+            lua.execute("""
+                clock=clock+1.1
+                B.GetBarSpells=function() return {
+                    {id=1259718,slot=1},{id=20600,slot=2},{id=1278068,slot=3},
+                    {id=2550,slot=4},{id=6603,slot=5},{id=8888,slot=6},
+                } end
+                B.GetDisplaySpellID=function(id)
+                    if id==2973 or id==14260 then
+                        if lowerRank then return 2973 end
+                        return 14260
+                    end
+                    return id
+                end
+                B.GetRotationSpells=function(gameOnly)
+                    assert(gameOnly==true)
+                    return {14260,75,1130,3044,2974,9999}
+                end
+                rangeContext='cleave'
+                SQ.DebugContextState=function() return {simcCtx=rangeContext} end
+                libraries['JustAC-RotationImport']={GetRotationGated=function(context)
+                    assert(context==rangeContext)
+                    if context=='aoe' then return {{id=1111}} end
+                    return {{id=1978},{id=75},{id=1130},{id=2973},{id=14260},{id=3044}}
+                end}
+                B.GetActionInfo=function() return 'macro',42 end
+                rangeActionCalls=0
+                C_ActionBar.IsActionInRange=function()
+                    rangeActionCalls=rangeActionCalls+1
+                    error('must not read macro range as a direct spell')
+                end
+                C_SpellBook.FindSpellBookSlotForSpell=function(id) return id,0 end
+                C_Spell.IsCurrentSpell=function(id) return id==14260 end
+            """)
+            spells = reads["signal.range.spells"]()
+            assert "source=rotation requested=2973 slot=nil:nil" in spells
+            assert "14260 min=" in spells and "queued=plain:true" in spells
+            assert "slot=14260 bank=0 spell=plain:14260 range=plain:true" in spells
+            assert spells.count("14260 min=") == 1 and spells.count(" requested=") == 6
+            assert "source=learned requested=2974" in spells
+            assert "1259718" not in spells and "9999" not in spells
+            assert lua.globals().rangeActionCalls == 0
+            lua.execute("clock=clock+1.1;lowerRank=true")
+            spells = reads["signal.range.spells"]()
+            assert "2973 min=" in spells and "14260 min=" not in spells, "use the canonical selected rank"
+            lua.execute("clock=clock+1.1;rangeContext='aoe'")
+            spells = reads["signal.range.spells"]()
+            assert "source=rotation requested=1111" in spells and "source=learned requested=75" in spells
+            lua.execute("clock=clock+1.1;libraries['JustAC-RotationImport']=nil")
+            assert "source=learned requested=14260" in reads["signal.range.spells"]()
+            lua.execute("clock=clock+1.1;B.GetRotationSpells=function() error('learned pool denied') end")
+            assert "learned pool denied" in reads["signal.range.spells"](), "source failures are not empty pools"
+            lua.execute("clock=clock+1.1;B.GetRotationSpells=nil")
+            assert "source=bar requested=1259718" in reads["signal.range.spells"]()
+            lua.execute("clock=clock+1.1;B.GetDisplaySpellID=function() return secret end")
+            assert "secret:<secret>" in reads["signal.range.spells"]()
+            lua.execute("clock=clock+1.1;B.GetBarSpells=function() return {} end")
+            assert "unavailable:no rotation, learned or bar spells" in reads["signal.range.spells"]()
+        else:
+            assert lua.globals().hooks == 0
+            for name in ("target", "swing", "spells", "items", "references", "refItems"):
+                assert reads["signal.range." + name]() == "plain:unavailable:not Forever"
+            assert lua.globals().itemReads == 0 and lua.globals().actionReads == 0
+
+        lua.globals().cleanup()
+        assert lua.globals().queueProbeEnabled is False
+        lua.execute("""
+            DebugCommands._diagnosticSession=nil
+            DebugCommands.RunProbeBattery=function() end
+            DebugCommands.StartDiagnostics(addon)
+        """)
+        session = lua.globals().DebugCommands._diagnosticSession
+        assert lua.globals().queueProbeEnabled is forever
+        assert bool(session.frame.events["PLAYER_SWING_RANGE_UPDATE"]) == forever
+        lua.globals().DebugCommands.StopDiagnostics(lua.globals().addon)
+        assert lua.globals().queueProbeEnabled is False
+        before = len(lua.globals().JustACGlobal.probeLog)
+        lua.execute("C_SwingTimer.EnableRangeCheck(0,false)")
+        assert len(lua.globals().JustACGlobal.probeLog) == before, "stopped captures receive no hook output"
+        lua.globals().DebugCommands.StartDiagnostics(lua.globals().addon)
+        assert lua.globals().queueProbeEnabled is forever
+        assert lua.globals().hooks == int(forever), "capture restarts reuse one passive hook"
+        lua.globals().DebugCommands.StopDiagnostics(lua.globals().addon)
+        assert lua.globals().queueProbeEnabled is False
+
+
+def test_lockout_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        known, auraTable, stackUp, fighting = {[17]=true}, nil, false, false
+        B.IsSpellAvailable=function(id) return known[id] == true end
+        B.GetAuraStackAtLeast=function(unit, id) assert(unit=='player' and id==6788); return stackUp end
+        B.IsSpellUsable=function() return true end
+        B.IsSpellReady=function() return true, "no cooldown" end
+        B.RunningAutoSwing=function() return nil end
+        C_UnitAuras={GetPlayerAuraBySpellID=function(id) assert(id==6788); return auraTable end}
+        C_Spell=C_Spell or {}
+        C_Spell.IsSpellUsable=function() return true end
+        C_Spell.GetSpellCooldown=function() return {isActive=false} end
+        C_Spell.GetSpellInfo=function() return {castTime=0} end
+        function UnitAffectingCombat() return fighting end
+        function UnitName() return "Me" end
+        libraries['JustAC-RotationImport']={GetRotationGated=function() return {} end,
+            RankBase=function(id) if id == 592 then return 17 end return id end}
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return "none" end)
+        DebugCommands._diagnosticSession={id='lockout-test',signalEvent=event}
+    """)
+    event = lua.globals().event
+
+    def rows():
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if "EVIDENCE lockout " in line] if log else []
+
+    event("UNIT_AURA", "player")
+    assert "spell=17 aura=6788 auraRead=nil auraUp=false usable=true gameUsable=true" in rows()[-1], rows()
+    assert "combat=false" in rows()[-1]
+    count = len(rows())
+    event("UNIT_AURA", "player")
+    assert len(rows()) == count, "unchanged state adds no row"
+    lua.execute("auraTable, stackUp = {spellId=6788}, true")
+    event("UNIT_AURA", "player")
+    assert "auraRead=aura auraUp=true" in rows()[-1], rows()
+    lua.execute("auraTable, stackUp, fighting = secret, nil, true")
+    event("PLAYER_REGEN_DISABLED")
+    assert "auraRead=secret auraUp=nil" in rows()[-1] and "combat=true" in rows()[-1], rows()
+    lua.execute("C_Spell.IsSpellUsable=function() return false end")
+    event("SPELL_UPDATE_COOLDOWN")
+    assert "gameUsable=false" in rows()[-1], rows()
+    # A cast of a watched spell (any rank) records whether its target was the player.
+    event("UNIT_SPELLCAST_SENT", "player", "Me", "guid-1", 592)
+    assert rows()[-1].endswith("event=cast spell=17 targetIsSelf=true"), rows()[-1]
+    event("UNIT_SPELLCAST_SENT", "player", "Ally", "guid-2", 17)
+    assert rows()[-1].endswith("targetIsSelf=false"), rows()[-1]
+    event("UNIT_SPELLCAST_SENT", "player", lua.globals().secret, "guid-3", 17)
+    assert rows()[-1].endswith("targetIsSelf=secret"), rows()[-1]
+    count = len(rows())
+    event("UNIT_SPELLCAST_SENT", "player", "Me", "guid-4", 585)
+    lua.execute("known = {}")
+    event("UNIT_AURA", "player")
+    assert len(rows()) == count, "unwatched casts and unknown spells add nothing"
+    print("Lockout evidence: aura reads, combat, usability, cast targets and unknown spells passed")
+
+
+def test_wand_state_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        hasWand, running, ready, why, usable, casting = true, 2, false, "isOnGCD flag (real cooldown)", true, nil
+        B.IsSpellAvailable=function(id) return id == 5019 and hasWand end
+        B.IsSpellReady=function() return ready, why end
+        B.IsSpellUsable=function() return usable end
+        B.RunningAutoSwing=function() return running end
+        C_Spell=C_Spell or {}
+        C_Spell.GetSpellCooldown=function() return {isActive=true, isOnGCD=false} end
+        C_Spell.IsAutoRepeatSpell=function() return running == 2 end
+        C_Spell.GetSpellInfo=function() return {castTime=0} end
+        function UnitCastingInfo() if casting then return "Smite",nil,nil,nil,nil,nil,nil,nil,casting end end
+        function UnitAffectingCombat() return true end
+        libraries['JustAC-RotationImport']={GetRotationGated=function() return {} end, RankBase=function(id) return id end}
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
+        libraries['JustAC-SpellQueue']={DebugContextState=function() return {weaponReason="weapon filler; spell advantage below 20%"} end}
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return "plain:main[1]=5019,main[2]=591" end)
+        DebugCommands._diagnosticSession={id='wand-test',signalEvent=event}
+    """)
+    event = lua.globals().event
+
+    def rows():
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if "EVIDENCE wandState " in line] if log else []
+
+    event("UNIT_SPELLCAST_START", "player", "cast-1", 591)
+    row = rows()[-1]
+    for part in ("event=UNIT_SPELLCAST_START", "running=2", "autoRepeat=true",
+                 "ready=false/isOnGCD_flag_(real_cooldown)", "usable=true", "cdActive=true", "cdGcd=false",
+                 "casting=none", "lead=5019", "weapon=weapon_filler;_spell_advantage_below_20%"):
+        assert part in row, (part, row)
+    # Unchanged state: no new row; a change: one row.
+    event("SPELL_UPDATE_COOLDOWN")
+    assert len(rows()) == 1, rows()
+    lua.execute("running, casting = 0, 'cast-2'")
+    event("SPELL_UPDATE_COOLDOWN")
+    assert len(rows()) == 2 and "running=0" in rows()[-1] and "casting=cast-2" in rows()[-1], rows()
+    # Other units' casts and characters without a wand never report.
+    lua.execute("running = 1")
+    event("UNIT_SPELLCAST_START", "target", "cast-3", 591)
+    assert len(rows()) == 2
+    lua.execute("hasWand = false")
+    event("SPELL_UPDATE_COOLDOWN")
+    assert len(rows()) == 2
+    print("Wand evidence: state fields, change-only rows, other units and no wand passed")
+
+
+def test_gcd_haste_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        B.RunningAutoSwing=function() return 0 end
+        libraries['JustAC-RotationImport']={
+            GetRotationGated=function() return {} end,
+            RankBase=function(id) if id==591 then return 585 end;return id end,
+        }
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
+        castTimes={[591]=1739,[1243]=0}
+        gcd, haste, fighting = 1.5, 0, false
+        C_Spell=C_Spell or {}
+        C_Spell.GetSpellInfo=function(id) return {castTime=castTimes[id]} end
+        spellCd=1.5
+        C_Spell.GetSpellCooldown=function(id)
+            if id==61304 then return {duration=gcd} end
+            return {duration=spellCd, isOnGCD=true}
+        end
+        function GetHaste() return haste end
+        function UnitAffectingCombat() return fighting end
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return 'none' end)
+        DebugCommands._diagnosticSession={id='gcd-test',signalEvent=event}
+    """)
+    event = lua.globals().event
+
+    def rows():
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if "EVIDENCE gcd " in line] if log else []
+
+    # A cast-time spell reports at its start, once: its success does not repeat it.
+    event("UNIT_SPELLCAST_START", "player", "cast-1", 591)
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 591)
+    assert len(rows()) == 1, rows()
+    assert "spell=591 base=585 from=start cast=1739 gcd=1.500 spellCd=1.500 onGcd=true haste=0.00 combat=false"         in rows()[-1], rows()
+    # An instant fires no start: its success reports.
+    lua.execute("haste=15")
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 1243)
+    assert "spell=1243 base=1243 from=success cast=0 gcd=1.500 spellCd=1.500 onGcd=true haste=15.00" in rows()[-1], rows()
+    # Hidden reads print as hidden; a missing GetHaste prints unknown.
+    lua.execute("gcd=secret; spellCd=secret; GetHaste=nil; fighting=true")
+    event("UNIT_SPELLCAST_START", "player", "cast-3", 591)
+    assert "gcd=secret spellCd=secret onGcd=true haste=unknown combat=true" in rows()[-1], rows()
+    # Another unit's casts never report.
+    count = len(rows())
+    event("UNIT_SPELLCAST_START", "target", "cast-4", 591)
+    assert len(rows()) == count
+    print("GCD evidence: start/success dedupe, haste, hidden and missing reads passed")
+
+
+def test_swing_interaction_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        B.RunningAutoSwing=function() return 0 end
+        buffUp=false
+        B.GetAuraStackAtLeast=function(unit, id, n)
+            assert(unit=='player' and id==1329555 and n==1, 'one presence question only')
+            return buffUp
+        end
+        libraries['JustAC-RotationImport']={
+            GetRotationGated=function() return {} end,
+            RankBase=function(id) if id==8820 then return 1240193 end;return id end,
+        }
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={[78]=true}
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return 'none' end)
+        DebugCommands._diagnosticSession={id='swing-test',signalEvent=event}
+    """)
+    event = lua.globals().event
+
+    def rows(kind):
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if f"EVIDENCE {kind} " in line] if log else []
+
+    def at(clock):
+        lua.execute(f"clock={clock}")
+
+    def cast(spell):
+        event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast", spell)
+
+    event("PLAYER_REGEN_DISABLED")
+    event("PLAYER_SWING", 2.0, 0)
+    assert "gap=unknown ratio=unknown afterCast=none" in rows("mainHandSwing")[-1]
+    assert "procAura=" not in rows("mainHandSwing")[-1], "no presence read without an open window"
+    at(11)
+    cast(8820)
+    assert "base=1240193 sinceSwing=1.000" in rows("cast")[-1], "a higher rank reports as rank 1"
+    at(13)
+    event("PLAYER_SWING", 2.0, 0)
+    assert "gap=3.000 ratio=1.50 afterCast=1240193 sinceCast=2.000" in rows("mainHandSwing")[-1]
+
+    # A window: two white swings, one Heroic Strike swing, one trigger cast, then the buff is gone.
+    at(13.5)
+    cast(1329555)
+    lua.execute("buffUp=true")
+    for clock in (15, 17):
+        at(clock)
+        event("PLAYER_SWING", 2.0, 0)
+    assert "procAura=true" in rows("mainHandSwing")[-1]
+    cast(1329554)
+    at(18.9)
+    cast(78)
+    at(19)
+    event("PLAYER_SWING", 2.0, 0)
+    lua.execute("buffUp=false")
+    at(20.5)
+    event("PLAYER_SWING", 2.0, 0)
+    window = rows("procWindow")[-1]
+    assert "aura=1329555 swings=3 nextSwing=1 procs=1 ended=gone age=7.000" in window, window
+
+    # Unknown presence closes a window as unknown; a recast closes the open one; time expires one.
+    at(21)
+    cast(1329555)
+    lua.execute("buffUp=secret")
+    at(22)
+    event("PLAYER_SWING", 2.0, 0)
+    assert "procAura=unknown" in rows("mainHandSwing")[-1]
+    assert "swings=0 nextSwing=0 procs=0 ended=unknown" in rows("procWindow")[-1]
+    lua.execute("buffUp=true")
+    cast(1329555)
+    at(23)
+    cast(1329555)
+    assert "ended=recast" in rows("procWindow")[-1]
+    at(32)
+    event("PLAYER_SWING", 2.0, 0)
+    assert "ended=expired" in rows("procWindow")[-1]
+    cast(1329555)
+    event("PLAYER_REGEN_ENABLED")
+    assert "ended=combat" in rows("procWindow")[-1]
+    event("PLAYER_REGEN_DISABLED")
+    event("PLAYER_SWING", 2.0, 0)
+    assert "gap=unknown" in rows("mainHandSwing")[-1], "a new fight starts a new rhythm"
+
+
+def test_swing_activity_capture():
+    for forever in (False, True):
+        lua = loaded_runtime(forever, True)
+        lua.execute("""
+            clock=10
+            function GetTime() return clock end
+            secret={}
+            function issecretvalue(value) return rawequal(value,secret) end
+            B=libraries['JustAC-BlizzardAPI']
+            B.GetBarSpells=function() return {} end
+            B.GetRotationSpells=nil
+            B.GetDisplaySpellID=function(id) if id==2973 then return 14260 end;return id end
+            libraries['JustAC-RotationImport']={GetRotationGated=function()
+                return {{id=2973},{id=75}}
+            end}
+            shot,ready,current,interact=true,true,false,true
+            guid='target-A';displayed='main[1]=14260'
+            interactReads,nativeReads=0,0
+            combat=true
+            function UnitExists() return true end
+            function UnitCanAttack() return true end
+            function UnitIsDeadOrGhost() return false end
+            function UnitGUID() return guid end
+            function UnitIsInInteractRange()
+                interactReads=interactReads+1
+                return interact
+            end
+            B.IsSpellReady=function() return ready end
+            B.RunningAutoSwing=function() return 0 end
+            C_Spell={
+                IsSpellInRange=function(id) if id==75 then return shot end;return true end,
+                IsCurrentSpell=function(id) return id==14260 and current end,
+            }
+            C_SwingTimer={IsTargetWithinSwingRange=function(hand)
+                assert(hand==0 or hand==1 or hand==2)
+                nativeReads=nativeReads+1
+            end}
+            reads,event,cleanup=DebugCommands.CombatSignalReads(function() return displayed end)
+            DebugCommands._diagnosticSession={id='activity-test',signalEvent=event}
+        """)
+        reads, event = lua.globals().reads, lua.globals().event
+        if forever:
+            assert "interact=plain:true" in reads["signal.range.target"]()
+            reads["signal.range.spells"]()
+            lua.execute("clock=10.01;interact=false;shot=false;ready=false;current=true;displayed='main[1]=wait:nil'")
+            event("PLAYER_SWING", 1.8, 0)
+            row = reads["signal.range.activity.mainHand"]()
+            assert "outcome=unknown victim=unknown" in row and "duration=plain:1.8" in row
+            assert "guid=plain:target-A" in row and "interact=plain:false" in row
+            assert "nativeSwing=plain:n/a in combat" in row
+            assert lua.globals().nativeReads == 0, "swing events must not call native range in combat"
+            assert "75 spell=plain:false ready=plain:false" in row
+            assert "14260 spell=plain:true ready=plain:false queued=plain:true" in row
+            assert "displayed=plain:main[1]=wait:nil" in row
+            assert "interact=plain:true" in reads["signal.range.target"](), "event reads bypass but do not rewrite cached polls"
+            for hand, name in ((1, "offHand"), (2, "ranged")):
+                event("PLAYER_SWING", 2.0, hand)
+                assert f"swing=plain:{hand}" in reads["signal.range.activity." + name]()
+            assert reads["signal.range.activity.mainHand"]() == row, "ranged/offhand evidence cannot replace main-hand activity"
+            for _ in range(125):
+                event("PLAYER_SWING", 1.8, 0)
+            rows = list(lua.globals().JustACGlobal.probeLog.values())
+            assert sum("EVIDENCE mainHandSwing " in line for line in rows) == 120
+            before = lua.globals().interactReads
+            event("PLAYER_SWING", 1.8, 0)
+            assert lua.globals().interactReads == before, "cap bounds API work, not only log rows"
+            event("PLAYER_REGEN_DISABLED")
+            assert reads["signal.range.activity.mainHand"]() == "untested"
+            event("PLAYER_SWING", 1.8, 0)
+            assert lua.globals().interactReads == before + 1
+            event("PLAYER_TARGET_CHANGED")
+            assert reads["signal.range.activity.mainHand"]() == "untested"
+            lua.execute("guid='target-B'")
+            event("PLAYER_SWING", 1.8, 0)
+            row = reads["signal.range.activity.mainHand"]()
+            assert "epoch=1" in row and "guid=plain:target-B" in row
+            before = lua.globals().nativeReads
+            event("PLAYER_SWING", lua.globals().secret, lua.globals().secret)
+            row = reads["signal.range.activity.unknown"]()
+            assert "swing=secret:<secret>" in row and "duration=secret:<secret>" in row
+            assert lua.globals().nativeReads == before, "secret/invalid swing types cannot reach native range queries"
+            event("PLAYER_SWING", 1.8, 9)
+            assert "unknown:swing type" in reads["signal.range.activity.unknown"]()
+            assert lua.globals().nativeReads == before
+            lua.execute("""
+                guid=secret
+                function UnitIsInInteractRange() error('interaction denied') end
+                B.IsSpellReady=function() error('readiness denied') end
+            """)
+            event("PLAYER_SWING", 1.8, 0)
+            row = reads["signal.range.activity.mainHand"]()
+            assert "guid=secret:<secret>" in row and "interaction denied" in row and "readiness denied" in row
+            lua.execute("UnitIsInInteractRange=nil;C_SwingTimer=nil;B.IsSpellReady=nil;C_Spell.IsCurrentSpell=nil")
+            event("PLAYER_SWING", 1.8, 0)
+            row = reads["signal.range.activity.mainHand"]()
+            assert "interact=plain:unavailable:API" in row and "nativeSwing=plain:unavailable:API" in row
+            assert "ready=plain:unavailable:helper queued=plain:unavailable:API" in row
+            event("PLAYER_ENTERING_WORLD")
+            assert reads["signal.range.activity.mainHand"]() == "untested"
+        else:
+            event("PLAYER_SWING", 1.8, 0)
+            assert reads["signal.range.activity.mainHand"]() == "untested"
+            assert lua.globals().interactReads == 0 and lua.globals().nativeReads == 0
+        lua.globals().cleanup()
+
+        lua.execute("""
+            DebugCommands._diagnosticSession=nil
+            DebugCommands.RunProbeBattery=function() end
+            C_SwingTimer=nil
+            addon.spellIcons={{currentSpellID=14260,IsShown=function() return true end,
+                GetAlpha=function() return 1 end,iconTexture={IsShown=function() return true end}}}
+            DebugCommands.StartDiagnostics(addon)
+        """)
+        session = lua.globals().DebugCommands._diagnosticSession
+        assert bool(session.frame.events["PLAYER_SWING"]) == forever, "swing events do not require the optional native range API"
+        callback = session.frame.scripts.OnEvent
+        if forever:
+            before = session.samples
+            lua.execute("addon.spellIcons[1].currentSpellID=75")
+            callback(session.frame, "PLAYER_SWING", 1.8, 0)
+            assert session.samples == before, "swing callbacks cannot trigger the full diagnostic sampler"
+            assert "displayed=plain:main[1]=75" in session.signalReads["signal.range.activity.mainHand"]()
+            assert "main[1]=14260" in session.last["displayed"], "event queue reads are fresh, not the last diagnostic snapshot"
+        lua.globals().DebugCommands.StopDiagnostics(lua.globals().addon)
+        before = lua.globals().nativeReads
+        callback(session.frame, "PLAYER_SWING", 1.8, 0)
+        assert lua.globals().nativeReads == before
+        lua.globals().DebugCommands.StartDiagnostics(lua.globals().addon)
+        assert lua.globals().DebugCommands._diagnosticSession.signalReads["signal.range.activity.mainHand"]() == "untested"
+        lua.globals().DebugCommands.StopDiagnostics(lua.globals().addon)
 
 
 def test_priority_gate_capture():
@@ -2159,11 +3178,13 @@ def test_rogue_archetype_candidate():
 def main():
     tests = (
         test_rotation_target_enemy_context, test_eligibility_evidence_capture,
-        test_registry, test_loaded_modules, test_log_capacity, test_loaded_recovery_mana, test_shared_health_fallback, test_low_health_heal_glow, test_critical_preparation_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
+        test_registry, test_loaded_modules, test_focused_session_and_marks, test_combat_edges_stay_quiet, test_log_capacity, test_loaded_recovery_mana, test_shared_health_fallback, test_low_health_heal_glow, test_critical_preparation_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
         test_ticker_lifecycle, test_battery_failures, test_delayed_snapshots,
         test_topoff_log, test_category_knowledge, test_error_capture_lifecycle,
         test_audit_lifecycle, test_curse_signals, test_chat_output, test_combat_signal_reads,
-        test_priority_gate_capture,
+        test_priority_gate_capture, test_range_signal_capture, test_swing_activity_capture,
+        test_swing_interaction_evidence, test_gcd_haste_evidence, test_wand_state_evidence,
+        test_lockout_evidence,
         test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
         test_consolidated_gate_reports, test_rotation_probe_source, test_stack_shape_scope,
     )
@@ -2171,7 +3192,9 @@ def main():
         test_eligibility_evidence_capture,
         test_shared_session, test_census_count, test_battery_failures,
         test_delayed_snapshots, test_audit_lifecycle, test_curse_signals,
-        test_combat_signal_reads, test_priority_gate_capture,
+        test_combat_signal_reads, test_priority_gate_capture, test_range_signal_capture, test_swing_activity_capture,
+        test_swing_interaction_evidence, test_gcd_haste_evidence, test_wand_state_evidence,
+        test_lockout_evidence,
         test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
         test_rotation_probe_source, test_stack_shape_scope,
     }
@@ -2181,7 +3204,7 @@ def main():
         test()
     if not RESEARCH_FILES:
         print("research companion absent: research-only regressions skipped")
-    print("debug probes: TOC-ordered Lua 5.1 loading, both clients, registry, denial/unknown, preferences, lifecycle, failures, delayed snapshots and saved transitions passed")
+    print("debug probes: TOC-ordered Lua 5.1 loading, both clients, registry, focused questions, marks, quiet combat edges, denial/unknown, preferences, lifecycle, failures, delayed snapshots and saved transitions passed")
 
 
 if __name__ == "__main__":

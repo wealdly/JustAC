@@ -117,9 +117,24 @@ def main():
     check(D.IsDotActiveOnCurrentTarget(772) is False, "secret GUID: a swap cannot be told apart, starts fresh")
     lua.execute("issecretvalue = nil")
 
-    # Tracked in the Cooldown Manager (Forever): Blizzard's icon is the answer.
+    # Tracked in the Cooldown Manager (Forever): Blizzard's icon is the answer, except that it
+    # trails our own cast; inside the bridge window an inactive icon means "not applied yet".
     D.Reset(); g.tracked = False; at(90); D.OnCastSucceeded(772)
-    check(D.IsDotActiveOnCurrentTarget(772) is False, "icon not showing: not on the target, whatever the cast said")
+    check(D.IsDotActiveOnCurrentTarget(772) is True, "icon lagging the cast: just-cast DoT stays sunk through the GCD")
+    check(D.GetTargetAuraState(772, True) is True, "refresh gates see the pending cast")
+    check(D.GetTargetAuraState(772, False) is None, "a pending cast is not presence evidence")
+    check(D.DebugState().entries[1].source == "cast-pending", "pending application is labeled")
+    at(92.1)
+    check(D.IsDotActiveOnCurrentTarget(772) is False, "icon never showed: not on the target, whatever the cast said")
+    D.Reset(); g.tracked = False; at(93); D.OnCastSucceeded(772); at(93.1); unit_combat("DODGE")
+    check(D.IsDotActiveOnCurrentTarget(772) is False, "a dodge inside the pending window re-offers at once")
+    D.Reset(); g.tracked = True; at(94); D.OnCastSucceeded(772)
+    check(D.IsDotActiveOnCurrentTarget(772) is True, "icon showing after the cast")
+    g.tracked = False; at(94.5)
+    check(D.IsDotActiveOnCurrentTarget(772) is False, "icon shown then gone: dropped, even inside the window")
+    D.Reset(); g.tracked = False; at(95); D.OnCastSucceeded(772); swap("Creature-B")
+    check(D.IsDotActiveOnCurrentTarget(772) is False, "pending cast does not follow a target swap")
+    swap("Creature-A")
     D.Reset(); g.tracked = True
     check(D.IsDotActiveOnCurrentTarget(772) is True, "icon showing: up, even with no cast seen")
     D.Reset(); at(100); D.OnCastSucceeded(772); at(100.1); unit_combat("IMMUNE"); g.tracked = False
