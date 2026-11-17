@@ -277,12 +277,22 @@ end
 
 --- True when the current target already has this DoT live (so the queue should
 --- sink it). Confirmed instance > early-drop > post-cast window fallback.
+-- This target's record for a spell, under its own id or its base/rank-1 id. nil when none.
+local function EntryFor(spellID)
+    if not spellID or not next(applied) then return nil end
+    local e = applied[spellID]
+    if e then return e end
+    local base = baseOf(spellID)
+    if base then return applied[base] end
+    return nil
+end
+
 local function EvaluateDot(spellID, diagnostic, observation, readCache)
     if not spellID then return false, "invalid-spell" end
     -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
     -- This query runs per rotation spell per build, so keeping it free when no DoT
     -- is active matters for non-DoT specs and between-target lulls.
-    local e = next(applied) and (applied[spellID] or applied[baseOf(spellID) or false]) or nil
+    local e = EntryFor(spellID)
     if e and e.immune then return true, "immune-policy" end
     local tracked, trackedReason
     -- WoW Forever: a DoT the player tracks in the Cooldown Manager is read off Blizzard's own
@@ -345,6 +355,30 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
     end
     if e.hadInstance then return false, "instance-removed", tracked, trackedReason end
     return now < e.expiry, "cast-estimate", tracked, trackedReason
+end
+
+--- Our own window for this DoT on the current target: cast time and book duration. Only a
+--- known duration (no fallback window), only before its expiry, and nil once the aura was
+--- confirmed removed or the target is immune. Our numbers, never an aura's.
+function DotTracker.GetCastWindow(spellID)
+    local e = EntryFor(spellID)
+    if not (e and e.castAt and e.pandemicPoint) or e.immune then return nil end
+    if e.hadInstance and not next(e.instances) then return nil end
+    if GetTime() >= e.expiry then return nil end
+    return e.castAt, e.expiry - e.castAt
+end
+
+--- The engine's own timer for this DoT on the current target: a DurationObject from a
+--- confirmed aura instance, passed through untouched (drawn by the engine, never read). nil when
+--- no instance answers (none bound, a stale id, or access refused while auras are secret).
+function DotTracker.GetDurationObject(spellID)
+    local e = EntryFor(spellID)
+    if not e or e.immune or not BlizzardAPI.GetAuraDurationObject then return nil end
+    for instanceID in pairs(e.instances) do
+        local durObj = BlizzardAPI.GetAuraDurationObject("target", instanceID)
+        if durObj then return durObj end
+    end
+    return nil
 end
 
 function DotTracker.IsDotActiveOnCurrentTarget(spellID, readCache)

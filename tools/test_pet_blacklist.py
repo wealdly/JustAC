@@ -541,6 +541,39 @@ def test_primary_pet_recovery():
         "spellCount": 0, "recommendedSpells": lua.table(), "blacklist": lua.table(),
     }))
     assert list(lua.globals().lastSpellIDs.values()) == [19574], "empty build cannot retain blocked summon"
+    # Attack behind a lead whose own button starts melee is the same press; Attack as the
+    # lead, or behind a lead without /startattack, stays.
+    lua.execute("function wipe(t) for k in pairs(t) do t[k]=nil end return t end; AUTO_ATTACK_SPELL=6603; startsAttack={}; ActionBarScanner={SpellPressStartsAttack=function(id) return startsAttack[id]==true end}")
+    for setup, queue, expected, why in (
+        ("startsAttack[585]=true", [585, 6603, 589], [585, 589], "lead macro starts melee"),
+        ("", [585, 6603, 589], [585, 6603, 589], "plain lead keeps Attack"),
+        ("startsAttack[6603]=true", [6603, 585], [6603, 585], "Attack as the lead stays"),
+        ("startsAttack[585]=true; ActionBarScanner=nil", [585, 6603], [585, 6603], "no scanner, no change"),
+        ("startsAttack[78]=true; sunkSet[78]=true", [78, 6603], [78, 6603],
+         "a sunk lead (Heroic Strike without rage) is not the press: Attack stays"),
+    ):
+        lua.execute("sunkSet={}; startsAttack={}; ActionBarScanner={SpellPressStartsAttack=function(id) return startsAttack[id]==true end};" + setup)
+        lua.globals().SpellQueue._StageFinalize(lua.table_from({
+            "spellCount": len(queue), "recommendedSpells": lua.table_from(queue), "blacklist": lua.table(),
+        }))
+        assert list(lua.globals().lastSpellIDs.values()) == expected, why
+    # Attack's key comes from the first other queued ability whose bound button starts melee,
+    # ready or not; none when Attack is not queued or nothing qualifies.
+    lua.execute("keys={[585]='1',[589]='2',[78]='3'}; ActionBarScanner.GetSpellHotkey=function(id) return keys[id] or '' end")
+    for setup, queue, expected, why in (
+        ("startsAttack[589]=true", [6603, 585, 589], 589, "the first /startattack ability carries Attack"),
+        ("startsAttack[78]=true; sunkSet[78]=true", [78, 6603], 78, "a sunk lead still carries the key"),
+        ("startsAttack[589]=true; keys[589]=nil", [6603, 589], None, "an unbound ability cannot carry it"),
+        ("startsAttack[589]=true", [585, 589], None, "no Attack queued, no carrier"),
+        ("", [6603, 585], None, "no /startattack anywhere"),
+    ):
+        lua.execute("sunkSet={}; startsAttack={}; keys={[585]='1',[589]='2',[78]='3'};"
+                    "ActionBarScanner={SpellPressStartsAttack=function(id) return startsAttack[id]==true end,"
+                    "GetSpellHotkey=function(id) return keys[id] or '' end};" + setup)
+        lua.globals().SpellQueue._StageFinalize(lua.table_from({
+            "spellCount": len(queue), "recommendedSpells": lua.table_from(queue), "blacklist": lua.table(),
+        }))
+        assert lua.eval("SpellQueue.GetAttackKeySpell()") == expected, (why, lua.eval("SpellQueue.GetAttackKeySpell()"))
 
 
 def main():

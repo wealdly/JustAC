@@ -1,7 +1,9 @@
-# JustAC hand pin, WoW Forever: Restoration Druid damage while there is nothing to heal. The
-# sim list source (tools/forever-apl-src) models no healer, and the guides only say "spare
-# time: regen or damage" (Documentation/forever-guides/druid-shaman.md), so a plain filler.
+# JustAC hand pin, WoW Forever: Restoration Druid damage (levelling, or nothing to heal). The
+# sim list source (tools/forever-apl-src) models no healer. Order: Icy Veins' Forever
+# Restoration Druid levelling guide (read 2026-11-17): keep Moonfire and, once talented,
+# Insect Swarm up, then Wrath as the filler.
 # Supported conditions: target.health.pct<N, [!]dot.X.ticking, active_enemies>=N.
 
 actions=moonfire,if=!dot.moonfire.ticking
+actions+=/insect_swarm,if=!dot.insect_swarm.ticking
 actions+=/wrath

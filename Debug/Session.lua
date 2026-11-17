@@ -20,7 +20,7 @@ function DebugCommands.DiagnosticReport(addon)
         "recoveryManaThreshold", "recoveryManaBelow", "leadMode",
         "efficiencyMode", "efficiencyManaThreshold", "efficiencyRecoverySeconds",
         "efficiencyReason", "efficiencyID", "efficiencyRecovery", "efficiencyCandidates",
-        "efficiencyManaBelow", "efficiencyEnemies", "pushbackComparison", "weaponComparison",
+        "efficiencyManaBelow", "efficiencyEnemies", "pushbackComparison", "weaponComparison", "auraClock",
         "queueContext", "targetContext", "enemyProvenance"}
     local s = DebugCommands._diagnosticSession or DebugCommands._lastDiagnosticSession
         or (_G.JustACGlobal and _G.JustACGlobal.diagnosticSummary)
@@ -215,6 +215,63 @@ function DebugCommands.StartDiagnostics(addon, arg)
             mounted=function() return IsMounted() end,
             vehicle=function() return UnitInVehicle("player") end,
             groupSize=function() return GetNumGroupMembers() end,
+            -- Can UNIT_AURA's removed-instance list end a buff timer here? How it has read so
+            -- far, out of combat and in combat: none / plain / secret / mixed (RedundancyFilter).
+            -- Categories, not counts: a count changes on every aura event.
+            auraRemovals=function()
+                local reads = RF and RF._removalReads
+                if not reads then return nil end
+                local function kind(plain, secret)
+                    if plain > 0 and secret > 0 then return "mixed" end
+                    if plain > 0 then return "plain" end
+                    if secret > 0 then return "secret" end
+                    return "none"
+                end
+                return "outOfCombat=" .. kind(reads.plain - reads.plainCombat, reads.secret - reads.secretCombat)
+                    .. " inCombat=" .. kind(reads.plainCombat, reads.secretCombat)
+            end,
+            -- Threat as the game exposes it (research question "threat"): the tank signals,
+            -- the target's state, lead and detailed values with their secrecy predicates, and a
+            -- tally of the visible plates' states. Each cell is a plain/secret/error probe read.
+            threat=function()
+                local function on(mob, fn) return compact(function() return fn("player", mob) end) end
+                local secrets = C_Secrets or {}
+                local parts = {
+                    "tankAura=" .. compact(function() return UnitHasEffectivelyTankAura("player") end),
+                    "role=" .. compact(function() return UnitGroupRolesAssigned("player") end),
+                    "pet=" .. tostring(exists("pet")),
+                }
+                if exists("target") then
+                    parts[#parts + 1] = "stateSecret=" .. on("target", secrets.ShouldUnitThreatStateBeSecret)
+                    parts[#parts + 1] = "valuesSecret=" .. on("target", secrets.ShouldUnitThreatValuesBeSecret)
+                    parts[#parts + 1] = "state=" .. on("target", UnitThreatSituation)
+                    parts[#parts + 1] = "lead=" .. on("target", UnitThreatLeadSituation)
+                    for i, name in ipairs({ "tanking", "status", "scaled", "raw", "rawThreat" }) do
+                        parts[#parts + 1] = name .. "=" .. compact(function()
+                            return (select(i, UnitDetailedThreatSituation("player", "target")))
+                        end)
+                    end
+                    parts[#parts + 1] = "ofLead=" .. on("target", UnitThreatPercentageOfLead)
+                end
+                local tally = { listed=0, secret=0, failed=0 }
+                for i = 1, 40 do
+                    local unit = "nameplate" .. i
+                    if exists(unit) then
+                        local ok, state = pcall(UnitThreatSituation, "player", unit)
+                        if not ok then
+                            tally.failed = tally.failed + 1
+                        elseif IsSecret(state) then
+                            tally.secret = tally.secret + 1
+                        elseif type(state) == "number" then
+                            tally.listed = tally.listed + 1
+                            tally[state] = (tally[state] or 0) + 1
+                        end
+                    end
+                end
+                parts[#parts + 1] = string.format("plates=%d s0=%d s1=%d s2=%d s3=%d platesSecret=%d platesFailed=%d",
+                    tally.listed, tally[0] or 0, tally[1] or 0, tally[2] or 0, tally[3] or 0, tally.secret, tally.failed)
+                return table.concat(parts, " ")
+            end,
             instanceType=function() return select(2, GetInstanceInfo()) end,
             difficulty=function() return select(3, GetInstanceInfo()) end,
             instanceID=function() return select(8, GetInstanceInfo()) end,
@@ -236,9 +293,10 @@ function DebugCommands.StartDiagnostics(addon, arg)
             queueContext=function()
                 local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
                 if not ctx then return nil end
-                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s",
+                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s lowValue=%s",
                     SafeSecret(ctx.simcCtx), SafeSecret(ctx.enemies), SafeSecret(ctx.outOfMelee),
-                    SafeSecret(ctx.dying), SafeSecret(ctx.execute), SafeSecret(ctx.pickID))
+                    SafeSecret(ctx.dying), SafeSecret(ctx.execute), SafeSecret(ctx.pickID),
+                    SafeSecret(ctx.lowValueTarget))
             end,
             enemyProvenance=function()
                 -- The engaged count and its per-plate reasons come from the queue's own scan.
@@ -323,6 +381,13 @@ function DebugCommands.StartDiagnostics(addon, arg)
                 if not ctx then return nil end
                 return string.format("reason=%s chosen=%s",
                     SafeSecret(ctx.pushbackReason), SafeSecret(ctx.pushbackID))
+            end,
+            -- Which timer each held icon drew ("spell:kind:source"): the engine's own (aura
+            -- container, aura or totem DurationObject), our estimate, or none. See AuraClock.
+            auraClock=function()
+                local clock = LibStub("JustAC-AuraClock", true)
+                if not clock then return nil end
+                return clock.Debug()
             end,
             weaponComparison=function()
                 local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
@@ -591,8 +656,11 @@ function DebugCommands.StartDiagnostics(addon, arg)
         end
         -- Re-registering replaces the unit list: keep the target and add the player's starts.
         s.frame:RegisterUnitEvent("UNIT_SPELLCAST_START", "target", "player")
-        -- Lockout auras (Weakened Soul, Forbearance) come and go on the player.
-        s.frame:RegisterUnitEvent("UNIT_AURA", "player")
+        -- Lockout auras (Weakened Soul, Forbearance) come and go on the player; the look-ahead
+        -- probe also times target debuffs, resource updates and the target's combat results.
+        s.frame:RegisterUnitEvent("UNIT_AURA", "player", "target")
+        s.frame:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
+        s.frame:RegisterUnitEvent("UNIT_COMBAT", "player", "target")
     end
     for _, event in ipairs({"PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE",
         "PLAYER_TARGET_CHANGED", "UPDATE_SHAPESHIFT_FORM", "UNIT_PET", "PLAYER_LEVEL_UP"}) do
@@ -606,7 +674,8 @@ function DebugCommands.StartDiagnostics(addon, arg)
         if event == "SPELL_UPDATE_COOLDOWN" or event == "UNIT_COMBAT" or event:match("^UNIT_SPELLCAST_")
            or event == "ACTION_RANGE_CHECK_UPDATE" or event == "SPELL_RANGE_CHECK_UPDATE"
            or event == "PLAYER_SWING" or event == "PLAYER_SWING_RANGE_UPDATE" or event == "CVAR_UPDATE"
-           or event:match("^DAMAGE_METER_") or event == "UI_ERROR_MESSAGE" or event == "UNIT_AURA" then
+           or event:match("^DAMAGE_METER_") or event == "UI_ERROR_MESSAGE" or event == "UNIT_AURA"
+           or event == "UNIT_POWER_FREQUENT" then
             return
         end
         if event == "PLAYER_REGEN_DISABLED" then s.pulls = s.pulls + 1 end

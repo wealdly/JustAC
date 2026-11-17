@@ -1049,7 +1049,127 @@ the data. Unknown: whether `IsSpellUsable` already refuses a locked spell, wheth
 lockout aura reads in combat, and whether a cast's target reads. `/jac inspect start
 lockout` records one `EVIDENCE lockout` row per change of each known pair (raw aura
 lookup, stack helper, addon and game usability, readiness, combat) and, per cast of a
-watched spell, only whether the target was the player.
+watched spell, how its target relates to the player (never the name).
+
+Measured 2026-11-16 (Forever priest, sessions 20261116-200437-1 and -200553-1, 159 rows):
+
+- Weakened Soul still blocks a self-recast: the attempts return "immune". It lasted 15s
+  (applied t=55813.7, removed t=55828.7).
+- Neither the game (`C_Spell.IsSpellUsable`) nor the addon refuses Power Word: Shield
+  while Weakened Soul is up: every row with `auraRead=aura` has `usable=true
+  gameUsable=true`.
+- Weakened Soul does not read in combat: every combat row is `auraRead=nil auraUp=nil`,
+  including the row right after a combat start that began with it present.
+- The cast's `targetIsSelf` read `false` on all 38 casts, including one that put Weakened
+  Soul on the player, so the `UNIT_SPELLCAST_SENT` name comparison was wrong, not the
+  target. The cast row now adds `nameIs` (self, selfFull, empty, target, other) and
+  `targetUnit` (none, self, hostile, friendly); a rerun decides whether a self-cast can be
+  identified.
+- Rerun (session 20261116-205838-1, 11 casts, all in combat, mostly `@mouseover` on the
+  player frame): every cast still read `nameIs=other`, including one with the player
+  targeted. `targetUnit` says nothing about a mouseover cast. An unreadable player name
+  would also produce `other`, so the cast row now adds `mouseover`, the read shapes of the
+  player's and target's names (`meName`, `targetName`), `nameHyphen`, and
+  `nameIsUnit` (`UnitIsUnit(name, "player")`); an unreadable player name reads
+  `nameIs=meUnreadable`.
+- Third run (session 20261116-210123-1, 15 casts, 1 out of combat): the player's name and
+  the target's name read plain in and out of combat, the SENT name has no realm hyphen,
+  yet it never equals `UnitName("player")` as text. `UnitIsUnit(name, "player")` read
+  `true` on all 15, in combat included. The out-of-combat cast (mouseover on the player
+  frame) put Weakened Soul on the player, so `true` was right there. Two casts read
+  `mouseover=hostile` with `nameIsUnit=true`, consistent with a `[@mouseover,help]`
+  fallback to self. Still missing: a cast on another player, to confirm `nameIsUnit`
+  reads `false` for them. The probe now also logs Renew (139) casts for target identity
+  only, so a Renew or shield on any friendly player outside a group supplies that control.
+- Fourth run (sessions 20261117-060327-1 and 060346-1, 19 casts of Renew and the shield on
+  other players and self, in and out of combat): `nameIsUnit=false` on every cast with
+  `mouseover=friendly` (6) and `true` on every cast with `mouseover=self`, so `UnitIsUnit`
+  does tell another player from the player. The out-of-combat self shield again read
+  Weakened Soul up. Four casts with `mouseover=none` and a friendly target split two
+  `false`, two `true`; the probe does not record which unit the macro chose, so those
+  stay unattributed (a `[@mouseover,help][@player]` fallback would explain the `true` ones).
+  A false self only costs a 15s park behind ready defensives.
+
+Adopted (2026-11-16): `SpellDB.SELF_LOCKOUTS` (`PRIEST_F`: Power Word: Shield, Weakened
+Soul, 15s). `DefensiveEngine` arms a hold on `UNIT_SPELLCAST_SENT` when
+`UnitIsUnit(target, "player")` is plain `true`, starts it on the `UNIT_SPELLCAST_SUCCEEDED`
+with the same castGUID (an "immune" attempt never succeeds), and parks the spell with the
+on-cooldown entries until it ends. Secret, missing or non-true identity holds nothing.
+Adopted (2026-11-17), from build 1.60.1.70938 data without a capture: `PALADIN_F`
+Forbearance (25771, 60s). The hold is keyed by the lockout aura, so a cast of Divine
+Shield, Divine Protection (both `selfOnly`, no identity check), Blessing of Protection on
+the player (identity checked) or Avenging Wrath 407788 (`applyOnly`: gives Forbearance,
+not blocked by it) holds all three blockable spells. Divine Shield and Divine Protection
+already share a cooldown; the gap closed is Blessing of Protection against those two. The
+lockout probe records 642, 498 and 1022 casts; a paladin run would confirm that each
+applies Forbearance on Forever.
+
+### Time-left clocks (2026-11-17)
+
+`AuraClock.lua` is the one passthrough that draws a held icon's time left on every surface
+(queue, defensive, nameplate overlay). Producers record the hold (`SpellQueue` for sunk
+entries: self-buff, totem slot, target debuff; `DefensiveEngine` for self-lockouts); the
+module draws the engine's DurationObject or aura container first, then a plain window (a
+reading taken while plain, or our cast plus a known duration), else nothing. Redraws follow a
+version bumped by target change, `UNIT_AURA` (player, target), `PLAYER_TOTEM_UPDATE`, combat
+edges, hold changes and lockout start/end.
+Not yet measured on Forever: whether `GetTotemDuration` draws in combat (it already backs
+`IsTotemSlotOccupied`) and whether `GetTotemInfo` reads secret in combat. The totem fallback
+(`BlizzardAPI.GetTotemWindow`) learns each totem's duration from a plain `GetTotemInfo`
+reading and times the slot's latest own cast (`NoteOwnCast`); a totem never read plain has no
+estimate. Buff windows are read at draw time from `BlizzardAPI.GetBuffWindowRemaining`.
+
+Fallback ladders (2026-11-17), most reliable first. Self buff: form; the Cooldown Manager's own
+icon (exact in combat); swing-speed evidence for haste buffs; a plain aura read (its expiry
+and, since 2026-11-17, its real duration, any rank); that remembered expiry while auras are
+secret; the out-of-combat aura snapshot; our own cast plus the learned duration, else the
+data's base duration. A reading older than our latest cast yields to the cast. A cast whose
+aura has another id (Bloodrage, 29131) is timed by its cast window, never by an aura of the
+cast's id (`tools/audit_forever_auras.py`). Target debuff (`DotTracker`): the cast plus the
+rank's data duration, dropped on a miss, dodge or parry in the hit window, held on IMMUNE, reset
+on target change and kill, confirmed by a plain instance or the Cooldown Manager.
+
+Early removal: the Cooldown Manager icon sees it exactly for tracked auras. Otherwise a mapped
+instance in `UNIT_AURA`'s removed list (RedundancyFilter, `GetAuraRemovedAt`, any rank) ends
+every source older than the removal; one within 0.5s after our cast is the refresh replacing
+the old aura. Measured on Forever (session `20261117-122140-1`, priest level 9): the list reads
+plain out of combat and secret in combat (session key `auraRemovals`), as on Retail 12.1. So
+the removal route ends a buff's estimate only out of combat; in combat, the Cooldown Manager
+icon is the only removal signal, and an untracked buff keeps its estimate to the end.
+
+### GCD reference spell: measured (2026-11-17, build 1.60.1.70959)
+
+Forever's data has no retail GCD dummy 61304, so `IsGlobalCooldownRunning`, the GCD
+lookahead and `GetGCDInfo` answered nil there. `/jac inspect start gcdref` read three
+candidates at each player GCD cast and again 2s later: 61304, 29515 ("TEST Scorch", Mage
+class set, start-recovery category 133) and 1283885 ("[DNT] Cooldown Never Secret Test
+Spell", category 133, no class, in both clients' data, with 61304's `Attributes_15` high bit).
+
+Captures: Mage 7, Priest 9 and Hunter 14 (no mana), every control met across the three.
+
+- 61304: missing on every row.
+- 1283885: `GetSpellCooldownSecrecy` NeverSecret on all 42 reads; `isActive`, the plain
+  duration and the duration-object verdict agree on every row. Active at GCD casts, inactive
+  2s later and at off-GCD casts (wand Shoot, the first Auto Shot), in and out of combat.
+  The few idle reads that stayed active had a GCD started inside the 2s: the next cast 11-12ms
+  later, or instant Hunter shots the probe does not log (cast-time index 18 reports a
+  non-zero cast time).
+- 29515: the same active/inactive answers, but ContextuallySecret, and its duration reads
+  secret in combat.
+- The duration follows the GCD actually triggered: 1.304s after Priest and Hunter spells,
+  1.500s after Hunter ranged shots. These rows carry no `GetHaste()`, so they support but do
+  not settle the haste question below.
+
+Adopted: `BlizzardAPI.GetGCDReferenceSpell()` returns the first of 61304 and 1283885 the
+client's spell data has (61304 on retail, 1283885 on Forever), or nil for unknown; every
+production GCD reader goes through it.
+
+Per spell (2026-11-17): `BlizzardAPI.NoteCastGCD` reads the reference at our own cast start
+(cast-time spells) and success (instants) and keeps the duration when that GCD began within
+0.5s, per spell and rank chain. `GetSpellGCD` returns it, else the last GCD seen
+(`GetGCDLength`), else nil. `GetSpellCycleSeconds` floors a spell's DPS cycle at it, so an
+instant has a DPS and a short cast no longer reads faster than its GCD; with no GCD measured a
+cast-time spell keeps its cast time and an instant stays unknown.
 
 ### Wand lead alternation: open question (2026-11-16)
 
@@ -1089,6 +1209,71 @@ push on one cast, damage over time ticks, partial absorbs and pushback resistanc
 combat log is `HasRestrictions` in Forever's docs and was removed on Retail 12.0; it is not
 registered, since a blocked registration could raise a forbidden-action warning.
 
+### Look-ahead: warrior measured (2026-11-17 09:09, level 9-12)
+
+Session `20261117-090926-1`, one pull: Charge, Rend x3, Heroic Strike x5, Thunder Clap x2,
+Hamstring x2, Battle Shout, one parry.
+
+- Rage read `secret` at every send, out of combat too: the amount is never readable, so rage
+  gains cannot be added to it. Usability (`C_Spell.IsSpellUsable`) stays plain.
+- Instants (Charge, Rend, Thunder Clap, Hamstring, Battle Shout): sent and succeeded in the same
+  frame, and in that frame the spell's cooldown went active, combat began (Charge), usability
+  turned false and the Cooldown Manager aura turned on (Rend, Thunder Clap, Hamstring, Battle
+  Shout). The game itself catches up instantly; a ledger adds nothing for them.
+- A parry on Rend arrived in the send frame and its Cooldown Manager aura never turned on.
+- Charge: combat starts at the cast, melee reach read true 0.40s later, the first swing landed
+  at 0.88s. While in flight every melee ability is unusable, so the queue now keeps the
+  arrival lead in slot 1 instead of WAIT (`b.landingMelee` in the WAIT stage).
+- Heroic Strike (next swing) succeeds only with the swing, 0.81-1.48s after the send; the queue
+  already treats it as queued from the press.
+- `GetPlayerAuraBySpellID` never reported Battle Shout in combat; the Cooldown Manager did.
+
+Still open: combo points (rogue) and cast-time spells (caster).
+
+### Look-ahead: open question (2026-11-17)
+
+The queue can treat an outcome of the player's own confirmed cast as already happened, from
+spell data, until the game's own reading catches up: a charge-effect closer (effect 96,
+`SpellDB.LandsAtTarget`) already orders melee for arrival (`SpellQueue._LandingInFlight`, until
+the 5-yard reading, a target change or 3s). Resource gains (energize effect 30, combo points
+effect 80; Charge rank 1 grants 90 tenths of rage), cooldown starts, applied auras and combat
+start are candidates for one pending-outcome ledger. Unmeasured: when each appears after the
+send, and whether rage and energy read plain in combat. `/jac inspect start lookahead` records,
+per own cast, a baseline at the send and every change of power (with plain/secret kind), combo
+points, the spell's cooldown, its player aura, its Cooldown Manager aura, melee reach, combat
+and usability, with the cast's milestones and the target's combat result, for 3 seconds.
+
+### Threat: measured in a group, opt-in cues built (2026-11-17)
+
+Candidate signals for opt-in threat cues (a tank losing a target, damage about to pull), not
+yet used by any decision. Docs (Forever build 1.60.1): `UnitThreatSituation`,
+`UnitThreatLeadSituation`, `UnitDetailedThreatSituation` and `UnitThreatPercentageOfLead` are
+secret only when the game restricts threat state or values, with predicates
+`C_Secrets.ShouldUnitThreatStateBeSecret` / `ShouldUnitThreatValuesBeSecret`. Blizzard's own
+frames give damage `UnitThreatSituation` and tanks `UnitThreatLeadSituation`, and decide "tank"
+from `UnitHasEffectivelyTankAura` or the Tank role.
+
+Measured: solo captures read the player's threat state plain in combat. Grouped (session
+`20261117-110741-1`: party of two, open world, Tank role, Battle Stance): both predicates false
+in all 74 target samples, every nameplate read plain, and the reads matched the documented
+meaning (state 3 / lead 0 tanking securely, state 2 / lead 1 slipping, state 0 / lead 3 not
+tanking; scaled above 100 only while not tanking; raw 255 when alone on the list). The tank aura
+read false in Battle Stance. Not measured: instances, Defensive Stance, aggro marks.
+
+Built (opt-in `defensives.threatCues`, DefensiveEngine): on the target only, in a group or with
+a pet, a threat drop for damage or healer at state 1 or above, a taunt for a tank not tanking,
+a threat boost for a tank whose lead reads 1-2. Any secret or unknown read offers nothing. External reports disagree: a Forever beta
+forum thread (October) found the detailed values secret for nameplate and party units, while a
+2026-11 Forever addon spec (ollidiemaus/qol issue 145) found both predicates false in combat in the
+open world and a dungeon. Threat events do not fire on every change of the numbers.
+
+Spell data (generated `THREAT_ROLES`, `SpellDB.GetThreatRole`): aura 668 is the
+effectively-tank aura (Defensive Stance, Bear and Dire Bear Form, Righteous Fury); ATTACK_ME or
+MOD_TAUNT taunts; a negative THREAT effect, negative MOD_TOTAL_THREAT or FEIGN_DEATH drops
+threat; a positive THREAT effect adds it (Sunder Armor). Pet spells (Growl ranks, Intimidation)
+and Tame Beast also carry THREAT effects and must be filtered by the cue. The research question
+`threat` (session key `threat`) records every read with its secrecy predicate.
+
 ### Global cooldown under haste: open question (2026-11-15)
 
 Unknown: whether haste shortens the global cooldown on Forever. A capture showed Smite
@@ -1106,10 +1291,10 @@ time alone is then exact for every current filler, and a floor matters only for 
 shorter than its global cooldown or a hasted cast under 1 second.
 
 Method (`/jac inspect start gcd`): `EVIDENCE gcd` rows record, at the start of each player
-cast (instants: at success), the GCD dummy spell 61304's duration, the spell's live cast
-time and `GetHaste()`, with hidden or missing reads printed as `secret` or `unknown`.
-Forever's spell data has no 61304, so rows also carry the cast spell's own cooldown
-(`spellCd`, with `onGcd`); for a spell without a cooldown of its own that should be the
+cast (instants: at success), the GCD reference spell's duration (61304 on retail, 1283885 on
+Forever; see "GCD reference spell" above), the spell's live cast time and `GetHaste()`, with
+hidden or missing reads printed as `secret` or `unknown`. Rows also carry the cast spell's own
+cooldown (`spellCd`, with `onGcd`); for a spell without a cooldown of its own that should be the
 global cooldown, which the `unhastedSpellGcd` and `hastedSpellGcd` checks summarize. If the
 hasted out-of-combat rows show a GCD below the spell data value, the scale against
 `haste` answers the question; equal values mean the GCD is fixed. Combat rows show whether

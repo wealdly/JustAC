@@ -64,6 +64,7 @@ local overlayPowerBar          = nil  -- primary resource bar (current displayed
 local overlaySecondaryPowerBar = nil  -- secondary point-resource bar (combo points / chi / …)
 local overlaySecondarySegments = 0    -- cached fail-closed segment count for the secondary
 local lastOverlayPowerUpdate    = 0   -- throttle stamp for UpdatePowerBar
+local overlayPowerTrailPending  = false   -- a catch-up UpdatePowerBar is scheduled
 local lastOverlayHealthUpdate    = 0  -- throttle stamp for UpdateHealthBar
 local lastOverlayPetHealthUpdate = 0  -- throttle stamp for UpdatePetHealthBar
 local currentNameplate = nil  -- nameplate frame we're currently anchored to
@@ -1372,6 +1373,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     ctx.firstIconScale      = npoFirstIconScale
     ctx.opacity             = opacity
     ctx.hideEmptySlots      = true
+    ctx.visibleIcons        = #dpsIcons
 
     for i, icon in ipairs(dpsIcons) do
         UIRenderer.RenderQueueIcon(icon, i, ctx)
@@ -1692,7 +1694,18 @@ function UINameplateOverlay.UpdatePowerBar(addon)
     local npo = profile and profile.nameplateOverlay
     if not (npo and npo.showPowerBar) or not UpdateOneOverlayPowerBar then return end
     local now = GetTime()
-    if now - lastOverlayPowerUpdate < POWER_UPDATE_INTERVAL then return end
+    local wait = POWER_UPDATE_INTERVAL - (now - lastOverlayPowerUpdate)
+    if wait > 0 then
+        -- Throttled: one catch-up refresh for the burst's final value (see UIHealthBar.UpdatePower).
+        if not overlayPowerTrailPending and C_Timer and C_Timer.After then
+            overlayPowerTrailPending = true
+            C_Timer.After(wait, function()
+                overlayPowerTrailPending = false
+                UINameplateOverlay.UpdatePowerBar(addon)
+            end)
+        end
+        return
+    end
     lastOverlayPowerUpdate = now
     UpdateOneOverlayPowerBar(overlayPowerBar)
     UpdateOneOverlayPowerBar(overlaySecondaryPowerBar)

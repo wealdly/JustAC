@@ -3,7 +3,6 @@
 -- Extends JustAC-DebugCommands; loaded explicitly by JustAC.toc.
 local DebugCommands = LibStub("JustAC-DebugCommands", true)
 if not DebugCommands then return end
-local IsSecret = DebugCommands._Common.IsSecret
 local SafeSecret = DebugCommands._Common.SafeSecret
 local ProbeRead = DebugCommands._Common.ProbeRead
 local SpellLabel = DebugCommands._Common.SpellLabel
@@ -429,73 +428,6 @@ function DebugCommands.GateDiagnostics(addon)
 end
 
 --------------------------------------------------------------------------------
--- Resource-inference probe
---------------------------------------------------------------------------------
---- /jac inspect resource - Test whether we can infer resource availability from
---- per-ability usability WITHOUT reading the (secret) resource value. Confirms the
---- direct UnitPower read is secret, then checks C_Spell.IsSpellUsable's
---- insufficientPower flag per rotation ability (secret-tested before use).
-function DebugCommands.ResourceDiagnostics(addon)
-    local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    addon:Print("|cff00ccff== Resource-inference probe ==|r")
-
-    -- 1. The direct read we're routing around (expected SECRET in combat).
-    if UnitPower and UnitPowerType then
-        local pt = UnitPowerType("player")
-        local val = UnitPower("player", pt)
-        addon:Print("UnitPower direct read: " .. (IsSecret(val)
-            and "|cffff6600SECRET (can't read)|r" or "|cff00ff00" .. tostring(val) .. "|r"))
-    end
-
-    -- 2. Per-ability usability: C_Spell.IsSpellUsable -> (usable, insufficientPower).
-    local RI = LibStub("JustAC-RotationImport", true)
-    local list = (RI and RI.GetRotation and RI.GetRotation("st"))
-        or (BAPI and BAPI.GetRotationSpells and BAPI.GetRotationSpells())
-    if not list or #list == 0 then
-        addon:Print("|cffff6600no spell list for this spec|r")
-        return
-    end
-
-    -- Static resource cost per ability (NeverSecret spell data), so the ladder is visible.
-    local function costStr(id)
-        local costs = C_Spell and C_Spell.GetSpellPowerCost and C_Spell.GetSpellPowerCost(id)
-        if type(costs) ~= "table" or #costs == 0 then return "-" end
-        local parts = {}
-        for _, c in ipairs(costs) do
-            local pn = (c.name or ""):lower():gsub("_", ""):sub(1, 6)
-            parts[#parts + 1] = tostring(c.cost or "?") .. (pn ~= "" and (" " .. pn) or "")
-        end
-        return table.concat(parts, "+")
-    end
-
-    local anySecret = false
-    addon:Print("|cffffff00ability | cost | cd | usable | resource|r")
-    for _, id in ipairs(list) do
-        local ready = BAPI.IsSpellReady and BAPI.IsSpellReady(id)
-        local usable, noPower = C_Spell.IsSpellUsable(id)
-        local secHit = IsSecret(usable) or IsSecret(noPower)
-        if secHit then anySecret = true end
-        local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or id
-        local tag
-        if secHit then
-            tag = "|cffff6600SECRET|r"
-        else
-            tag = (ready and "rdy" or "|cff888888cd|r")
-                .. " | " .. (usable and "|cff00ff00usable|r" or "no")
-                .. " | " .. (noPower and "|cffffcc00LOW|r" or "|cff00ff00ok|r")
-        end
-        addon:Print(string.format("  %-20s %-12s %s", tostring(name), costStr(id), tag))
-    end
-    if anySecret then
-        addon:Print("|cffff6600IsSpellUsable returned SECRET - resource inference not viable.|r")
-    else
-        addon:Print("|cff888888'LOW' = blocked by resource specifically. Spend down and re-run: "
-            .. "the costliest ability still 'ok' brackets your resource - no secret read needed. "
-            .. "(Pooled accumulators like combo points don't hard-gate, so they show no floor.)|r")
-    end
-end
-
---------------------------------------------------------------------------------
 -- Fight window (/jac inspect window [selftest])
 --------------------------------------------------------------------------------
 function DebugCommands.FightWindowDump(addon, arg)
@@ -559,7 +491,7 @@ local function PickLogSample()
     local waitWhy = ""
     if not pick then
         local casting = UnitCastingInfo("player") or UnitChannelInfo("player")
-        waitWhy = casting and " w=cast" or (BAPI.IsSpellOnGCD and BAPI.IsSpellOnGCD(61304) and " w=gcd") or " w=idle"
+        waitWhy = casting and " w=cast" or (BAPI.IsGlobalCooldownRunning and BAPI.IsGlobalCooldownRunning() == true and " w=gcd") or " w=idle"
     end
     -- Safe Lead dry run: what WOULD lead, and on which evidence class (plan phase 1).
     -- A trailing "!" on that field means the swap actually HAPPENED this tick, which is
@@ -752,6 +684,9 @@ function DebugCommands.SimcGateProbe(addon, arg)
                         tostring(g.slot), g.neg and "empty" or "occupied", tostring(occupied))
                 elseif g.t == "unconfirmed" then
                     return "fight-length mana pacing: unconfirmed (branch does not authorize a cast)"
+                elseif g.t == "hit" then
+                    return string.format("being hit: casts expect pushback [now=%s]",
+                        tostring(SQ._BeingHit and SQ._BeingHit()))
                 elseif g.t == "power" then
                     -- Ask the RUNTIME for the threshold rather than recomputing it -
                     -- a probe that mirrors the logic drifts from it.

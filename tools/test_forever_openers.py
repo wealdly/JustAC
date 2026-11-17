@@ -9,6 +9,19 @@ from test_gate_groups import extract
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+def aura_clock_source(root):
+    """AuraClock.lua for a harness without a real LibStub: the library becomes global AuraClock."""
+    shim = ("do local LibStub = setmetatable({NewLibrary = function() AuraClock = {}; return AuraClock end},"
+            " {__call = function() return nil end})\n")
+    return shim + (root / "AuraClock.lua").read_text(encoding="utf-8") + "\nend\n"
+
+
+def forever_stages_body():
+    """SpellQueueForever.lua without its header, which captures SpellQueue.lua's file-locals."""
+    text = (ROOT / "SpellQueueForever.lua").read_text(encoding="utf-8")
+    return text[text.index("local lastPushbackAt"):]
+
 PRELUDE = r"""
 local RI = {}
 function LibStub(name)
@@ -24,11 +37,13 @@ function RI.RegisterForever(data, chains, _, damageCooldowns, estimates)
 end
 function RI.RankBase(id) return rankBases[id] or id end
 function RI.RankChain(id) return rankChains[RI.RankBase(id)] end
+function RI.IsWideOnly(id) return wideOnly ~= nil and wideOnly[RI.RankBase(id)] == true end
 function RI.GetPushbackDamageCooldown(id) return pushbackDamage[RI.RankBase(id)] end
 function RI.GetDirectDamageEstimate(id) if unpriced[id] then return nil end return damageEstimates[id] end
 RotationImport = RI
 function wipe(t) for k in pairs(t) do t[k] = nil end end
 SpellQueue = { IsSpellBlacklisted = function(id) return blacklisted[id] == true end }
+SpellQueue._OneGCD = function() return 1.5 end
 SpellQueue.WAIT_SENTINEL = -999999999
 AUTO_ATTACK_SPELL = 6603
 SpellDB = {
@@ -92,7 +107,7 @@ function DotGateBlocks() return false end
 function RotationImport.GetEntry(id)
     local base = RotationImport.RankBase(id)
     for i, e in ipairs(entries) do
-        if e.id == base then return {rank = i, gates = e.gates, delegated = e.delegated} end
+        if e.id == base then return {rank = i, gates = e.gates, delegated = e.delegated, w = e.w} end
     end
 end
 function rankOf(id, rec) return rec and rec.rank or 999 end
@@ -114,6 +129,8 @@ function Reset()
     forever, specKey, stacks = true, "SHAMAN_F", 0
     targetExists, hostile = true, true
     targetDead = false
+    cachedGapCloserEngine = nil
+    wideOnly = {}
     activityAt = nil
     ranges, cooldown, unusable, starved, locked, filtered, blacklisted, procs =
         {[403] = true, [8042] = true}, {}, {}, {}, {}, {}, {}, {}
@@ -206,10 +223,12 @@ def create_runtime(real_gates=False):
             reset()
             wipe(tieredSpenderCache)
         end
-    """ + source[source.index("local lastPushbackAt"):source.index("\nlocal function IsHealerSpecActive")] \
-        + source[source.index("local spellbookProcState ="):source.index("\n--- Profile-distance rank")] \
+        LONG_FIGHT_SECONDS = LONG_FIGHT_SECONDS or 20
+        Upkeep = { DRAINING_POWER = {[1]=true, [6]=true} }
+    """ + aura_clock_source(ROOT) + source[source.index("local spellbookProcState ="):source.index("\n--- Profile-distance rank")] \
         + source[start:end] \
-        + source[source.index("local PUSHBACK_AUTOS"):source.index("--- Stage G - burst-ready cue")] + """
+        + source[source.index("local function PushbackRead("):source.index("--- Stage G - burst-ready cue")] \
+        + forever_stages_body() + """
         function Build()
             CategorizeAndAssembleRotation(AddSpellbookProcs(pool, b), b)
             return b.recommendedSpells
@@ -386,6 +405,7 @@ def check_target_setup_openers():
     start = source.index("function JustAC:OnUnitAura(")
     end = source.index("\nend", start) + len("\nend")
     lua.execute("JustAC={MarkQueueDirty=function() dirty=true end}")
+    lua.execute('function GetPrecombatEngine() return LibStub("JustAC-PrecombatEngine", true) end; AURA_CACHE_FLAGS={auras=true}')
     lua.execute(source[start:end])
     setup()
     assert build()[1] == 1130
@@ -408,16 +428,41 @@ def check_target_setup_openers():
     print("Target setup: independent class/cast/aura policy, all Mark ranks, aura safety, full queues and both clients passed")
 
 
+def check_wide_only_sinks():
+    lua = create_runtime()
+    for setup, sunk, why in (
+        ("", False, "without wide-only data the unlisted ability still fills the lead"),
+        ("wideOnly[6343]=true", True, "a cleave/AoE-only ability sinks at single target"),
+        ("wideOnly[6343]=true;b.simcCtx='cleave'", False, "in cleave context it is ranked normally"),
+        ("wideOnly[6343]=true;b.contextOrder='off'", False, "exact ordering is preserved"),
+        ("wideOnly[6343]=true;SpellQueue._rotationIsCustom=true", False, "custom lists are preserved"),
+        ("wideOnly[6343]=true;pinnedAlwaysShow[6343]=true", False, "an Always Show pin is preserved"),
+    ):
+        lua.execute("""
+            Reset()
+            b.inCombat=true;b.leadMode='mylist';b.simcCtx='st'
+            entries={{id=78}}
+            pool={6343,78}
+            cooldown[78]=true
+        """ + setup)
+        queue = lua.globals().Build()
+        assert bool(lua.globals().sunkSet[6343]) == sunk, why
+        if not sunk:
+            assert queue[1] == 6343, (why, queue[1])
+    print("Wide-only abilities: single-target sink, cleave, exact, custom and pinned passed")
+
+
 def check_trash_burst_wait():
     lua = create_runtime()
     for setup, should_wait in (
         ("", True),
         ("procs[1259799]=true", True),
         ("b.ctxEnemies=0", True),
-        ("b.inCombat=false;b.ctxEnemies=0", True),
-        ("b.inCombat=false;targetExists=false;b.ctxEnemies=0", True),
-        ("b.inCombat=false;targetDead=true;b.ctxEnemies=0", True),
-        ("b.inCombat=false;b.ctxEnemies=3", True),
+        # Before the pull only a next-swing lead waits: the cooling-down opener leads itself.
+        ("b.inCombat=false;b.ctxEnemies=0", "lead"),
+        ("b.inCombat=false;targetExists=false;b.ctxEnemies=0", "lead"),
+        ("b.inCombat=false;targetDead=true;b.ctxEnemies=0", "lead"),
+        ("b.inCombat=false;b.ctxEnemies=3", "lead"),
         ("classification='elite'", False),
         ("b.inCombat=false;classification='elite'", False),
         ("b.ctxEnemies=3", False),
@@ -443,7 +488,9 @@ def check_trash_burst_wait():
         queue = lua.globals().Build()
         lua.globals().b.spellCount = len(queue)
         lua.globals().SpellQueue._StageForeverWait(lua.globals().b)
-        if should_wait:
+        if should_wait == "lead":
+            assert queue[1] == 403 and queue[2] == 1259799, setup
+        elif should_wait:
             assert queue[1] == lua.globals().SpellQueue.WAIT_SENTINEL, setup
             assert queue[2] == 403 and queue[3] == 1259799, setup
         else:
@@ -700,6 +747,10 @@ def check_next_swing_priority():
             ranges={[1978]=true,[75]=true,[1130]=true,[3044]=true}
             queued, running = {}, {[75]=2}
             C_Spell.IsCurrentSpell=function(id) return queued[id] end
+            swingFar=false
+            SpellQueue._SwingFarOff=function() return swingFar end
+            meleeReach={}
+            SpellQueue._IsMeleeReach=function(id) return meleeReach[id] == true end
             C_Spell.IsAutoRepeatSpell=function(id) return running[id]==2 end
             DotTracker={IsDotActiveOnCurrentTarget=function(id) return id==1978 or id==1130 end}
         end
@@ -729,6 +780,43 @@ def check_next_swing_priority():
          "pending next-swing alone shows WAIT instead of a requeue request"),
         ("pool={2973};ranges[2973]=true;queued[2973]=false", 2973,
          "the native queue clearing immediately restores the next-swing suggestion"),
+        ("pool={2973,1495};ranges[2973]=true;ranges[1495]=true", 2973,
+         "a ready next-swing attack keeps its rank"),
+        ("pool={2973};ranges[2973]=false;b.landingMelee=true;meleeReach[2973]=true", 2973,
+         "a charge in flight: the melee attack ranks for arrival instead of waiting"),
+        ("pool={1495};ranges[1495]=false;unusable[1495]=true;b.landingMelee=true;meleeReach[1495]=true", 1495,
+         "a charge in flight: a not-yet-usable melee lead keeps slot 1 with its tint, not WAIT"),
+        ("pool={1495};ranges[1495]=true;unusable[1495]=true;b.landingMelee=false", -999999999,
+         "landed, nothing usable: WAIT as before"),
+        ("pool={2973};ranges[2973]=false;unusable[2973]=true;b.landingMelee=true;meleeReach[2973]=true", 2973,
+         "a charge in flight: even a next-swing lead keeps slot 1 (the swing starts on arrival)"),
+        ("pool={2973};ranges[2973]=false;b.landingMelee=false;meleeReach[2973]=true", -999999999,
+         "no charge in flight: out of reach still waits"),
+        ("pool={3044,2973};ranges[3044]=false;ranges[2973]=false;b.landingMelee=true;meleeReach[2973]=true",
+         2973, "a ranged spell keeps its own out-of-range reading during the charge"),
+        ("pool={2973,1495};ranges[2973]=true;ranges[1495]=true;b.ctxDying=true;swingFar=true", 1495,
+         "dying target, swing more than a GCD away: the instant finishes first"),
+        ("pool={2973,1495};ranges[2973]=true;ranges[1495]=true;b.ctxDying=true;swingFar=false", 2973,
+         "dying target, swing close: the next-swing attack keeps its rank"),
+        ("pool={2973,1495};ranges[2973]=true;ranges[1495]=true;b.ctxDying=false;swingFar=true", 2973,
+         "a healthy target keeps the next-swing attack"),
+        ("pool={2973};ranges[2973]=false", -999999999, "in combat an out-of-reach melee lead waits"),
+        ("b.inCombat=false;pool={2973};ranges[2973]=false", -999999999,
+         "before the pull an out-of-reach next-swing lead waits"),
+        ("b.inCombat=false;pool={2973};ranges[2973]=nil", -999999999,
+         "before the pull a next-swing lead of unknown reach waits"),
+        ("b.inCombat=false;pool={3044};ranges[3044]=false", 3044,
+         "before the pull an out-of-reach opener leads with its range tint, not WAIT"),
+        ("pool={3044};ranges[3044]=false;b.ctxOutOfMelee=true;cachedGapCloserEngine={InFlight=function() return true end}",
+         3044, "a gap closer in flight shows the next ability, not WAIT"),
+        ("pool={2973};ranges[2973]=false;b.ctxOutOfMelee=true;cachedGapCloserEngine={InFlight=function() return true end}",
+         -999999999, "a next-swing lead still waits while the gap closer is in flight"),
+        ("pool={3044};ranges[3044]=false;b.ctxOutOfMelee=false;cachedGapCloserEngine={InFlight=function() return true end}",
+         -999999999, "once in melee the flight window no longer lifts WAIT"),
+        ("pool={3044};ranges[3044]=false;b.ctxOutOfMelee=true;cachedGapCloserEngine={InFlight=function() return false end}",
+         -999999999, "out of melee without a gap closer in flight still waits"),
+        ("b.inCombat=false;pool={3044};ranges[3044]=nil", 3044,
+         "before the pull an opener of unknown reach leads, not WAIT"),
         ("pool={2973,3044};entries={{id=2973},{id=3044}};SpellQueue._rotationIsCustom=true", 2973,
          "custom ordering is preserved"),
         ("pool={2973,3044};entries={{id=2973},{id=3044}};b.contextOrder='off'", 2973,
@@ -950,12 +1038,226 @@ def check_next_swing_priority():
     print("Next-swing priority: real queued-state reader, Hunter shots, melee admission and explicit settings passed")
 
 
+def check_resource_wait_lead():
+    """A priority list holds on a shared resource: a lower-priority spender does not take the rage
+    a higher-priority one waits on, so the next press on rage is its highest-priority wait. A wait
+    blocked by its own condition holds nothing and trails the waits that clear on their own."""
+    lua = create_runtime(real_gates=True)
+    lua.execute("""
+        function GetTime() return 100 end
+        rageCost = {[12294]=30, [78]=15, [772]=10, [6343]=20}
+        function Setup()
+            Reset();specKey='WARRIOR_F';b.inCombat=true;b.leadMode='mylist'
+            entries={{id=12294,gates={}},{id=78,gates={}}}
+            pool={12294,78}; ranges={[12294]=true,[78]=true}; talents={}
+            starved[12294], starved[78] = true, true
+            C_Spell.GetSpellPowerCost=function(id) return {{type=1, cost=rageCost[id] or 0}} end
+            wipe(SpellQueue._continuousCost)
+            IsSpenderSpell = function() return true end
+        end
+        function Lead()
+            b.recommendedSpells, b.addedSpellIDs, b.spellCount = {}, {}, 0
+            wipe(sunkSet);wipe(unavailableTier)
+            Build()
+            return b.recommendedSpells[1]
+        end
+    """)
+    for setup, expected, why in (
+        ("", 12294, "both wait on rage: Mortal Strike ranks higher, so it is the next press"),
+        ("entries[2].gates={{t='known',id=999}}", 12294,
+         "a Heroic Strike blocked by its own condition does not jump the wait"),
+        ("starved[78]=nil", 12294, "Heroic Strike holds its rage for Mortal Strike, which ranks above it"),
+        ("starved[78]=nil; cooldown[12294]=true", 78, "a higher spender on cooldown holds nothing"),
+        ("starved[78]=nil; starved[12294]=nil", 12294, "both affordable: priority as ever"),
+        # Three targets: Thunder Clap above Heroic Strike gets its rage first.
+        ("entries={{id=6343,gates={}},{id=78,gates={}}};pool={6343,78};ranges[6343]=true;"
+         "starved[6343]=true;starved[78]=nil", 6343, "Thunder Clap waits on rage: Heroic Strike holds"),
+        # Thunder Clap held at one target (its own condition) never heads the waits, even when
+        # listed first: waiting does not make it the next press.
+        ("entries={{id=6343,gates={{t='known',id=999}}},{id=12294,gates={}},{id=78,gates={}}};"
+         "pool={6343,12294,78};ranges[6343]=true;starved[6343]=true", 12294,
+         "a condition-blocked wait trails the waits that clear on their own"),
+        # Offered only when its conditions hold (w): holding them and short of rage, Heroic
+        # Strike is a cost wait like any other and heads the waits over a blocked Thunder Clap.
+        ("entries={{id=6343,gates={{t='known',id=999}}},{id=78,w=true,gates={}}};"
+         "pool={6343,78};ranges[6343]=true;starved[6343]=true", 78,
+         "a w entry whose conditions hold waits on its cost"),
+        ("entries={{id=6343,gates={{t='known',id=999}}},{id=78,w=true,gates={{t='known',id=998}}}};"
+         "pool={6343,78};ranges[6343]=true;starved[6343]=true", 6343,
+         "a w entry whose conditions fail trails even a condition wait"),
+        # Range unknown while unaffordable: the target's melee distance answers for a melee attack.
+        ("entries={{id=6343,gates={{t='known',id=999}}},{id=78,gates={}}};"
+         "pool={6343,78};ranges[6343]=true;ranges[78]=nil;starved[6343]=true;"
+         "SpellDB.IsTargetWithin=function() return true end;"
+         "SpellQueue._IsMeleeReach=function(id) return id==78 end;"
+         "SpellDB.NEXT_SWING_SPELLS={[78]=true};BlizzardAPI.IsForever=function() return true end", 78,
+         "unknown range in melee distance: Heroic Strike's reach is confirmed"),
+    ):
+        lua.execute("Setup(); " + setup)
+        actual = lua.eval("Lead()")
+        assert actual == expected, (why, actual, expected)
+    print("Resource wait lead: lower spenders hold for a higher rage wait; condition waits trail")
+
+
+def check_instant_when_hit():
+    """Frost's Fire Blast ("a cast would not finish as planned"): leads over Frostbolt while you
+    are being hit or the target is confirmed nearly dead; otherwise Frostbolt leads."""
+    lua = create_runtime(real_gates=True)
+    lua.execute("""
+        function GetTime() return 100 end
+        function Setup()
+            Reset();specKey='MAGE_F';b.inCombat=true;b.leadMode='mylist'
+            entries=classes.MAGE_F.frost.st
+            pool={2136,116}; ranges={[2136]=true,[116]=true}; talents={}
+            beingHit, health = false, nil
+            SpellQueue._BeingHit = function() return beingHit end
+            BlizzardAPI.IsUnitHealthBelow = function() return health end
+        end
+        function Lead()
+            b.recommendedSpells, b.addedSpellIDs, b.spellCount = {}, {}, 0
+            wipe(sunkSet);wipe(unavailableTier)
+            Build()
+            return b.recommendedSpells[1]
+        end
+    """)
+    for setup, expected, why in (
+        ("", 116, "at range, not hit: Frostbolt"),
+        ("beingHit=true", 2136, "being hit: the instant avoids pushback"),
+        ("health=true", 2136, "target nearly dead: the instant finishes it"),
+        ("health=nil; beingHit=false", 116, "unreadable health is not dying"),
+        ("beingHit=true; cooldown[2136]=true", 116, "Fire Blast on cooldown: Frostbolt"),
+    ):
+        lua.execute("Setup(); " + setup)
+        actual = lua.eval("Lead()")
+        assert actual == expected, (why, actual, expected)
+    print("Instant when hit: Fire Blast leads while being hit or on a dying target; Frostbolt otherwise")
+
+
+def check_confirmed_offer():
+    """Hamstring's "main spender learned OR target dying" holds only when confirmed: its execute
+    alternative is required, so an unreadable target health is not dying."""
+    lua = create_runtime(real_gates=True)
+    lua.execute("""
+        function GetTime() return 100 end
+        function Setup()
+            Reset();specKey='WARRIOR_F';b.inCombat=true;b.leadMode='mylist'
+            entries={{id=1715,w=true,gates={{t="any",g={{t="known",id=12294},
+                                                       {t="execute",op="<",pct=20,required=true}}}}},
+                     {id=772,gates={}}}
+            pool={1715,772}; ranges={[1715]=true,[772]=true}; talents={}
+            health=nil
+            BlizzardAPI.IsUnitHealthBelow=function() return health end
+        end
+        function Lead()
+            b.recommendedSpells, b.addedSpellIDs, b.spellCount = {}, {}, 0
+            wipe(sunkSet);wipe(unavailableTier)
+            Build()
+            return b.recommendedSpells[1]
+        end
+    """)
+    for setup, expected, why in (
+        ("", 772, "health unknown: the condition is not confirmed, so Hamstring waits"),
+        ("health=false", 772, "a healthy target and no main spender: Hamstring waits"),
+        ("health=true", 1715, "a dying target confirms it: Hamstring finishes"),
+        ("talents[12294]=true", 1715, "a main spender learned confirms it"),
+        ("entries[1].gates[1].g[2].required=nil", 1715, "without required an unknown health leaks open"),
+    ):
+        lua.execute("Setup(); " + setup)
+        actual = lua.eval("Lead()")
+        assert actual == expected, (why, actual, expected)
+    print("Confirmed offers: an unreadable dying check keeps Hamstring held; confirmed conditions release it")
+
+
+def check_buff_upkeep():
+    lua = create_runtime(real_gates=True)
+    lua.execute("""
+        function GetTime() return 100 end
+        function SetupShout()
+            Reset();specKey='WARRIOR_F';b.inCombat=true;b.leadMode='mylist'
+            entries={{id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},{id=772,gates={}}}
+            pool={6673,772}
+            ranges={[6673]=true,[772]=true}
+            buffs, remaining, castAge = {[6673]=true}, {[6673]=100}, {}
+            BlizzardAPI.GetBuffWindowRemaining=function(id) return remaining[id] end
+            BlizzardAPI.GetOwnCastAge=function(id) return castAge[id] end
+            BlizzardAPI.IsSpellAvailable=function() return true end
+            C_Spell.GetSpellPowerCost=function(id) return {{type=costType[id] or 1, cost=10}} end
+            costType={}
+            combatStartedAt=90
+            b.now=100;b.ctxDying=true;b.ctxEnemies=1
+        end
+        function Queue()
+            b.recommendedSpells, b.addedSpellIDs, b.spellCount = {}, {}, 0
+            wipe(sunkSet);wipe(unavailableTier)
+            AuraClock.BeginQueueHolds()
+            Build()
+            AuraClock.EndQueueHolds()
+            b.spellCount=#b.recommendedSpells
+            return table.concat(b.recommendedSpells, ",")
+        end
+        function FightEnd()
+            Queue()
+            SpellQueue._StageFightEndRefresh(b, pool)
+            return table.concat(b.recommendedSpells, ",")
+        end
+    """)
+    for setup, expected, why in (
+        ("", "772", "a shout with more than the fight horizon left leaves the queue"),
+        ("remaining[6673]=10", "772,6673", "inside the horizon it stays sunk"),
+        ("remaining[6673]=nil", "772,6673", "unknown time left stays sunk: never hidden on a guess"),
+        ("buffs[6673]=false", "6673,772", "a missing shout leads at its rank"),
+        ("SpellQueue._rotationIsCustom=false;b.sinkCooldowns=false", "6673,772",
+         "unavailable-last opt-out keeps the exact order"),
+    ):
+        lua.execute("SetupShout(); " + setup)
+        assert lua.eval("Queue()") == expected, (why, lua.eval("Queue()"), expected)
+    # The sunk shout carries its aura to the icon: the aura id for the engine pass-through and
+    # its full duration, so the icon reads the plain window when it draws.
+    lua.execute("SetupShout(); remaining[6673]=10; Queue()")
+    kind, aura, dur = lua.eval("AuraClock.Resolve(6673, true)")
+    assert kind == "buff" and aura == 6673 and dur == 180
+    lua.execute("SetupShout(); remaining[6673]=nil; Queue()")
+    kind, aura, dur = lua.eval("AuraClock.Resolve(6673, true)")
+    assert kind == "buff" and aura == 6673, "unknown time left: still held, drawn by the engine or not at all"
+    assert lua.eval("AuraClock.Resolve(6673, false)") is None, "queue holds are for queue icons only"
+    assert lua.eval("AuraClock.Resolve(772, true)") is None, "an entry no aura holds draws its own cooldown"
+    for setup, lead, why in (
+        ("", 772, "dying last target, shout up with 100s left: not needed, no refresh"),
+        ("remaining[6673]=10", 6673, "dying last target, shout nearly out: leftover rage refreshes it"),
+        ("remaining[6673]=nil", 6673, "unknown time left: refresh, as before"),
+        ("buffs[6673]=false;remaining[6673]=nil", 6673, "shout missing: refresh"),
+        ("castAge[6673]=30;remaining[6673]=10", 6673, "cast before this fight, nearly out: refresh"),
+        ("castAge[6673]=30", 772, "cast before this fight, plenty left: no refresh"),
+        ("castAge[6673]=5", 772, "already cast this fight: no GCD spent"),
+        ("b.ctxDying=false", 772, "a healthy target keeps the rotation"),
+        ("b.ctxEnemies=2", 772, "more enemies: the fight is not ending"),
+        ("b.ctxEnemies=nil", 772, "unknown enemy count"),
+        ("starved[6673]=true", 772, "not affordable now"),
+        ("costType[6673]=0", 772, "mana does not drain out of combat: the pull checklist covers it"),
+        ("cooldown[6673]=true", 772, "not ready"),
+        ("blacklisted[6673]=true", 772, "blacklist honored"),
+        ("entries[1].gates[1].dur=10", 772, "a short rotation buff is not upkeep"),
+        ("b.inCombat=false", 772, "out of combat"),
+        ("combatStartedAt=nil", 772, "unknown fight start"),
+        ("SpellQueue._rotationIsCustom=true", 772, "custom order"),
+    ):
+        lua.execute("SetupShout(); " + setup)
+        actual = lua.eval("FightEnd()")
+        assert int(actual.split(",")[0]) == lead, (why, actual, lead)
+    print("Buff upkeep: hidden while up beyond the fight horizon, aura clock carried, end-of-fight refresh passed")
+
+
 def main():
     check_next_swing_priority()
+    check_confirmed_offer()
+    check_instant_when_hit()
+    check_resource_wait_lead()
+    check_buff_upkeep()
     check_priest_wand_fallback()
     check_queue_fast_paths()
     check_spellbook_proc_pipeline()
     check_shared_proc_stage()
+    check_wide_only_sinks()
     check_trash_burst_wait()
     lua = create_runtime()
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
@@ -1081,7 +1383,7 @@ def main():
         (rogue + "points=2; b.ctxPointCap=0; forever=false", [1752, 2098], "retail keeps its preference on a dying target"),
         (rogue + "points=2; b.ctxPointCap=0; finisher[2098]=nil", [1752, 2098], "non-damage finishers keep their preference"),
         (rogue + "points=2; b.ctxPointCap=0; entries[1].gates[2]={t='stack',id=1,op='>=',n=1}",
-         [2098, 1752], "other blocking gates stay blocking without a points shortfall"),
+         [1752, 2098], "another blocking gate stays blocking: a condition wait trails the builder"),
         (rogue + "points=5", [2098, 1752], "met finisher requirement preserves source order"),
         (rogue + "points=nil", [2098, 1752], "unknown points never infer a missing prerequisite"),
         (rogue + "points=0; forever=false", [1752, 2098], "retail tail shares prerequisite ordering"),
@@ -1104,7 +1406,7 @@ def main():
         (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
          [1752, 2098], "actual minimum still applies despite imported upper bound"),
         (rogue + "points=5; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1}}",
-         [2098, 1752], "imported upper bound is not a casting prerequisite"),
+         [1752, 2098], "an imported upper bound is no points shortfall, but still a condition wait"),
         (rogue + "points=0; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
          [1752, 2098], "deficit prerequisite uses current maximum"),
         (rogue + "points=0; maximum=nil; entries[1].gates={{t='resource',res='combo_points',op='<=',n=1,deficit=true}}",
@@ -1186,7 +1488,7 @@ def main():
         (rogue + "points=0", [wait, 1752, 2098], "all-starved queue shows WAIT before missing-point finisher"),
         (rogue + "points=2; b.ctxPointCap=2", [wait, 2098, 1752], "eligible finisher still waits for energy"),
         (rogue + "points=0; ranges[1752]=false; ranges[2098]=false", [wait, 2098, 1752], "all-out-of-range queue shows WAIT"),
-        (rogue + "points=0; b.inCombat=false", [wait, 1752, 2098], "live OOC target shows WAIT"),
+        (rogue + "points=0; b.inCombat=false", [1752, 2098], "live OOC target: the opener leads, not WAIT"),
         (rogue + "points=0; b.inCombat=false; targetExists=false", [1752, 2098], "no-target OOC preview unchanged"),
         (rogue + "points=0; b.inCombat=false; hostile=false", [1752, 2098], "friendly OOC target unchanged"),
         (rogue + "points=0; b.inCombat=false; targetDead=true", [1752, 2098], "dead OOC target unchanged"),

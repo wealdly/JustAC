@@ -626,6 +626,14 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     return false, nil
 end
 
+-- Does the body hold a /startattack line (any conditions)? Pressing it can start melee.
+local function BodyStartsAttack(macroBody)
+    for line in string_gmatch(macroBody, "[^\r\n]+") do
+        if StartAttackCommand(GetLowercase(line)) then return true end
+    end
+    return false
+end
+
 local function AutoAttackOnly(macroBody, targetSpellID, targetSpellName)
     if targetSpellID ~= 6603 and targetSpellID ~= 5019 and targetSpellID ~= 75 then return nil end
     for line in string_gmatch(macroBody, "[^\r\n]+") do
@@ -696,11 +704,23 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
         end
     end
     
+    -- startsAttack: pressing this macro for the spell also starts melee. Every same-named
+    -- candidate must agree, since the slot's exact body is not always known.
+    -- The matched body is one of the candidates, so this tests it too.
+    local startsAttack = true
+    for _, candidate in ipairs(candidates) do
+        if not BodyStartsAttack(candidate.body) then
+            startsAttack = false
+            break
+        end
+    end
+
     local entry = {
         found = true,
         modifiers = modifiers,
         qualityScore = qualityScore,
         autoAttackOnly = autoAttackOnly,
+        startsAttack = startsAttack,
     }
     
     parsedMacroCache[cacheKey] = entry

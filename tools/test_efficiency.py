@@ -4,6 +4,9 @@ from pathlib import Path
 
 from lupa.lua51 import LuaRuntime
 
+from test_combat_phase import group_helpers_lua
+from test_forever_openers import aura_clock_source
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -368,7 +371,7 @@ def check_eligibility_binding():
 
 def check_engaged_count():
     source = (ROOT / "BlizzardAPI" / "StateHelpers.lua").read_text(encoding="utf-8")
-    start = source.index("local UnitCanAttack       = UnitCanAttack\nlocal UnitThreatSituation")
+    start = source.index("local UnitThreatSituation = _G.UnitThreatSituation")
     end = source.index("\n-- Important casts nearby", start)
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
@@ -447,7 +450,28 @@ def check_engaged_count():
     first = lua.eval("BlizzardAPI.GetEngagedEnemyCount()")
     lua.execute("plates[2]={hostile=true,threat={player=0}}; now=now+0.1")
     assert lua.eval("BlizzardAPI.GetEngagedEnemyCount()") == first == 1, "short cache"
-    print(f"efficiency: engaged-enemy count {len(cases)} cases: pet/party-held adds, other fights and unreadable reads")
+    # "Prioritize Your Own Targets": another player's mob not attacking you does not count.
+    lua.execute("""
+        own=false
+        BlizzardAPI.GetAddon=function() return {db={profile={prioritizeOwnTargets=own}}} end
+        BlizzardAPI.SafeUnitIsUnit=function(a, b) local v=UnitIsUnit(a, b); if rawequal(v, secret) then return nil end; return v end
+        function UnitIsTapDenied(u) local p=plates[tonumber(u:match('^nameplate(%d+)$') or 0)]; return p and p.tapped end
+    """)
+    for setup, expected, why in (
+        ("own=true; plates[1]={hostile=true,threat={player=0},tapped=true,target='raidX'}", 0,
+         "an other player's mob you hit, not on you"),
+        ("own=true; plates[1]={hostile=true,threat={player=0},tapped=true,target='player'}", 1,
+         "an other player's mob attacking you still counts"),
+        ("own=false; plates[1]={hostile=true,threat={player=0},tapped=true,target='raidX'}", 1,
+         "option off: unchanged"),
+        ("own=true; plates[1]={hostile=true,threat={player=0},tapped=secret,target='raidX'}", 1,
+         "an unreadable tap counts"),
+        ("own=true; plates[1]={hostile=true,threat={player=0},tapped=false,target='raidX'}", 1,
+         "your own tagged mob counts wherever it looks"),
+    ):
+        assert count(setup) == expected, why
+    print(f"efficiency: engaged-enemy count {len(cases) + 5} cases: pet/party-held adds, other fights, "
+          "others' mobs (option) and unreadable reads")
 
 
 def main():
@@ -547,14 +571,22 @@ def main():
             }
         end
     """)
+    lua.execute("local IsSecretValue = BlizzardAPI.IsSecretValue\n" + group_helpers_lua())
     costs_start = source.index("local function CostsMana(")
     costs_end = source.index('\n--- "Too low on mana', costs_start)
     placement_start = source.index("local function PlaceQueueSpell(")
     placement_end = source.index("\nend", placement_start) + len("\nend")
-    stage_start = source.index("local EFFICIENCY_ATTACKS")
+    # SpellQueue.lua keeps the shared readers and buff upkeep; the efficiency, weapon and
+    # pushback stages live in SpellQueueForever.lua (its body, past the header captures).
+    stage_start = source.index("local function PushbackRead(")
     stage_end = source.index("\n--- Stage G", stage_start)
-    lua.execute(source[costs_start:costs_end] + "\n"
-                + source[placement_start:placement_end] + "\n" + source[stage_start:stage_end])
+    forever = (ROOT / "SpellQueueForever.lua").read_text(encoding="utf-8")
+    forever = forever[forever.index("local lastPushbackAt"):]
+    lua.execute("Upkeep = Upkeep or { DRAINING_POWER = {} }\n"
+                + aura_clock_source(ROOT)
+                + source[costs_start:costs_end] + "\n"
+                + source[placement_start:placement_end] + "\n" + source[stage_start:stage_end]
+                + "\n" + forever)
     run = lua.eval("""
         function(setup)
             Reset()
@@ -759,6 +791,12 @@ def main():
     worthwhile_end = source.index("\nend\n", worthwhile_start) + len("\nend\n")
     lua.execute("IsLiveAttackableTarget = IsLiveAttackableTarget or function() return true end\n"
                 + source[worthwhile_start:worthwhile_end].replace("local function", "function", 1))
+    lua.execute(aura_clock_source(ROOT))
+    # The context stage asks the shared fight-ending helper; load the real one.
+    state = (ROOT / "BlizzardAPI" / "StateHelpers.lua").read_text(encoding="utf-8")
+    ending_start = state.index("BlizzardAPI.FIGHT_ENDING_TARGET_PCT = ")
+    ending_end = state.index("\n--- The combat phase:", ending_start)
+    lua.execute(state[ending_start:ending_end])
     lua.execute(source[context_start:context_end])
     for setup, expected in [
         ("", 6603),

@@ -83,7 +83,6 @@ RotationImport.RegisterForever({
     feral_bear = {  -- presets/druid/feralbear/default
       st = {
         {id=770,gates={{t="debuff",id=770,neg=true,refresh=true}}},  -- Faerie Fire
-        {id=99,gates={{t="debuff",id=99,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Roar
         {id=407995,gates={}},  -- Primal Bite
         {id=6807,gates={{t="power",res="rage",op=">=",n=25}}},  -- Maul
         {id=1328617,gates={}},  -- Lacerate
@@ -91,7 +90,6 @@ RotationImport.RegisterForever({
       aoe = {
         {id=779,gates={{t="targets",op=">=",n=2}}},  -- Swipe
         {id=770,gates={{t="debuff",id=770,neg=true,refresh=true}}},  -- Faerie Fire
-        {id=99,gates={{t="debuff",id=99,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Roar
         {id=407995,gates={}},  -- Primal Bite
         {id=6807,gates={{t="power",res="rage",op=">=",n=25}}},  -- Maul
         {id=1328617,gates={}},  -- Lacerate
@@ -100,6 +98,7 @@ RotationImport.RegisterForever({
     restoration = {  -- pin:druid_restoration
       st = {
         {id=8921,gates={{t="dot",id=8921}}},  -- Moonfire
+        {id=5570,gates={{t="dot",id=5570}}},  -- Insect Swarm
         {id=5176,gates={}},  -- Wrath
       },
     },
@@ -318,7 +317,7 @@ RotationImport.RegisterForever({
         {id=120,gates={{t="buff",id=400669,dur=15},{t="stack",id=12579,op=">=",n=3,tgt=true},{t="near",n=10}},delegated=true,w=true},  -- Cone of Cold
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
         {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=2136,gates={{t="unconfirmed"}}},  -- Fire Blast
+        {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
         {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
         {id=5019,gates={}},  -- Shoot
@@ -328,7 +327,7 @@ RotationImport.RegisterForever({
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=20,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
         {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=2136,gates={{t="unconfirmed"}}},  -- Fire Blast
+        {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
         {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
         {id=5019,gates={}},  -- Shoot
@@ -339,7 +338,7 @@ RotationImport.RegisterForever({
         {id=10,gates={{t="targets",op=">=",n=4}}},  -- Blizzard
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
         {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=2136,gates={{t="unconfirmed"}}},  -- Fire Blast
+        {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
         {id=122,gates={{t="near",n=10}},w=true},  -- Frost Nova
         {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
@@ -372,7 +371,6 @@ RotationImport.RegisterForever({
         {id=20271,gates={{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
         {id=24275,gates={{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
         {id=679,gates={}},  -- Holy Strike
-        {id=20925,gates={}},  -- Holy Shield
         {id=26573,gates={{t="power",res="mana",op=">=",n=20,ispct=true},{t="near",n=8}},w=true},  -- Consecration
       },
     },
@@ -575,10 +573,12 @@ RotationImport.RegisterForever({
         {id=403,gates={}},  -- Lightning Bolt
       },
       cleave = {
+        {id=421,gates={}},  -- Chain Lightning
         {id=403,gates={}},  -- Lightning Bolt
       },
       aoe = {
         {id=408341,gates={}},  -- Fire Nova
+        {id=421,gates={}},  -- Chain Lightning
         {id=403,gates={}},  -- Lightning Bolt
       },
     },
@@ -740,15 +740,14 @@ RotationImport.RegisterForever({
         {id=5308,gates={{t="execute",op="<",pct=20}}},  -- Execute
         {id=1240193,gates={},delegated=true},  -- Slam
         {id=1310222,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="power",res="rage",op=">=",n=20}}},  -- Spearing Strike
-        {id=78,gates={{t="targets",op="=",n=1},{t="power",res="rage",op=">=",n=90}}},  -- Heroic Strike
-        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true}}},  -- Hamstring
+        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
+        {id=78,gates={{t="targets",op="=",n=1},{t="any",g={{t="power",res="rage",op=">=",n=90},{t="all",g={{t="known",id=12294,neg=true},{t="known",id=1240193,neg=true},{t="known",id=1680,neg=true},{t="known",id=23881,neg=true}}}}}},w=true},  -- Heroic Strike
+        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=10},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
-        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
       },
       cleave = {
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
-        {id=6343,gates={{t="near",n=8}},w=true},  -- Thunder Clap
         {id=402927,gates={}},  -- Victory Rush
         {id=7386,gates={{t="stack",id=7386,op="<",n=1,tgt=true}}},  -- Sunder Armor
         {id=1719,gates={{t="execute",op="<",pct=20}}},  -- Recklessness
@@ -761,7 +760,7 @@ RotationImport.RegisterForever({
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true},{t="targets",op=">=",n=2}}},  -- Rend
         {id=1310222,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="power",res="rage",op=">=",n=20}}},  -- Spearing Strike
         {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=80},{t="execute",op="<",pct=20}}}}},  -- Cleave
-        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true}}},  -- Hamstring
+        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=10},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=1160,gates={{t="debuff",id=1160,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Shout
@@ -783,7 +782,7 @@ RotationImport.RegisterForever({
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true},{t="targets",op=">=",n=2}}},  -- Rend
         {id=1310222,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="power",res="rage",op=">=",n=20}}},  -- Spearing Strike
         {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=80},{t="execute",op="<",pct=20}}}}},  -- Cleave
-        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true}}},  -- Hamstring
+        {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=10},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=1160,gates={{t="debuff",id=1160,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Shout
@@ -804,10 +803,30 @@ RotationImport.RegisterForever({
         {id=7384,gates={}},  -- Overpower
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=2458,gates={{t="buff",id=1282733,dur=5,neg=true},{t="buff",id=2458,neg=true}}},  -- Berserker Stance
-        {id=78,gates={{t="power",res="rage",op=">=",n=50},{t="targets",op="<=",n=1}}},  -- Heroic Strike
-        {id=1715,gates={{t="targets",op="<=",n=1},{t="all",g={{t="cd",id=1680,neg=true},{t="cd",id=23881,neg=true}}}}},  -- Hamstring
+        {id=78,gates={{t="targets",op="<=",n=1},{t="any",g={{t="power",res="rage",op=">=",n=50},{t="all",g={{t="known",id=12294,neg=true},{t="known",id=1240193,neg=true},{t="known",id=1680,neg=true},{t="known",id=23881,neg=true}}}}}},w=true},  -- Heroic Strike
+        {id=1715,gates={{t="targets",op="<=",n=1},{t="all",g={{t="cd",id=1680,neg=true},{t="cd",id=23881,neg=true}}},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
+      },
+      cleave = {
+        {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
+        {id=402927,gates={}},  -- Victory Rush
+        {id=7386,gates={{t="stack",id=7386,op="<",n=1,tgt=true},{t="debuff",id=11198,neg=true}}},  -- Sunder Armor
+        {id=12328,gates={}},  -- Death Wish
+        {id=20572,gates={}},  -- Blood Fury
+        {id=1259813,gates={{t="known",id=1259813}}},  -- Eureka!
+        {id=1680,gates={{t="near",n=8}},w=true},  -- Whirlwind
+        {id=5308,gates={{t="execute",op="<",pct=20}}},  -- Execute
+        {id=23881,gates={}},  -- Bloodthirst
+        {id=2457,gates={{t="buff",id=1282733,dur=5},{t="buff",id=2457,neg=true},{t="power",res="rage",op="<=",n=40}}},  -- Battle Stance
+        {id=7384,gates={}},  -- Overpower
+        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
+        {id=2458,gates={{t="buff",id=1282733,dur=5,neg=true},{t="buff",id=2458,neg=true}}},  -- Berserker Stance
+        {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=40},{t="execute",op="<",pct=20}}}}},  -- Cleave
+        {id=1715,gates={{t="targets",op=">",n=1},{t="all",g={{t="cd",id=23881,neg=true},{t="cd",id=1680,neg=true},{t="power",res="rage",op=">",n=70}}},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
+        {id=1329555,gates={}},  -- Reckless Swings
+        {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
+        {id=1160,gates={{t="debuff",id=1160,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Shout
       },
       aoe = {
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
@@ -825,7 +844,7 @@ RotationImport.RegisterForever({
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=2458,gates={{t="buff",id=1282733,dur=5,neg=true},{t="buff",id=2458,neg=true}}},  -- Berserker Stance
         {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=40},{t="execute",op="<",pct=20}}}}},  -- Cleave
-        {id=1715,gates={{t="targets",op=">",n=1},{t="all",g={{t="cd",id=23881,neg=true},{t="cd",id=1680,neg=true},{t="power",res="rage",op=">",n=70}}}}},  -- Hamstring
+        {id=1715,gates={{t="targets",op=">",n=1},{t="all",g={{t="cd",id=23881,neg=true},{t="cd",id=1680,neg=true},{t="power",res="rage",op=">",n=70}}},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=1160,gates={{t="debuff",id=1160,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Shout
@@ -833,33 +852,38 @@ RotationImport.RegisterForever({
     },
     protection = {  -- presets/warrior/protection/protection
       st = {
-        {id=2565,gates={{t="buff",id=2565,dur=7,neg=true}}},  -- Shield Block
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
         {id=1719,gates={}},  -- Recklessness
-        {id=71,gates={}},  -- Defensive Stance
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=23922,gates={}},  -- Shield Slam
         {id=6572,gates={}},  -- Revenge
-        {id=6343,gates={{t="debuff",id=6343,neg=true,refresh=true},{t="near",n=8}},w=true},  -- Thunder Clap
-        {id=78,gates={{t="power",res="rage",op=">=",n=45}}},  -- Heroic Strike
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
-        {id=7386,gates={}},  -- Sunder Armor
+        {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
+        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
+      },
+      cleave = {
+        {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
+        {id=1719,gates={}},  -- Recklessness
+        {id=1329555,gates={}},  -- Reckless Swings
+        {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
+        {id=23922,gates={}},  -- Shield Slam
+        {id=6572,gates={}},  -- Revenge
+        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
+        {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
+        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
       },
       aoe = {
-        {id=2565,gates={{t="buff",id=2565,dur=7,neg=true}}},  -- Shield Block
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
-        {id=1160,gates={{t="debuff",id=1160,neg=true,refresh=true},{t="near",n=10}},w=true},  -- Demoralizing Shout
         {id=1719,gates={}},  -- Recklessness
-        {id=71,gates={}},  -- Defensive Stance
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=23922,gates={}},  -- Shield Slam
         {id=6572,gates={}},  -- Revenge
-        {id=6343,gates={{t="debuff",id=6343,neg=true,refresh=true},{t="near",n=8}},w=true},  -- Thunder Clap
-        {id=78,gates={{t="power",res="rage",op=">=",n=45}}},  -- Heroic Strike
+        {id=6343,gates={{t="debuff",id=6343,neg=true,refresh=true},{t="targets",op=">=",n=3},{t="near",n=8}},w=true},  -- Thunder Clap
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
-        {id=7386,gates={}},  -- Sunder Armor
+        {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
+        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
       },
     },
   },
@@ -1262,15 +1286,15 @@ RotationImport.RegisterForever({
   [1328618] = {1328618,22568,22827,22828,22829,31018},
   [1329283] = {1329283,1329549},
 }, {
-  ["DRUID_F"] = {99,768,770,779,1079,1082,1822,2912,5176,5221,5229,5487,5570,6603,6785,6807,8921,9634,16914,20554,20572,22812,22842,24858,29166,407995,417141,1259799,1259812,1259813,1259817,1259821,1259823,1322605,1328617,1328618},
+  ["DRUID_F"] = {768,770,779,1079,1082,1822,2912,5176,5221,5229,5487,5570,6603,6785,6807,8921,9634,16914,20554,20572,22812,22842,24858,29166,407995,417141,1259799,1259812,1259813,1259817,1259821,1259823,1322605,1328617,1328618},
   ["HUNTER_F"] = {75,1002,1130,1495,1510,1515,1978,2643,2764,2973,2974,2975,3044,3045,3674,5384,6197,6603,13795,13812,17254,19263,19306,19434,19574,20554,20572,24118,24424,24584,24845,26094,444680,1259799,1259812,1259813,1259817,1259821,1259823,1264727,1264745,1264937,1265043,1265059,1265831,1265887,1293241,1310687,1317257},
   ["MAGE_F"] = {10,116,120,122,130,133,543,1449,1463,1953,2120,2136,2948,5019,5143,6143,6603,11113,11129,11366,11426,11958,12042,12043,12051,12536,20554,20572,24530,400574,401502,1259799,1259812,1259813,1259817,1259821,1259823,1312002,1326079},
-  ["PALADIN_F"] = {498,642,679,879,2812,6603,20154,20271,20375,20554,20572,20925,21082,24275,26573,407632,1259799,1259812,1259813,1259817,1259821,1259823,1311015,1311606,1311649},
+  ["PALADIN_F"] = {498,642,679,879,2812,6603,20154,20271,20375,20554,20572,21082,24275,26573,407632,1259799,1259812,1259813,1259817,1259821,1259823,1311015,1311606,1311649},
   ["PRIEST_F"] = {585,586,589,1706,2096,2651,2652,2944,5019,6603,8092,10060,10797,13896,14914,15237,15286,15407,15473,18137,20554,20572,401977,1259799,1259812,1259813,1259817,1259821,1259823,1277331,1309595},
   ["ROGUE_F"] = {53,703,1752,1833,1856,1943,2098,2480,2764,5171,5277,6603,7918,7919,8676,13750,13877,14177,14183,14185,14251,14278,16511,20554,20572,399956,1259799,1259812,1259813,1259817,1259821,1259823,1316709,1329283},
   ["SHAMAN_F"] = {324,403,421,2484,3599,5394,5675,5730,6196,6495,6603,8042,8050,8056,8071,8075,8143,8166,8170,8177,8181,8184,8190,8227,8512,8835,10595,15107,16166,16190,17364,20554,20572,408341,425336,437009,1259799,1259812,1259813,1259817,1259821,1259823},
   ["WARLOCK_F"] = {126,172,348,603,686,689,980,1120,1122,1454,1949,5019,5676,5740,6229,6353,6603,17877,18265,18288,18662,20554,20572,412758,440892,1259799,1259812,1259813,1259817,1259821,1259823,1293817,1316697},
-  ["WARRIOR_F"] = {71,78,772,845,871,1160,1680,1715,1719,2457,2458,2480,2565,2687,2764,5308,6343,6572,6603,6673,7384,7386,7918,7919,12292,12294,12328,20230,20252,20554,20572,23881,23922,402927,1240193,1259799,1259812,1259813,1259817,1259821,1259823,1310222,1329555},
+  ["WARRIOR_F"] = {78,772,845,871,1160,1680,1715,1719,2457,2458,2480,2687,2764,5308,6343,6572,6603,6673,7384,7386,7918,7919,12292,12294,12328,20230,20252,20554,20572,23881,23922,402927,1240193,1259799,1259812,1259813,1259817,1259821,1259823,1310222,1329555},
 }, {
   [53] = 0,  -- Backstab
   [75] = 0,  -- Auto Shot

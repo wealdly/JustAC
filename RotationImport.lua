@@ -170,6 +170,7 @@ local function InBearForm()
 end
 
 --- The tree to run: most points spent wins; none spent (or unreadable) is the class default.
+--- Every tree's list is a damage list in that talent style (tools/gen_forever_rotations.py).
 local function PickTree(trees)
     local best, bestSpent = nil, 0
     local displays, spent = RotationImport.SpentByTree()
@@ -636,4 +637,28 @@ function RotationImport.GetEntry(spellID, context)
     end
     if not m then return nil end
     return m[spellID] or m[baseID(spellID)]
+end
+
+--- Is spellID listed only for several targets: absent from this spec's single-target list
+--- but present in its cleave or AoE list? False when the spec has no single-target list.
+--- Plain static data - reads no combat state.
+function RotationImport.IsWideOnly(spellID)
+    if not spellID then return false end
+    local SpellDB = cachedSpellDB
+    if not SpellDB then
+        SpellDB = LibStub("JustAC-SpellDB", true)
+        cachedSpellDB = SpellDB
+    end
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return false end
+    local byCtx = lookupCache[specKey] or BuildLookup(specKey)
+    local st = byCtx and byCtx.st
+    if not st then return false end
+    local b = baseID(spellID)
+    if st[spellID] or st[b] then return false end
+    for _, ctx in ipairs({ "cleave", "aoe" }) do
+        local m = byCtx[ctx]
+        if m and (m[spellID] or m[b]) then return true end
+    end
+    return false
 end

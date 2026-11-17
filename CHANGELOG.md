@@ -3,6 +3,115 @@
 
 ## [Unreleased]
 
+## [6.3.0] - 2026-11-17
+
+### Cooldown Manager
+- New "Track Hidden Buffs" button (General > Blizzard UI) and `/jac cdm track-hidden`: moves
+  every buff the Cooldown Manager is set not to display into Tracked Buffs, so JustAC can read
+  it. Choose Add All to include buffs you have not learned yet (they appear once learned), or
+  Only Learned for the ones you have now. This happens in a new layout named
+  "JAC - <specialization>", copied from the one you use, so your own layout is never changed.
+  "Switch Back" or `/jac cdm undo` returns to your previous layout. Not available in combat or
+  while the Cooldown Manager settings are open; takes effect after a reload.
+- A short prompt offers this once per specialization. If the Cooldown Manager is off, it offers
+  to turn it on, either kept invisible on screen or shown. After that you are only asked when a
+  newly learned skill brings a buff the Cooldown Manager hides; several at once share one prompt
+  and one reload, and every prompt can add all. Choose "Leave them" under New Hidden Buffs to stop
+  the prompts.
+- Forever: "Track Your Rotation's Buffs" now responds. Its button and messages did nothing
+  before, and it now also offers buffs the Cooldown Manager hides by default.
+
+### Damage queue
+- Attack no longer shows behind a ready ability whose macro already starts attacking with
+  `/startattack`. When Attack does show, its hotkey is the next queued ability whose macro has
+  `/startattack`, so you stay on your rotation keys. `/jac inspect validate` names ranged spell
+  macros that also use `/startattack`, since starting melee stops your wand or Auto Shot.
+- An ability the priority lists use only against several enemies, such as Thunder Clap,
+  Multi-Shot or Arcane Explosion, no longer leads against a single target or when the enemy
+  count is unknown.
+- A dead enemy left targeted (while looting) shows the same queue as having no target, instead
+  of attacks on the corpse.
+- New option, Prioritize Your Own Targets (off by default): on a target that is not attacking
+  you and that nobody has tagged yet, long cooldowns and other burst are saved for an enemy you
+  get credit for; on one another player has tagged, damage over time spells wait too. Openers
+  are never held. Enemies tagged by other players that are not attacking you no longer count
+  toward multi-target decisions. Your normal attacks still help.
+
+### Forever: priority lists
+- Every talent tree's queue is a damage list in that tree's style, tank and healer trees
+  included. Protection and bear lists no longer lead with threat and mitigation presses
+  (Shield Block, Defensive Stance, Sunder Armor, Demoralizing Shout, Holy Shield, Demoralizing
+  Roar). Restoration druids add Insect Swarm, and Restoration shamans add Chain Lightning
+  against several enemies.
+- Levelling warriors: until a main rage spender is learned (Mortal Strike, Slam, Whirlwind or
+  Bloodthirst; Revenge or Shield Slam for Protection), rage goes to Heroic Strike, and
+  Hamstring is used only to finish an enemy confirmed nearly dead. Rend comes before Heroic
+  Strike, as the levelling guides open.
+- Warriors lead with Thunder Clap from three enemies instead of two.
+- Armor reductions that deal no damage of their own (Sunder Armor, Faerie Fire, Curse of
+  Recklessness, Expose Armor) wait for a target that lasts (an elite, a boss, or a fight already
+  running long), like Bane of Doom, instead of costing a global cooldown on a mob about to die.
+  A pack of normal enemies does not count as a long fight for these.
+- Bloodrage (and a bear's Enrage) waits out a nearly dead last enemy, whose fight would end before
+  most of its rage arrives.
+- Frost mages are offered Fire Blast as an instant on a nearly dead enemy and while enemies are
+  hitting you, when a Frostbolt would not finish as planned. It was never offered before.
+- On a nearly dead last enemy, a buff paid with rage (Battle Shout) moves to the front when you
+  can afford it and have not cast it this fight, so leftover rage keeps it up for the next pull.
+
+### Forever: resources, waits and timing
+- A cheaper ability no longer spends the rage, energy or mana a higher-priority one is waiting
+  for, so the better ability gets its resource (Thunder Clap on a pack is no longer starved by
+  Heroic Strike). While everything waits, the first icon shows the ability that comes next; one
+  held back by its own condition (Thunder Clap against a single enemy) waits behind those that
+  only need a cooldown or resources.
+- An energy ability you will afford within one global cooldown, or a rage ability Charge's rage
+  will pay for when you land, keeps its place instead of giving it up for a moment.
+- JustAC reads the global cooldown from the game, haste included. An ability ready again within
+  one global cooldown keeps its place instead of dropping behind a filler and jumping back, and
+  the comparison between a spell and your wand, ranged or melee attack counts each spell's real
+  global cooldown, so instants are compared too.
+- A next-swing attack such as Heroic Strike that you can press now, or have already queued,
+  keeps the first icon over an ability you cannot press yet; it costs no global cooldown. On a
+  nearly dead enemy, a next-swing attack (Heroic Strike, Cleave, Raptor Strike, Maul) gives way
+  to a ready instant when the swing is more than one global cooldown away.
+- After Charge, Intercept or Feral Charge, the queue orders your melee abilities as they will be
+  on arrival instead of reshuffling while you close the distance. Range tints still show your
+  real distance until you land.
+- The queue no longer shows a wait while you close the distance, before a pull or during a gap
+  closer. Your next ability leads with its range or usability tint, ready to press on arrival;
+  only a next-swing attack such as Heroic Strike still waits before the pull.
+
+### Forever: time left on icons
+- A long self-buff such as Battle Shout leaves the queue while it has more than about 20
+  seconds left, and returns at its usual place if it drops. Closer to running out it shows at
+  the back with its time left drawn on the icon.
+- Held abilities show their time left: damage over time spells, an ability whose aura is on you
+  (Bloodrage, Recklessness, Evasion), a totem while it is out, and an ability waiting on another
+  debuff, such as Vanish while Garrote is up. The game's own timer is used where it can be, so it
+  stays accurate in combat, and the clock follows your target when you switch.
+
+### Defensive queue
+- Forever: new opt-in Threat Cues (off by default). In a group or with your pet out, a
+  magenta-glowing icon joins the defensive icons when threat on your target needs a press: a
+  threat drop such as Fade or Feint when you are about to pull aggro as damage or healer, and as
+  a tank a taunt when your target is attacking someone else, or a threat ability when your lead
+  is slipping.
+- Forever: after you shield yourself with Power Word: Shield, it moves behind your other
+  defensives for the 15 seconds Weakened Soul blocks a recast, so the queue no longer offers a
+  shield that would come back "immune". Shielding another player, including with a mouseover
+  macro, leaves it where it is.
+- Forever: after Divine Shield, Divine Protection, Avenging Wrath or Blessing of Protection on
+  yourself, Divine Shield, Divine Protection and Blessing of Protection move behind your other
+  defensives for the 60 seconds Forbearance blocks them. Blessing of Protection on another
+  player leaves them where they are.
+- Forever: while Weakened Soul or Forbearance holds a defensive back, its icon shows the time
+  until you can cast it again.
+
+### Bars
+- The resource bars (on the panel and the nameplate overlay) no longer stop short of your real
+  power when it changes twice in quick succession, such as reaching full right after a tick.
+
 ## [6.2.2] - 2026-11-16
 
 ### Range and positioning
@@ -115,11 +224,11 @@
 
 ### Recovery
 
-- Out-of-combat recovery prefers ready, usable short-cooldown self-heals over food and bandages, without requiring Recuperate to be learned. Health Recovery offers learned self-heals and an item-only choice; Auto prefers class heals below 70% health. Mana recovery, optional higher top-off reminders and combat emergency priorities remain independent.
+- Out-of-combat recovery prefers ready, usable short-cooldown self-heals over food and bandages, without requiring Recuperate to be learned. Health Recovery offers learned self-heals and an item-only choice; Auto prefers class heals when you are hurt. Mana recovery, optional higher top-off reminders and combat emergency priorities remain independent.
 - Forever health and mana recovery have independent Off/Auto controls, inheriting the previous Recovery setting. Combined food/drink can serve either enabled need without duplicate recommendations; Food Buff remains independent.
-- Forever between-pull drink reminders default to below 80% mana, adjustable from 50% to 90% in 10% steps under Pre-combat Recovery.
-- The pre-combat top-off slider uses 10% steps from 50% to 90%. Its selected threshold (80% by default) must be confirmed before offering optional healing; unavailable health reads no longer trigger a generic below-full reminder. Existing saved thresholds and the separate critical-health reminder are preserved.
-- Cast-time personal defensive heals show a dimmed WAIT indicator at 60% health or above when automatic defensive waiting is enabled. More specific defaults and explicit spell settings take precedence.
+- Forever between-pull drink reminders are adjustable under Pre-combat Recovery.
+- The pre-combat top-off reminder needs confirmed missing health before offering optional healing; unreadable health no longer triggers a generic below-full reminder. Existing saved settings and the separate critical-health reminder are preserved.
+- Cast-time personal defensive heals show a dimmed WAIT indicator while you are healthy when automatic defensive waiting is enabled. More specific defaults and explicit spell settings take precedence.
 
 ### Highlights
 
@@ -173,7 +282,7 @@
 - Show WAIT when every DPS ability is waiting for resources, cooldowns, range or other requirements, with waiting abilities behind it. Requires Unavailable Last and ranked ordering; out-of-combat previews without a live attackable target are unchanged.
 - Keep Throw and other ranged weapon fillers ahead of unavailable melee attacks while the enemy remains beyond melee reach, including between shots with a cooldown swipe. A ready alternative takes over immediately; WAIT still applies when the filler cannot reach or otherwise cannot be used. Melee autoattack also moves behind usable alternatives when out of range, including out of combat.
 - Move rear-required attacks such as Backstab and Shred behind usable alternatives when out of stealth and the enemy is targeting you, including during proc or full-energy promotion. Stealth openers, tank-held targets, Dirty Deeds and detected Shred positional-removal bonuses retain their eligibility; unknown targeting leaves the order unchanged.
-- Reduce combo-point overkill on normal enemies for variable-point finishers such as Eviscerate: aim for 3 points, 2 below half health, and any affordable amount when nearly dead. Unknown health keeps the 3-point target; elites and bosses retain the rotation's targets.
+- Reduce combo-point overkill on normal enemies for variable-point finishers such as Eviscerate: aim for fewer points as the enemy weakens, and any affordable amount when nearly dead. Unknown health keeps the 3-point target; elites and bosses retain the rotation's targets.
 
 ### Availability and priorities
 
@@ -281,7 +390,7 @@
 - **One setting decides who leads the queue:** the game (the default), the queue filling the gaps when the game has nothing to recommend, or your own list replacing the game's pick. The two that are not the game are marked as such.
 - The defensive, pet, gap-closer and burst-trigger lists use the same compact rows: drag to reorder, settings open under the ability, hovering shows its tooltip, and each row shows its cooldown.
 - **Show in:** the queue and the nameplate overlay can each be hidden in open world, delves, dungeons, raids or PvP. Keep the queue for dungeons and hide it in raids, say.
-- **Per-defensive health levels.** Set a potion to wait until you are below 30%, say, and it shows greyed out with WAIT until then. If your health cannot be read, the defensive is shown as usual, so the setting never hides one you need. Immunity bubbles now wait until your health is at its lowest rather than lighting up from half health, and still come up sooner while you keep taking hits.
+- **Per-defensive health levels.** Set a potion to wait until your health is low, and it shows greyed out with WAIT until then. If your health cannot be read, the defensive is shown as usual, so the setting never hides one you need. Immunity bubbles now wait until your health is at its lowest rather than lighting up early, and still come up sooner while you keep taking hits.
 - **New Help Your Group list** for party-wide buttons. In a group they come up when your party is taking a beating, so you can take pressure off your healer; solo they come up once your own health is low instead of sitting in your defensives at full health. Rallying Cry, Darkness, Anti-Magic Zone, Zephyr and Ancestral Guidance move over from your defensive list automatically, and some specs gain one: Vampiric Embrace for Shadow, Mass Barrier for Mages, Emerald Blossom for Devastation and Augmentation, Healing Stream Totem for Elemental and Enhancement.
 - **Tank maintenance slot settings:** how many seconds before your buff drops it starts warning you, an alert sound when the buff drops (or first needs refreshing), and for Demon Spikes a glow while every charge is ready, since sitting on full charges wastes recharge.
 - **Ability Overrides is now Overrides** and covers items as well as abilities. Customized abilities use the same rows as the lists, say exactly what is set on each, and open their settings under the row. Right-clicking an ability in any list opens all of its settings. Each ability only shows the settings that can affect it, and every section says whether it applies to this spec or all of them.
@@ -434,7 +543,7 @@
 - A "Hold Until" dial on every Custom Priority entry, replacing the Hold Until Charged
   checkbox (existing settings carry over). Pick when an ability is allowed back into its
   listed spot: fully charged (what the old checkbox did), at least N of its resource -
-  exact counts for combo points, runes, holy power and the like - or a percentage of a
+  exact counts for combo points, runes, holy power and the like - or a level of a
   flowing resource such as energy or runic power. Until then it is treated exactly like
   an ability on cooldown: parked at the back, never dropped, promoted by nothing. Your
   list order says where an ability belongs; the hold says when. It needs "Unavailable
@@ -782,7 +891,7 @@
 - The between-pulls heal reminder no longer flickers, and no longer turns invisible while you are hurt. It is now an ordinary suggestion icon - fully visible for as long as it is up
 
 ### Changed
-- The between-pulls heal reminder now honors its Top-Off Threshold anywhere in the world: it appears once you are below the percentage you set, and clears as soon as you are back above it. It also waits a couple of seconds before appearing, so a scratch that heals on its own never makes it pop up
+- The between-pulls heal reminder now honors its Top-Off Threshold anywhere in the world: it appears once you are below the level you set, and clears as soon as you are back above it. It also waits a couple of seconds before appearing, so a scratch that heals on its own never makes it pop up
 - A free-heal proc (Clearcasting and friends) no longer glows at you, or pushes its way to the front of the defensive queue, while you are at full health and nobody in the party needs healing - both return the moment there is actually something to heal. Other procs are unchanged
 - The pet heal cue now appears only while your pet is below your Pet Heal Threshold, and steps aside otherwise - leaving the slot beside the queue free for whatever else needs it
 - Execute abilities rise in the queue as soon as your target is low enough to be worth finishing
@@ -2880,7 +2989,7 @@
 
 - Dead variable `defensivePosition` in `UIHealthBar.CreateHealthBar` (assigned but never read)
 - `BlizzardAPI` import from `UIHealthBar` (only used by removed gradient code)
-- **Threshold sliders from Defensives options**: Self-heal, cooldown, and pet heal threshold settings hidden from UI (health values are secret in 12.0+, making user-configured thresholds non-functional); defaults still used internally
+- **Defensives options**: Self-heal, cooldown, and pet heal settings removed from the options; their defaults still apply
 
 ## [3.21.4] - 2026-02-11
 

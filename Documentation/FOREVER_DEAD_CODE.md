@@ -48,6 +48,28 @@ engage. Forever warriors and druids still tank, and the Cooldown Manager loads o
 this can be RETARGETED (class keys + Forever spell IDs) instead of deleted. CC-break / loss of
 control (~150 lines of the same file) is live either way.
 
+**Decision (2026-11-16): upkeep stays Retail-only; add no `_F` entries.** Checked against
+Forever build 1.60.1.70938:
+
+- Candidates are few. Warrior Shield Block (2565: 7s, 5s cooldown, off GCD, 2 block charges,
+  aura under the cast id) and Paladin Holy Shield (20925 talent: 10s, 10s cooldown, ON the GCD,
+  4 block charges). Bear Druid has no rolled mitigation buff (Frenzied Regeneration is a
+  3-minute cooldown).
+- Both are already in the Forever Protection rotations (Shield Block first, behind a
+  buff-missing gate), and the guides say "on cooldown". A second surface adds nothing, the same
+  reasoning that keeps Shield Block out of the Retail `WARRIOR_3` entry. Holy Shield on the GCD
+  also breaks the slot's off-GCD premise.
+- Both buffs are consumed by blocks, so a time-based refresh lead would be a guess (the Bone
+  Shield argument). With a 7s buff on a 5s cooldown the cue would just mean "cooldown ready".
+- No tank signal: every Forever spec is role DAMAGER and `WARRIOR_F` covers every warrior, while
+  the slot checks no known spell, shield or stance. An entry would show to Arms/Fury and to
+  paladins without the talent, and its active entry would hide the spell from the defensive
+  queue.
+
+Reopen only with a verified tank signal plus an in-game check that the cast bridge
+(`IsAuraFilteredOutByInstanceID`, plain `addedAuras` instance ids) and Cooldown Manager entries
+work for these buffs. The smallest useful version would be a Warrior-only Shield Block entry.
+
 ## Tier 2: KEEP - Forever is secret-restricted (measured 2026-10-04)
 
 The first OOC probe run settled H1: `HasSecretRestrictions` is true OUT of combat, and player
@@ -83,7 +105,8 @@ need a manual Forever pass. `tools/gen_aura_durations.py` targets a file that no
 7. **GCD dummy 61304 does not exist on Forever** (absent from SpellName 1.60.1.70205). It is
    read by `CooldownTracking` `GCD_DUMMY_SPELL` (GCD lookahead) and `SpellQuery`
    `GetGCDInfo`; both fail closed, so the lookahead silently turns off and `GetGCDInfo`
-   reports no GCD. Replacement source decided by probe H13.
+   reports no GCD. Resolved 2026-11-17: `BlizzardAPI.GetGCDReferenceSpell()` reads 1283885
+   on Forever (gcdref captures; see FOREVER_COMBAT_SIGNALS.md "GCD reference spell").
 8. **Every Forever spec is role DAMAGER with primary stat 0** (ChrSpecialization 1482-1491).
    So healer-spec logic (`IsHealerSpecActive`, `FilterHealerTail`, the healer first-run
    disable) never triggers for a healing priest/druid/shaman/paladin, and SpellDB

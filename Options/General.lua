@@ -329,24 +329,64 @@ function General.CreateTabArgs(addon)
                         end,
                         hidden = NotForever,
                     },
-                    cdmTrackAsk = {
-                        type = "toggle", order = 19.575, width = "full",
-                        name = L["CDM ask"], desc = L["CDM ask desc"],
+                    -- Both clients: every "Not displayed" buff into a tracked panel, in a
+                    -- JAC layout of its own (CdmAdvisor has the rules). Raw entries, as above.
+                    cdmHiddenTitle = {
+                        type = "description", order = 19.58, fontSize = "medium",
+                        name = function() return "\n|cffffd100" .. L["CDM Track Hidden"] .. "|r" end,
+                    },
+                    cdmHiddenDesc = {
+                        type = "description", order = 19.581, fontSize = "small",
+                        name = L["CDM Track Hidden desc"],
+                    },
+                    cdmHiddenStatus = {
+                        type = "description", order = 19.582,
+                        name = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            return CA and CA.TrackHiddenStatus() or ""
+                        end,
+                    },
+                    cdmHiddenTrack = {
+                        type = "execute", order = 19.583, width = "normal",
+                        name = L["CDM track hidden"],
+                        func = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            if CA then CA.ConfirmTrackHidden() end
+                            W.NotifyChange()
+                        end,
+                        disabled = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            return not (CA and CA.PlanTrackHidden())
+                        end,
+                    },
+                    cdmHiddenMode = {
+                        type = "select", order = 19.585, width = "double",
+                        name = L["CDM hidden mode"], desc = L["CDM hidden mode desc"],
+                        values = function()
+                            return { detect = L["CDM mode detect"], manual = L["CDM mode manual"] }
+                        end,
+                        sorting = { "detect", "manual" },
                         get = function()
-                            local c = addon.db.char.cdm
-                            return not (c and c.neverAsk)
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            return CA and CA.GetMode() or "manual"
                         end,
                         set = function(_, val)
-                            addon.db.char.cdm = addon.db.char.cdm or {}
-                            if val then
-                                addon.db.char.cdm.neverAsk = nil
-                                local CA = LibStub("JustAC-CdmAdvisor", true)
-                                if CA then CA.MaybePrompt() end
-                            else
-                                addon.db.char.cdm.neverAsk = true
-                            end
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            if CA then CA.SetMode(val) end
                         end,
-                        hidden = NotForever,
+                    },
+                    cdmHiddenUndo = {
+                        type = "execute", order = 19.584, width = "normal",
+                        name = L["CDM undo hidden"], desc = L["CDM undo hidden desc"],
+                        func = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            if CA then CA.RunUndoTrackHidden() end
+                            W.NotifyChange()
+                        end,
+                        disabled = function()
+                            local CA = LibStub("JustAC-CdmAdvisor", true)
+                            return not (CA and CA.HasTrackHidden())
+                        end,
                     },
         },
     }

@@ -475,13 +475,31 @@ local function ValidateClassify(fn)
     return "ok", cell
 end
 
--- First rotation spell if plainly readable, else the GCD reference spell.
+-- First spell on the action bars that is a real ability: not Attack or an auto-repeat
+-- shot, which have no cost or cooldown of their own to measure.
+local function FirstBarAbility(B)
+    if not (B and B.GetActionInfo) then return nil end
+    for slot = 1, 120 do
+        local ok, actionType, id = pcall(B.GetActionInfo, slot)
+        if ok and actionType == "spell" and not IsSecret(id) and type(id) == "number" and id > 0
+           and id ~= 6603 then
+            local okRepeat, autoRepeat = pcall(C_Spell.IsAutoRepeatSpell, id)
+            if not (okRepeat and autoRepeat == true) then return id end
+        end
+    end
+    return nil
+end
+
+-- The spell the cd/secrecy checks read: the first rotation spell if plainly readable;
+-- else the first real ability on the bars (Forever has no rotation feed); else the GCD
+-- reference spell, an uncastable dummy that still answers the cooldown reads.
 local function ValidateProbeSpell()
     local ok, sid = pcall(function()
         return C_AssistedCombat.GetRotationSpells()[1] + 0
     end)
     if ok and type(sid) == "number" then return sid end
-    return 61304
+    local B = LibStub("JustAC-BlizzardAPI", true)
+    return FirstBarAbility(B) or (B and B.GetGCDReferenceSpell())
 end
 
 -- First occupied action slot with a plainly readable HasAction.
@@ -534,6 +552,39 @@ local function BuildValidateProbes()
     add("health.UnitPowerMax", function() return UnitPowerMax("player") end)
     add("health.absorbs", function() return UnitGetTotalAbsorbs("player") end)
     add("health.targetHealth", function() return UnitHealth("target") end)
+
+    -- Class points (combo points, holy power, chi...): spenders are gated on an exact plain
+    -- count. comboPoints is the raw read; classPoints is the addon's own reader, which goes
+    -- nil (unknown) if Blizzard hides the count or reshapes the point widgets.
+    add("power.comboPoints", function() return GetComboPoints("player", "target") end)
+    add("power.classPoints", function()
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        return B and B.GetClassResourcePoints and (B.GetClassResourcePoints())
+    end)
+
+    -- Enemy count: the AoE context rests on per-nameplate reads staying plain. The first
+    -- present plate's hostility and threat are the raw reads; engagedCount is the addon's
+    -- count built on them (a secret read silently counts as zero, so watch both).
+    local function FirstPlate()
+        for i = 1, 40 do
+            local unit = "nameplate" .. i
+            local exists = UnitExists(unit)
+            if not IsSecret(exists) and exists then return unit end
+        end
+        return nil
+    end
+    add("enemy.plateHostile", function()
+        local unit = FirstPlate()
+        return unit and UnitCanAttack("player", unit)
+    end)
+    add("enemy.plateThreat", function()
+        local unit = FirstPlate()
+        return unit and UnitThreatSituation("player", unit)
+    end)
+    add("enemy.engagedCount", function()
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        return B and B.GetEngagedEnemyCount and B.GetEngagedEnemyCount()
+    end)
 
     add("aura.helpfulCount", function()
         local n = 0
@@ -595,6 +646,8 @@ local function BuildValidateProbes()
         return d and d:HasSecretValues()
     end)
     add("cd.usable", function() return C_Spell.IsSpellUsable(sid) end)
+    -- The second return: the queue infers "not enough resource" from it without reading power.
+    add("cd.insufficientPower", function() return select(2, C_Spell.IsSpellUsable(sid)) end)
     add("cd.inRange", function() return C_Spell.IsSpellInRange(sid, "target") end)
     add("cd.overrideSpell", function() return C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid) end)
 
@@ -743,6 +796,20 @@ local function BuildValidateProbes()
     add("tech.groupBuffItems", function()
         return (C_CooldownViewer and C_CooldownViewer.GetGroupBuffItems) ~= nil
     end)
+    add("tech.auraContainer", function()
+        -- The enrage/soothe cue and the maintenance overlay are AuraContainers. Build one
+        -- (hidden, kept for later runs) and check the methods those cues call. Creation is
+        -- the part a client change is most likely to break: only this template may be made
+        -- untainted, and nothing else can draw those cues.
+        local cont = DebugCommands._validateAuraContainer
+        if not cont then
+            local ok, made = pcall(CreateFrame, "AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+            if not ok or not made then return "CREATE FAILED" end
+            made:Hide()
+            cont, DebugCommands._validateAuraContainer = made, made
+        end
+        return (cont.AddAuraSlot and cont.AddAuraGroup and cont.SetUnit) and "ok" or "MISSING"
+    end)
 
     return probes
 end
@@ -759,15 +826,83 @@ local function PrintValidateEnv(addon)
         .. " diff=" .. vs(function() return select(4, GetInstanceInfo()) end)
         .. " map=" .. vs(function() return C_Map.GetBestMapForUnit("player") end)
         .. " instID=" .. vs(function() return select(8, GetInstanceInfo()) end))
+    local stateAPI = LibStub("JustAC-BlizzardAPI", true)
+    local phase, half, group, content = "?", nil, nil, "?"
+    if stateAPI and stateAPI.GetCombatPhase then phase, half = stateAPI.GetCombatPhase() end
+    if stateAPI and stateAPI.GetGroupContext then group = stateAPI.GetGroupContext() end
+    if stateAPI and stateAPI.GetContentType then content = stateAPI.GetContentType() end
     addon:Print("  state: combat=" .. tostring(UnitAffectingCombat("player"))
+        .. " phase=" .. tostring(phase) .. (half and ("(" .. half .. ")") or "")
+        .. " content=" .. tostring(content)
         .. " resting=" .. vs(IsResting)
-        .. " group=" .. (IsInRaid() and "raid" or IsInGroup() and "party" or "solo")
+        .. " group=" .. tostring(group or "unknown")
         .. " spec=" .. vs(function() return select(2, C_SpecializationInfo.GetSpecializationInfo(C_SpecializationInfo.GetSpecialization())) end)
         .. " form=" .. vs(GetShapeshiftFormID)
         .. " level=" .. vs(function() return UnitLevel("player") end))
     addon:Print("  pvp: warMode=" .. vs(C_PvP.IsWarModeActive)
         .. " zonePvP=" .. vs(function() return (C_PvP.GetZonePVPInfo()) end)
         .. "  client: " .. vs(function() local v, b = GetBuildInfo(); return v .. "." .. b end))
+end
+
+-- A ranged spell's macro that also holds /startattack stops a running wand or Auto Shot on
+-- every press (starting melee ends the ranged auto-repeat), so the queue keeps asking for the
+-- wand again. Lists each such macro on the action bars; nothing is changed.
+local AUTO_REPEATS = { 5019, 75 }   -- Shoot (wand), Auto Shot
+local RANGED_SPELL_YARDS = 10       -- beyond melee reach and Auto Shot's dead zone
+function DebugCommands.StartAttackConflicts()
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local MP = LibStub("JustAC-MacroParser", true)
+    if not (BAPI and BAPI.IsSpellAvailable and BAPI.GetActionInfo and MP and MP.GetMacroSpellInfo
+            and C_Spell and C_Spell.GetSpellInfo) then return nil end
+    local repeatName
+    for _, id in ipairs(AUTO_REPEATS) do
+        if BAPI.IsSpellAvailable(id) == true then
+            local ok, info = pcall(C_Spell.GetSpellInfo, id)
+            if ok and type(info) == "table" and type(info.name) == "string" then
+                repeatName = info.name
+                break
+            end
+        end
+    end
+    if not repeatName then return nil end
+    local found, seen = {}, {}
+    for slot = 1, 180 do
+        local ok, kind, id, subType, macroSpellID = pcall(BAPI.GetActionInfo, slot)
+        if ok and kind == "macro" then
+            local spellID = macroSpellID
+            if (type(spellID) ~= "number" or spellID <= 0) and subType == "spell" then spellID = id end
+            local okInfo, info
+            if type(spellID) == "number" and spellID > 0 and not BAPI.IsSecretValue(spellID) then
+                okInfo, info = pcall(C_Spell.GetSpellInfo, spellID)
+            end
+            if okInfo and type(info) == "table" and type(info.name) == "string"
+               and type(info.maxRange) == "number" and info.maxRange > RANGED_SPELL_YARDS then
+                local entry = MP.GetMacroSpellInfo(slot, spellID, info.name)
+                local okText, text = pcall(GetActionText, slot)
+                local macroName = "slot " .. slot
+                if okText and type(text) == "string" and text ~= "" then macroName = text end
+                local key = macroName .. "|" .. info.name
+                if entry and entry.startsAttack == true and not seen[key] then
+                    seen[key] = true
+                    found[#found + 1] = { macro = macroName, spell = info.name }
+                end
+            end
+        end
+    end
+    return found, repeatName
+end
+
+local function PrintStartAttackConflicts(addon)
+    local found, repeatName = DebugCommands.StartAttackConflicts()
+    if not found then return end
+    if #found == 0 then
+        addon:Print("  macros: no ranged spell macro starts melee (" .. repeatName .. " stays running)")
+        return
+    end
+    for _, hit in ipairs(found) do
+        addon:Print(string.format("  |cffffff00macro '%s'|r casts %s and has /startattack: each press stops %s",
+            hit.macro, hit.spell, repeatName))
+    end
 end
 
 -- Runs all probes; returns snapshot {key -> class} plus ordered key list.
@@ -834,6 +969,7 @@ function DebugCommands.ValidateAssumptions(addon, arg)
 
     addon:Print("===== assumption validation (" .. (armed and "armed" or "one-shot") .. ") =====")
     PrintValidateEnv(addon)
+    PrintStartAttackConflicts(addon)
 
     -- Secrecy surface drift check: the one signal that all cached verdicts are stale.
     local fnCount = 0

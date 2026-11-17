@@ -344,6 +344,19 @@ local function HandleSlashCommand(addon, input)
             addon:Print(InspectUsage())
         end
 
+    elseif command == "cdm" then
+        local CA = LibStub("JustAC-CdmAdvisor", true)
+        local sub = arg and arg:lower()
+        if not CA then
+            addon:Print("Cooldown Manager module not available")
+        elseif sub == "track-hidden" then
+            CA.ConfirmTrackHidden()
+        elseif sub == "undo" then
+            CA.RunUndoTrackHidden()
+        else
+            addon:Print("Usage: /jac cdm track-hidden | undo")
+        end
+
     elseif command == "help" then
         CallDebug("ShowHelp")
 

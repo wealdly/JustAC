@@ -154,6 +154,12 @@ Every distinct `(unit, threshold)` pair is one curve evaluation plus one widget
 round-trip, memoised for 0.1s - so roughly 10 evaluations/second each. Hits are table
 lookups. `/jac inspect perf` reports hit/miss/evals-per-second.
 
+**Thresholds are quantized to the nearest 5%** (`NormalizePct`, 2026-11-17), so every
+caller shares one ladder of at most 21 curves per unit and resource; user-facing percent
+controls use 10% steps. A health or power question is therefore at most 2.5 points coarse:
+converted source gates such as energy 59 and 79 ask 60 and 80. `tools/test_threshold_quantize.py`
+keeps the named `*_PCT` constants on the ladder.
+
 **Invariant: misses track distinct thresholds x memo windows, NOT queue length.** A
 miss count that scales with the number of spells means something is asking per-entry
 instead of per-question.

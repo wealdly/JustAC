@@ -278,6 +278,24 @@ end
 -- a buff window opened is the cast that opened it.
 local ownCastAt = {}
 local auraUntil = {}   -- [spellID] = the buff's expiry, read while its aura was plain
+local auraUntilReadAt = {}   -- [spellID] = when that expiry was read
+-- [spellID] = the buff's real full duration, read while its aura was plain (talents and ranks
+-- included). Stands in for the data's base duration when a later cast is timed.
+local learnedDuration = {}
+BlizzardAPI._learnedBuffDuration = learnedDuration   -- tests
+-- A removal this soon after our own cast is the refresh replacing the old aura, not an end.
+local REMOVAL_GRACE = 0.5
+local redundancyFilterRef
+--- When the buff was last seen removed (RedundancyFilter, from UNIT_AURA), or nil.
+local function AuraRemovedAt(spellID)
+    if redundancyFilterRef == nil then redundancyFilterRef = LibStub("JustAC-RedundancyFilter", true) or false end
+    if not (redundancyFilterRef and redundancyFilterRef.GetAuraRemovedAt) then return nil end
+    return redundancyFilterRef.GetAuraRemovedAt(spellID)
+end
+--- Did a seen removal end what `since` describes (a reading, a snapshot, our cast)?
+local function RemovedSince(removedAt, since, grace)
+    return removedAt ~= nil and since ~= nil and removedAt > since + (grace or 0)
+end
 local formCache   -- resolved on first use: FormCache loads after this file
 local rotationImport   -- resolved on first use: rank chains (WoW Forever)
 local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state (loads later)
@@ -287,11 +305,48 @@ local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state
 -- "same ability twice" rule.
 local lastCast, lastGcdCast
 
+-- The global cooldown each spell triggers, [spell id] = seconds, read off the GCD reference
+-- spell as our own cast starts it. Spells differ (Forever, 2026-11-17: 1.304s after Priest and
+-- Hunter spells, 1.500s after ranged shots) and haste moves them, so each keeps its own.
+local gcdBySpell = {}
+local GCD_START_WINDOW = 0.5   -- a GCD that began this long ago or less was started by this cast
+
+--- Record the GCD this cast started: called at a cast's start (cast-time spells start the GCD
+--- there) and at its success (instants). A GCD already running before the cast is not its own.
+function BlizzardAPI.NoteCastGCD(spellID)
+    if not spellID or IsSecretValue(spellID) or not BlizzardAPI.GetGCDInfo then return end
+    local start, duration = BlizzardAPI.GetGCDInfo()
+    if IsSecretValue(start) or IsSecretValue(duration) or type(start) ~= "number" or type(duration) ~= "number"
+       or not (duration > 0 and duration < 5) then
+        return
+    end
+    local age = GetTime() - start
+    if age < 0 or age > GCD_START_WINDOW then return end
+    gcdBySpell[spellID] = duration
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    local r1 = rotationImport and rotationImport.RankBase(spellID)
+    if r1 and r1 ~= spellID then gcdBySpell[r1] = duration end
+end
+
+--- The global cooldown this spell triggers, as last measured from our own cast (any rank),
+--- else the last GCD seen running (BlizzardAPI.GetGCDLength), else nil.
+function BlizzardAPI.GetSpellGCD(spellID)
+    local gcd = spellID and gcdBySpell[spellID]
+    if gcd == nil and spellID then
+        if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+        local r1 = rotationImport and rotationImport.RankBase(spellID)
+        gcd = r1 and gcdBySpell[r1]
+    end
+    if gcd then return gcd end
+    return BlizzardAPI.GetGCDLength and BlizzardAPI.GetGCDLength() or nil
+end
+
 --- Record a successful player cast (every cast, in or out of combat).
 function BlizzardAPI.NoteOwnCast(spellID)
     if not spellID then return end
     local now = GetTime()
     ownCastAt[spellID] = now
+    BlizzardAPI.NoteCastGCD(spellID)
     local base = BlizzardAPI.ResolveBaseSpellID(spellID)
     if base then ownCastAt[base] = now end
     -- Forever ranks: a rank-3 cast opens the window the data names by rank 1.
@@ -483,18 +538,27 @@ end
 --- Baseline direct spell DPS, not a simulator: excludes talents, crit and target mitigation.
 --- baseline=true uses the explicitly captured pre-combat stats, not live combat stats.
 --- A hit followed by a damage over time (e[7]) is not the spell's whole damage: unknown.
---- Cast time only: Forever global cooldown timing under haste is unmeasured, so this is an
---- upper bound for a cast shorter than its global cooldown.
+--- Per cycle: the cast time, but never less than the global cooldown the spell triggers
+--- (measured from our own casts, BlizzardAPI.GetSpellGCD), so an instant has a DPS too. With no
+--- GCD measured yet a cast-time spell falls back to its cast time (an upper bound below one GCD)
+--- and an instant stays unknown. An explicit castSeconds is used as given.
+function BlizzardAPI.GetSpellCycleSeconds(spellID)
+    if not BlizzardAPI.GetSpellInfo then return nil end
+    local ok, info = pcall(BlizzardAPI.GetSpellInfo, spellID)
+    if not ok then geterrorhandler()(info); return nil end
+    if IsSecretValue(info) or type(info) ~= "table" or not PlainDamageNumber(info.castTime) then return nil end
+    local cast = info.castTime / 1000
+    local gcd = BlizzardAPI.GetSpellGCD and BlizzardAPI.GetSpellGCD(spellID)
+    local cycle = cast
+    if PlainDamageNumber(gcd) and gcd > cycle then cycle = gcd end
+    if cycle <= 0 then return nil end
+    return cycle, cast
+end
+
 function BlizzardAPI.GetDirectSpellDPS(spellID, castSeconds, baseline)
     local e = DamageEstimate(spellID)
     if not e or e[7] then return nil end
-    if castSeconds == nil then
-        if not BlizzardAPI.GetSpellInfo then return nil end
-        local ok, info = pcall(BlizzardAPI.GetSpellInfo, spellID)
-        if not ok then geterrorhandler()(info); return nil end
-        if IsSecretValue(info) or type(info) ~= "table" or not PlainDamageNumber(info.castTime) then return nil end
-        castSeconds = info.castTime / 1000
-    end
+    if castSeconds == nil then castSeconds = BlizzardAPI.GetSpellCycleSeconds(spellID) end
     if not PlainDamageNumber(castSeconds) or castSeconds <= 0 then return nil end
     local damage = ScaledDamage(e, baseline, e[1], e[2], e[5])
     if not damage then return nil end
@@ -761,7 +825,13 @@ local function BuffWindowEvidence(spellID, readCache)
             -- is unreadable, and a /reload forgets the cast that would otherwise time it.
             local exp = aura.expirationTime
             if type(exp) == "number" and not IsSecretValue(exp) and exp > 0 and forever then
-                auraUntil[spellID] = exp
+                auraUntil[spellID], auraUntilReadAt[spellID] = exp, GetTime()
+            end
+            -- Its real length too (an Improved talent, a higher rank): the next cast is timed
+            -- with it once the aura goes unreadable again.
+            local length = aura.duration
+            if type(length) == "number" and not IsSecretValue(length) and length > 0 and forever then
+                learnedDuration[spellID] = length
             end
             return true
         end
@@ -774,7 +844,100 @@ local function BuffWindowEvidence(spellID, readCache)
         return nil
     end
     local untilAt = auraUntil[spellID]
-    if untilAt ~= nil and GetTime() < untilAt then return true end
+    if untilAt ~= nil and GetTime() < untilAt
+       and not RemovedSince(AuraRemovedAt(spellID), auraUntilReadAt[spellID]) then
+        return true
+    end
+    return nil
+end
+
+--- Seconds left on a self-buff window from plain evidence only, most reliable first:
+---   1. the expiry this spell's aura showed while it read plain (the real aura: talents and
+---      ranks included);
+---   2. the last complete out-of-combat aura scan (also the real aura, any rank);
+---   3. our own cast plus its full duration: the length its aura last showed while plain
+---      (talents and ranks included), else the data's base duration (an estimate).
+--- A reading taken before our latest cast describes the previous application, so it yields
+--- to the cast. nil when nothing is known; never read from a live aura in combat.
+local redundancyFilter   -- resolved on first use: loads after this file
+function BlizzardAPI.GetBuffWindowRemaining(spellID, durSecs)
+    if not spellID then return nil end
+    local now = GetTime()
+    local castAt = ownCastAt[spellID]
+    local untilAt, readAt = auraUntil[spellID], auraUntilReadAt[spellID]
+    -- A removal seen after a source (dispelled, cancelled, expired early) ends what it said.
+    local removedAt = AuraRemovedAt(spellID)
+    if untilAt ~= nil and untilAt > now and not (castAt and readAt and castAt > readAt)
+       and not RemovedSince(removedAt, readAt) then
+        return untilAt - now
+    end
+    if redundancyFilter == nil then redundancyFilter = LibStub("JustAC-RedundancyFilter", true) or false end
+    if redundancyFilter and redundancyFilter.GetTrustedAuraExpiry then
+        if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+        local chain = rotationImport and rotationImport.RankChain(spellID)
+        for i = 1, chain and #chain or 1 do
+            local exp, takenAt = redundancyFilter.GetTrustedAuraExpiry(chain and chain[i] or spellID)
+            if exp and not (castAt and takenAt and castAt > takenAt) and not RemovedSince(removedAt, takenAt) then
+                return exp - now
+            end
+        end
+    end
+    durSecs = learnedDuration[spellID] or durSecs
+    if RemovedSince(removedAt, castAt, REMOVAL_GRACE) then return nil end
+    if castAt ~= nil and durSecs and now - castAt < durSecs then return durSecs - (now - castAt) end
+    return nil
+end
+
+--- Seconds since our own last cast of this spell (any rank), or nil when never seen.
+function BlizzardAPI.GetOwnCastAge(spellID)
+    local castAt = spellID and ownCastAt[spellID]
+    if castAt == nil then return nil end
+    return GetTime() - castAt
+end
+
+--- The totem slot's own timer: a DurationObject for a cooldown widget, never read. nil when the
+--- read fails.
+function BlizzardAPI.GetTotemDurationObject(slot)
+    if not (slot and GetTotemDuration) then return nil end
+    local ok, duration = pcall(GetTotemDuration, slot)
+    if ok then return duration end
+    return nil
+end
+
+local totemDurationLearned = {}   -- [rank-1 totem spell] = seconds, read while GetTotemInfo was plain
+
+--- Plain start, length for the totem in a slot, most reliable first:
+---   1. GetTotemInfo while it reads plain (which also learns that totem's duration);
+---   2. our latest cast of a totem for this slot plus the duration learned for it.
+--- nil when unknown, and when the slot reads plainly empty.
+function BlizzardAPI.GetTotemWindow(slot)
+    if not slot then return nil end
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    if GetTotemInfo then
+        local ok, have, _, start, duration, _, _, spellID = pcall(GetTotemInfo, slot)
+        if ok then
+            if not IsSecretValue(have) and have == false then return nil end
+            start, duration, spellID = Unsecret(start), Unsecret(duration), Unsecret(spellID)
+            if type(duration) == "number" and duration > 0 then
+                if type(spellID) == "number" and spellID > 0 then
+                    local r1 = rotationImport and rotationImport.RankBase(spellID)
+                    totemDurationLearned[r1 or spellID] = duration
+                end
+                if type(start) == "number" and start > 0 then return start, duration end
+            end
+        end
+    end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local slots = SpellDB and SpellDB.FOREVER_TOTEM_SLOTS
+    if not slots then return nil end
+    -- The latest totem cast into this slot decides, even when its duration is not known.
+    local lastAt, lastSpell
+    for spellID, s in pairs(slots) do
+        local castAt = s == slot and ownCastAt[spellID]
+        if castAt and (not lastAt or castAt > lastAt) then lastAt, lastSpell = castAt, spellID end
+    end
+    local known = lastSpell and totemDurationLearned[lastSpell]
+    if known and GetTime() - lastAt < known then return lastAt, known end
     return nil
 end
 
@@ -800,7 +963,9 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs, readCache)
         end
     end
     if evidence ~= nil and evidence ~= BUFF_UNKNOWN then return evidence end
+    durSecs = learnedDuration[spellID] or durSecs
     local castAt = durSecs and ownCastAt[spellID]
+    if RemovedSince(AuraRemovedAt(spellID), castAt, REMOVAL_GRACE) then return false end
     return castAt ~= nil and (GetTime() - castAt) < durSecs
 end
 
@@ -880,7 +1045,34 @@ end
 -- accepted anyway. Off-GCD abilities are excluded: they can be pressed NOW, so for them
 -- "ready" must stay literal.
 --------------------------------------------------------------------------------
-local GCD_DUMMY_SPELL = 61304
+-- The GCD reference: an uncastable spell in start-recovery category 133 whose cooldown is
+-- the player's current GCD. The first one this client's spell data has wins. Retail has the
+-- "Global Cooldown" dummy 61304. Forever's data has none, so it reads 1283885 ("[DNT]
+-- Cooldown Never Secret Test Spell", category 133, no class), which tracked every GCD
+-- plainly in and out of combat there (gcdref captures, build 1.60.1.70959: Mage, Priest,
+-- Hunter).
+local GCD_REFERENCE_CANDIDATES = { 61304, 1283885 }
+local gcdReferenceSpell  -- resolved once (static spell data); false: no candidate exists
+
+--- The spell whose cooldown reads the player's global cooldown, or nil when this client's
+--- spell data has no reference. Callers treat nil as "GCD unknown".
+function BlizzardAPI.GetGCDReferenceSpell()
+    if gcdReferenceSpell == nil then
+        gcdReferenceSpell = false
+        if C_Spell and C_Spell.DoesSpellExist then
+            for i = 1, #GCD_REFERENCE_CANDIDATES do
+                local id = GCD_REFERENCE_CANDIDATES[i]
+                local ok, exists = pcall(C_Spell.DoesSpellExist, id)
+                if ok and exists == true then
+                    gcdReferenceSpell = id
+                    break
+                end
+            end
+        end
+    end
+    if gcdReferenceSpell then return gcdReferenceSpell end
+    return nil
+end
 -- 0.4s steps / 0.1s memo: every step is a threshold-gate evaluation (curve + widget round
 -- trip), so this costs at most 4 per 0.1s plus one per ability on cooldown - and 0.4s is the
 -- game's default spell-queue window, so rounding up by a step never shows a press that fails.
@@ -896,7 +1088,9 @@ local function GCDLookahead()
     if now - lookaheadAt < LOOKAHEAD_MEMO then return lookaheadSecs end
     lookaheadAt, lookaheadSecs = now, nil
     if not (C_Spell and C_Spell.GetSpellCooldownDuration and BlizzardAPI.IsDurationBelowSeconds) then return nil end
-    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, GCD_DUMMY_SPELL)
+    local reference = BlizzardAPI.GetGCDReferenceSpell()
+    if not reference then return nil end
+    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, reference)
     if not ok or not DurationObjectActive(gcd) then return nil end
     for i = 1, #LOOKAHEAD_STEPS do
         local below = BlizzardAPI.IsDurationBelowSeconds(gcd, LOOKAHEAD_STEPS[i])
@@ -934,27 +1128,20 @@ end
 BlizzardAPI.IsOffGCDSpell = IsOffGCD
 
 --- Is the player's global cooldown running? true / false, or nil when unknown: the GCD
---- dummy is absent from the client's spell data (WoW Forever) or the read failed. Read
---- from the dummy's duration object (the same evidence GCDLookahead uses), memoized for
+--- reference spell is absent from the client's spell data or the read failed. Read
+--- from the reference's duration object (the same evidence GCDLookahead uses), memoized for
 --- one frame so per-icon callers can skip their own per-spell GCD query while no GCD
 --- runs. Callers must treat nil as "ask the spell itself".
 local gcdRunningAt, gcdRunning = -1, nil
-local gcdDummyExists  -- resolved once: static spell data
 function BlizzardAPI.IsGlobalCooldownRunning()
     local now = GetTime()
     if now == gcdRunningAt then return gcdRunning end
     gcdRunningAt, gcdRunning = now, nil
-    if gcdDummyExists == nil then
-        local okExists, exists = false, nil
-        if C_Spell and C_Spell.DoesSpellExist then
-            okExists, exists = pcall(C_Spell.DoesSpellExist, GCD_DUMMY_SPELL)
-        end
-        gcdDummyExists = okExists and exists == true
-    end
-    if not gcdDummyExists or not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
-    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, GCD_DUMMY_SPELL)
+    local reference = BlizzardAPI.GetGCDReferenceSpell()
+    if not reference or not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
+    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, reference)
     if not ok then return nil end
-    -- With the dummy present, no duration object means no GCD (as GCDLookahead reads it).
+    -- With the reference present, no duration object means no GCD (as GCDLookahead reads it).
     gcdRunning = DurationObjectActive(gcd)
     return gcdRunning
 end

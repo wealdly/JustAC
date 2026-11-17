@@ -58,7 +58,7 @@ data (ranks make exact-id lists miss; wago.tools carries the Forever build as `w
 | H10 | Does the Cooldown Manager have entries for a Forever class? | `forever` G | MaintenanceTracker's buff bridge works unchanged |
 | H11 | Are combo points (`GetComboPoints`) plain in combat? | `forever` B | Finisher gating for rogue and feral |
 | H12 | Does `GetManaRegen` casting regen move with the five-second rule? | `forever` E, before/after a cast | Spirit-tap / five-second-rule cue for healers and casters |
-| H13 | The retail GCD dummy (61304) is not in Forever's spell data. Does it still answer, and does a bar spell's `isOnGCD` track the GCD? | `forever` B "GCD dummy", D `onGCD=` right after a cast | Which spell CooldownTracking's GCD lookahead and `GetGCDInfo` should read on Forever (today they get nothing and silently disable) |
+| H13 | The retail GCD dummy (61304) is not in Forever's spell data. Does it still answer, and does a bar spell's `isOnGCD` track the GCD? | `forever` B "GCD dummy", D `onGCD=` right after a cast | Answered 2026-11-17 by `gcdref`: 61304 is absent; reference spell 1283885 tracks the GCD plainly in combat, and production now reads it (FOREVER_COMBAT_SIGNALS.md "GCD reference spell") |
 | H14 | Does hotkey lookup find the button for a low rank AND for the top rank? | `forever` D `key=` / `keyTop=` | Whether curated lists can name any rank, or must match the rank on the bar |
 | H15 | Do `[AllowLoadGameType mainline]` files load on camelot? | `forever` A: AssistedCombatManager, PersonalResourceDisplayFrame, `.classFrame`, combo bar frame | Which Blizzard frames the shell can still lean on; expected: manager + resource display yes, class frame + combo bars no |
 

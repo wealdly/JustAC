@@ -81,7 +81,6 @@ end
 -- an unreadable value never adds to the count. Cached briefly so the per-frame
 -- queue build stays cheap. Nameplate frames are restricted, so we go through the
 -- unit TOKENS, not C_NamePlate.GetNamePlates().
-local UnitCanAttack       = UnitCanAttack
 local UnitThreatSituation = _G.UnitThreatSituation
 local UnitAffectingCombat = _G.UnitAffectingCombat
 local NAMEPLATE_UNITS, NAMEPLATE_TARGETS = {}, {}
@@ -126,8 +125,19 @@ end
 -- reasons: plates, hostile, threat (player on the list), widened (Forever: counted through
 -- pet/party threat or targeting), others (plainly in combat, not counted: another fight)
 -- and unknown (a hostile or present plate with an unreadable read).
+--- "Prioritize Your Own Targets": another player's mob (tapped by someone outside your group)
+--- that is not attacking you does not count toward multi-target decisions. Unknown reads count.
+local function OthersMobNotOnMe(unit)
+    local okTap, denied = pcall(UnitIsTapDenied, unit)
+    if not okTap or IsSecretValue(denied) or denied ~= true then return false end
+    return BlizzardAPI.SafeUnitIsUnit ~= nil and BlizzardAPI.SafeUnitIsUnit(unit .. "target", "player") == false
+end
+
 local function ScanEngaged(out)
     local n = 0
+    local addon = BlizzardAPI.GetAddon and BlizzardAPI.GetAddon()
+    local profile = addon and addon.db and addon.db.profile
+    local ownOnly = profile ~= nil and profile.prioritizeOwnTargets == true
     local widened = BlizzardAPI.IsForever and BlizzardAPI.IsForever()
     if out then
         out.plates, out.hostile, out.threat, out.widened, out.others, out.unknown = 0, 0, 0, 0, 0, 0
@@ -148,7 +158,9 @@ local function ScanEngaged(out)
             if out then out.plates = out.plates + 1 end
             local hostile = UnitCanAttack("player", u)
             unread = IsSecretValue(hostile)
-            if not unread and hostile then
+            if not unread and hostile and ownOnly and OthersMobNotOnMe(u) then
+                if out then out.others = out.others + 1 end
+            elseif not unread and hostile then
                 if out then out.hostile = out.hostile + 1 end
                 local ok, ts = pcall(UnitThreatSituation, "player", u)
                 unread = not ok or IsSecretValue(ts)
@@ -616,6 +628,11 @@ function BlizzardAPI.GetPartyLowCount()
     return n
 end
 
+-- pcall probes taking their inputs as arguments, so the per-call paths below
+-- allocate no closure.
+local function HasKey(t, key) return t[key] ~= nil end
+local function LengthOf(t) return #t end
+
 --- Is this unit currently below the alert threshold? Key existence only.
 --- @param unit string "player" or "party1".."party4"
 function BlizzardAPI.IsUnitLow(unit)
@@ -624,7 +641,7 @@ function BlizzardAPI.IsUnitLow(unit)
     local info = mgr and mgr.partyHealthInfo
     local byUnit = info and info.unitInfo
     if not byUnit then return false end
-    local ok, present = pcall(function() return byUnit[unit] ~= nil end)
+    local ok, present = pcall(HasKey, byUnit, unit)
     return ok and present == true
 end
 
@@ -715,10 +732,15 @@ local THRESHOLD_CURVE_CAP = 64   -- distinct thresholds; real use is under a doz
 --- range, NaN rejected. Quantizing bounds the curve cache and lifts the memo hit
 --- rate when generated data (SimC absolute->percent conversion) yields long
 --- fractions that differ meaninglessly.
+-- Thresholds are quantized to the nearest 5%: each distinct value builds and caches its own
+-- engine curve, and one shared 5% ladder keeps that set small (user-facing controls use 10%
+-- steps). The finest a health or power question can ask is therefore 5 points; converted
+-- source gates move by at most 2.5 (energy 59 -> 60, 79 -> 80).
+local PCT_STEP = 5
 local function NormalizePct(pct)
     if type(pct) ~= "number" or pct ~= pct then return nil end   -- nil / NaN
     if pct < 0 then pct = 0 elseif pct > 100 then pct = 100 end
-    return math_floor(pct * 10 + 0.5) / 10
+    return math_floor(pct / PCT_STEP + 0.5) * PCT_STEP
 end
 
 --- Build + SELF-TEST one threshold curve: flat-high below `t`, flat-zero at and
@@ -812,7 +834,11 @@ end
 -- Per-tick memo. A rotation build asks the same question many times inside one
 -- update, and every miss costs a curve evaluation plus a widget round-trip.
 -- "?" stands in for nil, which a Lua table cannot store as a cached answer.
+-- Memo layout: belowMemo[kind][unit][pct], kind = "h" for health or the power type
+-- (or "p" when none was given) for power. Nested rather than a concatenated string
+-- key so a hit builds no string; leaves persist and are wiped in place each window.
 local belowMemo, belowMemoAt = {}, 0
+local HEALTH_KIND, POWER_KIND_DEFAULT = "h", "p"
 local BELOW_MEMO_WINDOW = 0.1
 local NO_ANSWER = "?"
 -- Cost counters. Each MISS is a curve evaluation plus a FontString round-trip;
@@ -831,12 +857,31 @@ local function CachedBelow(unit, pct, isPower, powerType)
     if not pct then return nil end
     local now = GetTime()
     if now - belowMemoAt >= BELOW_MEMO_WINDOW then
-        wipe(belowMemo)
+        for _, byUnit in pairs(belowMemo) do
+            for _, leaf in pairs(byUnit) do wipe(leaf) end
+        end
         belowMemoAt = now
         belowWipes = belowWipes + 1
     end
-    local key = (isPower and "p" or "h") .. tostring(powerType or "") .. "|" .. unit .. "|" .. pct
-    local hit = belowMemo[key]
+    local kind = HEALTH_KIND
+    if isPower then
+        if powerType ~= nil then
+            kind = powerType
+        else
+            kind = POWER_KIND_DEFAULT
+        end
+    end
+    local byUnit = belowMemo[kind]
+    if not byUnit then
+        byUnit = {}
+        belowMemo[kind] = byUnit
+    end
+    local leaf = byUnit[unit]
+    if not leaf then
+        leaf = {}
+        byUnit[unit] = leaf
+    end
+    local hit = leaf[pct]
     if hit ~= nil then
         belowHits = belowHits + 1
         if hit == NO_ANSWER then return nil end
@@ -844,7 +889,7 @@ local function CachedBelow(unit, pct, isPower, powerType)
     end
     belowMisses = belowMisses + 1
     local result = EvaluateBelow(unit, pct, isPower, powerType)
-    belowMemo[key] = (result == nil) and NO_ANSWER or result
+    leaf[pct] = (result == nil) and NO_ANSWER or result
     return result
 end
 
@@ -915,6 +960,33 @@ end
 function BlizzardAPI.HiddenInContent(hideIn)
     if not (hideIn and next(hideIn)) then return false end
     return hideIn[BlizzardAPI.GetContentType()] == true
+end
+
+-- Group membership. IsInGroup and IsInRaid are absent from both clients' generated API
+-- docs, so whether they can return secret values is undocumented: every read goes
+-- through ReadableBool, and an unreadable or failed call is unknown (nil), never solo.
+local function ReadGroupProbe(fn)
+    if not fn then return nil end
+    local ok, value = pcall(fn)
+    if not ok then return nil end
+    return ReadableBool(value)
+end
+
+--- Is the player in a party or raid? true / false, or nil when unknown.
+function BlizzardAPI.IsGrouped()
+    return ReadGroupProbe(IsInGroup)
+end
+
+--- "solo", "party" or "raid", or nil when unknown. Content type is separate
+--- (GetContentType): a party in the open world and a party in a dungeon both read "party".
+function BlizzardAPI.GetGroupContext()
+    local grouped = BlizzardAPI.IsGrouped()
+    if grouped == nil then return nil end
+    if grouped == false then return "solo" end
+    local raid = ReadGroupProbe(IsInRaid)
+    if raid == nil then return nil end
+    if raid then return "raid" end
+    return "party"
 end
 
 function BlizzardAPI.IsUnitHealthBelow(unit, pct)
@@ -1253,7 +1325,7 @@ function BlizzardAPI.IsUnitCrowdControlled(unit)
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs) then return false end
     local ok, t = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, "HARMFUL|CROWD_CONTROL")
     if not ok or type(t) ~= "table" then return false end
-    local okN, n = pcall(function() return #t end)
+    local okN, n = pcall(LengthOf, t)
     if not okN or type(n) ~= "number" then return false end
     if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(n) then return false end
     return n > 0
@@ -1944,7 +2016,9 @@ end
 -- since health never regenerates at full) carries the top-off reminder and drops it the
 -- moment you hit full. So this stays SHORT: long enough to overlap the onset of a sustained
 -- regen run, no longer (a longer window would keep the reminder up after a no-damage pull).
--- Combat state is never secret, so the window itself is fully reliable.
+-- Combat state is never secret, so the window itself is fully reliable. This is the
+-- "after" half of the post-combat phase (GetCombatPhase); its length was set for health
+-- regen onset, not for how fast combat resources drain.
 local POSTCOMBAT_WINDOW_SECS = 10
 local combatEndedAt = -1e9
 function BlizzardAPI.NotePlayerLeftCombat()
@@ -1952,6 +2026,41 @@ function BlizzardAPI.NotePlayerLeftCombat()
 end
 function BlizzardAPI.IsInPostCombatDowntime()
     return (GetTime() - combatEndedAt) <= POSTCOMBAT_WINDOW_SECS
+end
+
+-- The fight is ending: the last engaged enemy, not a boss, is CONFIRMED below this health.
+-- 20%, matching the queue's execute probe so both share one threshold memo per tick; it is
+-- also where a lone trash mob is genuinely a few globals from dead.
+BlizzardAPI.FIGHT_ENDING_TARGET_PCT = 20
+
+--- Is the current fight about to end? Asked in combat; the caller owns the combat check.
+--- Every clause must be a positive read, so any unknown answers false:
+---   * exactly one engaged enemy (0 means it could not be counted, not "one left");
+---   * a live attackable target that is not a boss (a dying boss is an execute phase);
+---   * a confirmed below-threshold health gate (== true, never just non-false).
+--- @param enemyCount number|nil the engaged-enemy count when the caller already has it
+function BlizzardAPI.IsFightEnding(enemyCount)
+    if enemyCount == nil then enemyCount = BlizzardAPI.GetEngagedEnemyCount() end
+    if enemyCount ~= 1 then return false end
+    if not (UnitExists("target") and UnitCanAttack("player", "target")) then return false end
+    if BlizzardAPI.IsTargetBoss() then return false end
+    return BlizzardAPI.IsUnitHealthBelow("target", BlizzardAPI.FIGHT_ENDING_TARGET_PCT) == true
+end
+
+--- The combat phase: "precombat", "combat" or "postcombat". Post-combat straddles the end
+--- of combat, so a second value says which half: "ending" (still in combat, the fight is
+--- ending) or "after" (out of combat, inside the post-combat window). Phase reads are for
+--- recommendation logic; anything touching secure frames uses InCombatLockdown() instead.
+--- This counts engaged enemies itself; a hot path that already has the count calls
+--- IsFightEnding(count) instead.
+--- @return string phase, string|nil half
+function BlizzardAPI.GetCombatPhase()
+    if UnitAffectingCombat("player") then
+        if BlizzardAPI.IsFightEnding() then return "postcombat", "ending" end
+        return "combat", nil
+    end
+    if BlizzardAPI.IsInPostCombatDowntime() then return "postcombat", "after" end
+    return "precombat", nil
 end
 
 -- Returns (percent, isEstimate). Out of combat: the exact percent, false. In combat

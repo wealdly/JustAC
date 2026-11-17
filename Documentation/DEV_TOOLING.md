@@ -256,6 +256,12 @@ It checks `CLASS_DEFENSIVE_DEFAULTS` and `DEFENSE_TIER` for the failure mode wit
 in-game symptom: an entry the player can never press. `IsSpellAvailable` hides it
 forever, so it quietly consumes a queue slot and nothing says why.
 
+For Forever's aura reads, also run `python tools/audit_forever_auras.py` (`--all` lists every
+side). It maps each class ability to the aura it applies, directly or through a triggered spell,
+and flags list conditions on an aura id that never appears and generated aura tables keyed by
+a cast whose aura has another id (Bloodrage's rage aura is 29131). The queue's own-aura clock
+reads by the cast's window, so those keys are safe there; a new reader keyed by aura id is not.
+
 There are two distinct ways to land there and they need different tests; the trap is
 that a **passive talent node** looks identical to the castable button it grants. The
 rule is `castable = reachable AND NOT SPELL_ATTR0_PASSIVE (0x40)`. Both are explained

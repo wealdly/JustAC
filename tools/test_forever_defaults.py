@@ -137,6 +137,42 @@ def main():
     check(sdb.IsDelayedPayoff(603) is True and sdb.IsDelayedPayoff(980) is False,
           "Forever: Bane of Doom pays off only in long fights; Bane of Agony ticks at once")
     check(r.IsDelayedPayoff(603) is False, "retail: no Forever delayed-payoff data")
+    for sid, held, why in ((7386, True, "Sunder Armor: an armor reduction pays off only over a long fight"),
+                           (11597, True, "every Sunder Armor rank"), (770, True, "Faerie Fire"),
+                           (704, True, "Curse of Recklessness"), (8647, True, "Expose Armor"),
+                           (772, False, "Rend deals its own damage"),
+                           (6343, False, "Thunder Clap deals damage"), (6673, False, "Battle Shout buffs you")):
+        check(sdb.IsDelayedPayoff(sid) is held, f"Forever slow payoff: {why}")
+    check(sdb.LandsAtTarget(100) is True and sdb.LandsAtTarget(20252) is True and sdb.LandsAtTarget(2983) is False,
+          "Forever: Charge and Intercept carry the player to the target; Sprint does not")
+    check(tuple(sdb.GetEnergize(100)) == (1, 9) and tuple(sdb.GetEnergize(6178)) == (1, 12),
+          "Forever: Charge gives 9 rage at rank 1, 12 at rank 2 (data in tenths)")
+    check(tuple(sdb.GetEnergize(1752)) == (4, 1) and tuple(sdb.GetEnergize(1833)) == (4, 2),
+          "Forever: Sinister Strike builds one combo point, Cheap Shot two")
+    check(sdb.GetEnergize(633) is None and sdb.GetEnergize(772) is None,
+          "Forever: Lay on Hands' mana goes to its target; Rend gives nothing")
+    check(r.LandsAtTarget(100) is False and r.GetEnergize(100) is None, "retail: no Forever look-ahead data")
+    for sid, role, why in ((71, "tank", "Defensive Stance carries the effectively-tank aura"),
+                           (5487, "tank", "Bear Form"), (25780, "tank", "Righteous Fury"),
+                           (355, "taunt", "Taunt"), (6795, "taunt", "Growl"), (694, "taunt", "Mocking Blow"),
+                           (1161, "taunt", "Challenging Shout"),
+                           (586, "drop", "Fade"), (9578, "drop", "Fade rank 2"), (1966, "drop", "Feint"),
+                           (8998, "drop", "Cower"), (5384, "drop", "Feign Death"),
+                           (7386, "boost", "Sunder Armor adds threat"),
+                           (78, None, "Heroic Strike has no threat effect in the data"),
+                           (2565, None, "Shield Block is mitigation, not threat")):
+        check(sdb.GetThreatRole(sid) == role, f"Forever threat role: {why} ({sdb.GetThreatRole(sid)})")
+    check(r.GetThreatRole(355) is None, "retail: no Forever threat data")
+    check(sdb.GainsOverTime(2687) is True and sdb.GainsOverTime(5229) is True,
+          "Forever: Bloodrage and Enrage keep paying rage after the cast")
+    check(sdb.GainsOverTime(100) is False and sdb.GainsOverTime(18499) is False,
+          "Forever: Charge pays at once; Berserker Rage is no gain over time")
+    check(r.GainsOverTime(2687) is False, "retail: no Forever gain-over-time data")
+    check(sdb.GetSelfAuraSeconds(2687) == 10 and sdb.GetSelfAuraSeconds(1719) == 15,
+          "Forever: Bloodrage's triggered rage aura lasts 10s; Recklessness 15s")
+    check(sdb.GetSelfAuraSeconds(78) is None and sdb.GetSelfAuraSeconds(71) is None,
+          "Forever: Heroic Strike puts no aura on you; a stance has no duration")
+    check(r.GetSelfAuraSeconds(2687) is None, "retail: no Forever self-aura data")
     check(r.GetInterruptAbility(99).kind == "cc" and r.GetInterruptAbility(12809) is None,
           "retail: Incapacitating Roar kept, no Forever-only entries")
 

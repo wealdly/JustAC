@@ -76,7 +76,9 @@ ADD = {"warrior": [6673]}   # Battle Shout: the tank (Protection) sim list has n
 # are read live (rank-1 ids). Everything else in the 2-target tier stays the sim's own call on
 # whether AoE beats single-target damage there.
 AOE_LEAD = {"warrior": [6343]}   # Thunder Clap
-AOE_LEAD_TIERS = ["cleave", "aoe"]
+# A pack attack leads from three targets: at two, a low-level Thunder Clap deals less than the
+# single-target attacks it would displace, for more rage.
+AOE_LEAD_TIERS = ["aoe"]
 
 # Abilities the level-60 sims leave out but levelling play needs (tools/forever-guides, and the
 # missing-abilities audit of 2026-10-07), by ability name; the build exits on one the class
@@ -95,20 +97,29 @@ EXTRA = {
     # Reactive melee attacks (usable only after a dodge, parry or kill) lead when lit; until then
     # the game reports them unusable and they trail. The sims omit them or keep them defensive.
     # Launch guides: Demoralizing Shout is upkeep only when nobody else covers it (a missing
-    # debuff); damage trees keep it behind their attacks, the tank leads with it.
-    "warrior": [dict(spell="demoralizing_shout", trees=["protection"], tiers=["cleave", "aoe"],
-                     at="front", gates=["dot"]),
-                dict(spell="demoralizing_shout", trees=["arms", "fury"], tiers=["cleave", "aoe"],
+    # debuff); damage trees keep it behind their attacks (Protection's is TANK_ONLY).
+    "warrior": [dict(spell="demoralizing_shout", trees=["arms", "fury"], tiers=["cleave", "aoe"],
                      at="end", gates=["dot"]),
                 dict(spell="victory_rush", trees=["arms", "fury"], at="front"),
+                # Protection's sim omits Hamstring; without an entry it joined as an ungated
+                # pool filler. Listed, the finisher rule (REGATE) holds it.
+                dict(spell="hamstring", trees=["protection"], at="end"),
+                dict(spell="rend", trees=["protection"], at="before:heroic_strike", move=True),
+                # Its single-target Thunder Clap is the tank's attack-speed slow (mitigation, guides
+                # disagree on upkeep); as damage it is a pack attack, as in Arms.
+                dict(spell="thunder_clap", trees=["protection"], tiers=AOE_LEAD_TIERS,
+                     at="after:revenge", move=True),
                 # Arms: Overpower > Mortal Strike > Execute > Slam; Rend only with a second
                 # enemy; Sweeping Strikes leads multi-target play.
                 dict(spell="mortal_strike", trees=["arms"], at="after:overpower", move=True),
                 dict(spell="execute", trees=["arms"], at="after:mortal_strike", move=True),
                 dict(spell="rend", trees=["arms"], tiers=["cleave", "aoe"], at="after:slam", move=True),
-                # Untalented warriors use this list: below level 20 (no Slam, no Mortal Strike)
-                # Rend is one of the few damaging buttons, so single target keeps it last.
-                dict(spell="rend", trees=["arms"], tiers=["st"], at="end", gates=["dot"], copy=True),
+                # Untalented warriors use this list. Single target puts Rend (while missing) ahead
+                # of Heroic Strike, as the levelling guides open (Charge, Rend, then Heroic
+                # Strike): a priority list holds a cheaper spender for a higher one, so below it
+                # Rend would wait on Heroic Strike's rage.
+                dict(spell="rend", trees=["arms"], tiers=["st"], at="before:heroic_strike", gates=["dot"],
+                     copy=True),
                 dict(spell="sweeping_strikes", trees=["arms"], tiers=["cleave", "aoe"],
                      at="before:battle_stance"),
                 # Fury (low attack power, i.e. levelling): Whirlwind > Execute > Bloodthirst >
@@ -215,18 +226,45 @@ EXTRA = {
 #   or_known: ...or whenever this talent is known: with Shadow and Flame the launch
 #            Destruction guide uses Shadowburn on cooldown (good enough without timing its
 #            buff, whose id is not in the data).
+#   or_none_known: its resource condition also holds while none of these spells is learned.
+#            Heroic Strike waits for excess rage, but before a warrior learns a main rage
+#            spender all rage is excess: otherwise Hamstring (which waits only on those
+#            spenders being unavailable) spends every point for little damage (2026-11-17
+#            level-8 capture). Once one is learned the original condition returns.
+#   needs_known: only once at least one of these spells is learned. Hamstring "with spare
+#            rage" has no spare rage before a main spender exists: at 10-14 rage it would
+#            otherwise spend what Heroic Strike (15) is building toward.
+#   or_execute: ...or while the target is below this percent. On a dying target the rage left
+#            drains out of combat anyway, and Hamstring is instant: it finishes the target while
+#            a next-swing attack waits on the swing (2026-11-17, player observation).
+#   trees:   limit the entry to these trees (default: every tree).
+#   A spell list may instead be a {tree: [names]} dict (a talent style's own spenders); a tree it
+#   does not name is skipped.
+WARRIOR_SPENDERS = {"arms": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
+                    "fury": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
+                    "protection": ["revenge", "shield_slam"]}
 REGATE = {
     "warlock": {"life_tap": dict(starved=True, health=50),
                 "hellfire": dict(health=50, near=10),
                 "shadowburn": dict(execute=20, or_known=426316)},
     "mage": {"evocation": dict(starved=True)},
     "druid": {"innervate": dict(starved=True)},
-    "warrior": {"bloodrage": dict(health=50)},
+    "warrior": {"bloodrage": dict(health=50),
+                # Each talent style names its own main spenders: Protection levels on Heroic
+                # Strike until Revenge (14) or Shield Slam (talent) arrives (forever-guides).
+                "heroic_strike": dict(or_none_known=WARRIOR_SPENDERS),
+                "hamstring": dict(needs_known=WARRIOR_SPENDERS, or_execute=20)},
 }
 
 
-def regate(cls, entries, chains):
+def regate(cls, tree, entries, chains):
     for name, spec in REGATE.get(cls, {}).items():
+        if spec.get("trees") and tree not in spec["trees"]:
+            continue
+        by_tree = [k for k in ("or_none_known", "needs_known") if isinstance(spec.get(k), dict)]
+        if any(tree not in spec[k] for k in by_tree):
+            continue
+        spec = dict(spec, **{k: spec[k][tree] for k in by_tree})
         chain = chains.get(name)
         sid = chain and rank1(chain)
         for e in entries:
@@ -250,6 +288,22 @@ def regate(cls, entries, chains):
                 near = {"t": "near", "n": spec["near"]}
                 if near not in gates:
                     gates.append(near)
+            if spec.get("or_none_known"):
+                power = [g for g in gates if g["t"] == "power"]
+                unknown = [{"t": "known", "id": rank1(chains[n]), "neg": True}
+                           for n in spec["or_none_known"] if chains.get(n)]
+                assert power and unknown, (cls, name, "or_none_known needs a power gate and spells")
+                gates = [g for g in gates if g not in power]
+                cond = power[0] if len(power) == 1 else {"t": "all", "g": power}
+                gates.append({"t": "any", "g": [cond, {"t": "all", "g": unknown}]})
+            if spec.get("needs_known"):
+                known = [{"t": "known", "id": rank1(chains[n])} for n in spec["needs_known"] if chains.get(n)]
+                assert known, (cls, name, "needs_known names no learnable spell")
+                if spec.get("or_execute"):
+                    # required: an unreadable target health is "not dying", or the whole group
+                    # reads unknown and the entry leaks open (2026-11-17 capture: Hamstring).
+                    known.append({"t": "execute", "op": "<", "pct": spec["or_execute"], "required": True})
+                gates.append(known[0] if len(known) == 1 else {"t": "any", "g": known})
             e["gates"], e["w"] = gates, True
 
 
@@ -703,6 +757,13 @@ class Conv:
             return UNK
         if name in ("auraRemainingTime", "dotRemainingTime"):
             return self.remaining(op, name, side, val)
+        if n is None and name == "remainingTime" and op in ("<", "<="):
+            # "A cast would not finish as planned" (frost Fire Blast: fight time left under
+            # Frostbolt's cast), so the instant goes: on a dying target (confirmed below the
+            # execute line; unreadable health is not dying), or while being hit, when every
+            # cast expects pushback (the player's own hits, UNIT_COMBAT).
+            return {"t": "any", "g": [{"t": "execute", "op": "<", "pct": EXECUTE_PCT, "required": True},
+                                      {"t": "hit"}]}
         if n is None and "remainingTime" in json.dumps(val):
             # No fight-duration signal: keep this branch unconfirmed, rather than
             # erasing it and turning a conditional mana spender into a filler.
@@ -1089,6 +1150,15 @@ NOT_DPS = {
     "priest":  ["focused_casting", "dark_sacrifice"],
 }
 NOT_DPS_ALL = ["grovel"]
+# The queue is a damage queue in every tree, a tank tree included: its list is that talent
+# style's damage order. Presses whose value is threat or mitigation leave the tank lists and the
+# pool (the tank sims lead with them); tank play belongs to the defensive queue. A damage
+# tree keeps one its guides list (Demoralizing Shout upkeep in Arms and Fury).
+TANK_ONLY = {
+    "warrior": ["shield_block", "defensive_stance", "sunder_armor", "demoralizing_shout"],
+    "paladin": ["holy_shield"],
+    "druid":   ["demoralizing_roar"],
+}
 _mechanic = _cooldown = None
 
 
@@ -1220,7 +1290,7 @@ def condition_coverage(gates, path=""):
             status, reason = "partial", "three-valued group; inspect child coverage and live verdicts"
         elif kind in ("power", "execute", "health") and gate.get("op") not in ("<", "<=", ">", ">="):
             status, reason = "partial", "runtime supports threshold operators only"
-        elif kind in ("known", "stealth", "targets", "totem", "near", "swing",
+        elif kind in ("known", "stealth", "targets", "totem", "near", "swing", "hit",
                       "resource", "power", "execute", "health", "cd", "prev", "starved"):
             status, reason = "fully supported", "runtime evaluator exists; live unknowns remain possible"
         else:
@@ -1285,6 +1355,12 @@ def main():
                     cooldown = PUSHBACK_MAX_CD
                 if cooldown < PUSHBACK_MAX_CD:
                     pushback_damage[sid] = cooldown
+        # A damage tree may still list one by guide (Demoralizing Shout upkeep): it rejoins below.
+        for name in TANK_ONLY.get(cls, []):
+            if name in chains:
+                pool.discard(rank1(chains[name]))
+            else:
+                unresolved.append(f"{cls}: TANK_ONLY {name} is not learnable")
         for name in NOT_DPS.get(cls, []) + NOT_DPS_ALL:
             if name in chains:
                 pool.discard(rank1(chains[name]))
@@ -1306,8 +1382,11 @@ def main():
                     entries.append({"id": sid, "delegated": False, "tiers": [t for t, _ in TIERS],
                                     "gates": [{"t": "buff", "id": sid, "dur": DURATION.get(sid), "neg": True}]})
             add_extras(cls, tree, entries, chains, unresolved)
-            regate(cls, entries, chains)
+            regate(cls, tree, entries, chains)
             generalize_entries(cls, tree, entries, chains)
+            if tree in TANK_TREES.get(cls, ()):
+                tank_only = {rank1(chains[n]) for n in TANK_ONLY.get(cls, []) if n in chains}
+                entries[:] = [e for e in entries if e["id"] not in tank_only]
             for sid in reversed(AOE_LEAD.get(cls, [])):
                 if not any(e["id"] == sid for e in entries):
                     entries.insert(0, {"id": sid, "delegated": False, "tiers": list(AOE_LEAD_TIERS), "gates": []})

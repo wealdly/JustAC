@@ -58,6 +58,12 @@ local function queueContentGroup(addon)
                 onSet = function() addon:ForceUpdate() end,
                 disabled = manaConservationDisabled,
             }),
+            prioritizeOwnTargets = W.toggle(addon, "prioritizeOwnTargets", {
+                name = L["Prioritize Your Own Targets"], desc = L["Prioritize Your Own Targets desc"],
+                order = 5, width = "normal", default = false,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = fullyDisabled,
+            }),
             hideItemAbilities = {
                 type = "toggle",
                 name = L["Allow Item Abilities"],

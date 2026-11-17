@@ -177,6 +177,28 @@ end
 -- casts) → cast bar fields (icon-hidden is the one that works, on an untainted Blizzard bar)
 -- → API fallback → fail-open.
 -- ═════════════════════════════════════════════════════════════════════════════
+
+-- Cast-bar field readers, each run under pcall (fields may carry secret booleans).
+-- File-level so a pass does not allocate a fresh closure per check while a target casts.
+local function ReadBarNotInterruptible(bar)
+    return bar.notInterruptible and true or false
+end
+
+local function ReadBarIconHidden(bar)
+    return bar.Icon and bar.HideIconWhenNotInterruptible
+        and bar.showIcon ~= false
+        and (bar.look == nil or bar.look == "UNITFRAME")
+        and not bar.Icon:IsShown()
+end
+
+local function ReadBarBorderShieldShown(bar)
+    return bar.BorderShield and bar.BorderShield:IsShown() and (bar.BorderShield:GetAlpha() or 0) > 0.5
+end
+
+local function ReadBarShieldShown(bar)
+    return bar.Shield and bar.Shield:IsShown() and (bar.Shield:GetAlpha() or 0) > 0.5
+end
+
 local function IsTargetCastInterruptible(nameplate)
     local evtActive, evtInterruptible, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
     local bar, barSource = FindVisibleCastBar(nameplate)
@@ -212,7 +234,7 @@ local function IsTargetCastInterruptible(nameplate)
         -- Direct field: notInterruptible. Blizzard's own mixin NEVER assigns this - it exists
         -- there only as a local/parameter - so on a stock bar this is always nil and falls
         -- through. Kept for a replacement bar that does expose it as a field.
-        local niOk, ni = pcall(function() return bar.notInterruptible and true or false end)
+        local niOk, ni = pcall(ReadBarNotInterruptible, bar)
         if niOk and ni then return true, false, bar, true end
 
         -- Icon hidden when not interruptible. CastingBarMixin:ShouldIconBeShown returns false
@@ -222,25 +244,16 @@ local function IsTargetCastInterruptible(nameplate)
         -- "uninterruptible" for EVERY cast, silently suppressing every kick suggestion for
         -- that player, permanently. Compare against false, not truthiness: a replacement bar
         -- may not carry these fields at all, and nil must keep the signal rather than kill it.
-        local iconOk, iconHidden = pcall(function()
-            return bar.Icon and bar.HideIconWhenNotInterruptible
-                and bar.showIcon ~= false
-                and (bar.look == nil or bar.look == "UNITFRAME")
-                and not bar.Icon:IsShown()
-        end)
+        local iconOk, iconHidden = pcall(ReadBarIconHidden, bar)
         if iconOk and iconHidden then return true, false, bar, true end
 
         -- BorderShield visible = not interruptible (IsShown/GetAlpha inherit secret)
-        local shieldOk, shieldShown = pcall(function()
-            return bar.BorderShield and bar.BorderShield:IsShown() and (bar.BorderShield:GetAlpha() or 0) > 0.5
-        end)
+        local shieldOk, shieldShown = pcall(ReadBarBorderShieldShown, bar)
         if shieldOk and shieldShown then return true, false, bar, true end
 
         -- child-element cast bars use .Shield instead of .BorderShield
         if barSource == "childCastbar" then
-            local altOk, altShown = pcall(function()
-                return bar.Shield and bar.Shield:IsShown() and (bar.Shield:GetAlpha() or 0) > 0.5
-            end)
+            local altOk, altShown = pcall(ReadBarShieldShown, bar)
             if altOk and altShown then return true, false, bar, true end
         end
     end

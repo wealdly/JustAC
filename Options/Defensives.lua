@@ -322,6 +322,15 @@ function Defensives.CreateTabArgs(addon)
                             return (not std or stdHB) and (not ov or ovHB)
                         end,
                     }),
+                    -- Opt-in: presses the player did not ask the damage queue for. The threat
+                    -- spells come from Forever's spell data, so the toggle is Forever only.
+                    threatCues = W.toggle(addon, "defensives.threatCues", {
+                        name = L["Threat Cues"], desc = L["Threat Cues desc"],
+                        order = 3, width = "full", default = false,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = not forever,
+                        disabled = defensivesUnreachable,
+                    }),
                 },
             },
             -- SUSTAIN - defensive "position 0". NOT tank-only: the tank mitigation
@@ -553,13 +562,13 @@ function Defensives.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdateAll() end,
                         hidden = function() return not IsPetHealClass() end,
                     }),
-                    -- Stepped in 5s deliberately: the threshold becomes a curve point, and each
-                    -- distinct value builds and caches its own curve. A continuous slider would
-                    -- mint one per pixel dragged; 5% steps cap it at ~16 for the whole session.
+                    -- Stepped in 10s like every user-facing percent: the threshold becomes a curve
+                    -- point (the helper quantizes to 5%), and each distinct value builds and caches
+                    -- its own curve. A continuous slider would mint one per pixel dragged.
                     petHealThreshold = W.range(addon, "petHealThreshold", {
                         name = L["Pet Heal Threshold"],
                         desc = L["Pet Heal Threshold desc"],
-                        order = 4, width = "double", min = 10, max = 90, step = 5, default = 50,
+                        order = 4, width = "double", min = 10, max = 90, step = 10, default = 50,
                         onSet = function() addon:ForceUpdateAll() end,
                         hidden = function() return not IsPetHealClass() end,
                         disabled = function(a) return a.db.profile.showPetHealCue == false end,
@@ -789,6 +798,7 @@ function Defensives.CreateTabArgs(addon)
             local def = p.defensives
             def.showProcs             = true
             def.hideEmergencyUntilLow = true
+            def.threatCues            = false
             def.emergencyPotionChoice = nil
             def.emergencyPotionWaitBelow = nil
             p.showMaintenanceSlot = true

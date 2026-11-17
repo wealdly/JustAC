@@ -23,6 +23,7 @@ SRC = Path(__file__).resolve().parent.parent / "SpellQueue.lua"
 # Only the two leaves the cases use need stubbing. Lua resolves globals at call time, so a
 # branch the cases never reach needs nothing behind it.
 PRELUDE = """
+SpellQueue = SpellQueue or {}
 stealthed = false
 function IsStealthed() return stealthed end
 ctx = { strict = false }
@@ -84,6 +85,7 @@ def check_automatic_burst():
         SpellDB={
             IsPureSelfAura=function() return selfBuff end,
             IsDelayedPayoff=function() return delayed end,
+            GainsOverTime=function() return overTime end,
             GetSpecKey=function() return 'ROGUE_F' end,
         }
         BlizzardAPI={
@@ -118,12 +120,14 @@ def check_automatic_burst():
         ("seconds=0", False), ("seconds=secret", False),
         ("BlizzardAPI.PeekBaseCooldownSeconds=function() error('denied') end", False),
         ("b.profile.burstTriggers={ROGUE_F={1259799}}", False),
-        # Damage that lands only after a long delay (Bane of Doom) waits for the same fights,
-        # whatever its cooldown or aura shape.
+        # A slow payoff on the target alone (Bane of Doom, an armor reduction such as Sunder
+        # Armor) waits for a target that lasts, whatever its cooldown or aura shape. A pack of
+        # trash does not make that one target live longer.
         ("delayed=true;selfBuff=false;seconds=0", True),
         ("delayed=true;selfBuff=false;classification='elite'", False),
         ("delayed=true;selfBuff=false;boss=true", False),
-        ("delayed=true;selfBuff=false;b.ctxEnemies=2", False),
+        ("delayed=true;selfBuff=false;b.ctxEnemies=2", True),
+        ("delayed=true;selfBuff=false;b.ctxEnemies=2;classification='elite'", False),
         ("delayed=true;selfBuff=false;SpellQueue._rotationIsCustom=true", False),
         ("delayed=true;selfBuff=false;b.contextOrder='off'", False),
         # A normal target fought this long is no quick trash kill.
@@ -131,13 +135,23 @@ def check_automatic_burst():
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80", False),
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80;b.inCombat=false", True),
         ("seconds=180;b.now=100;targetFightStartedAt=60", False),
+        # "Prioritize Your Own Targets": a low-value target is never worthwhile.
+        ("SpellQueue._lowValueTarget=true;classification='elite'", True),
+        ("SpellQueue._lowValueTarget=true;delayed=true;selfBuff=false;boss=true", True),
+        ("SpellQueue._lowValueTarget=true;b.profile.burstTriggers={ROGUE_F={1259799}}", False),
+        # A resource paid out over time (Bloodrage) waits out a confirmed dying last enemy, even
+        # on an elite; any other fight, or an unconfirmed one, offers it as before.
+        ("overTime=true;selfBuff=false;b.ctxDying=true;classification='elite'", True),
+        ("overTime=true;selfBuff=false;b.ctxDying=false", False),
+        ("overTime=true;selfBuff=false;b.ctxDying=nil", False),
+        ("overTime=false;selfBuff=false;b.ctxDying=true", False),
     ]
     for setup, expected in cases:
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
-            boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false
+            boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false;overTime=false
             LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
-            pick=false;target=true;SpellQueue._rotationIsCustom=false
+            pick=false;target=true;SpellQueue._rotationIsCustom=false;SpellQueue._lowValueTarget=nil
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
         """ + setup)
         assert lua.eval("HoldAutomaticBurst(1259799,b)") == expected, setup
@@ -150,12 +164,13 @@ def check_dying_long_casts():
     lua = LuaRuntime(unpack_returned_tuples=True)
     source = SRC.read_text(encoding="utf-8")
     lua.execute("""
-        RANK_SINK, ARCH_UNK, ARCH_MISS, GEOM_PEN, ROLE_PEN, LONG_CAST_MS = 9, 3, 4, 1, 1, 1500
-        castTimes, pick, secret = {}, false, {}
+        RANK_SINK, ARCH_UNK, ARCH_MISS, GEOM_PEN, ROLE_PEN, UNHASTED_GCD_SECONDS = 9, 3, 4, 1, 1, 1.5
+        castTimes, pick, secret, gcd = {}, false, {}, nil
         BlizzardAPI = {
             HasGamePick = function() return pick end,
             IsSecretValue = function(v) return v == secret end,
             GetCachedSpellInfo = function(id) return {castTime = castTimes[id]} end,
+            GetSpellGCD = function() return gcd end,
         }
         SpellDB = {}
         function ResolveBurstTriggers() return nil end
@@ -169,10 +184,12 @@ def check_dying_long_casts():
         ("castTimes[1]=secret", True, 3, "a hidden cast time is not a long cast"),
         ("castTimes[1]=nil", True, 3, "an unknown cast time is not a long cast"),
         ("castTimes[1]=2000; pick=true", True, 3, "retail (game pick): unchanged"),
+        ("castTimes[1]=1400; gcd=1.304", True, 9, "longer than a hasted 1.304s GCD: sinks"),
+        ("castTimes[1]=1600; gcd=2", True, 3, "within the spell's own measured GCD: keeps its rank"),
     ]
     bad = 0
     for setup, dying, want, why in cases:
-        lua.execute("castTimes, pick = {}, false; " + setup)
+        lua.execute("castTimes, pick, gcd = {}, false, nil; " + setup)
         got = lua.eval("ContextRank(1, nil, nil, nil, false, false, %s)" % ("true" if dying else "false"))
         if got != want:
             bad += 1
@@ -284,6 +301,15 @@ def main():
         assert run('return GateVerdict({t="unconfirmed"}, ctx)') is False
         signal_cases += 1
     lua.globals().ctx.strict = False
+    # Being hit (Fire Blast's "a cast would not finish as planned"): our own hits, never unknown.
+    lua.execute("beingHit = nil; SpellQueue._BeingHit = function() return beingHit end")
+    for hit, expected in ((True, True), (False, False), (None, False)):
+        lua.globals().beingHit = hit
+        assert run('return GateVerdict({t="hit"}, ctx)') is expected, ("hit", hit)
+        signal_cases += 1
+    lua.execute("SpellQueue._BeingHit = nil")
+    assert run('return GateVerdict({t="hit"}, ctx)') is False, "no hit signal: not being hit"
+    signal_cases += 1
     print(f"Forever signal gates: {signal_cases} cases passed")
     lua.execute("gateCtx={}; BlizzardAPI.IsForever=function() return not hasPick end")
     source = SRC.read_text(encoding="utf-8")

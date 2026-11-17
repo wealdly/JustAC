@@ -126,8 +126,11 @@ def main():
             ranges[6343],ranges[78]=true,true
         """)
         assert build() == [expected], tree
-    queue.execute("entries=classes.WARRIOR_F.protection.aoe")
+    # Protection's Thunder Clap is a pack attack (two or more engaged enemies).
+    queue.execute("entries=classes.WARRIOR_F.protection.aoe;"
+                  "BlizzardAPI.GetEngagedEnemyCount=function() return 3 end")
     assert build("pinnedAlwaysShow[6343]=true") == [6343]
+    queue.execute("BlizzardAPI.GetEngagedEnemyCount=nil")
     assert build("b.contextOrder='off'") == [6343]
     assert db.IsTargetDot(6343) is False
     assert db.IsTrackedTargetAura(133) is False, "ordinary Fireball remains a repeatable nuke"

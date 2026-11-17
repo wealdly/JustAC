@@ -201,9 +201,31 @@ CHANNEL_ATTR1 = 0x4 | 0x40   # SPELL_ATTR1_IS_CHANNELLED / IS_SELF_CHANNELLED
 NEXT_SWING_ATTR0 = 0x4       # SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Raptor Strike, Maul)
 # A DoT: APPLY_AURA (6) of PERIODIC_DAMAGE (3) on the enemy target (6).
 DOT_EFFECT, DOT_AURA, ENEMY_TARGET = "6", "3", "6"
+CHARGE_EFFECT = "96"   # SPELL_EFFECT_CHARGE: the caster moves to the target (Charge, Intercept, Feral Charge)
+# Resource gains a cast grants the caster: ENERGIZE (power type in EffectMiscValue_0; rage is
+# stored in tenths) and ADD_COMBO_POINTS. Emitted as power type, amount in the game's units.
+ENERGIZE_EFFECT, COMBO_EFFECT = "30", "80"
+RAGE_POWER, COMBO_POWER = "1", 4
+# Threat roles from the spell data (2026-11-17 research): APPLY_AURA (6) of aura 668 is the
+# client's "effectively tank" aura (Defensive Stance, Bear Forms, Righteous Fury: what
+# UnitHasEffectivelyTankAura reads); ATTACK_ME (114) or aura MOD_TAUNT (11) taunts; THREAT (63)
+# or aura MOD_TOTAL_THREAT (103) below zero drops threat, as does FEIGN_DEATH (66); THREAT above
+# zero adds bonus threat (Sunder Armor).
+APPLY_AURA_EFFECT, TANK_AURA, TAUNT_EFFECT, TAUNT_AURA = "6", "668", "114", "11"
+# A resource that keeps arriving after the cast: PERIODIC_ENERGIZE (24) on the caster, put on by
+# the spell or by the spell it triggers (TRIGGER_SPELL, 64). Bloodrage: 10 rage, then 10 more over
+# 10 seconds, most of which a dying last enemy outlives.
+PERIODIC_ENERGIZE_AURA, TRIGGER_SPELL_EFFECT, CASTER_TARGET = "24", "64", "1"
+THREAT_EFFECT, TOTAL_THREAT_AURA, FEIGN_DEATH_AURA = "63", "103", "66"
 # A damage aura whose first tick comes this late pays off only in a long fight (Bane of Doom:
 # one hit after 60s). The queue holds such spells outside worthwhile fights.
 DELAYED_PAYOFF_MS = 30000
+# An armor reduction on the enemy (APPLY_AURA of the armor modifier, 674, misc 1 = armor, at
+# or below zero) that deals no damage of its own (Sunder Armor, Faerie Fire, Curse of
+# Recklessness, Expose Armor) also pays off only over a long fight: on a mob that dies in a few
+# global cooldowns its press and cost outweigh the armor it removes.
+ARMOR_AURA, ARMOR_MISC = "674", "1"
+DAMAGE_EFFECTS = {"2", "17", "31", "58", "121"}   # SCHOOL_DAMAGE and the weapon damage effects
 SUMMON_EFFECTS = {"28", "87", "88", "89", "90"}   # SUMMON, SUMMON_OBJECT_SLOT1-4 (totems)
 SCHOOL_DAMAGE = "2"
 # The cast's own hit as a share of hit + the DoT's total (client data, per rank). At or above
@@ -483,10 +505,106 @@ def main():
     for sid in sorted(s for s in shares if shares[s] >= FRONTAL_SHARE):
         lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({shares[sid]:.0%} upfront)")
     lines.append("}")
+    def armor_debuff(fx):
+        if any(e["Effect"] in DAMAGE_EFFECTS or (e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA)
+               for e in fx):
+            return False
+        return any(e["Effect"] == DOT_EFFECT and e["EffectAura"] == ARMOR_AURA
+                   and e.get("EffectMiscValue_0") == ARMOR_MISC and e.get("ImplicitTarget_0") == ENEMY_TARGET
+                   and float(e.get("EffectBasePointsF") or 0) <= 0 for e in fx)
+
     lines.append("local DELAYED_PAYOFF = {")
     for sid in sorted(sid for sid in class_ids if any(
             e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA
-            and num(e["EffectAuraPeriod"]) >= DELAYED_PAYOFF_MS for e in effects.get(str(sid), []))):
+            and num(e["EffectAuraPeriod"]) >= DELAYED_PAYOFF_MS for e in effects.get(str(sid), []))
+            or armor_debuff(effects.get(str(sid), []))):
+        lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # Spells that carry the caster to the target, every rank: while one is in flight the queue
+    # orders melee abilities as they will rank on arrival.
+    lines.append("local LANDS_AT_TARGET = {")
+    for sid in sorted(sid for sid in class_ids
+                      if any(e["Effect"] == CHARGE_EFFECT for e in effects.get(str(sid), []))):
+        lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # What a cast gives the caster, every rank: {power type, amount}. Read from the data (the
+    # live resource is secret in combat), for the queue's look-ahead.
+    lines.append("local ENERGIZE = {")
+    for sid in sorted(class_ids):
+        gain = None
+        for e in effects.get(str(sid), []):
+            amount = num(e.get("EffectBasePointsF") or 0)
+            # Caster only (implicit target 1): Lay on Hands' energize goes to the healed unit.
+            if e["Effect"] == ENERGIZE_EFFECT and amount > 0 and e.get("ImplicitTarget_0") == "1":
+                power = e["EffectMiscValue_0"]
+                if power == RAGE_POWER:
+                    amount = amount / 10
+                gain = (int(power), amount)
+            elif e["Effect"] == COMBO_EFFECT and amount > 0:
+                gain = (COMBO_POWER, amount)
+        if gain:
+            lines.append(f"    [{sid}] = {{{gain[0]}, {gain[1]:g}}},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # What a cast does to threat, every rank: "tank" (puts on the effectively-tank aura),
+    # "taunt", "drop" (sheds threat) or "boost" (bonus threat). The first that applies wins, in
+    # that order. Data for the defensive queue's threat cues; the queue itself reads none.
+    lines.append("local THREAT_ROLES = {")
+    for sid in sorted(class_ids):
+        fx = effects.get(str(sid), [])
+
+        def has(test):
+            # Signed: num() is a magnitude, and a threat drop is a negative amount.
+            return any(test(e, float(e.get("EffectBasePointsF") or 0)) for e in fx)
+        role = None
+        if has(lambda e, _: e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TANK_AURA):
+            role = "tank"
+        elif has(lambda e, _: e["Effect"] == TAUNT_EFFECT
+                 or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TAUNT_AURA)):
+            role = "taunt"
+        elif has(lambda e, n: (e["Effect"] == THREAT_EFFECT and n < 0)
+                 or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TOTAL_THREAT_AURA and n < 0)
+                 or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == FEIGN_DEATH_AURA)):
+            role = "drop"
+        elif has(lambda e, n: e["Effect"] == THREAT_EFFECT and n > 0):
+            role = "boost"
+        if role:
+            lines.append(f'    [{sid}] = "{role}",  -- {names.get(str(sid), '?')}')
+    lines.append("}")
+    def gains_over_time(sid, depth=0):
+        for e in effects.get(str(sid), []):
+            if (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == PERIODIC_ENERGIZE_AURA
+                    and e.get("ImplicitTarget_0") == CASTER_TARGET):
+                return True
+            trig = e.get("EffectTriggerSpell") or "0"
+            if depth < 1 and e["Effect"] == TRIGGER_SPELL_EFFECT and trig != "0" and gains_over_time(trig, depth + 1):
+                return True
+        return False
+    # How long the aura a cast puts on yourself lasts, every rank: the spell's own APPLY_AURA on
+    # the caster, or one from the spell it triggers (Bloodrage's rage aura is spell 29131).
+    # The queue shows that aura's time left on the icon while it runs, whatever the entry's
+    # conditions are; a form or stance (no duration) has none.
+    def self_aura_seconds(sid, depth=0):
+        fx = effects.get(str(sid), [])
+        if any(e["Effect"] == APPLY_AURA_EFFECT and e.get("ImplicitTarget_0") == CASTER_TARGET for e in fx):
+            seconds = duration(sid)
+            if seconds > 0:
+                return seconds
+        for e in fx:
+            trig = e.get("EffectTriggerSpell") or "0"
+            if depth < 1 and e["Effect"] == TRIGGER_SPELL_EFFECT and trig != "0":
+                seconds = self_aura_seconds(trig, depth + 1)
+                if seconds:
+                    return seconds
+        return 0
+    # An aura no longer than a global cooldown (Execute's 1s marker) is nothing to plan around.
+    lines.append("local SELF_AURA_SECONDS = {")
+    for sid in sorted(class_ids):
+        seconds = self_aura_seconds(sid)
+        if 1.5 < seconds <= 600:
+            lines.append(f"    [{sid}] = {seconds:g},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    lines.append("local GAINS_OVER_TIME = {")
+    for sid in sorted(sid for sid in class_ids if gains_over_time(sid)):
         lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
     lines.append("}")
     # On-next-swing abilities, every rank: the queue shows one as in progress while queued.
@@ -556,6 +674,11 @@ def main():
         "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
         "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",
         "SpellDB.FOREVER_DELAYED_PAYOFF = DELAYED_PAYOFF",
+        "SpellDB.FOREVER_LANDS_AT_TARGET = LANDS_AT_TARGET",
+        "SpellDB.FOREVER_ENERGIZE = ENERGIZE",
+        "SpellDB.FOREVER_THREAT_ROLES = THREAT_ROLES",
+        "SpellDB.FOREVER_GAINS_OVER_TIME = GAINS_OVER_TIME",
+        "SpellDB.FOREVER_SELF_AURA_SECONDS = SELF_AURA_SECONDS",
         "Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)",
         "Put(SpellDB.CLASS_PET_REZ_DEFAULTS, PET_REZ, true)",
         "Put(SpellDB.CLASS_GROUP_HELP_DEFAULTS, GROUP_HELP)",

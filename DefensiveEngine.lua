@@ -12,6 +12,8 @@ local UnitAffectingCombat = UnitAffectingCombat
 local wipe = wipe
 local ipairs = ipairs
 local pairs = pairs
+local next = next
+local pcall = pcall
 local math_min = math.min
 
 -- Module references (resolved at load time - DefensiveEngine loads after all deps in TOC)
@@ -72,7 +74,7 @@ local function PushEntry(results, spellID, isItem, isProcced, unusable, noResour
     e.spellID, e.isItem, e.isProcced = spellID, isItem, isProcced
     e.unusable, e.noResources = unusable, noResources
     e.precombat, e.topoff = precombat, topoff
-    e.waiting, e.storedID = nil, nil
+    e.waiting, e.storedID, e.threat = nil, nil, nil
     results[#results + 1] = e
     return e
 end
@@ -225,7 +227,7 @@ local GetAllyLowCounts
 --- party read is a workaround the game can block, and an unreadable count is "no": this
 --- only ever ADDS buttons, so failing closed hides an extra, never a defensive.
 local function PartyHurting(healing)
-    if not IsInGroup() then return false end
+    if BlizzardAPI.IsGrouped() ~= true then return false end
     local low, urgent = GetAllyLowCounts(healing)
     return (low or 0) >= 2 or (urgent or 0) >= 1
 end
@@ -755,6 +757,192 @@ end
 -- are the display fields AppendUsableSpells copies out; usableGate/realProc drive
 -- the buffer choice. All the semantics from the old inline body live here - see the
 -- comments; only the per-pass re-execution was removed.
+--------------------------------------------------------------------------------
+-- Self-lockouts (SpellDB.SELF_LOCKOUTS): Weakened Soul, Forbearance.
+--------------------------------------------------------------------------------
+-- The game reports the spell usable while the lockout aura blocks a self-cast, and the
+-- aura cannot be read in combat, so the hold is timed from our own cast. Two signals, both
+-- confirmed in the 2026-11-16 Forever captures:
+--   * UNIT_SPELLCAST_SENT's target name answers UnitIsUnit(name, "player") = true for a
+--     self-cast, @mouseover included (its text does NOT equal UnitName("player")).
+--     selfOnly entries skip this: the spell cannot land on anyone else.
+--   * UNIT_SPELLCAST_SUCCEEDED with the same castGUID: an "immune" attempt never succeeds,
+--     so it neither starts nor extends the hold.
+-- Unknown stays unknown: a secret, missing or non-true identity answer holds nothing.
+-- The hold is keyed by the lockout aura, so one cast holds every entry sharing it.
+local pendingSelfLockout = { guid = nil, entry = nil }
+local selfLockedUntil = {}   -- lockout aura id -> GetTime() the hold ends
+local AuraClock = LibStub("JustAC-AuraClock", true)
+
+local function Unsecret(v)
+    return BlizzardAPI.Unsecret(v)
+end
+
+--------------------------------------------------------------------------------
+-- Threat cues (opt-in: profile.defensives.threatCues). The game's own threat reads on the
+-- target, as Blizzard's frames use them (captured readable in a group, 2026-11-17):
+--   * a damage dealer or healer about to pull aggro (state 1) or holding it (2-3): a threat
+--     drop (Fade, Feint, Cower, Feign Death);
+--   * a tank (a tank stance or form, or the Tank role) on the target's threat list but not
+--     tanking it: a taunt; still tanking with its lead slipping (lead 1-2): a threat boost.
+-- Only with somebody else to hold aggro (a group, or your own pet). Which spells qualify comes
+-- from the spell data (SpellDB.GetThreatRole); an unknown or secret read offers nothing.
+--------------------------------------------------------------------------------
+local threatBases   -- role -> sorted rank-1 ids, built once from the data
+
+local function ThreatBases(role)
+    if not threatBases then
+        threatBases = {}
+        local roles = SpellDB and SpellDB.FOREVER_THREAT_ROLES
+        local RI = LibStub("JustAC-RotationImport", true)
+        local seen = {}
+        for id, r in pairs(roles or {}) do
+            local base = id
+            if RI and RI.RankBase then base = RI.RankBase(id) or id end
+            if not seen[base] then
+                seen[base] = true
+                threatBases[r] = threatBases[r] or {}
+                table.insert(threatBases[r], base)
+            end
+        end
+        for _, list in pairs(threatBases) do table.sort(list) end
+    end
+    return threatBases[role]
+end
+
+local function PlainRead(fn, ...)
+    if not fn then return nil end
+    local ok, value = pcall(fn, ...)
+    if not ok or BlizzardAPI.IsSecretValue(value) then return nil end
+    return value
+end
+
+local function IsPlayerTank()
+    if PlainRead(UnitHasEffectivelyTankAura, "player") == true then return true end
+    return PlainRead(UnitGroupRolesAssigned, "player") == "TANK"
+end
+
+--- The threat role wanted on the target right now: "drop", "taunt", "boost", or nil.
+function DefensiveEngine.WantedThreatRole()
+    if not (UnitExists("target") and UnitCanAttack("player", "target")) then return nil end
+    local others = BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true
+    if not others and PlainRead(UnitExists, "pet") ~= true then return nil end
+    if C_Secrets and C_Secrets.ShouldUnitThreatStateBeSecret
+       and PlainRead(C_Secrets.ShouldUnitThreatStateBeSecret, "player", "target") ~= false then
+        return nil
+    end
+    local state = PlainRead(UnitThreatSituation, "player", "target")
+    if type(state) ~= "number" then return nil end   -- not on its threat list, or unknown
+    if not IsPlayerTank() then
+        if state >= 1 then return "drop" end
+        return nil
+    end
+    local tanking = PlainRead(UnitDetailedThreatSituation, "player", "target")
+    if tanking == false then return "taunt" end
+    if tanking == true then
+        local lead = PlainRead(UnitThreatLeadSituation, "player", "target")
+        if lead == 1 or lead == 2 then return "boost" end
+    end
+    return nil
+end
+
+--- The first ready, usable, in-range spell of that threat role you know (highest rank).
+local function ThreatSpell(role)
+    local RI = LibStub("JustAC-RotationImport", true)
+    for _, base in ipairs(ThreatBases(role) or {}) do
+        local id
+        if RI and RI.HighestKnownRank then
+            id = RI.HighestKnownRank(base)
+        elseif IsPlayerSpell and IsPlayerSpell(base) then
+            id = base
+        end
+        if id and BlizzardAPI.IsSpellReady(id) == true then
+            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
+            if usable == true and notEnough ~= true and BlizzardAPI.AbilityInRange(id) ~= false then
+                return id
+            end
+        end
+    end
+    return nil
+end
+
+local function AppendThreatCue(profile, results, alreadyAdded, maxIcons)
+    if not (profile.defensives.threatCues == true and #results < maxIcons) then return end
+    local role = DefensiveEngine.WantedThreatRole()
+    local id = role and ThreatSpell(role)
+    if not id or alreadyAdded[id] then return end
+    local e = PushEntry(results, id, false, false, nil, nil, nil)
+    e.threat = role
+    alreadyAdded[id] = true
+end
+DefensiveEngine._AppendThreatCue = AppendThreatCue   -- tests
+
+local function LockoutEntry(spellID)
+    if not (SpellDB and SpellDB.GetSelfLockout) then return nil end
+    return SpellDB.GetSelfLockout(spellID)
+end
+
+--- UNIT_SPELLCAST_SENT for the player: arm the hold when a lockout spell targets the player.
+function DefensiveEngine.NoteSpellcastSent(targetName, castGUID, spellID)
+    pendingSelfLockout.guid, pendingSelfLockout.entry = nil, nil
+    spellID, castGUID = Unsecret(spellID), Unsecret(castGUID)
+    if type(spellID) ~= "number" or castGUID == nil then return end
+    local entry = LockoutEntry(spellID)
+    if not entry then return end
+    if not entry.selfOnly then
+        targetName = Unsecret(targetName)
+        if type(targetName) ~= "string" or targetName == "" then return end
+        local ok, isSelf = pcall(UnitIsUnit, targetName, "player")
+        if not ok or Unsecret(isSelf) ~= true then return end
+    end
+    pendingSelfLockout.guid, pendingSelfLockout.entry = castGUID, entry
+end
+
+--- UNIT_SPELLCAST_SUCCEEDED for the player: start the hold for the armed cast.
+--- @return boolean started - true when a hold began (the defensive queue should rebuild)
+function DefensiveEngine.NoteSpellcastSucceeded(castGUID)
+    local guid = pendingSelfLockout.guid
+    if guid == nil or Unsecret(castGUID) ~= guid then return false end
+    local entry = pendingSelfLockout.entry
+    pendingSelfLockout.guid, pendingSelfLockout.entry = nil, nil
+    selfLockedUntil[entry.aura] = GetTime() + entry.dur
+    if AuraClock then AuraClock.Touch() end
+    return true
+end
+
+--- The lockout entry holding this spell (any rank) right now, or nil.
+local function HeldLockoutEntry(spellID)
+    if not next(selfLockedUntil) then return nil end
+    -- Prune every expired hold first, so the next() early-out holds even when no spell
+    -- sharing an aura is ever asked about again (e.g. Avenging Wrath alone).
+    local now, pruned = GetTime(), false
+    for aura, untilAt in pairs(selfLockedUntil) do
+        if now >= untilAt then
+            selfLockedUntil[aura], pruned = nil, true
+        end
+    end
+    if pruned and AuraClock then AuraClock.Touch() end
+    if not next(selfLockedUntil) then return nil end
+    local entry = LockoutEntry(spellID)
+    if not entry or entry.applyOnly or selfLockedUntil[entry.aura] == nil then return nil end
+    return entry
+end
+
+--- Is this spell (any rank) inside a self-lockout hold?
+function DefensiveEngine.IsSelfLockedOut(spellID)
+    return HeldLockoutEntry(spellID) ~= nil
+end
+
+-- The lockout's time left on the held icon: exact, timed from our own confirmed cast.
+if AuraClock then
+    AuraClock.RegisterProvider(function(spellID)
+        local entry = HeldLockoutEntry(spellID)
+        if not entry then return nil end
+        local untilAt = selfLockedUntil[entry.aura]
+        return AuraClock.LOCKOUT, entry.aura, untilAt - entry.dur, entry.dur
+    end)
+end
+
 local function EvalDefensiveSpell(entry, profile, locActive, now)
     local m = defensiveEvalMemo[entry]
     if not m then m = {}; defensiveEvalMemo[entry] = m
@@ -786,6 +974,10 @@ local function EvalDefensiveSpell(entry, profile, locActive, now)
         -- IsSpellReady reads cooldown state only, so it stays honest while CC'd -
         -- the order holds and the renderer greys the icons on its own.
         if not BlizzardAPI.IsSpellReady(resolvedID) then
+            m.unusable, m.noResources = true, false
+        elseif DefensiveEngine.IsSelfLockedOut(resolvedID) then
+            -- Usable by the game's account, but a self-recast would be refused ("immune").
+            -- Parked with the on-cooldown entries, like a running cooldown.
             m.unusable, m.noResources = true, false
         elseif not locActive then
             local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
@@ -1431,6 +1623,9 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     if displayMode == "combatOnly" and not inCombat then
         return results, alreadyAdded
     end
+
+    -- Threat first: losing or pulling aggro is the most urgent thing this cluster can say.
+    if inCombat then AppendThreatCue(profile, results, alreadyAdded, maxIcons) end
 
     -- Procced spells shown at ANY health level
     if showProcs and ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then

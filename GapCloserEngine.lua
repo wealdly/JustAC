@@ -198,6 +198,11 @@ function GapCloserEngine.NoteSpellcastSucceeded(addon, spellID)
     end
 end
 
+--- Is a confirmed gap-closer cast still inside its travel window (the post-fire debounce)?
+function GapCloserEngine.InFlight()
+    return (GetTime() - lastFiredTime) < GAP_CLOSER_FIRED_DEBOUNCE
+end
+
 --- Returns the first usable gap-closer spell ID for the current spec, or nil.
 --- "Usable" = known (IsSpellKnown), not blacklisted, not on a real cooldown
 --- (IsSpellReady), and - for the melee-range gate - in range (IsSpellInRange).

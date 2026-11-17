@@ -163,8 +163,52 @@ def check_autoattack_macros():
     print("Autoattack hotkeys: pure start/cast/use macros preferred; mixed actions excluded")
 
 
+def check_spell_press_starts_attack():
+    cases = (
+        ("/startattack\n/cast Smite", True, "a /startattack line starts melee with the cast"),
+        ("/startattack [harm,nodead]\n/cast Smite", True, "conditions still start melee"),
+        ("/cast Smite\n/startattack", True, "line order does not matter"),
+        ("/cast Smite", False, "a plain cast macro does not start melee"),
+        ("#/startattack\n/cast Smite", False, "a commented line is ignored"),
+        (None, False, "a plain spell button is not a macro"),
+    )
+    for body, expected, why in cases:
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("""
+            SPELLS={[6603]='Attack',[585]='Smite'}
+            BAR={[1]=585}
+            BINDS={ACTIONBUTTON1='1'}
+        """)
+        lua.execute(PRELUDE)
+        lua.globals().body = body if body is not None else False  # nil would read the stub
+        lua.execute("""
+            C_SpecializationInfo={GetSpecialization=function() return 0 end}
+            MAX_ACCOUNT_MACROS=120
+            C_Spell.GetOverrideSpell=function() end
+            function GetActionInfo(slot) if body then return "macro",slot end return "spell",585 end
+            function GetActionText(slot) return "M"..slot end
+            function GetMacroInfo(index)
+                if body and (index==1 or index=="M1") then return "M1",nil,body end
+            end
+            function GetNumMacros() return 1,0 end
+            LibStub.libs["JustAC-BlizzardAPI"].GetDebugMode=function() return false end
+            LibStub.libs["JustAC-BlizzardAPI"].GetActionInfo=function(slot)
+                if BAR[slot] and body then return "macro",slot,"spell",BAR[slot] end
+                if BAR[slot] then return "spell",BAR[slot] end
+            end
+        """)
+        lua.execute((SRC.parent / "MacroParser.lua").read_text(encoding="utf-8"))
+        lua.execute(SRC.read_text(encoding="utf-8"))
+        scanner = lua.eval('LibStub.libs["JustAC-ActionBarScanner"]')
+        scanner.RebuildKeybindCache()
+        assert scanner.GetSpellHotkey(585) == "1", (why, "the cast keeps its key")
+        assert scanner.SpellPressStartsAttack(585) == expected, why
+    print("Spell press starts attack: /startattack macros detected; plain casts, comments and buttons not")
+
+
 def main():
     check_autoattack_macros()
+    check_spell_press_starts_attack()
     bad = []
     for name, bar, binds, button_libs, spell, want in CASES:
         got = hotkey(bar, binds, button_libs, spell)

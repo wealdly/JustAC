@@ -42,7 +42,7 @@ the parser/classifier and the gate EVALUATORS are kept; only the pick-relative p
 | Spell known / rank | spellbook, `IsPlayerSpell`, rank chains (section 5) | which entries exist, which id to show |
 | Ready | scratch-Cooldown readiness probe, cooldown `isActive` | skip abilities on cooldown |
 | Usable (resource / reactive) | `C_ActionBar.IsUsableAction`, plain | "enough rage/energy", Overpower/Revenge/Execute lit |
-| GCD | a known GCD-bound spell's `isOnGCD` + its cooldown duration | lookahead; replaces the missing 61304 |
+| GCD | reference spell 1283885's cooldown, plain in combat (`GetGCDReferenceSpell`) | lookahead; replaces the missing 61304 |
 | Swing timer | `PLAYER_SWING` (`swingDuration`, `swingType`) plain; gap measured 1.82-2.00s on a 1.9s weapon | NEW: Slam / Heroic Strike / Auto Shot timing |
 | Queued on-next-swing | `C_Spell.IsCurrentSpell`, plain | NEW: drop a Heroic Strike / Cleave already queued; "auto attack off" cue |
 | Own casts | `UNIT_SPELLCAST_SUCCEEDED` (player) plain, `ShouldUnitSpellCastBeSecret(player)` = false | buff windows and DoT tracking by observation |
@@ -218,6 +218,12 @@ reads Forever's talent frame uses). Re-evaluated on `TRAIT_CONFIG_UPDATED` / lev
 combat. No points spent: the class `default` list. A player's own list always wins, as it
 does today. Group ids map to tree names through `displayName` once, recorded in the data.
 
+The queue is a damage queue whatever role the player plays, so a class has several lists only
+for its talent STYLES: each tree's list is that style's damage order. Tank lists drop threat
+and mitigation presses (`TANK_ONLY` in the generator); healer pins are the guides' levelling
+damage. Tank and healer play belongs to the defensive queue and preparation, which read the
+same installed tree (Righteous Fury, a Protection seal). No group role or size is read.
+
 Build selection and combat-condition evaluation are separate. The current selector uses the
 dominant tree, not archetype similarity matching. A future curated archetype selector would
 use verified talent allocation and signature talents to choose one coherent list, not blend
@@ -345,7 +351,7 @@ priority position with no gate, which is how the retail pipeline already fails s
   tools; the live queue comes from the engine.
 - Healer handling keys off the group role (`UnitGroupRolesAssigned`) or a setting, because
   every Forever spec reports DAMAGER.
-- The GCD source moves from 61304 to a known GCD-bound spell (bug 7).
+- The GCD source moved from 61304 to reference spell 1283885 (bug 7, done 2026-11-17).
 
 ## 9. Open questions (each has a probe)
 

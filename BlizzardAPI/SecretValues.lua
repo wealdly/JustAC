@@ -344,8 +344,9 @@ function BlizzardAPI.CountAuras(unit, filter)
     local n = #list
     -- Only a narrowed filter can be ignored, and only a multi-aura sample can
     -- reveal it. Once proven honoured, stop paying for the second call.
+    if n <= 1 or filterVerdict[filter] ~= nil then return n end
     local base = filter and filter:match("^[^|]+")
-    if n > 1 and base and base ~= filter and filterVerdict[filter] == nil then
+    if base and base ~= filter then
         local all = BlizzardAPI.GetAuras(unit, base)
         if all and #all == n then
             filterVerdict[filter] = false
