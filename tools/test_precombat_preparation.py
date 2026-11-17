@@ -543,6 +543,7 @@ def test_precombat_handoff_order():
         function LibStub() return {ClearCache=function() clears=clears+1 end} end
         function JustAC:MarkQueueDirty() end
         function JustAC:InvalidateCaches() end
+        function GetPrecombatEngine() return LibStub("JustAC-PrecombatEngine", true) end; AURA_CACHE_FLAGS={auras=true}
     """ + source[start:end])
     lua.execute('JustAC:OnUnitAura("UNIT_AURA","player",{});JustAC:OnUnitAura("UNIT_AURA","player",{})')
     assert lua.globals().clears == 2, "each OOC aura change invalidates checklist despite aura throttle"
@@ -621,7 +622,7 @@ def test_preparation_queue_exclusivity():
         """)
         lua.execute(source[primary_start:primary_end])
         lua.execute(
-            "local lastSpellIDs={};local blankActive=false\n"
+            "local lastSpellIDs={};local blankActive=false;local sunkSet={}\n"
             + source[final_start:final_end]
             + """
             function Finalize(ids)

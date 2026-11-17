@@ -11,6 +11,7 @@ from lupa import LuaRuntime  # type: ignore[import-not-found]
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 from test_forever_defaults import PRELUDE
+from test_combat_phase import group_helpers_lua
 
 CLASSES = [
     "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE",
@@ -100,6 +101,8 @@ end
 def new_runtime(forever=True, precombat=True, consumables=False):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE + BASE_STUBS)
+    lua.execute('local BlizzardAPI = LibStub("JustAC-BlizzardAPI")\n'
+                "local IsSecretValue = issecretvalue\n" + group_helpers_lua())
     if forever:
         lua.execute("WOW_PROJECT_CAMELOT = 18; WOW_PROJECT_ID = 18")
         lua.execute("""

@@ -183,6 +183,7 @@ local GLOW_COLORS = {
     PREPARATION = { r = 0.80, g = 0.55, b = 1.00 }, -- violet: buff/enchantment preparation
     INTERRUPT   = { r = 1.00, g = 0.25, b = 0.05 }, -- red: stop the enemy cast
     SOOTHE      = { r = 0.55, g = 0.90, b = 1.00 }, -- cyan: cleanse enemy enrage
+    THREAT      = { r = 1.00, g = 0.30, b = 0.85 }, -- magenta: aggro (yellow read as the gold proc glow)
 }
 
 -- Shared helper: show a desaturated+tinted proc glow on a named frame key.
@@ -235,6 +236,19 @@ end
 
 local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
+end
+
+-- Threat cue (DefensiveEngine threat cues): pull or lose aggro, press this.
+local function ShowThreatProcGlow(icon)
+    local color = GLOW_COLORS.THREAT
+    ShowColoredProcGlow(icon, "ThreatProcGlowFrame", color.r, color.g, color.b)
+    icon.hasThreatGlow = true
+end
+
+local function HideThreatProcGlow(icon)
+    if not icon then return end
+    HideColoredProcGlow(icon, "ThreatProcGlowFrame")
+    icon.hasThreatGlow = false
 end
 
 -- The soothe cue's proc glow, for a parent that forbids SetScript AND owns none of the
@@ -951,6 +965,7 @@ local function StopAllGlows(icon)
     if icon.hasPrecombatGlow then StopPrecombatGlow(icon) end
     if icon.hasMaintenanceGlow then StopMaintenanceGlow(icon) end
     if icon.hasProcGlow      then HideProcGlow(icon)      end
+    if icon.hasThreatGlow    then HideThreatProcGlow(icon) end
     HidePreparationGlow(icon)
     icon.hasAssistedGlow  = false
     icon.hasDefensiveGlow = false
@@ -986,6 +1001,8 @@ UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowPreparationGlow = ShowPreparationGlow
 UIAnimations.HidePreparationGlow = HidePreparationGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
+UIAnimations.ShowThreatProcGlow = ShowThreatProcGlow
+UIAnimations.HideThreatProcGlow = HideThreatProcGlow
 -- Exported for the maintenance slot, which picks its own tint rather than using one of the
 -- fixed wrappers. frameKey scopes the glow so it cannot collide on a pooled icon.
 UIAnimations.ShowColoredProcGlow = ShowColoredProcGlow

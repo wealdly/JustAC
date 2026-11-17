@@ -19,6 +19,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **Burst-ready cue** - your major cooldown glows orange when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
 - **Gap-closers** - melee specs get a blue movement cue when the target is out of range (DPS Queue → Gap-Closers).
 - **Mana Conservation** (both clients, off by default; tune Forever first) - under DPS Queue → General → Queue Content, choose Solo Only or Always (PvE). With one detected normal enemy and safe player health, an available free attack can lead ahead of a mana-costing single-target attack, including the game's recommendation, when mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context block conservation. Prefers confirmed reach; unknown/out-of-range attacks can still lead, leaving positioning to you. No level cutoff; custom/exact lists, procs and utility picks remain unchanged.
+- **Prioritize Your Own Targets** *(off by default)* - on an enemy that isn't attacking you, long cooldowns and burst wait for one you get credit for; on another player's enemy, damage over time waits too. Openers are never held.
 - **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
 - Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
 
@@ -38,6 +39,7 @@ activity colors, rather than class or spell-school colors:
 | Cyan | Cleanse an enemy enrage |
 | Orange | Offensive burst window or execute |
 | Violet | Buff/enchantment preparation |
+| Magenta | Threat cue (Forever, opt-in): drop threat, taunt or hold aggro |
 
 Preparation and mitigation keep the same hue when their reminder ring escalates
 to a proc-style glow. Existing glow controls and recommendation priorities still
@@ -117,7 +119,7 @@ JustAC isn't a healing addon - keep yours. It covers the other half of the job:
 The Preparation tab groups Between-pull Recovery, Buffs & Enhancements, and
 class-appropriate Combat Readiness. Health Recovery Below controls self-heal spells, not
 recovery food. Food Buff chooses food for its buff. Health Recovery defaults to
-Auto: below 70% health it prefers a ready, usable short-cooldown self-heal, then
+Auto: when you're hurt it prefers a ready, usable short-cooldown self-heal, then
 food or a bandage. Choose a learned heal to prefer it, or Food / Bandage for
 item recovery. Mana Recovery Items stays independent; both selectors inherit the old
 Recovery setting until explicitly changed. Combined food/drink qualifies for
@@ -131,8 +133,8 @@ either enabled need and appears once, including when also suggested for its buff
 - Form reminders never replace an active form or ask you to shift while mounted. Existing weapon enchants satisfy rite preparation without being overwritten.
 - Group buffs are offered again when a party member is missing one, so one cast covers everyone.
 - **Recuperate** *(opt-in)* - offered when you're below your top-off level out of combat.
-- The top-off slider offers 50% through 90% in 10% steps. The reminder requires confirmed health below your selected threshold; an unreadable threshold stays quiet instead of treating any missing health as sufficient. Critical-health reminders remain separate.
-- **Forever mana recovery** - with Mana Recovery Items on Auto, offers your best owned, usable drink below 80% mana by default. Adjust Mana Recovery Below from 50% to 90% in 10% steps. Requires confirmed low mana and stops while eating or drinking. Health Recovery saves food and bandages when a suitable self-heal is usable or already healing you.
+- The reminder needs confirmed missing health and stays quiet when that cannot be read. Critical-health reminders remain separate.
+- **Forever mana recovery** - with Mana Recovery Items on Auto, offers your best owned, usable drink when your mana is low. Requires confirmed low mana and stops while eating or drinking. Health Recovery saves food and bandages when a suitable self-heal is usable or already healing you.
 - Covers every expansion's consumables, so leveling characters are covered too, and weapon enchants match the weapon you have equipped.
 
 ### Keybinds and filtering
@@ -146,7 +148,7 @@ either enabled need and appears once, including when also suggested for its buff
 
 ## WoW Forever
 
-JustAC 6.2 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
+JustAC 6.3 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
 WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
 
@@ -159,12 +161,14 @@ What works differently on Forever:
 - **Save burst for worthwhile fights** - automatic priorities reserve confirmed self-buffs with a base cooldown of at least two minutes until an elite, boss or multiple engaged enemies are confirmed. The reservation persists before and after combat and through missing encounter information; unknown spell classification or cooldown does not qualify a spell for reservation. Custom lists, Always Show, explicit Hold Until settings and custom burst triggers retain control. With no other eligible ability, WAIT leads instead of spending the cooldown.
 - **Between ranged shots** - while the enemy is confirmed beyond melee reach, an otherwise eligible Throw or ranged weapon filler keeps its first slot and cooldown swipe instead of alternating with WAIT. Any ready alternative takes precedence; blocked or unknown shot range still falls back to WAIT.
 - **Rear-required attacks** - Backstab, Shred and similar attacks step back when you are out of stealth and the enemy is targeting you. Stealth openers and enemies targeting your tank retain priority. This is a targeting heuristic, not a facing check; unreadable targeting information leaves the order unchanged.
-- **Tiered damage finishers** - on normal enemies, aim for 3 combo points, 2 below half health, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
+- **Tiered damage finishers** - on normal enemies, aim for fewer combo points as the enemy weakens, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
 - **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
 - **Auto Shot and Attack** trade places as you move in and out of melee range.
 - **Damage over time** is timed from your own casts, including your opener: it steps back while it ticks, comes back as it runs out, and isn't suggested on a target about to die. Tracking it in the Cooldown Manager makes this exact.
 - **Resource presses** - Life Tap, Evocation and Innervate come forward when you can't afford your spells; Life Tap, Bloodrage and Hellfire only while your health is above half.
-- **Area abilities** lead when two or more enemies are fighting you.
+- **Area abilities** lead when two or more enemies are fighting you; pack attacks such as Thunder Clap lead from three.
+- **Shared resources** - a cheaper ability never spends the rage, energy or mana a higher-priority one is waiting for, and while everything waits the first slot shows what comes next.
+- **Threat Cues** *(opt-in, Defensives)* - in a group or with your pet out, a magenta icon offers a threat drop when you are about to pull aggro, or a taunt or threat ability when you are tanking and losing it.
 - **Between pulls** - food, drink or a bandage when you need them, and the flasks, elixirs and scrolls you carry (Defensive Queue → Pre-Combat Buffs).
 - Options that only apply to Assisted Combat are greyed out.
 
@@ -272,8 +276,7 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 - **Midnight compliant, targeting Retail 12.1.5** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
 - **Taint is fatal around secrets** - Tainted execution cannot read a secret at all, so writing any Lua field on a frame that reads secrets (Blizzard's Cooldown Manager viewers) breaks *Blizzard's* code, not just ours. Reads and widget C methods are safe; mixin methods that store state are not. See [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
-- **Threshold gates** - The engine evaluates a curve the addon authors against a secret value and returns a secret result; the addon reads only whether that result is *zero*. Nothing is compared, ordered or read in Lua, but the answer to "is this below N" is an ordinary branchable boolean. Health, power and aura/cooldown remaining time all go through the same path, which is what makes graded defensive bands and stack-aware ordering possible in combat. Deliberately scoped to answering *questions*, never recovering values
-- **Never-secret signals** - Readable side-channels stand in where even that is unavailable: the low-health vignette (~35% binary), and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
+- **Never-secret signals** - Readable side-channels fill gaps where a value is secret: the low-health vignette, and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
 - **No External Spell Databases** - Native spell classification (`SpellDB` + generated `Data/` tables: archetypes, categories, base cooldowns & charges, aura stack counts, form/stealth requirements, caster-aura requirements, pure self-buffs, healing items, pre-combat buffs) replaces LibPlayerSpells; tables regenerate per patch from client data exports via `tools/`
 - **Modular Architecture** - Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
 - **Event-Driven** - Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates

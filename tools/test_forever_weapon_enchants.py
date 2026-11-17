@@ -246,7 +246,8 @@ def main():
     start = source.index("local function PlaceQueueSpell(")
     end = source.index("\n--- Largest icon count", start)
     lua.execute("""
-        SpellQueue = { IsSpellBlacklisted = function() return false end }
+        SpellQueue = { IsSpellBlacklisted = function() return false end,
+            _NoteAuraClock = function() end, _BuffUpBeyondFight = function() return false end }
         lastCtx = {}
         proccedSpells, normalSpells, proccedRank, normalRank = {}, {}, {}, {}
         cooldownSpells, sunkSet, unavailableTier, formEntryBase, pinnedAlwaysShow = {}, {}, {}, {}, {}
@@ -272,14 +273,15 @@ def main():
         BlizzardAPI.HasGamePick = function() return not forever end
         BlizzardAPI.IsItemSpell = function() return false end
     """)
-    prepare_start = source.index("function SpellQueue._PrepareWeaponFillers(")
-    prepare_end = source.index("\nfunction SpellQueue._AddWeaponFiller(", prepare_start)
-    lua.execute(source[prepare_start:prepare_end])
+    forever = (ROOT / "SpellQueueForever.lua").read_text(encoding="utf-8")
+    prepare_start = forever.index("function SpellQueue._PrepareWeaponFillers(")
+    prepare_end = forever.index("\nfunction SpellQueue._AddWeaponFiller(", prepare_start)
+    lua.execute(forever[prepare_start:prepare_end])
     # The categorizer refreshes the near-melee ordering hint on every build; load the
     # real function so these orderings run through it (it stands down with ordering off).
-    hint_start = source.index("function SpellQueue._UpdateNearMeleeHint(")
-    hint_end = source.index("\nfunction SpellQueue._PrepareWeaponFillers(", hint_start)
-    lua.execute(source[hint_start:hint_end])
+    hint_start = forever.index("function SpellQueue._UpdateNearMeleeHint(")
+    hint_end = forever.index("\nfunction SpellQueue._PrepareWeaponFillers(", hint_start)
+    lua.execute(forever[hint_start:hint_end])
     lua.execute(source[start:end] + """
         function BuildQueue(sink)
             wipe(sunkSet); wipe(unavailableTier)

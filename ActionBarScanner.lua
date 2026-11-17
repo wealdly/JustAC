@@ -77,6 +77,7 @@ local spellHotkeyCacheValid = false
 
 -- Cache slot mappings so hotkey lookups don't fail when spell changes mid-GCD
 local spellSlotCache = {}
+local startsAttackCache = {}   -- [spellID] = does its hotkey button start melee (/startattack)
 -- Parallel cache: true when slot directly represents the spell (safe for
 -- C_ActionBar slot-based queries), false when behind a macro modifier.
 local slotDirectCache = {}
@@ -385,6 +386,7 @@ local function WipeSpellCaches()
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
+    wipe(startsAttackCache)
     wipe(slotDirectCache)
     wipe(directSpellSlotCache)
     wipe(itemSlotCache)
@@ -1353,7 +1355,31 @@ function ActionBarScanner.GetAutoAttackSlotForSpell(spellID)
     return ActionBarScanner.GetDirectSlotForSpell(spellID)
 end
 
+--- Does the button that supplies this spell's hotkey also start melee (a macro with a
+--- /startattack line)? true only when confirmed; false for a plain button or no button.
+--- Cached per spell with the slot caches (bar, binding and macro changes wipe both).
+function ActionBarScanner.SpellPressStartsAttack(spellID)
+    if not spellID then return false end
+    local cached = startsAttackCache[spellID]
+    if cached ~= nil then return cached end
+    local verdict = false
+    local slot = ActionBarScanner.GetSlotForSpell(spellID)
+    if slot and MacroParser and MacroParser.GetMacroSpellInfo then
+        local ok, kind = pcall(BlizzardAPI.GetActionInfo, slot)
+        if ok and not BlizzardAPI.IsSecretValue(kind) and kind == "macro" then
+            local okInfo, info = pcall(C_Spell_GetSpellInfo, spellID)
+            if okInfo and type(info) == "table" and type(info.name) == "string" then
+                local entry = MacroParser.GetMacroSpellInfo(slot, spellID, info.name)
+                verdict = entry ~= nil and entry.startsAttack == true
+            end
+        end
+    end
+    startsAttackCache[spellID] = verdict
+    return verdict
+end
+
 -- Returns action slot for an item placed directly on the bar.
+
 function ActionBarScanner.GetDirectSlotForItem(itemID)
     if not itemID then return nil end
 

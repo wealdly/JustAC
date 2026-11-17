@@ -303,7 +303,7 @@ def check_pushback_weapon_dps():
         SpellDB.IsChanneled=function() return leadChannel end
         SpellDB.IsInterruptTypeSpell=function() return false end
         function SetupWeapons()
-            Reset();SpellQueue.ResetPushback();weaponPhaseID=nil
+            Reset();SpellQueue.ResetPushback();SpellQueue._ResetWeaponPhase()
             specKey='PRIEST_F';entries=classes.PRIEST_F.shadow.st
             pool={585,5019,6603};b.inCombat=true;b.now=100;b.ctxEnemies=1
             b.recommendedSpells={585,5019,6603};b.spellCount=3
@@ -504,7 +504,7 @@ def check_pushback_weapon_dps():
         ("cooldown[5019]=true; briefWait[5019]=true", 5019, "the chosen wand stays between shots"),
         ("cooldown[5019]=true; briefWait[5019]=true; ranges[5019]=false", 585, "out of range ends the phase"),
         ("cooldown[5019]=true; briefWait[5019]=true; blacklisted[5019]=true", 585, "a blacklist ends the phase"),
-        ("cooldown[5019]=true; briefWait[5019]=true; weaponPhaseID=nil", 585,
+        ("cooldown[5019]=true; briefWait[5019]=true; SpellQueue._ResetWeaponPhase()", 585,
          "a new target (choice cleared) starts over"),
     ):
         lua.globals().SetupWeapons()

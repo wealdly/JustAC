@@ -97,8 +97,74 @@ def test_range_hotkey() -> None:
     """)
 
 
+def test_attack_hotkey() -> None:
+    source = SOURCE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    start = source.index("--- Bar lookup for a spell or an item")
+    end = source.index("\n-----", source.index("local function AttackHotkey("))
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        keys = {[6603]="A", [78]="2", [772]="3"}
+        ActionBarScanner = { GetSpellHotkey=function(id) return keys[id] or "" end }
+        SpellQueue = { GetAttackKeySpell=function() return carrier end }
+    """ + source[start:end] + "\nTestAttackHotkey = AttackHotkey")
+    lua.execute("""
+        assert(TestAttackHotkey() == "A", "no carrier: Attack's own key")
+        carrier = 772
+        assert(TestAttackHotkey() == "3", "the queue's chosen carrier supplies the key")
+        keys[772] = nil
+        assert(TestAttackHotkey() == "A", "a carrier that lost its key falls back")
+        SpellQueue = nil
+        assert(TestAttackHotkey() == "A", "no queue module: Attack's own key")
+    """)
+    print("Attack hotkey: the queue's /startattack carrier, else Attack's own key")
+
+
+def test_aura_clock_diagnostics() -> None:
+    from test_forever_openers import aura_clock_source
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("GetTime = function() return 0 end\n" + aura_clock_source(ROOT))
+    lua.execute("""
+        local function icon(id, kind, src, shown)
+            local b = {spellID=id, _auraClockKind=kind, _auraClockSource=src,
+                       IsShown=function() return shown end}
+            AuraClock._buttons[b] = true
+            return b
+        end
+        assert(AuraClock.Debug() == "none", "nothing held")
+        icon(6673, "buff", "engine-container", true)
+        icon(589, "debuff", "estimate", true)
+        icon(772, "debuff", nil, true)
+        icon(78, "buff", "none", false)
+        assert(AuraClock.Debug() == "589:debuff:estimate,6673:buff:engine-container", AuraClock.Debug())
+    """)
+    # /jac inspect's auraClock row reads the module directly.
+    session = (ROOT / "Debug" / "Session.lua").read_text(encoding="utf-8")
+    assert "return clock.Debug()" in session
+    print("Aura clock diagnostics: shown held icons listed by spell, kind and source")
+
+
+def test_hold_never_duplicates() -> None:
+    source = SOURCE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    start = source.index("local function ShownElsewhere(")
+    end = source.index("\nend\n", start) + len("\nend\n")
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source[start:end] + "\nTestShownElsewhere = ShownElsewhere")
+    lua.execute("""
+        local q = {78, 772, 6603, 1715}
+        assert(TestShownElsewhere(q, 4, 3, 2, 78), "moved to slot 1: holding it at 2 would duplicate")
+        assert(not TestShownElsewhere(q, 4, 3, 1, 78), "its own slot does not count")
+        assert(not TestShownElsewhere(q, 4, 3, 2, 1715), "queued past the visible icons: hold may keep it")
+        assert(not TestShownElsewhere(q, 4, 3, 2, 999), "not queued at all")
+        assert(TestShownElsewhere(q, 4, nil, 2, 1715), "unknown visible count reads the whole queue")
+    """)
+    print("Position hold: never keeps a spell the queue already shows in another visible slot")
+
+
 def main() -> None:
     test_range_hotkey()
+    test_hold_never_duplicates()
+    test_aura_clock_diagnostics()
+    test_attack_hotkey()
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
     lua.execute(

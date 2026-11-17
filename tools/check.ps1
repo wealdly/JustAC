@@ -60,6 +60,34 @@ try {
             $code = 2
         }
     }
+    # Lua 5.1 compile limits, every run. luacheck does not know them (60 upvalues and 200
+    # locals per function, the main chunk included), and crossing either kills the whole
+    # file in game. luasyntax.py counts both and compiles with a real Lua 5.1 when lupa is
+    # installed. WARN lines are the headroom margins and fail the check like errors.
+    if ($luacheck) {
+        $py = Get-Command python -ErrorAction SilentlyContinue
+        $hasParser = $false
+        if ($py) { & $py.Source -c 'import luaparser' 2>$null; $hasParser = ($LASTEXITCODE -eq 0) }
+        if ($hasParser) {
+            $limitTargets = @(if ($Files) { $Files } else {
+                Get-ChildItem -Recurse -Filter *.lua -File |
+                    Where-Object { $_.FullName -notmatch '[\\/](Libs|dist)[\\/]' } |
+                    ForEach-Object FullName
+            })
+            $limits = & $py.Source (Join-Path $tools 'luasyntax.py') @limitTargets 2>&1
+            $limitCode = $LASTEXITCODE
+            $flagged = @($limits | Where-Object { $_ -match '^FAIL|WARN' })
+            if ($limitCode -ne 0 -or $flagged.Count -gt 0) {
+                Write-Host ''
+                Write-Host 'Lua 5.1 compile limits:' -ForegroundColor Red
+                $flagged | ForEach-Object { Write-Host $_ }
+                if ($code -eq 0) { $code = 1 }
+            }
+        }
+        else {
+            Write-Host 'luaparser not installed - Lua 5.1 compile limits not checked (python -m pip install luaparser lupa).' -ForegroundColor Yellow
+        }
+    }
     # Locale keys, whole-addon runs only. A key the code asks for but no locale defines
     # throws "Missing entry for '<key>'" in game, and comparing the locale files against
     # each other cannot see it - they are all equally missing it. Source is the only truth.

@@ -266,7 +266,30 @@ assert survival.index(13795) < survival.index(2973) < survival.index(3044), \
 for context in ("st", "cleave", "aoe"):
     ids = ids_of(classes.MAGE_F.frost[context])
     assert ids[0] != 11426 and ids[-2:] == [11426, 5019], (context, "absorb shield trails damage, wand last")
-assert ids_of(classes.WARRIOR_F.protection.st)[0] == 2565, "tank trees keep their own shield lead"
+# Every tree is a damage list in its talent style: tank lists drop threat and mitigation.
+for cls, tree, gone in (("WARRIOR_F", "protection", {2565, 71, 7386, 1160}),   # Shield Block, Defensive
+                        ("PALADIN_F", "protection", {20925}),                   # Stance, Sunder, Demo Shout;
+                        ("DRUID_F", "feral_bear", {99})):                       # Holy Shield; Demo Roar
+    for context in ("st", "cleave", "aoe"):
+        ids = ids_of(classes[cls][tree][context]) if classes[cls][tree][context] else []
+        assert not gone & set(ids), (cls, tree, context, "threat and mitigation leave tank lists")
+prot = ids_of(classes.WARRIOR_F.protection.st)
+assert 6343 not in prot, "Protection's single-target Thunder Clap is the tank's slow, not damage"
+assert 6343 in ids_of(classes.WARRIOR_F.protection.aoe), "Thunder Clap stays a pack attack"
+clap = entry_of(classes.WARRIOR_F.protection.aoe, 6343)
+assert any(g["t"] == "targets" and g["op"] == ">=" and g["n"] == 3 for g in gate_list(clap)),     "a pack attack leads from three targets"
+for tree in ("arms", "fury"):
+    assert 6343 not in ids_of(classes.WARRIOR_F[tree].cleave), (tree, "two targets: no Thunder Clap lead")
+    assert ids_of(classes.WARRIOR_F[tree].aoe)[1] == 6343, (tree, "three or more: Thunder Clap leads behind the shout")
+assert 7386 in ids_of(classes.WARRIOR_F.arms.st), "damage trees keep the sims' Sunder Armor"
+heroic = entry_of(classes.WARRIOR_F.protection.st, 78)
+spenders = {g["id"] for g in gate_list(heroic) if g["t"] == "any"
+            for sub in [dict(x) for x in g["g"].values()] if sub["t"] == "all"
+            for g in [dict(y) for y in sub["g"].values()]}
+assert heroic["w"] and spenders == {6572, 23922}, "Protection: Heroic Strike first until Revenge or Shield Slam"
+ham = entry_of(classes.WARRIOR_F.protection.st, 1715)
+members = [dict(g) for gate in gate_list(ham) if gate["t"] == "any" for g in gate["g"].values()]
+assert ham["w"] and {g.get("id") for g in members if g["t"] == "known"} == {6572, 23922}     and any(g["t"] == "execute" and g["required"] for g in members), "Protection: Hamstring finisher rule"
 for context in ("st", "cleave", "aoe"):
     burn = entry_of(classes.WARLOCK_F.destruction[context], 17877)
     either = [g for g in gate_list(burn) if g["t"] == "any"]
@@ -278,7 +301,11 @@ for context in ("st", "cleave", "aoe"):
 arms = ids_of(classes.WARRIOR_F.arms.st)
 assert arms.index(7384) < arms.index(12294) < arms.index(5308) < arms.index(1240193), \
     "Arms: Overpower > Mortal Strike > Execute > Slam"
-assert arms[-1] == 772, "untalented warriors (Arms list) keep Rend last in single target"
+assert arms.index(772) == arms.index(78) - 1, "Arms single target: Rend (while missing) just ahead of Heroic Strike"
+prot = ids_of(classes.WARRIOR_F.protection.st)
+assert prot.index(772) < prot.index(78), "Protection: Charge, Rend, then Heroic Strike (forever-guides)"
+pack = ids_of(classes.WARRIOR_F.protection.aoe)
+assert pack.index(6343) < pack.index(772) < pack.index(78), "Protection pack: Thunder Clap, Rend, Heroic Strike"
 for context in ("cleave", "aoe"):
     ids = ids_of(classes.WARRIOR_F.arms[context])
     assert 12292 in ids and ids.index(1240193) < ids.index(772), (context, "Sweeping Strikes; Rend after Slam")
@@ -289,7 +316,7 @@ for context in ("st", "aoe"):
 for tree in ("arms", "fury"):
     ids = ids_of(classes.WARRIOR_F[tree].aoe)
     assert ids[-1] == 1160, (tree, "Demoralizing Shout is upkeep behind the attacks")
-assert ids_of(classes.WARRIOR_F.protection.aoe).index(1160) < 3, "the tank still leads with it"
+assert 1160 not in ids_of(classes.WARRIOR_F.protection.aoe), "a tank-only shout leaves the Protection damage list"
 for tree in ("assassination", "combat"):
     ids = ids_of(classes.ROGUE_F[tree].st)
     assert ids.index(703) < ids.index(1833), (tree, "Garrote opens ahead of Cheap Shot")
@@ -340,9 +367,38 @@ for cls, tree, sid in (("WARRIOR_F", "arms", 402927), ("WARRIOR_F", "fury", 4029
 assert ids_of(classes.WARRIOR_F.arms.st).index(402927) < ids_of(classes.WARRIOR_F.arms.st).index(12294), \
     "Victory Rush leads while it is lit"
 assert 402927 not in ids_of(classes.WARRIOR_F.protection.st), "tank lists keep Victory Rush defensive"
+def flat_gates(gates):
+    for g in gates:
+        yield g
+        if g["t"] in ("any", "all"):
+            yield from flat_gates([g["g"][i] for i in range(1, len(g["g"]) + 1)])
+
+
 heroic = entry_of(classes.WARRIOR_F.arms.st, 78)
-assert any(g["t"] == "power" and g["res"] == "rage" and g["n"] == 90 for g in gate_list(heroic)), \
+assert any(g["t"] == "power" and g["res"] == "rage" and g["n"] == 90 for g in flat_gates(gate_list(heroic))), \
     "an unreachable rage threshold reads as near the cap"
+# Before a main rage spender is learned all rage is excess: Heroic Strike's rage condition
+# also holds while none of Mortal Strike, Slam, Whirlwind, Bloodthirst is known (Arms, Fury).
+SPENDERS = {12294, 1240193, 1680, 23881}
+for tree in ("arms", "fury"):
+    hs = entry_of(classes.WARRIOR_F[tree].st, 78)
+    alt = [g for g in gate_list(hs) if g["t"] == "any"]
+    assert len(alt) == 1, (tree, "one rage-or-unlearned group")
+    members = [alt[0]["g"][i] for i in range(1, len(alt[0]["g"]) + 1)]
+    assert members[0]["t"] == "power" and members[1]["t"] == "all", (tree, members)
+    inner = [members[1]["g"][i] for i in range(1, len(members[1]["g"]) + 1)]
+    assert {g["id"] for g in inner if g["t"] == "known" and g["neg"]} == SPENDERS, (tree, inner)
+    assert ids_of(classes.WARRIOR_F[tree].st).index(78) < ids_of(classes.WARRIOR_F[tree].st).index(1715), \
+        (tree, "Heroic Strike ranks above Hamstring")
+# ...and Hamstring waits until one of those spenders is learned (no spare rage before).
+for tree in ("arms", "fury"):
+    for ham in (e for e in classes.WARRIOR_F[tree].st.values() if e["id"] == 1715):
+        need = [g for g in gate_list(ham) if g["t"] == "any"
+                and any(g["g"][i]["t"] == "known" for i in range(1, len(g["g"]) + 1))]
+        members = [need[0]["g"][i] for i in range(1, len(need[0]["g"]) + 1)] if need else []
+        assert {g["id"] for g in members if g["t"] == "known"} == SPENDERS, (tree, gate_list(ham))
+        assert any(g["t"] == "execute" and g["pct"] == 20 and g["required"] for g in members), \
+            (tree, "a dying target may take Hamstring as a finisher, confirmed only")
 frost = classes.MAGE_F.frost
 assert 120 in ids_of(frost.cleave), "Cone of Cold retains reviewed two-target coverage"
 assert any(e["id"] == 120 and any(g["t"] == "near" and g["n"] == 10 for g in e["gates"].values())
@@ -371,6 +427,11 @@ assert ids_of(classes.SHAMAN_F.enhancement.aoe).index(408341) < \
     ids_of(classes.SHAMAN_F.enhancement.aoe).index(17364), "AoE Nova precedes Stormstrike"
 assert any(e["id"] == 403 and e["gates"][1]["t"] == "stack" and e["gates"][1]["n"] == 5
            and e["gates"][1]["required"] for e in enh.values()), "Combat Maelstrom requires confirmed stacks"
+for tree in ("frost",):
+    blast = next(e for e in classes.MAGE_F[tree].st.values() if e["id"] == 2136)
+    either = blast["gates"][1]
+    assert either["t"] == "any" and [dict(g) for g in either["g"].values()] == [
+        {"t": "execute", "op": "<", "pct": 20, "required": True}, {"t": "hit"}],         (tree, "Fire Blast: a dying target, or casts pushed back while being hit")
 fire_nova = next(e for e in enh.values() if e["id"] == 408341)
 assert list(g["t"] for g in fire_nova["gates"].values()) == ["totem"], \
     "Nova requires a fire totem, not the Clearcasting talent or buff"

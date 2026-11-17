@@ -20,6 +20,8 @@ def block(path: Path, start: str, end: str) -> str:
 OWNERSHIP = block(ROOT / "SpellDB.lua", "local OWNED_ITEM_MAX_AGE", "\n-- Caster specs")
 GCD_GATE = block(ROOT / "BlizzardAPI" / "CooldownTracking.lua",
                  "local gcdRunningAt, gcdRunning", "\nend\n") + "\nend\n"
+GCD_REFERENCE = block(ROOT / "BlizzardAPI" / "CooldownTracking.lua",
+                      "local GCD_REFERENCE_CANDIDATES", "\nend\n") + "\nend\n"
 
 
 def test_ownership_memo():
@@ -54,24 +56,26 @@ def test_ownership_memo():
     assert owns(e1) is False                      # age backstop for a missed event
 
 
-def gcd_runtime(exists, durations):
+def gcd_runtime(reference, present, durations):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
         now = 100
         function GetTime() return now end
-        calls = { duration = 0 }
-        GCD_DUMMY_SPELL = 61304
+        calls = { duration = 0, ids = {} }
         BlizzardAPI = {}
         local function DurationObjectActive(d) return d ~= nil and d.active == true end
         _G.DurationObjectActive = DurationObjectActive
     """)
-    lua.globals().dummyExists = exists
+    lua.globals().reference = reference
+    lua.globals().present = lua.table_from(present)
     lua.globals().durs = lua.table_from(durations)
     lua.execute("""
+        function BlizzardAPI.GetGCDReferenceSpell() return reference end
         C_Spell = {
-            DoesSpellExist = function() return dummyExists end,
-            GetSpellCooldownDuration = function()
+            DoesSpellExist = function(id) return present[id] == true end,
+            GetSpellCooldownDuration = function(id)
                 calls.duration = calls.duration + 1
+                calls.ids[#calls.ids + 1] = id
                 return durs[calls.duration]
             end,
         }
@@ -80,25 +84,58 @@ def gcd_runtime(exists, durations):
     return lua
 
 
+def test_gcd_reference_by_client():
+    # The first candidate the spell data has wins: retail keeps 61304 although it also has
+    # 1283885; Forever has only 1283885; neither means unknown. Resolved once.
+    for present, expected in (({61304: True, 1283885: True}, 61304), ({1283885: True}, 1283885),
+                              ({}, None)):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().present = lua.table_from(present)
+        lua.execute("""
+            BlizzardAPI = {}
+            existsCalls = 0
+            C_Spell = {DoesSpellExist = function(id) existsCalls = existsCalls + 1; return present[id] == true end}
+        """)
+        lua.execute(GCD_REFERENCE)
+        ref = lua.globals().BlizzardAPI.GetGCDReferenceSpell
+        assert ref() == expected and ref() == expected, (present, ref())
+        calls = lua.globals().existsCalls
+        lua.execute("BlizzardAPI.GetGCDReferenceSpell()")
+        assert lua.globals().existsCalls == calls        # static data: never asked again
+
+
 def test_gcd_gate_retail():
-    lua = gcd_runtime(True, [None, {"active": True}])
+    lua = gcd_runtime(61304, {61304: True}, [None, {"active": True}])
     gate = lua.globals().BlizzardAPI.IsGlobalCooldownRunning
-    assert gate() is False                        # dummy present, no duration -> idle
+    assert gate() is False                        # reference present, no duration -> idle
     assert gate() is False                        # same frame: memoized
     assert lua.globals().calls.duration == 1
     lua.execute("now = now + 0.016")
     assert gate() is True
+    assert lua.globals().calls.ids[1] == 61304
 
 
-def test_gcd_gate_unknown_without_dummy():
-    lua = gcd_runtime(False, [])
+def test_gcd_gate_forever_reference():
+    # Forever has no 61304; its reference 1283885 answers instead of unknown.
+    lua = gcd_runtime(1283885, {1283885: True}, [{"active": True}, None])
     gate = lua.globals().BlizzardAPI.IsGlobalCooldownRunning
-    assert gate() is None                         # Forever: unknown, callers ask the spell
+    assert gate() is True
+    lua.execute("now = now + 0.016")
+    assert gate() is False
+    assert lua.globals().calls.ids[1] == 1283885 and lua.globals().calls.ids[2] == 1283885
+
+
+def test_gcd_gate_unknown_without_reference():
+    lua = gcd_runtime(None, {}, [])
+    gate = lua.globals().BlizzardAPI.IsGlobalCooldownRunning
+    assert gate() is None                         # no reference: unknown, callers ask the spell
     assert lua.globals().calls.duration == 0
 
 
 if __name__ == "__main__":
     test_ownership_memo()
+    test_gcd_reference_by_client()
     test_gcd_gate_retail()
-    test_gcd_gate_unknown_without_dummy()
+    test_gcd_gate_forever_reference()
+    test_gcd_gate_unknown_without_reference()
     print("consumable call budget: ok")

@@ -303,6 +303,47 @@ function SpellDB.GetForeverTotemSlot(spellID)
     return SpellDB.FOREVER_TOTEM_SLOTS and StaticLookup(SpellDB.FOREVER_TOTEM_SLOTS, spellID) or nil
 end
 
+--- Does casting this carry the player to the target (spell effect CHARGE: Charge, Intercept,
+--- Feral Charge)? Forever data, every rank; empty on retail.
+function SpellDB.LandsAtTarget(spellID)
+    return SpellDB.FOREVER_LANDS_AT_TARGET ~= nil
+        and StaticLookup(SpellDB.FOREVER_LANDS_AT_TARGET, spellID) == true
+end
+
+--- What casting this gives the caster, from the spell data: power type (Enum.PowerType; combo
+--- points 4) and amount in the game's units (Charge rank 1: rage, 9). nil when it gives nothing.
+--- Forever data, every rank; empty on retail.
+function SpellDB.GetEnergize(spellID)
+    local gain = SpellDB.FOREVER_ENERGIZE and StaticLookup(SpellDB.FOREVER_ENERGIZE, spellID)
+    if type(gain) ~= "table" then return nil end
+    return gain[1], gain[2]
+end
+
+--- How long the aura this cast puts on yourself lasts, in seconds (its own, or one from the
+--- spell it triggers: Bloodrage's rage aura). nil without one. Forever data, every rank.
+function SpellDB.GetSelfAuraSeconds(spellID)
+    local seconds = SpellDB.FOREVER_SELF_AURA_SECONDS and StaticLookup(SpellDB.FOREVER_SELF_AURA_SECONDS, spellID)
+    if type(seconds) ~= "number" then return nil end
+    return seconds
+end
+
+--- Does casting this keep paying the caster a resource after the cast (a periodic energize on
+--- yourself: Bloodrage's rage over ten seconds)? Forever data, every rank; empty on retail.
+function SpellDB.GainsOverTime(spellID)
+    return SpellDB.FOREVER_GAINS_OVER_TIME ~= nil
+        and StaticLookup(SpellDB.FOREVER_GAINS_OVER_TIME, spellID) == true
+end
+
+--- What casting this does to threat, from the spell data: "tank" (the effectively-tank aura:
+--- Defensive Stance, Bear Form, Righteous Fury), "taunt", "drop" (sheds threat: Fade, Feint,
+--- Feign Death) or "boost" (bonus threat: Sunder Armor). nil otherwise. Forever data, every
+--- rank; empty on retail.
+function SpellDB.GetThreatRole(spellID)
+    local role = SpellDB.FOREVER_THREAT_ROLES and StaticLookup(SpellDB.FOREVER_THREAT_ROLES, spellID)
+    if type(role) ~= "string" then return nil end
+    return role
+end
+
 --- Damage that lands only after a long delay (Forever data: Bane of Doom), so it pays off in
 --- long fights only.
 function SpellDB.IsDelayedPayoff(spellID)
@@ -1957,6 +1998,47 @@ SpellDB.DEFENSIVE_AURA_HINTS = {
 --- talent-override variants to the base list ID). Returns the hint table or nil.
 function SpellDB.GetDefensiveAuraHint(spellID)
     return StaticLookup(SpellDB.DEFENSIVE_AURA_HINTS, spellID)
+end
+
+-- Self-lockouts: a successful cast ON THE PLAYER puts an aura on them that blocks casting
+-- the listed spells on themselves, while the game still reports them usable. Keyed by spec
+-- key, so an entry applies only where it was checked. `aura` is the lockout aura and keys the
+-- hold, so every entry sharing it is held together; `dur` is its duration. The aura cannot be
+-- read in combat, so the hold is timed from our own confirmed cast.
+--   selfOnly  - the spell can only land on the caster, so no target identity check is made.
+--   applyOnly - the cast starts the hold but the spell itself is not blocked by the aura.
+-- PRIEST_F: Weakened Soul (6788) after Power Word: Shield. Measured 2026-11-16 on Forever:
+-- the recast returns "immune" while C_Spell.IsSpellUsable reads true, Weakened Soul lasted
+-- 15s (SpellDuration agrees), and it reads nil in combat even while present. Talents that
+-- shorten or clear it only make the hold run long, which costs a late shield, never a wasted
+-- press. See Documentation/FOREVER_COMBAT_SIGNALS.md (ability lockouts).
+-- PALADIN_F: Forbearance (25771, 60s). Build 1.60.1.70938 data: SpellAuraRestrictions
+-- excludes it on the caster for Divine Shield and Divine Protection and on the target for
+-- Blessing of Protection; Avenging Wrath 407788 triggers it (SpellEffect) and is not blocked.
+-- Divine Shield / Divine Protection / Blessing of Protection applying it is not in the data
+-- (hardcoded, like Weakened Soul) and not yet captured; a wrong hold only moves a spell
+-- behind ready defensives for 60s. Divine Shield and Divine Protection already share a
+-- cooldown, so the gap this closes is Blessing of Protection on yourself against the other two.
+local FORBEARANCE, FORBEARANCE_DUR = 25771, 60.0
+SpellDB.SELF_LOCKOUTS = {
+    PRIEST_F = {
+        [17] = { aura = 6788, dur = 15.0 },  -- Power Word: Shield -> Weakened Soul
+    },
+    PALADIN_F = {
+        [642] = { aura = FORBEARANCE, dur = FORBEARANCE_DUR, selfOnly = true },   -- Divine Shield
+        [498] = { aura = FORBEARANCE, dur = FORBEARANCE_DUR, selfOnly = true },   -- Divine Protection
+        [1022] = { aura = FORBEARANCE, dur = FORBEARANCE_DUR },                   -- Blessing of Protection
+        [407788] = { aura = FORBEARANCE, dur = FORBEARANCE_DUR, selfOnly = true,  -- Avenging Wrath
+                     applyOnly = true },
+    },
+}
+
+--- The current spec's self-lockout entry for a spell (any rank), or nil.
+function SpellDB.GetSelfLockout(spellID)
+    local specKey = SpellDB.GetSpecKey()
+    local list = specKey and SpellDB.SELF_LOCKOUTS[specKey]
+    if not list or not spellID then return nil end
+    return StaticLookup(list, spellID)
 end
 
 -- The ONE mitigation buff each tank spec is expected to keep rolling, for the defensive

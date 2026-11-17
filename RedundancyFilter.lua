@@ -244,6 +244,11 @@ end
 -- Prevents trustedOutOfCombatCache from re-adding auras the player manually cancelled
 -- Cleared on leaving combat (ClearActivationTracking)
 local combatRemovedSpellIDs = {}
+-- [spellID] = when its aura was last seen removed (UNIT_AURA removedAuraInstanceIDs), kept past
+-- combat: the buff timer compares it with our latest cast (GetAuraRemovedAt).
+RedundancyFilter._auraRemovedAt = {}
+-- How often the removed-instance list read plain or secret, in and out of combat (probe).
+RedundancyFilter._removalReads = { plain = 0, secret = 0, plainCombat = 0, secretCombat = 0 }
 
 -- Pending activation queue: bridges UNIT_SPELLCAST_SUCCEEDED → UNIT_AURA addedAuras
 -- When a spell is cast in combat, we know the spellID but not the new auraInstanceID.
@@ -337,12 +342,20 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     if not updateInfo then return end
 
     local removed = BlizzardAPI.Unsecret(updateInfo.removedAuraInstanceIDs)
+    if updateInfo.removedAuraInstanceIDs ~= nil then
+        local reads, inCombat = RedundancyFilter._removalReads, UnitAffectingCombat("player")
+        local key = removed and "plain" or "secret"
+        reads[key] = reads[key] + 1
+        if inCombat then reads[key .. "Combat"] = reads[key .. "Combat"] + 1 end
+    end
     if removed then
+        local removedAtNow = GetTime()
         for _, instanceID in ipairs(removed) do
             -- Record the spellID before removing, so trusted cache merge doesn't re-add it
             local removedSpellID = instanceToSpellMap[instanceID]
             if removedSpellID then
                 combatRemovedSpellIDs[removedSpellID] = true
+                RedundancyFilter._auraRemovedAt[removedSpellID] = removedAtNow
                 -- Also clear from inCombatActivations (player may have cast then cancelled)
                 inCombatActivations[removedSpellID] = nil
             end
@@ -659,6 +672,33 @@ local function MergeTrustedCacheFallback(now)
             cachedAuras.auraInfo[spellID] = info
         end
     end
+end
+
+--- Expiry of a player aura from the last complete out-of-combat scan, and when that scan was
+--- taken: plain numbers saved before combat, never a live read. nil for none, a permanent
+--- aura, one already past, or one seen removed during this combat.
+--- When this spell's aura (any Forever rank) was last seen removed, or nil. A removal is seen
+--- only while the removed-instance list reads plain and the instance was mapped to the spell.
+function RedundancyFilter.GetAuraRemovedAt(spellID)
+    if not spellID then return nil end
+    local at = RedundancyFilter._auraRemovedAt
+    local RI = LibStub("JustAC-RotationImport", true)
+    local chain = RI and RI.RankChain and RI.RankChain(spellID)
+    local latest = at[spellID]
+    for i = 1, chain and #chain or 0 do
+        local t = at[chain[i]]
+        if t and (not latest or t > latest) then latest = t end
+    end
+    return latest
+end
+
+function RedundancyFilter.GetTrustedAuraExpiry(spellID)
+    local infos = trustedOutOfCombatCache.auraInfo
+    local info = spellID and infos and infos[spellID]
+    if not info or combatRemovedSpellIDs[spellID] then return nil end
+    local exp = info.expirationTime
+    if BlizzardAPI.IsSecretValue(exp) or type(exp) ~= "number" or exp <= GetTime() then return nil end
+    return exp, lastTrustedCacheTime
 end
 
 -- Build cache of current player auras (by spellID, name, and icon)

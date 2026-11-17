@@ -20,7 +20,8 @@ not the plan.
    changes must be intentional; client-specific changes are gated.
 5. **The same id can be a different spell.** Shared tables keyed by Retail ids (interrupts,
    soothes) apply on Forever too: 99 is Demoralizing Roar there, 5938 Shiv has no dispel,
-   and the GCD dummy 61304 does not exist. Retract or replace such ids in the Forever
+   and the GCD dummy 61304 does not exist (`BlizzardAPI.GetGCDReferenceSpell()` reads
+   1283885 there instead). Retract or replace such ids in the Forever
    defaults, and check a shared id against the Forever data before relying on it.
 6. **Every leak is a test.** `tools/test_forever_defaults.py` loads the real SpellDB,
    RotationImport, Forever lists and Forever defaults as retail and asserts nothing Forever
@@ -85,6 +86,9 @@ Intended universal changes (apply on both clients):
 - Queue icons tint by usability out of combat too.
 - An unbound button's slot answers usability, range and cooldown.
 - `/startattack` in a macro maps to Attack; Attack hides while auto-attacking.
+- Attack also hides behind a lead whose hotkey macro contains `/startattack` (that press
+  starts the swing); Attack as the lead stays. `/jac inspect validate` lists ranged spell
+  macros with `/startattack` when a wand or Auto Shot is known: each press stops the auto-repeat.
 - Saved settings (blacklist, pins, holds, hotkey overrides) match across ranks (a no-op on
   retail).
 - Priority-list tie order keeps the incoming order.

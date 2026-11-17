@@ -497,7 +497,8 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
 
     addon:Print("")
 
-    addon:Print("4. GCD (dummy spell 61304):")
+    local gcdReference = BlizzardAPI and BlizzardAPI.GetGCDReferenceSpell and BlizzardAPI.GetGCDReferenceSpell()
+    addon:Print("4. GCD (reference spell " .. tostring(gcdReference) .. "):")
     if BlizzardAPI and BlizzardAPI.GetGCDInfo then
         local gcdStart, gcdDur = BlizzardAPI.GetGCDInfo()
         local startSecret = BlizzardAPI.IsSecretValue(gcdStart)
@@ -1221,79 +1222,6 @@ function DebugCommands.RangeProbe(addon)
     end
 end
 
---- /jac inspect aoe - Test whether we can count nearby enemies DIRECTLY (nameplate
---- enumeration + per-unit checks) without tripping 12.0 secret values, i.e. an
---- AC-independent AoE signal. Every value is tested with issecretvalue BEFORE it is
---- branched on, so the probe itself never trips a secret.
-function DebugCommands.AoeDiagnostics(addon)
-    local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    addon:Print("|cff00ccff== AoE-context probe (secret-safe enemy counting) ==|r")
-    local pc = UnitAffectingCombat("player")
-    addon:Print("player in combat: " .. (IsSecret(pc) and "|cffff6600SECRET|r"
-        or "|cff00ff00" .. tostring(pc) .. "|r"))
-
-    if not (C_NamePlate and C_NamePlate.GetNamePlates) then
-        addon:Print("|cffff6600C_NamePlate.GetNamePlates unavailable|r")
-        return
-    end
-    local plates = C_NamePlate.GetNamePlates()
-    local total = plates and #plates or 0
-    addon:Print("nameplates enumerated: " .. total
-        .. "  (count secret=" .. tostring(IsSecret(total)) .. ")")
-
-    -- Nameplate FRAMES are restricted in 12.0 (their fields read secret/nil), so
-    -- resolve via the unit TOKENS directly (nameplate1..40) and filter: hostile,
-    -- then within AoE range. Range - not "in combat" - is the useful AoE proxy,
-    -- since you AoE targets that are NEAR you before they're engaged.
-    local nUnits, nHostile, nRange, nCombat, nThreat = 0, 0, 0, 0, 0
-    local sExists, sHostile, sRange, sCombat, sThreat = false, false, false, false, false
-    local RANGE_PROBE = 1822  -- Rake (melee ~5yd); placeholder AoE-range check
-    for i = 1, 40 do
-        local u = "nameplate" .. i
-        local ex = UnitExists(u)
-        if IsSecret(ex) then
-            sExists = true
-        elseif ex then
-            nUnits = nUnits + 1
-            local ca = UnitCanAttack("player", u)   -- value first, secret-test before branching
-            if IsSecret(ca) then
-                sHostile = true
-            elseif ca then
-                nHostile = nHostile + 1
-                local r = C_Spell and C_Spell.IsSpellInRange and C_Spell.IsSpellInRange(RANGE_PROBE, u)
-                if IsSecret(r) then sRange = true elseif r then nRange = nRange + 1 end
-                local ic = UnitAffectingCombat(u)              -- engaged with anyone
-                if IsSecret(ic) then sCombat = true elseif ic then nCombat = nCombat + 1 end
-                local threatFn = _G.UnitThreatSituation         -- on its threat table = fighting ME
-                if threatFn then
-                    local ts = threatFn("player", u)
-                    if IsSecret(ts) then sThreat = true elseif ts ~= nil then nThreat = nThreat + 1 end
-                end
-            end
-        end
-    end
-
-    local function line(label, n, s)
-        addon:Print(string.format("  %-36s %d  %s", label, n,
-            s and "|cffff6600<hit SECRET>|r" or "|cff00ff00secret-safe|r"))
-    end
-    line("nameplate units", nUnits, sExists)
-    line("hostile (UnitCanAttack)", nHostile, sHostile)
-    line("+ in melee range", nRange, sRange)
-    line("+ engaged (UnitAffectingCombat)", nCombat, sCombat)
-    line("+ fighting me (UnitThreatSituation)", nThreat, sThreat)
-
-    -- Compare with AC's own context signal (the thing we're trying to replicate
-    -- WITHOUT AC). AC's pick + its archetype is exactly how the queue infers AoE today.
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    local pick = BAPI and BAPI.GetNextCastSpell and BAPI.GetNextCastSpell()
-    local arch = pick and SpellDB and SpellDB.GetArch and SpellDB.GetArch(pick)
-    addon:Print(string.format("|cffffff00AC view:|r pick=%s  archetype=|cff00ccff%s|r",
-        pick and tostring(pick) or "none", tostring(arch or "?")))
-    addon:Print("|cff888888Pull 1 vs 3+ mobs and re-run: does the direct hostile count track "
-        .. "reality (secret-safe), and does it agree with AC's archetype?|r")
-end
-
 --------------------------------------------------------------------------------
 -- Performance Diagnostics
 --------------------------------------------------------------------------------
@@ -1588,93 +1516,6 @@ function DebugCommands.CCImmunityDB(addon, arg)
     end
     addon:Print("  signal on this target: "
         .. tostring(B.GetCCImmuneSignal and B.GetCCImmuneSignal()))
-end
-
---------------------------------------------------------------------------------
--- /jac inspect audioalerts - the combat audio alert manager as a SIGNAL SOURCE
---------------------------------------------------------------------------------
--- Blizzard's combat audio alert system announces player/target health, player/target casts,
--- party health and player debuffs. To do that it must COMPUTE those things - and it is
--- ordinary untainted Lua on an ordinary Frame (`CombatAudioAlertManager`, toplevel, plain
--- mixin), NOT one of the forbidden aura containers. It caches what it computed:
---
---   lastUnitHealthPercent[unit]      lastPlayerPowerPercent[...]     partyHealthInfo
---   lastUnitHealthAnnouncePercent    lastPlayerPowerAnnouncePercent  lastInterruptedCast
---   unitCastStartUnitsLookup         unitCastEndUnitsLookup          unitHealthUnitsLookup
---
--- Why this is worth measuring rather than assuming: untainted control flow CAN launder a
--- secret into a plain value, and we already ship a technique that depends on it -
--- `item.isActive` on the Cooldown Manager is "an ordinary boolean assigned by untainted
--- control flow" and reads PLAIN in combat (MaintenanceTracker.ViewerBuffActive). If health
--- and power percents survive the same way, they are branchable numbers - the exact thing
--- every note we have says does not exist.
---
--- Same conditionality as the Cooldown Manager, and the same trap: this only computes while
--- the FEATURE IS ON. A category the player left off caches nothing, and a stale cache from a
--- category switched off mid-session would be worse than nothing - so report the settings
--- FIRST and never interpret a value without them.
-function DebugCommands.AudioAlertProbe(addon)
-    addon:Print("=== combat audio alerts as a signal source ===")
-    local mgr = CombatAudioAlertManager
-    if not mgr then
-        addon:Print("|cffff6600CombatAudioAlertManager missing|r - addon not loaded this session")
-        return
-    end
-    addon:Print("manager: present  initDone=" .. tostring(rawget(mgr, "initDone")))
-
-    -- WHICH CATEGORIES ARE ON. Everything below is meaningless without this: an off category
-    -- never populates its cache, so a nil read means "disabled", not "unreadable".
-    local CA = C_CombatAudioAlert
-    local cats = Enum and Enum.CombatAudioAlertCategory
-    if CA and CA.GetSpecSetting and type(cats) == "table" then
-        local parts = {}
-        for name, value in pairs(cats) do
-            local st, txt = ProbeRead(function() return CA.GetSpecSetting(value) end)
-            parts[#parts + 1] = string.format("%s=%s", name, st == "plain" and txt or st)
-        end
-        table.sort(parts)
-        addon:Print("settings: " .. table.concat(parts, "  "))
-    else
-        addon:Print("|cff888888category settings unavailable - cannot say which caches are live|r")
-    end
-
-    -- THE CACHES. Percent-per-unit tables are the prize; the rest are cheap to read while
-    -- we are here and each one is a signal in its own right if it comes back plain.
-    local function report(label, fn)
-        local st, txt = ProbeRead(fn)
-        local colour = (st == "plain") and "|cff2ecc71" or "|cff888888"
-        addon:Print(string.format("  %-38s %s%s|r%s", label, colour, st,
-            (st == "plain" and txt and txt ~= "nil") and (" = " .. txt) or ""))
-    end
-    report("lastUnitHealthPercent[player]", function() return mgr.lastUnitHealthPercent and mgr.lastUnitHealthPercent["player"] end)
-    report("lastUnitHealthPercent[target]", function() return mgr.lastUnitHealthPercent and mgr.lastUnitHealthPercent["target"] end)
-    report("lastPlayerPowerPercent (count)", function()
-        local t = mgr.lastPlayerPowerPercent
-        if type(t) ~= "table" then return nil end
-        local n = 0
-        for _ in pairs(t) do n = n + 1 end
-        return n
-    end)
-    report("lastPlayerPowerPercent (first value)", function()
-        local t = mgr.lastPlayerPowerPercent
-        if type(t) ~= "table" then return nil end
-        -- next(), not a one-iteration pairs loop: the table is keyed by power token and any
-        -- entry characterises it, so say "give me one" rather than writing a loop that lies
-        -- about iterating.
-        return select(2, next(t))
-    end)
-    report("partyHealthInfo.unitCount", function()
-        return mgr.partyHealthInfo and mgr.partyHealthInfo.unitCount
-    end)
-    report("lastInterruptedCast", function() return mgr.lastInterruptedCast end)
-    report("unitCastStartUnitsLookup[target]", function()
-        return mgr.unitCastStartUnitsLookup and mgr.unitCastStartUnitsLookup["target"]
-    end)
-
-    addon:Print("|cff888888green = PLAIN, i.e. branchable. A percent reading plain here is a"
-        .. " number every other route says cannot exist - re-read the settings line before"
-        .. " believing it, and check it TRACKS (take damage, re-run).|r")
-    addon:Print("==============================================")
 end
 
 --------------------------------------------------------------------------------

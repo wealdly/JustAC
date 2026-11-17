@@ -18,6 +18,9 @@ version, dependencies and load order; do not duplicate changing inventories here
   files. See [runtime test sync](Documentation/DEV_TOOLING.md#runtime-test-sync).
 - Keep release notes player-facing in [UNRELEASED.md](UNRELEASED.md).
   Research, probes and tooling do not belong in player release notes.
+- Public text (README, CHANGELOG, UNRELEASED, release notes) never mentions how secret
+  health, power or durations are read: no threshold curves or gates, percentage bands, slider
+  steps or "below N%" detection. Describe only what the player sees the queue do.
 - No AI attribution, acknowledgments or co-author trailers in project files or
   commits. Preserve required upstream source/license credits.
 - No em dashes in project files.

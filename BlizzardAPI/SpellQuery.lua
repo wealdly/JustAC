@@ -486,12 +486,22 @@ function BlizzardAPI.GetSpellCooldown(spellID)
     return 0, 0
 end
 
--- Blizzard's dummy GCD spell always returns current GCD state
-local GCD_SPELL_ID = 61304
+-- The client's GCD reference spell (CooldownTracking) always returns current GCD state
+--- The length of the global cooldown last seen running on the GCD reference spell (plain
+--- seconds), or nil before one has been seen. It follows haste and the GCD the spell triggered
+--- (measured 1.304s and 1.500s on Forever, 2026-11-17); remembered because the reference only
+--- reports a duration while a GCD runs.
+local lastGCDLength
+function BlizzardAPI.GetGCDLength()
+    local _, duration = BlizzardAPI.GetGCDInfo()
+    if type(duration) == "number" and duration > 0 and duration < 5 then lastGCDLength = duration end
+    return lastGCDLength
+end
 
 function BlizzardAPI.GetGCDInfo()
-    if C_Spell_GetSpellCooldown then
-        local cd = C_Spell_GetSpellCooldown(GCD_SPELL_ID)
+    local reference = BlizzardAPI.GetGCDReferenceSpell()
+    if C_Spell_GetSpellCooldown and reference then
+        local cd = C_Spell_GetSpellCooldown(reference)
         if cd then
             local startTime = cd.startTime
             local duration = cd.duration

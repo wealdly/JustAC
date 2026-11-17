@@ -4,6 +4,8 @@
 local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 47)
 if not UIRenderer then return end
 
+local AuraClock = LibStub("JustAC-AuraClock", true)
+
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
@@ -134,6 +136,18 @@ local function LookupHotkey(id, isItem, itemCastSpellID)
         return ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(id, itemCastSpellID) or ""
     end
     return ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
+end
+
+--- Attack's key: the queued ability the queue chose to carry it (its button starts melee with
+--- /startattack), so the player stays on the rotation's own keys. Otherwise Attack's own key.
+local AUTO_ATTACK_SPELL = 6603
+local function AttackHotkey()
+    local carrier = SpellQueue and SpellQueue.GetAttackKeySpell and SpellQueue.GetAttackKeySpell()
+    if carrier then
+        local key = LookupHotkey(carrier)
+        if key ~= "" then return key end
+    end
+    return LookupHotkey(AUTO_ATTACK_SPELL)
 end
 
 --------------------------------------------------------------------------------
@@ -373,7 +387,7 @@ local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartT
 local itemCooldownScratch  = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 
 -- False only when the player's GCD is known idle (one read per frame, shared by every
--- icon); unknown (no GCD source, e.g. WoW Forever) keeps the per-spell query.
+-- icon); unknown (no readable GCD reference spell) keeps the per-spell query.
 local function MayBeOnGCD()
     if not BlizzardAPI.IsGlobalCooldownRunning then return true end
     return BlizzardAPI.IsGlobalCooldownRunning() ~= false
@@ -410,6 +424,7 @@ local function UpdateButtonCooldowns(button)
     end
 
     if id ~= button._lastCooldownID then
+        if AuraClock then AuraClock.Release(button) end
         if button.cooldown then button.cooldown:Clear() end
         if button.chargeCooldown then button.chargeCooldown:Clear(); button.chargeCooldown:Hide() end
         button._lastCooldownID = id
@@ -551,6 +566,8 @@ local function UpdateButtonCooldowns(button)
         -- numbers and apply them ONCE; the swipe is already animating, so we then leave
         -- it alone (no per-tick duration-object rebuild) for a seamless, efficient hold.
         if showNormal or chargeDepleted then
+            -- A real cooldown is drawn: no time-left clock.
+            if AuraClock then AuraClock.Release(button) end
             if chargeDepleted and cdSlot and C_ActionBar_GetActionChargeDuration then
                 -- 0 charges with a visible slot: the next charge's recharge is the swipe.
                 local durObj = C_ActionBar_GetActionChargeDuration(cdSlot)
@@ -611,10 +628,15 @@ local function UpdateButtonCooldowns(button)
                     gcdShown = true
                 end
             end
-            if not gcdShown then
+            -- Not on a real cooldown: an icon held back by something with a timer (queue
+            -- holds for queue icons, self-lockouts for any icon) draws that time left. One
+            -- passthrough for every surface; see AuraClock for the source ladder.
+            button._cdStart, button._cdDuration = nil, nil
+            if AuraClock then
+                AuraClock.Apply(button, id, button.showsAuraClock == true, gcdShown)
+            elseif not gcdShown then
                 button.cooldown:Clear()
             end
-            button._cdStart, button._cdDuration = nil, nil
         end
 
         -- Charge cooldown edge ring (only while charges remain - at 0 charges the
@@ -1010,7 +1032,7 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     -- From "none" is turning a glow ON: immediate, per the rule above. Debouncing it
     -- cost a second render tick (an idle tick out of combat) on every glow onset.
     if not immediate and have ~= nil and have ~= "none" and have ~= "preparation"
-       and want ~= "proc" and want ~= "preparation" then
+       and want ~= "proc" and want ~= "preparation" and want ~= "threat" then
         local now = GetTime()
         if icon.pendingDefGlowState ~= want then
             icon.pendingDefGlowState = want
@@ -1029,12 +1051,15 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StopPrecombatGlow(icon)
     elseif have == "preparation" then
         UIAnimations.HidePreparationGlow(icon)
+    elseif have == "threat" then
+        UIAnimations.HideThreatProcGlow(icon)
     else
         -- Unknown starting state (fresh icon, combat-transition reset): clear all
         UIAnimations.HideProcGlow(icon)
         UIAnimations.StopDefensiveGlow(icon)
         UIAnimations.StopPrecombatGlow(icon)
         UIAnimations.HidePreparationGlow(icon)
+        UIAnimations.HideThreatProcGlow(icon)
     end
     if want == "proc" then
         -- Always animated (even OOC): a procced heal is the preferred top-up
@@ -1045,6 +1070,8 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StartPrecombatGlow(icon, isInCombat)
     elseif want == "preparation" then
         UIAnimations.ShowPreparationGlow(icon)
+    elseif want == "threat" then
+        UIAnimations.ShowThreatProcGlow(icon)
     end
     icon.appliedDefGlowState = want
 end
@@ -1083,10 +1110,12 @@ local function IsUrgentPlayerHeal(icon)
     local addon = BlizzardAPI.GetAddon()
     local list = DE and addon and DE.GetClassSpellList(addon, "defensiveSpells")
     local personal = false
-    for _, spellID in ipairs(list or {}) do
-        if spellID == id or BlizzardAPI.GetDisplaySpellID(spellID) == id then
-            personal = true
-            break
+    if list then
+        for _, spellID in ipairs(list) do
+            if spellID == id or BlizzardAPI.GetDisplaySpellID(spellID) == id then
+                personal = true
+                break
+            end
         end
     end
     if not personal or not BlizzardAPI.IsSpellReady(id) then return false end
@@ -1098,6 +1127,12 @@ local function ComputeDefensiveGlowState(icon, isProc)
     icon.defGlowReason = "none"
     if icon.isWaiting then return "none" end
     local mode = icon.defGlowMode or "all"
+    -- A threat cue (aggro about to be pulled or already lost) carries its own tint in every
+    -- glow mode that shows glows at all: the colour is the whole message.
+    if icon.isThreatCue and mode ~= "none" then
+        icon.defGlowReason = "threat"
+        return "threat"
+    end
     if isProc and (mode == "all" or mode == "procOnly") then
         -- A procced HEAL only glows while there is something to heal: at full
         -- health with nobody low, the "press me" burst is noise (field report:
@@ -2162,6 +2197,7 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         ClearIconState(defensiveIcon)
         defensiveIcon.currentID = nil
         defensiveIcon.isPrecombatBuff = nil
+        defensiveIcon.isThreatCue = nil
         defensiveIcon.isWaiting = nil
         defensiveIcon.cachedMetadataID = nil
         defensiveIcon.cachedMetadataIsItem = nil
@@ -2200,6 +2236,7 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
+            icon.isThreatCue = entry.threat ~= nil or nil
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, entry.waiting, entry.precombat)
             anyVisible = true
         else
@@ -2559,6 +2596,15 @@ end
 -- Cached per itemID: item icons never change, and the uncached version allocated
 -- a fresh table per item icon per render pass. A miss (icon not loaded yet) is
 -- deliberately NOT negative-cached so it retries until the item data streams in.
+--- Is this spell queued at another visible slot than `i`? A hold that kept it at `i` too would
+--- show the same spell twice (seen live: Heroic Strike in slots 1 and 2 while it moved up).
+local function ShownElsewhere(spellIDs, spellCount, visible, i, id)
+    for j = 1, math.min(spellCount, visible or spellCount) do
+        if j ~= i and spellIDs[j] == id then return true end
+    end
+    return false
+end
+
 local function RenderQueueIcon(icon, i, ctx)
     -- WAIT sentinel first: it is a number in item-id space, and everything below
     -- treats numeric ids as spells/items - this is the one consumer that knows it.
@@ -2584,11 +2630,14 @@ local function RenderQueueIcon(icon, i, ctx)
     -- POSITION_HOLD_TIME before replacing it. Prevents rapid position
     -- shuffling when SpellQueue re-categorizes spells (proc gained/lost,
     -- CD expired). If the old spell is no longer anywhere in the queue
-    -- (consumed/cast), allow immediate replacement.
+    -- (consumed/cast), allow immediate replacement. Neither hold keeps a spell that the
+    -- queue now shows at another visible slot: it already has a place, and holding it here
+    -- too would show it twice.
     -- Position 1: hold display briefly after a confirmed keypress so the
     -- icon doesn't change right as the player commits to it.
     if i == 1 and spellID and icon.spellID and icon.spellID ~= spellID then
-        if icon.lastPressTime and (currentTime - icon.lastPressTime) < POSITION_HOLD_TIME then
+        if icon.lastPressTime and (currentTime - icon.lastPressTime) < POSITION_HOLD_TIME
+           and not ShownElsewhere(spellIDs, spellCount, ctx.visibleIcons, i, icon.spellID) then
             -- Items too (negative ids), like the positions-2+ hold below: looking an
             -- item up as a spell found nothing, cleared the slot for a tick and
             -- restarted the glow - the very flicker the hold exists to prevent.
@@ -2611,7 +2660,7 @@ local function RenderQueueIcon(icon, i, ctx)
                     break
                 end
             end
-            if oldStillQueued then
+            if oldStillQueued and not ShownElsewhere(spellIDs, spellCount, ctx.visibleIcons, i, icon.spellID) then
                 local oldInfo
                 if icon.spellID < 0 then
                     oldInfo = ItemIconInfo(-icon.spellID)
@@ -2700,6 +2749,7 @@ local function RenderQueueIcon(icon, i, ctx)
 
         -- Swipe animates smoothly once set; only refresh on change or throttle tick.
         if spellChanged or ctx.updateCooldowns then
+            icon.showsAuraClock = true
             UpdateButtonCooldowns(icon)
         end
 
@@ -2800,7 +2850,10 @@ local function RenderQueueIcon(icon, i, ctx)
         -- can resolve proc overrides (Infernal Bolt, Ruination, etc.)
         -- that miss on the first frame before GetOverrideSpell propagates.
         local hotkey = icon.cachedHotkey
-        if ctx.refreshHotkeys or spellChanged or not hotkey or hotkey == "" then
+        if spellID == AUTO_ATTACK_SPELL then
+            -- Follows the queue behind it, so it is re-read every pass (cached lookups).
+            hotkey = ctx.lookupHotkeys and AttackHotkey() or ""
+        elseif ctx.refreshHotkeys or spellChanged or not hotkey or hotkey == "" then
             if isItemEntry then
                 hotkey = LookupHotkey(itemID, true, icon.itemCastSpellID)
             else
@@ -3261,6 +3314,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ctx.firstIconScale      = nil
         ctx.opacity             = nil
         ctx.hideEmptySlots      = nil
+        ctx.visibleIcons        = maxIcons
 
         for i = 1, maxIcons do
             local icon = spellIconsRef[i]

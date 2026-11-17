@@ -360,6 +360,30 @@ local function UpdateFormCache()
 end
 ```
 
+### Combat Phase and Content Context
+
+Ask the shared helpers in `BlizzardAPI/StateHelpers.lua`; do not read the raw group or
+instance APIs in feature code.
+
+| Question | Helper | Answers |
+|---|---|---|
+| Which combat phase? | `GetCombatPhase()` | `"precombat"`, `"combat"`, `"postcombat"` plus half `"ending"` or `"after"` |
+| Is the fight ending? | `IsFightEnding(enemyCount)` | true only on positive reads; the caller checks combat |
+| Grouped at all? | `IsGrouped()` | true, false, or nil when unknown |
+| Solo, party or raid? | `GetGroupContext()` | `"solo"`, `"party"`, `"raid"`, or nil when unknown |
+| What kind of content? | `GetContentType()` | `"world"`, `"delve"`, `"dungeon"`, `"raid"`, `"pvp"` |
+
+- Post-combat straddles the end of combat. `"ending"` is still in combat: the last engaged
+  enemy, not a boss, is confirmed below `FIGHT_ENDING_TARGET_PCT`. `"after"` is the short
+  window after combat ends.
+- Unknown stays unknown. A nil group answer is never solo; each caller picks its own
+  fail-closed fallback.
+- Recommendation logic reads combat with `UnitAffectingCombat("player")` (or the phase).
+  Anything touching secure frames, protected actions or options panels uses
+  `InCombatLockdown()`.
+- `GetContentType()` is plain (instance information is not secret on either client) and
+  drives per-content visibility (`hideIn`).
+
 ---
 
 ## Early Returns (Critical Rule)

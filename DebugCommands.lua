@@ -129,6 +129,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac find [spell] - Find spell on action bars (defaults to AC suggestion)")
     addon:Print("/jac why <spell> - Explain why a spell is or isn't showing in the queue")
+    addon:Print("/jac cdm track-hidden - Move every Cooldown Manager buff set to \"Not displayed\" into a tracked panel, in a JAC layout")
+    addon:Print("/jac cdm undo - Switch this spec back to the Cooldown Manager layout it used before")
     for i = 1, #INSPECT_TOPICS do
         -- Indexed, NOT unpack(): the no-argument rows carry a nil in slot 3, and the
         -- length of a table with a hole is undefined - unpack would truncate them.

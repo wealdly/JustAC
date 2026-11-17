@@ -27,6 +27,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lua51 import lua51_compile_error  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNTIME = r"<sources>\JustAC-runtime\JustAC"
 DEFAULT_CLIENTS = [r"C:\Blizzard\World of Warcraft\_retail_\Interface\AddOns",
@@ -111,6 +114,22 @@ def main():
     if not args.apply:
         print(f"{len(copy)} file(s) differ; rerun with --apply to deploy")
         return 1 if copy else 0
+    # A Lua file that Lua 5.1 will not compile (a syntax error, more than 60 upvalues or 200
+    # locals in one function) kills the whole file in game. Refuse the deploy instead.
+    blocked = []
+    for r in copy:
+        if r.endswith(".lua"):
+            error = lua51_compile_error((ROOT / r).read_text(encoding="utf-8"), r)
+            if error:
+                blocked.append(f"{r}: {error}")
+            elif error is False:
+                print("  note: no Lua 5.1 runtime (pip install lupa): compile not checked")
+                break
+    if blocked:
+        for b in blocked:
+            print(f"  REFUSED  Lua 5.1 will not compile {b}")
+        print(f"nothing copied: {len(blocked)} file(s) would not load in game")
+        return 1
     for r in copy:
         (runtime / r).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / r, runtime / r)

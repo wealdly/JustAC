@@ -20,6 +20,16 @@ local defensiveQueueDirty = true
 -- Shared read-only empty queue for suppressed states (vehicle/possess) - renderers
 -- only iterate their input, so one constant replaces two fresh tables per tick.
 local EMPTY_QUEUE = {}
+-- Read-only InvalidateCaches flag set for the UNIT_AURA path (InvalidateCaches only reads it).
+local AURA_CACHE_FLAGS = { auras = true }
+-- PrecombatEngine resolved once on first use: the UNIT_AURA handlers run per aura event.
+local precombatEngineRef
+local function GetPrecombatEngine()
+    if not precombatEngineRef then
+        precombatEngineRef = LibStub("JustAC-PrecombatEngine", true)
+    end
+    return precombatEngineRef
+end
 local lastFullUpdate = 0
 local IDLE_CHECK_INTERVAL = 0.25  -- Check every 0.25s when idle (no recent events)
 local COMBAT_DEFENSIVE_INTERVAL = 0.5  -- In-combat defensive rebuild fallback (2Hz)
@@ -90,6 +100,7 @@ local defaults = {
         contextOrder = "simc",            -- "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft priority; falls back to "ac" without spec data)
         orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
         efficiencyMode = DefaultEfficiencyMode(), -- off | solo (open world) | always (PvE)
+        prioritizeOwnTargets = false,  -- hold burst/DoTs on untagged or others' mobs not on you
         efficiencyManaThreshold = 40,
         efficiencyRecoverySeconds = 10,
         includeHiddenAbilities = true,    -- Let the pick name abilities with no visible bar button
@@ -188,6 +199,7 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
+            threatCues = false,       -- Forever, opt-in: threat drop / taunt / threat boost cues (DefensiveEngine)
             emergencyPotionChoice = 0, -- Emergency healing potion pick (0 = automatic/highest)
             position = "SIDE1",       -- SIDE1 (health bar side) or SIDE2 (legacy saved "LEADING" reads as SIDE1)
             showHealthBar = true,    -- Display compact health bar above main queue
@@ -726,6 +738,7 @@ function JustAC:OnEnable()
         UNIT_MAXPOWER                = "OnPowerTypeChanged",
         UNIT_AURA                    = "OnUnitAura",
         UNIT_SPELLCAST_SUCCEEDED     = "OnSpellcastSucceeded",
+        UNIT_SPELLCAST_SENT          = "OnSpellcastSent",
         UNIT_SPELLCAST_START         = "OnPlayerCastChanged",
         UNIT_SPELLCAST_STOP          = "OnPlayerCastChanged",
         UNIT_SPELLCAST_DELAYED       = "OnPlayerCastDelayed",
@@ -733,6 +746,7 @@ function JustAC:OnEnable()
         UNIT_SPELLCAST_CHANNEL_START = "OnPlayerChannelChanged",
         UNIT_SPELLCAST_CHANNEL_STOP  = "OnPlayerChannelChanged",
         UNIT_PET                     = "OnPetChanged",
+        UNIT_THREAT_SITUATION_UPDATE = "OnThreatChanged",
         UNIT_ENTERED_VEHICLE         = "OnVehicleChanged",
         UNIT_EXITED_VEHICLE          = "OnVehicleChanged",
     }
@@ -784,6 +798,7 @@ function JustAC:OnEnable()
     uf:RegisterUnitEvent("UNIT_MAXPOWER", "player")
     uf:RegisterUnitEvent("UNIT_AURA", "player", "target")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
     if BlizzardAPI and BlizzardAPI.IsForever and BlizzardAPI.IsForever() then
@@ -793,6 +808,7 @@ function JustAC:OnEnable()
     uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
     uf:RegisterUnitEvent("UNIT_PET", "player")
+    uf:RegisterUnitEvent("UNIT_THREAT_SITUATION_UPDATE", "player")
     uf:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
     uf:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
     self.targetHealthFrame:RegisterUnitEvent("UNIT_HEALTH", "target")
@@ -1119,6 +1135,13 @@ function JustAC:OnProfileDeleted(event, db, deletedName)
 end
 
 -- Defensive Engine wrapper methods (delegated to DefensiveEngine module)
+-- Threat cues (opt-in): your threat state moved, so rebuild the defensive icons now rather
+-- than at the next in-combat refresh.
+function JustAC:OnThreatChanged()
+    local p = self.db and self.db.profile
+    if p and p.defensives and p.defensives.threatCues == true then defensiveQueueDirty = true end
+end
+
 function JustAC:OnHealthChanged(event, unit)
     -- Real player UNIT_HEALTH events (not the synthetic periodic calls with
     -- event=nil) stamp the never-secret "health is changing" activity signal:
@@ -1502,9 +1525,8 @@ function JustAC:OnCombatEvent(event)
         self:ForceUpdateAll()  -- Update both combat and defensive queues
         NotifyOptionsChange()
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Open the post-combat bridge window: covers the few-second delay before OOC
-        -- health regen starts ticking, after which sustained-regen detection carries the
-        -- top-off heal reminder (see PrecombatEngine hurt detection / StateHelpers).
+        -- Open the post-combat window: the "after" half of the post-combat phase
+        -- (BlizzardAPI.GetCombatPhase), which starts here.
         if BlizzardAPI and BlizzardAPI.NotePlayerLeftCombat then
             BlizzardAPI.NotePlayerLeftCombat()
         end
@@ -1713,7 +1735,7 @@ end
 
 function JustAC:OnUnitAura(event, unit, updateInfo)
     if unit == "target" then
-        local preparation = LibStub("JustAC-PrecombatEngine", true)
+        local preparation = GetPrecombatEngine()
         if preparation and preparation.InvalidateTargetDebuffs then
             preparation.InvalidateTargetDebuffs()
             if not UnitAffectingCombat("player") then self:MarkQueueDirty() end
@@ -1751,7 +1773,7 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     if not UnitAffectingCombat("player") then
         defensiveQueueDirty = true
     end
-    local precombatEngine = LibStub("JustAC-PrecombatEngine", true)
+    local precombatEngine = GetPrecombatEngine()
     if precombatEngine and precombatEngine.ClearCache then precombatEngine.ClearCache() end
 
     -- 12.0: Pass updateInfo to RedundancyFilter for incremental instance map updates
@@ -1764,7 +1786,7 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     local now = GetTime()
     if now - (self.lastAuraInvalidation or 0) > 0.1 then
         self.lastAuraInvalidation = now
-        self:InvalidateCaches({auras = true})
+        self:InvalidateCaches(AURA_CACHE_FLAGS)
         -- Reset update timer in combat so proc-driven AC changes surface promptly
         -- instead of waiting for the next CVar-rate poll.  Throttled to 10x/sec
         -- by lastAuraInvalidation - safe even in heavy multi-aura combat.
@@ -1948,9 +1970,11 @@ function JustAC:OnTargetChanged()
     -- Refresh per-target creature type cache for CC immunity detection.
     -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
     -- cache on every target switch and only populates it when the value is readable.
+    -- (Target cast state is NOT reset here: StateHelpers' own PLAYER_TARGET_CHANGED
+    -- handler resets it and probes the new target's cast; a second reset here could
+    -- run after that probe and erase a cast already in progress.)
     if BlizzardAPI then
         BlizzardAPI.RefreshTargetCreatureType()
-        if BlizzardAPI.ResetTargetCastState then BlizzardAPI.ResetTargetCastState() end
     end
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
@@ -2082,8 +2106,22 @@ function JustAC:OnBagUpdate()
     end
 end
 
+-- Arms the self-lockout hold (Weakened Soul): only the cast's target identity is read here,
+-- and only for spells with a SpellDB.SELF_LOCKOUTS entry. See DefensiveEngine.
+function JustAC:OnSpellcastSent(event, unit, target, castGUID, spellID)
+    if unit ~= "player" then return end
+    if DefensiveEngine and DefensiveEngine.NoteSpellcastSent then
+        DefensiveEngine.NoteSpellcastSent(target, castGUID, spellID)
+    end
+end
+
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
+
+    if DefensiveEngine and DefensiveEngine.NoteSpellcastSucceeded
+       and DefensiveEngine.NoteSpellcastSucceeded(castGUID) then
+        defensiveQueueDirty = true
+    end
 
     -- Flash whichever visible icon shows what was just cast - the signal that covers
     -- every input route the key hook can't see (macros, click-casting, mouse 1-2).
@@ -2092,6 +2130,7 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     end
 
     if BlizzardAPI and BlizzardAPI.NoteOwnCast then BlizzardAPI.NoteOwnCast(spellID) end
+    if SpellQueue and SpellQueue.NoteLandingCast then SpellQueue.NoteLandingCast(spellID) end
     local FightWindow = LibStub("JustAC-FightWindow", true)
     if FightWindow and UnitAffectingCombat("player") then FightWindow.Used(spellID) end
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
@@ -2175,9 +2214,13 @@ end
 
 -- Player cast/channel start and stop. The renderer reads the cast itself each pass
 -- (ResolvePlayerCastState); these only schedule the rebuilds that pick the change up.
-function JustAC:OnPlayerCastChanged(event, unit)
+function JustAC:OnPlayerCastChanged(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
     MarkPrecombatGuardDirty()
+    -- A cast-time spell starts its global cooldown here, not at success.
+    if event == "UNIT_SPELLCAST_START" and BlizzardAPI and BlizzardAPI.NoteCastGCD then
+        BlizzardAPI.NoteCastGCD(spellID)
+    end
 end
 
 function JustAC:OnPlayerCastDelayed(event, unit)

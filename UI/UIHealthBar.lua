@@ -720,6 +720,7 @@ end
 local powerBarFrame = nil           -- primary (current displayed power)
 local secondaryPowerBarFrame = nil  -- secondary point resource
 local lastPowerUpdate = 0
+local powerTrailPending = false   -- a catch-up UpdatePower is scheduled
 local UnitPower = UnitPower
 local UnitPowerMax = UnitPowerMax
 local UnitPowerType = UnitPowerType
@@ -1033,7 +1034,20 @@ UIHealthBar.UpdateOneResourceBar = UpdateOneResourceBar  -- shared with the name
 function UIHealthBar.UpdatePower(addon)
     if not powerBarFrame or not powerBarFrame:IsVisible() then return end
     local now = GetTime()
-    if now - lastPowerUpdate < UPDATE_INTERVAL then return end
+    local wait = UPDATE_INTERVAL - (now - lastPowerUpdate)
+    if wait > 0 then
+        -- Throttled: catch the burst's final value once the interval ends, or a skipped last
+        -- change (reaching full, a cost and a tick together) would sit on the bar until power
+        -- moves again. One pending refresh at a time.
+        if not powerTrailPending and C_Timer and C_Timer.After then
+            powerTrailPending = true
+            C_Timer.After(wait, function()
+                powerTrailPending = false
+                UIHealthBar.UpdatePower(addon)
+            end)
+        end
+        return
+    end
     lastPowerUpdate = now
     UpdateOneResourceBar(powerBarFrame)
     UpdateOneResourceBar(secondaryPowerBarFrame)

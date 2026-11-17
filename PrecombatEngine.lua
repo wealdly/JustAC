@@ -109,11 +109,12 @@ local PREPARATION_REFRESH_FRACTION = 0.25
 local PREPARATION_REFRESH_MAX = 10
 
 local function RefreshWindow()
-    local inGroup = IsInGroup and IsInGroup()
-    -- Group-membership probes can come back secret in instanced contexts; unreadable means
-    -- we cannot establish a group, and the narrower window is the one that nags less.
-    if issecretvalue and issecretvalue(inGroup) then return PRECOMBAT_REFRESH_SOLO end
-    return inGroup and PRECOMBAT_REFRESH_GROUP or PRECOMBAT_REFRESH_SOLO
+    -- Unknown group state means we cannot establish a group, and the narrower window is
+    -- the one that nags less.
+    if BlizzardAPI and BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true then
+        return PRECOMBAT_REFRESH_GROUP
+    end
+    return PRECOMBAT_REFRESH_SOLO
 end
 
 -- Exported because the redundancy filter has to agree with us: it decides when a buff that
@@ -629,10 +630,11 @@ end
 -- the player can act on immediately. Note UnitInRange is ~40yd while these buffs reach
 -- further - the mismatch errs toward silence, never toward a false cue.
 local function PartyMemberMissingBuff(castID, auraIDs)
-    -- Group-membership probes go through the same readable-boolean gate: anything we can't
-    -- read plainly means we can't establish there's a party to check, so offer nothing.
-    if ReadableBool(IsInGroup and IsInGroup()) ~= true then return false end
-    if ReadableBool(IsInRaid and IsInRaid()) ~= false then return false end
+    -- An unknown group context means we can't establish there's a party to check, so
+    -- offer nothing.
+    if not (BlizzardAPI and BlizzardAPI.GetGroupContext and BlizzardAPI.GetGroupContext() == "party") then
+        return false
+    end
     for i = 1, 4 do
         local unit = "party" .. i
         if ReadableBool(UnitExists(unit)) == true then

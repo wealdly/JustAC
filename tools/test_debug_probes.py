@@ -172,6 +172,7 @@ def loaded_runtime(forever, research=True):
         libraries['JustAC-BlizzardAPI']={
             IsForever=function() return forever end,
             GetRotationSpells=function() return {123,456} end,
+            GetGCDReferenceSpell=function() return 61304 end,
         }
         LibStub=setmetatable({
             NewLibrary=function(_,name)
@@ -433,6 +434,78 @@ def test_combat_edges_stay_quiet():
     assert len(lua.globals().output) == len(held)
 
 
+def test_validate_canaries():
+    # The checks that stand in for retired research probes: each prints its own key, a
+    # plain read shows its value, a hidden read shows secret, and a container that cannot
+    # be built is reported rather than throwing.
+    def run(container_ok, bar=()):
+        lua = loaded_runtime(True)
+        lua.globals().containerOk = container_ok
+        lua.globals().bar = lua.table_from(list(bar))
+        lua.execute("""
+            local cf = CreateFrame
+            function CreateFrame(kind, ...)
+                if kind == "AuraContainer" then
+                    if not containerOk then error("template refused") end
+                    return {Hide=function() end, AddAuraSlot=function() end,
+                            AddAuraGroup=function() end, SetUnit=function() end}
+                end
+                local f = cf(kind, ...)
+                f.Hide = function() end
+                return f
+            end
+            UIParent = {CreateTexture=function() return {Hide=function() end} end}
+            local stub
+            stub = setmetatable({}, {__call=function() return nil end, __index=function() return stub end})
+            setmetatable(_G, {__index=function(_, k)
+                if type(k) == "string" and k:match("^[A-Z]") then return stub end
+            end})
+            -- Like a real secret, it refuses to become text.
+            secret = setmetatable({}, {__tostring=function() error("secret") end})
+            function issecretvalue(v) return rawequal(v, secret) end
+            C_Spell = {IsSpellUsable=function() return true, false end,
+                       IsAutoRepeatSpell=function(id) return id == 5019 end}
+            function GetComboPoints() return 3 end
+            function UnitExists(unit) return unit == "nameplate2" end
+            function UnitCanAttack(_, unit) return unit == "nameplate2" end
+            function UnitThreatSituation() return secret end
+            local B = libraries['JustAC-BlizzardAPI']
+            B.GetClassResourcePoints = function() return 4, 5, "combo_points" end
+            B.GetEngagedEnemyCount = function() return 2 end
+            B.GetActionInfo = function(slot)
+                if bar[slot] then return "spell", bar[slot] end
+            end
+        """)
+        lua.globals().DebugCommands.ValidateAssumptions(lua.globals().addon)
+        # Validate prints "  group: name=cell name=cell", each coloured cell ending in |r.
+        rows = {}
+        for line in lines(lua).split("\n"):
+            m = re.match(r"\s+(\w+): (.*)", line)
+            if not m:
+                continue
+            for name, cell in re.findall(r"(\w+)=(.*?)\|r", m.group(2)):
+                rows[m.group(1) + "." + name] = cell
+        keys = ("cd.probeSpell", "cd.insufficientPower", "power.comboPoints", "power.classPoints", "enemy.plateHostile",
+                "enemy.plateThreat", "enemy.engagedCount", "tech.auraContainer")
+        return {k: rows[k] for k in keys if k in rows}
+
+    rows = run(True)
+    assert len(rows) == 8, rows
+    assert "61304" in rows["cd.probeSpell"], rows      # no rotation, no ability on the bars
+    assert "false" in rows["cd.insufficientPower"], rows
+    assert "3" in rows["power.comboPoints"] and "4" in rows["power.classPoints"], rows
+    assert "true" in rows["enemy.plateHostile"] and "2" in rows["enemy.engagedCount"], rows
+    assert "secret" in rows["enemy.plateThreat"], rows
+    assert "ok" in rows["tech.auraContainer"], rows
+    rows = run(False)
+    assert "CREATE FAILED" in rows["tech.auraContainer"], rows
+    # Forever has no rotation feed: the first real ability on the bars, past Attack and
+    # an auto-repeat shot, is what the spell checks read.
+    rows = run(True, bar=(6603, 5019, 772))
+    assert "772" in rows["cd.probeSpell"], rows
+    print("Validate canaries: insufficient power, class points, nameplate reads, enemy count and AuraContainer passed")
+
+
 def test_log_capacity():
     for research in ((False, True) if RESEARCH_FILES else (False,)):
         lua = loaded_runtime(True, research)
@@ -515,8 +588,15 @@ def test_rotation_target_enemy_context():
         function UnitCreatureType(unit) assert(unit=='target'); return 'Undead',6 end
         function UnitClassification() return 'elite' end
         function UnitLevel(unit) if unit=='target' then return 7 end return 6 end
-        threats={nameplate1=0,nameplate3=secretThreat}
+        threats={target=1,nameplate1=0,nameplate2=3,nameplate3=secretThreat}
         function UnitThreatSituation(_,unit) return threats[unit] end
+        function UnitThreatLeadSituation(_,unit) assert(unit=='target'); return 3 end
+        function UnitDetailedThreatSituation(_,unit) return false,1,104.5,95,1200 end
+        function UnitThreatPercentageOfLead() error('denied') end
+        function UnitHasEffectivelyTankAura() return false end
+        function UnitGroupRolesAssigned() return 'DAMAGER' end
+        C_Secrets={ShouldUnitThreatStateBeSecret=function() return false end,
+            ShouldUnitThreatValuesBeSecret=function() return true end}
         C_Spell={IsSpellUsable=function(id)
             if id==678 then return false,true end
             return true,false
@@ -567,10 +647,15 @@ def test_rotation_target_enemy_context():
     assert "1:679>678 raw=false/true helper=false/true ready=true/test source range=true gate=ok q=1" in rotation
     assert "2:20271>20271" in rotation and "ready=false/test source range=false gate=block/delegated q=-" in rotation
     assert s.last.targetContext == "plain:type=Undead typeID=6 classification=elite level=7"
-    assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679"
+    assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679 lowValue=nil"
     assert s.last.enemyProvenance == (
         "plain:plates=4 hostile=3 threat=1 unknown=1 helper=1 widened=0 inCombatOthers=1"
     ), "provenance reports the queue helper's own breakdown (behaviour: test_efficiency)"
+    threat = s.last.threat
+    for cell in ("tankAura=false", "role=DAMAGER", "pet=false", "stateSecret=false", "valuesSecret=true",
+                 "state=1", "lead=3", "tanking=false", "status=1", "scaled=104.5", "raw=95",
+                 "rawThreat=1200", "ofLead=err", "plates=2 s0=1 s1=0 s2=0 s3=1 platesSecret=1 platesFailed=0"):
+        assert cell in threat, (cell, threat)
     dc.StopDiagnostics(lua.globals().addon)
     assert "enemyProvenance" not in lines(lua), "stop prints a short summary, not the report"
     dc.DiagnosticReport(lua.globals().addon)
@@ -2466,6 +2551,75 @@ def test_range_signal_capture():
         assert lua.globals().queueProbeEnabled is False
 
 
+def test_lookahead_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        B.IsSpellAvailable=function() return false end
+        power, combo, cdActive, inMelee, fighting, band = 0, 0, false, false, false, 1
+        B.GetPowerBand=function(unit, bounds) assert(unit=="player" and bounds[1]==5 and bounds[2]==10); return band end
+        function UnitPower() return power end
+        function UnitPowerType() return 1 end
+        function GetComboPoints() return combo end
+        function UnitAffectingCombat() return fighting end
+        C_Spell=C_Spell or {}
+        C_Spell.GetSpellCooldown=function() return {isActive=cdActive} end
+        C_Spell.IsSpellUsable=function() return true end
+        C_UnitAuras={GetPlayerAuraBySpellID=function() return nil end}
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
+        libraries['JustAC-SpellDB'].IsTargetWithin=function() return inMelee end
+        libraries['JustAC-RotationImport']={GetRotationGated=function() return {} end, RankBase=function(id) return id end}
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return "none" end)
+        DebugCommands._diagnosticSession={id='lookahead-test',signalEvent=event}
+    """)
+    event = lua.globals().event
+
+    def rows():
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if "EVIDENCE lookahead " in line] if log else []
+
+    event("UNIT_SPELLCAST_SENT", "player", "Mob", "cast-1", 100)
+    base = rows()[-1]
+    assert "spell=100 since=0.000 event=sent" in base and "power=plain:0" in base and "melee=false" in base, base
+    assert "band=1" in base, base
+    lua.execute("clock=10.1; band=2")
+    event("UNIT_POWER_FREQUENT", "player", "RAGE")
+    assert "since=0.100 event=UNIT_POWER_FREQUENT field=band from=1 to=2" in rows()[-1], rows()[-1]
+    lua.execute("clock=10.25; power=9")
+    event("UNIT_POWER_FREQUENT", "player", "RAGE")
+    assert "since=0.250 event=UNIT_POWER_FREQUENT field=power from=plain:0 to=plain:9 toKind=plain" in rows()[-1], rows()[-1]
+    lua.execute("clock=10.3")
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 100)
+    assert any("event=succeeded milestone=true" in r for r in rows()), rows()
+    lua.execute("clock=10.9; inMelee=true; fighting=true")
+    event("PLAYER_REGEN_DISABLED")
+    tail = rows()[-2:]
+    assert any("field=melee from=false to=true" in r for r in tail) and any("field=combat" in r for r in tail), tail
+    event("UNIT_COMBAT", "target", "DODGE", "")
+    assert "event=result action=plain:DODGE" in rows()[-1], rows()[-1]
+    lua.execute("power=secret")
+    event("UNIT_POWER_FREQUENT", "player", "RAGE")
+    assert "field=power" in rows()[-1] and "toKind=secret" in rows()[-1], rows()[-1]
+    count = len(rows())
+    lua.execute("clock=13.5; power=20")
+    event("UNIT_POWER_FREQUENT", "player", "RAGE")
+    assert len(rows()) == count, "past the window: nothing more for that cast"
+    event("UNIT_SPELLCAST_SENT", "player", "Mob", "cast-2", lua.globals().secret)
+    assert len(rows()) == count, "an unreadable spell id starts nothing"
+    print("Look-ahead evidence: baseline, timed changes, milestones, results, secrecy and window passed")
+
+
 def test_lockout_evidence():
     lua = loaded_runtime(True, True)
     lua.execute("""
@@ -2488,12 +2642,15 @@ def test_lockout_evidence():
         C_Spell.GetSpellCooldown=function() return {isActive=false} end
         C_Spell.GetSpellInfo=function() return {castTime=0} end
         function UnitAffectingCombat() return fighting end
-        function UnitName() return "Me" end
+        function UnitName(unit) if unit == "target" then return "Boss" end return "Me" end
+        function UnitFullName() return "Me", "Realm" end
+        targetExists, targetIsMe = true, false
+        function UnitIsUnit() return targetIsMe end
         libraries['JustAC-RotationImport']={GetRotationGated=function() return {} end,
             RankBase=function(id) if id == 592 then return 17 end return id end}
         libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
         libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
-        function UnitExists() return true end
+        function UnitExists() return targetExists end
         function UnitCanAttack() return true end
         function UnitGUID() return 'target-A' end
         reads,event,cleanup=DebugCommands.CombatSignalReads(function() return "none" end)
@@ -2521,13 +2678,34 @@ def test_lockout_evidence():
     lua.execute("C_Spell.IsSpellUsable=function() return false end")
     event("SPELL_UPDATE_COOLDOWN")
     assert "gameUsable=false" in rows()[-1], rows()
-    # A cast of a watched spell (any rank) records whether its target was the player.
+    # A cast of a watched spell (any rank) records how its target relates to the player:
+    # the SENT name class (never the name) and what was targeted.
     event("UNIT_SPELLCAST_SENT", "player", "Me", "guid-1", 592)
-    assert rows()[-1].endswith("event=cast spell=17 targetIsSelf=true"), rows()[-1]
+    assert "event=cast spell=17 targetIsSelf=true nameIs=self targetUnit=hostile " in rows()[-1], rows()[-1]
+    event("UNIT_SPELLCAST_SENT", "player", "Me-Realm", "guid-1b", 17)
+    assert "targetIsSelf=true nameIs=selfFull targetUnit=hostile " in rows()[-1], rows()[-1]
+    event("UNIT_SPELLCAST_SENT", "player", "", "guid-1c", 17)
+    assert "targetIsSelf=true nameIs=empty targetUnit=hostile " in rows()[-1], rows()[-1]
+    event("UNIT_SPELLCAST_SENT", "player", "Boss", "guid-1d", 17)
+    assert "targetIsSelf=false nameIs=target targetUnit=hostile " in rows()[-1], rows()[-1]
     event("UNIT_SPELLCAST_SENT", "player", "Ally", "guid-2", 17)
-    assert rows()[-1].endswith("targetIsSelf=false"), rows()[-1]
+    assert "targetIsSelf=false nameIs=other targetUnit=hostile " in rows()[-1], rows()[-1]
+    lua.execute("targetIsMe = true")
+    event("UNIT_SPELLCAST_SENT", "player", "Me", "guid-2b", 17)
+    assert "nameIs=self targetUnit=self " in rows()[-1], rows()[-1]
+    lua.execute("targetExists = false")
     event("UNIT_SPELLCAST_SENT", "player", lua.globals().secret, "guid-3", 17)
-    assert rows()[-1].endswith("targetIsSelf=secret"), rows()[-1]
+    assert "targetIsSelf=secret nameIs=secret targetUnit=none " in rows()[-1], rows()[-1]
+    assert rows()[-1].endswith("meName=plain targetName=plain nameHyphen=unknown nameIsUnit=true"), rows()[-1]
+    # An unreadable player name is its own answer, not "other".
+    lua.execute("targetIsMe, targetExists = false, true; UnitName = function(unit)"
+                " if unit == 'player' then return secret end return 'Boss' end")
+    event("UNIT_SPELLCAST_SENT", "player", "Me-Realm", "guid-3b", 17)
+    assert "targetIsSelf=unknown nameIs=meUnreadable targetUnit=hostile mouseover=hostile " in rows()[-1], rows()[-1]
+    assert rows()[-1].endswith("meName=secret targetName=plain nameHyphen=true nameIsUnit=false"), rows()[-1]
+    # Renew is logged for target identity only: the no-group "another player" control.
+    event("UNIT_SPELLCAST_SENT", "player", "Ally", "guid-3c", 139)
+    assert "event=cast spell=139 targetIsSelf=unknown nameIs=meUnreadable " in rows()[-1], rows()[-1]
     count = len(rows())
     event("UNIT_SPELLCAST_SENT", "player", "Me", "guid-4", 585)
     lua.execute("known = {}")
@@ -2655,6 +2833,85 @@ def test_gcd_haste_evidence():
     event("UNIT_SPELLCAST_START", "target", "cast-4", 591)
     assert len(rows()) == count
     print("GCD evidence: start/success dedupe, haste, hidden and missing reads passed")
+
+
+def test_gcd_reference_evidence():
+    lua = loaded_runtime(True, True)
+    lua.execute("""
+        clock=10
+        function GetTime() return clock end
+        secret={}
+        function issecretvalue(value) return rawequal(value,secret) end
+        B=libraries['JustAC-BlizzardAPI']
+        B.GetBarSpells=function() return {} end
+        B.GetRotationSpells=nil
+        B.RunningAutoSwing=function() return 0 end
+        B.IsGlobalCooldownRunning=function() return nil end
+        B.IsDurationObjectActive=function(obj) return obj ~= nil and obj.active end
+        libraries['JustAC-RotationImport']={GetRotationGated=function() return {} end, RankBase=function(id) return id end}
+        libraries['JustAC-SpellDB']=libraries['JustAC-SpellDB'] or {}
+        libraries['JustAC-SpellDB'].NEXT_SWING_SPELLS={}
+        gcdUp, scorchSecret, fighting = true, false, false
+        C_Spell=C_Spell or {}
+        C_Spell.GetSpellInfo=function() return {castTime=0} end
+        C_Spell.DoesSpellExist=function(id) return id ~= 61304 end
+        C_Spell.GetSpellCooldown=function(id)
+            if id==29515 and scorchSecret then return {isActive=secret, duration=secret} end
+            if id==29515 or id==1283885 then return {isActive=gcdUp, duration=gcdUp and 1.5 or 0} end
+            return {duration=0, isOnGCD=true}
+        end
+        C_Spell.GetSpellCooldownDuration=function(id) return {active=gcdUp} end
+        C_Secrets={
+            GetSpellCooldownSecrecy=function(id) if id==1283885 then return 0 end;return 2 end,
+            ShouldSpellCooldownBeSecret=function(id) return id==29515 and scorchSecret end,
+        }
+        function UnitAffectingCombat() return fighting end
+        function UnitExists() return true end
+        function UnitCanAttack() return true end
+        function UnitGUID() return 'target-A' end
+        reads,event,cleanup=DebugCommands.CombatSignalReads(function() return 'none' end)
+        session={id='gcdref-test',signalEvent=event}
+        DebugCommands._diagnosticSession=session
+    """)
+    event = lua.globals().event
+
+    def rows():
+        store = lua.globals().JustACGlobal
+        log = store and store.probeLog
+        return [line for line in log.values() if "EVIDENCE gcdRef " in line] if log else []
+
+    def flush():
+        # The test stub's After queues the callbacks; run and clear them.
+        lua.execute("local queued=callbacks;callbacks={};for i=1,#queued do queued[i]() end")
+
+    lua.execute("callbacks={}")
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 1243)
+    row = rows()[-1]
+    for part in ("phase=cast spell=1243", "dummy=missing", "neverSecrecy=NeverSecret", "neverSecretNow=false",
+                 "neverActive=true", "neverDur=1.500", "neverObj=true", "scorchSecrecy=ContextuallySecret",
+                 "scorchActive=true", "prod=nil", "combat=false"):
+        assert part in row, (part, row)
+    # Two seconds on, the GCD is over: the idle read shows the falling edge.
+    lua.execute("gcdUp=false;clock=12")
+    flush()
+    assert "phase=idle" in rows()[-1] and "neverActive=false neverDur=0.000 neverObj=false" in rows()[-1], rows()
+    # Hidden reads print as hidden, never as a value.
+    lua.execute("gcdUp, scorchSecret, fighting = true, true, true")
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 1243)
+    assert "scorchSecretNow=true scorchActive=secret scorchDur=secret" in rows()[-1], rows()
+    assert "combat=true" in rows()[-1]
+    # A later cast supersedes the earlier idle read; a stopped session drops it.
+    count = len(rows())
+    lua.execute("clock=13")
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-3", 1243)
+    flush()
+    assert len(rows()) == count + 2 and "phase=idle" in rows()[-1], rows()
+    event("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-4", 1243)
+    lua.execute("DebugCommands._diagnosticSession=nil")
+    count = len(rows())
+    flush()
+    assert len(rows()) == count, rows()
+    print("GCD reference evidence: both edges, secrecy, hidden reads and superseded idle passed")
 
 
 def test_swing_interaction_evidence():
@@ -3175,16 +3432,41 @@ def test_rogue_archetype_candidate():
         assert sample() == "not-applicable:class" and lua.globals().reads == 0
 
 
+def test_start_attack_conflicts():
+    lua = loaded_runtime(True, False)
+    lua.execute("""
+        B=libraries['JustAC-BlizzardAPI']
+        known={[5019]=true}
+        B.IsSpellAvailable=function(id) return known[id]==true end
+        bar={[1]={"macro",1,"spell",585},[2]={"macro",2,"spell",78},[3]={"spell",585},[4]={"macro",4,"spell",589}}
+        B.GetActionInfo=function(slot) local a=bar[slot]; if a then return a[1],a[2],a[3],a[4] end end
+        B.IsSecretValue=function() return false end
+        info={[5019]={name='Shoot',maxRange=30},[585]={name='Smite',maxRange=30},
+              [78]={name='Heroic Strike',maxRange=5},[589]={name='Shadow Word: Pain',maxRange=30}}
+        C_Spell=C_Spell or {}
+        C_Spell.GetSpellInfo=function(id) return info[id] end
+        starts={[1]=true,[2]=true,[4]=false}
+        libraries['JustAC-MacroParser']={GetMacroSpellInfo=function(slot) return {startsAttack=starts[slot]} end}
+        function GetActionText(slot) return "M"..slot end
+    """)
+    found, name = lua.eval("DebugCommands.StartAttackConflicts()")
+    hits = [(found[i].macro, found[i].spell) for i in range(1, len(found) + 1)]
+    assert name == "Shoot" and hits == [("M1", "Smite")], hits
+    lua.execute("known={}")
+    assert lua.eval("DebugCommands.StartAttackConflicts()") is None, "no wand or Auto Shot, nothing to warn"
+    print("Start attack conflicts: ranged macros with /startattack listed; melee, plain and buttons not")
+
+
 def main():
     tests = (
         test_rotation_target_enemy_context, test_eligibility_evidence_capture,
-        test_registry, test_loaded_modules, test_focused_session_and_marks, test_combat_edges_stay_quiet, test_log_capacity, test_loaded_recovery_mana, test_shared_health_fallback, test_low_health_heal_glow, test_critical_preparation_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
+        test_registry, test_loaded_modules, test_focused_session_and_marks, test_combat_edges_stay_quiet, test_validate_canaries, test_log_capacity, test_loaded_recovery_mana, test_shared_health_fallback, test_low_health_heal_glow, test_critical_preparation_glow, test_shared_session, test_threshold_verdicts, test_aura_denial, test_census_count, test_buff_unknown_and_preferences,
         test_ticker_lifecycle, test_battery_failures, test_delayed_snapshots,
         test_topoff_log, test_category_knowledge, test_error_capture_lifecycle,
         test_audit_lifecycle, test_curse_signals, test_chat_output, test_combat_signal_reads,
         test_priority_gate_capture, test_range_signal_capture, test_swing_activity_capture,
-        test_swing_interaction_evidence, test_gcd_haste_evidence, test_wand_state_evidence,
-        test_lockout_evidence,
+        test_swing_interaction_evidence, test_gcd_haste_evidence, test_gcd_reference_evidence, test_wand_state_evidence,
+        test_lockout_evidence, test_start_attack_conflicts, test_lookahead_evidence,
         test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
         test_consolidated_gate_reports, test_rotation_probe_source, test_stack_shape_scope,
     )
@@ -3193,8 +3475,8 @@ def main():
         test_shared_session, test_census_count, test_battery_failures,
         test_delayed_snapshots, test_audit_lifecycle, test_curse_signals,
         test_combat_signal_reads, test_priority_gate_capture, test_range_signal_capture, test_swing_activity_capture,
-        test_swing_interaction_evidence, test_gcd_haste_evidence, test_wand_state_evidence,
-        test_lockout_evidence,
+        test_swing_interaction_evidence, test_gcd_haste_evidence, test_gcd_reference_evidence, test_wand_state_evidence,
+        test_lockout_evidence, test_lookahead_evidence,
         test_spell_bound_aura_capture, test_dot_provenance_capture, test_rogue_archetype_candidate,
         test_rotation_probe_source, test_stack_shape_scope,
     }

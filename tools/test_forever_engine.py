@@ -136,6 +136,18 @@ def main():
     check(RI.GetPushbackDamageCooldown(8042) == 6 and RI.GetPushbackDamageCooldown(8044) == 6,
           "generated Earth Shock cooldown resolves both ranks")
     check(RI.GetPushbackDamageCooldown(120) is None, "ten-second cooldown remains excluded")
+    # Wide-only: listed for cleave/AoE but absent from the single-target list.
+    g.specKey = "WARRIOR_F"
+    g.groups = lua.eval("{ {groupID=1, displayName='Arms'} }")
+    g.spent = lua.eval("{[1]=5}")
+    RI.InvalidateLookup()
+    check(RI.IsWideOnly(6343) is True, "generated Arms data: Thunder Clap is wide-only")
+    check(RI.IsWideOnly(772) is False and RI.IsWideOnly(78) is False,
+          "generated Arms data: Rend and Heroic Strike are single-target entries")
+    check(RI.IsWideOnly(999999) is False, "an unlisted spell is not wide-only")
+    g.specKey = "MONK_1"
+    RI.InvalidateLookup()
+    check(RI.IsWideOnly(6343) is False, "no data -> not wide-only")
 
     for why in bad:
         print("  FAIL", why)

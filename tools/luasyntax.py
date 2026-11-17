@@ -22,15 +22,37 @@ and only in code that references a name before its local declaration (a global
 read in real Lua) - a pattern this codebase's file-locals-at-top style never
 produces. Overcounting is the safe direction for a gate.
 
+It ALSO counts the main chunk's locals. Lua 5.1 caps every function at 200 locals, and a
+file's main chunk is a function, so each file-level `local` (and `local function`) counts;
+crossing it kills the file the same way (SpellQueue.lua reached 201 on 2026-11-16). And when
+lupa is installed it compiles each file with a real Lua 5.1 (`loadstring`), the ground truth
+for every compile limit, including ones this file does not model.
+
 Usage: python luasyntax.py <file.lua> [file2.lua ...]
-Exit 0 = all clean, 1 = at least one failure (syntax error or >60 upvalues).
+Exit 0 = all clean, 1 = at least one failure (syntax error, >60 upvalues, >200 file
+locals, or a Lua 5.1 compile error). Lines marked WARN are inside the headroom margins.
 """
 import sys
 from luaparser import ast, astnodes
 from luaparser.ast import SyntaxException
 
+sys.path.insert(0, __import__('os').path.dirname(__file__))
+from lua51 import lua51_compile_error  # noqa: E402
+
 UPVALUE_LIMIT = 60   # Lua 5.1 per-function compile limit (hard file killer)
 UPVALUE_WARN = 55    # headroom warning: refactor before the next edit trips it
+LOCAL_LIMIT = 200    # Lua 5.1 locals per function, the main chunk included
+LOCAL_WARN = 195     # headroom warning: group new file state into a table
+
+def main_chunk_locals(tree):
+    """Names declared by file-level `local` / `local function` statements."""
+    count = 0
+    for node in tree.body.body:
+        if isinstance(node, astnodes.LocalFunction):
+            count += 1
+        elif isinstance(node, astnodes.LocalAssign):
+            count += len(node.targets)
+    return count
 
 
 def read(path):
@@ -225,6 +247,21 @@ def main(paths):
             print(f"FAIL {path}: {type(e).__name__}: {e}")
             errs += 1
             continue
+        compile_error = lua51_compile_error(src, path)
+        if compile_error:
+            print(f"FAIL {path}: Lua 5.1 will not compile it: {compile_error}")
+            errs += 1
+            continue
+        locals_count = main_chunk_locals(tree)
+        if locals_count > LOCAL_LIMIT:
+            print(f"FAIL {path}: {locals_count} file-level locals (Lua 5.1 limit {LOCAL_LIMIT} - file will not compile)")
+            errs += 1
+            continue
+        notes = []
+        if locals_count > LOCAL_WARN:
+            notes.append(f"{locals_count}/{LOCAL_LIMIT} file-level locals")
+        if compile_error is False:
+            notes.append("no Lua 5.1 runtime (pip install lupa): compile not checked")
         try:
             fails, warns = check_upvalues(tree)
         except Exception as e:
@@ -236,8 +273,10 @@ def main(paths):
                 print(f"FAIL {path}: {label}() line {line} has {n} upvalues (Lua 5.1 limit {UPVALUE_LIMIT} - file will not compile)")
             errs += 1
         else:
-            note = "; ".join(f"{label}() line {line} at {n}/{UPVALUE_LIMIT} upvalues" for label, line, n in warns)
-            print(f"OK   {path}" + (f"  (WARN: {note})" if note else ""))
+            notes += [f"{label}() line {line} at {n}/{UPVALUE_LIMIT} upvalues" for label, line, n in warns]
+            warn = [n for n in notes if not n.startswith("no Lua 5.1 runtime")]
+            print(f"OK   {path}" + (f"  (WARN: {'; '.join(warn)})" if warn else "")
+                  + (f"  ({notes[-1]})" if compile_error is False else ""))
     print(f"\n{'-'*40}\n{len(paths)-errs}/{len(paths)} clean, {errs} failed")
     return 1 if errs else 0
 
