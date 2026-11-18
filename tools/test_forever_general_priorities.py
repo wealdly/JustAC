@@ -204,13 +204,24 @@ def check_pushback_priority():
         assert(PushbackResult() == 8042 and calls == 1)
     """)
     lua.globals().SetupPushback()
-    lua.execute("""
-        SpellQueue.NotePushback()
-        entries = classes.SHAMAN_F.enhancement.st
-        sunkSet[403] = true
-        SpellQueue._StagePushback(b, pool)
-        assert(b.recommendedSpells[1] == 403 and b.recommendedSpells[2] == 8042)
-    """)
+    # The real Enhancement list: Earth Shock shares the shocks' cooldown, so it answers pushback
+    # only while Flame Shock is known to have more than that cooldown left.
+    for below, expected in (("false", "8042"), ("true", "nil"), ("nil", "nil")):
+        lua.globals().SetupPushback()
+        lua.execute(f"""
+            local saved = DotTracker
+            DotTracker = {{ IsTimeLeftBelow = function(id, seconds)
+                assert(id == 8050 and seconds == 6)
+                return {below}
+            end }}
+            SpellQueue.NotePushback()
+            entries = classes.SHAMAN_F.enhancement.st
+            sunkSet[403] = true
+            SpellQueue._StagePushback(b, pool)
+            DotTracker = saved
+            assert(b.recommendedSpells[1] == 403 and b.recommendedSpells[2] == {expected},
+                   "Flame Shock below 6s left = {below}")
+        """)
     lua.globals().SetupPushback()
     lua.execute("""
         SpellQueue.NotePushback()
@@ -238,7 +249,11 @@ def check_pushback_priority():
         end
         Build()
         assert(b.recommendedSpells[1] == 6603 and sunkSet[403])
+        -- Flame Shock running with time to spare: the shared shock cooldown costs nothing.
+        local saved = DotTracker
+        DotTracker = { IsTimeLeftBelow = function() return false end }
         SpellQueue._StagePushback(b, pool)
+        DotTracker = saved
         assert(b.recommendedSpells[1] == 6603 and b.recommendedSpells[2] == 8042)
     """)
     lua.globals().SetupPushback()
@@ -317,6 +332,7 @@ def check_pushback_weapon_dps():
             running={}
             hits=2
             manaRegen,manaCost=nil,0
+            Enum = Enum or { PowerType = { Mana = 0 } }
             BlizzardAPI.GetBaseManaRegen=function() return manaRegen end
             C_Spell.GetSpellPowerCost=function(id)
                 if id == 585 then return {{type=0,cost=manaCost}} end
@@ -444,12 +460,19 @@ def check_pushback_weapon_dps():
             'one cast hit shares the DPS damage model')
         assert(math.abs(BlizzardAPI.GetDirectSpellHit(14914)-(54+20*0.75))<0.000001,
             'Holy Fire hit is priced without its damage over time')
-        assert(BlizzardAPI.GetDirectSpellDPS(14914,3)==nil, 'a partial hit is not the spell DPS')
+        assert(math.abs(BlizzardAPI.GetDirectSpellDPS(14914,3)-(54+20*0.75+(20+20*0.25)*3/10)/3)<0.000001,
+            'a hit with a burn counts the part of the burn that runs during one cycle')
+        assert(math.abs(BlizzardAPI.GetDirectSpellDPS(14914,20)-(54+20*0.75+20+20*0.25)/20)<0.000001,
+            'a cycle longer than the burn counts all of it, never more')
         assert(math.abs(BlizzardAPI.GetDirectSpellHit(14914,nil,true)-(54+20*0.75+20+20*0.25))<0.000001,
             'whole Holy Fire adds every damage-over-time tick')
         assert(math.abs(BlizzardAPI.GetDirectSpellHit(585,nil,true)-(15.5+20*0.429))<0.000001,
             'a plain hit is already the whole spell')
         assert(BlizzardAPI.GetDirectSpellHit(999999)==nil, 'unknown hit stays unknown')
+        assert(math.abs(BlizzardAPI.GetDirectSpellHit(172,nil,true)-(40+20*0.8))<0.000001,
+            'a damage over time with no hit is priced by its total')
+        assert(BlizzardAPI.GetDirectSpellHit(172)==nil and BlizzardAPI.GetDirectSpellDPS(172,2)==nil,
+            'and has no hit and no filler rate of its own')
         offSpeed,offLow,offHigh=2,2,6
         assert(BlizzardAPI.GetAutoAttackDPS(6603)==10, 'both hands counted')
         offLow=secret
@@ -590,6 +613,51 @@ def check_pushback_weapon_dps():
         lua.execute("wandLow,wandHigh=16,16\n" + setup)
         actual = lua.globals().NormalWeaponResult()
         assert actual == expected, (why, actual, expected)
+    # Mana confirmed at or above the conserve threshold: a cast is priced on damage alone.
+    for setup, expected, why in (
+        ("wandLow,wandHigh=16,16;manaBelow=false", 585, "mana to spare: the cast's mana is not charged"),
+        ("wandLow,wandHigh=16,16;manaBelow=true", 5019, "low mana: recovering the mana still favors the wand"),
+        ("wandLow,wandHigh=16,16;manaBelow=nil", 5019, "unreadable mana keeps the conserving rule"),
+        ("wandLow,wandHigh=16,16;b.profile.efficiencyManaThreshold=60;manaAt=50", 5019,
+         "the profile's threshold decides what low means"),
+        ("wandLow,wandHigh=16,16;b.profile.efficiencyManaThreshold=30;manaAt=50", 585,
+         "a lower threshold leaves this mana level spendable"),
+        ("wandLow,wandHigh=18,18;manaRegen=nil;manaBelow=false", 585,
+         "mana to spare: a cast that is simply ahead leads, no 20% margin"),
+        ("wandLow,wandHigh=18,18;manaRegen=nil;manaBelow=true", 5019, "low mana keeps the 20% margin"),
+        ("wandLow,wandHigh=30,30;manaRegen=nil;manaBelow=false", 5019,
+         "mana to spare never promotes a weaker cast"),
+    ):
+        lua.globals().SetupWeapons()
+        lua.execute("""
+            manaBelow, manaAt = nil, nil
+            SpellQueue._ResetWeaponPhase()
+            b.profile.efficiencyManaThreshold = nil
+            manaRegen, manaCost = 10, 10
+            BlizzardAPI.IsUnitPowerBelow = function(_, pct)
+                if manaAt then return manaAt < pct end
+                return manaBelow
+            end
+        """ + setup)
+        actual = lua.globals().NormalWeaponResult()
+        assert actual == expected, (why, actual, expected)
+    lua.globals().SetupWeapons()
+    lua.execute("""
+        wandLow,wandHigh=16,16
+        manaRegen, manaCost = 10, 10
+        SpellQueue._ResetWeaponPhase()
+        manaBelow = true
+        assert(NormalWeaponResult()==5019, 'low mana conserves')
+        manaBelow = false
+        assert(BuildWeaponFillers()==5019, 'once low in a fight, the conserving rule stays for that fight')
+        b.inCombat = false; b.ctxEnemies = 0
+        BuildWeaponFillers()
+        b.inCombat = true; b.ctxEnemies = 1
+        assert(BuildWeaponFillers()==585, 'leaving combat clears it')
+        BlizzardAPI.IsUnitPowerBelow = nil
+        b.profile.efficiencyManaThreshold = nil
+        SpellQueue._ResetWeaponPhase()
+    """)
     lua.globals().SetupWeapons()
     lua.execute("""
         wandLow,wandHigh=24,24
@@ -612,16 +680,17 @@ def check_pushback_weapon_dps():
         level,bonus,normalCastTime=5,1,1304
         wandLow,wandHigh,rangedSpeed=17,17,1.304
         running[5019]=2
-        assert(NormalWeaponResult()==5019)
+        local W=SpellQueue.WAIT_SENTINEL
+        assert(NormalWeaponResult()==W, 'a running wand leaves the queue: WAIT keeps it going')
         for i=1,20 do
             cooldown[585],cooldown[5019],cooldown[6603]=i%2==0,i%2==0,i%3==0
             BuildWeaponFillers()
-            assert(b.spellCount==3 and b.recommendedSpells[1]==5019
+            assert(b.spellCount==3 and b.recommendedSpells[1]==W
                 and b.recommendedSpells[2]==585 and b.recommendedSpells[3]==6603,
-                'shot lockouts do not shuffle fillers or insert WAIT')
+                'shot lockouts do not shuffle fillers or show the running wand')
         end
         b.ctxEnemies=0
-        assert(BuildWeaponFillers()==5019, 'confirmed running repeat survives initial threat-count delay')
+        assert(BuildWeaponFillers()==W, 'confirmed running repeat survives initial threat-count delay')
         b.ctxEnemies=1;meleeReach=true;locked[585]=true
         BuildWeaponFillers()
         assert(b.recommendedSpells[2]==6603, 'real school/LoC lockout still sinks filler')
@@ -657,7 +726,8 @@ def check_pushback_weapon_dps():
         pool={585,75,6603};entries={{id=585},{id=75},{id=6603}}
         assert(NormalWeaponResult()==75, 'supported ranged weapons can offer sustained Auto Shot')
         running[75]=2;cooldown[585],cooldown[75]=true,true
-        assert(BuildWeaponFillers()==75 and b.recommendedSpells[2]==585, 'Auto Shot cycle is stable too')
+        assert(BuildWeaponFillers()==SpellQueue.WAIT_SENTINEL and b.recommendedSpells[2]==585,
+            'a running Auto Shot cycle leaves the queue to WAIT, stably')
         running[75]=nil;unusable[75]=true;cooldown[585]=nil
         assert(BuildWeaponFillers()==585, 'missing ammo or another usability failure rejects ranged repeat')
     """)
@@ -667,7 +737,8 @@ def check_pushback_weapon_dps():
             pool={{{auto}}};entries={{{{id={auto}}}}}
             running[{auto}]={2 if auto == 5019 else 0}
             meleeReach=true
-            assert(NormalWeaponResult()=={auto}, 'ongoing in-range damage alone does not mean WAIT')
+            assert(NormalWeaponResult()==SpellQueue.WAIT_SENTINEL,
+                'an attack already running takes no slot: WAIT while it continues')
             ranges[{auto}]=false
             assert(BuildWeaponFillers()==SpellQueue.WAIT_SENTINEL, 'out-of-range checked attacks cannot prevent WAIT')
         """)

@@ -71,13 +71,13 @@ RotationImport.RegisterForever({
         {id=768,gates={{t="buff",id=768,neg=true}}},  -- Cat Form
         {id=1322605,gates={{t="power",res="energy",op="<",n=50,required=true}},w=true},  -- Shifting Power
         {id=6785,gates={{t="buff",id=5215}}},  -- Ravage
-        {id=770,gates={{t="any",g={{t="debuff",id=770,neg=true,refresh=true},{t="debuff",id=770,neg=true,refresh=true}}}}},  -- Faerie Fire
+        {id=770,gates={{t="debuff",id=770,neg=true,refresh=true}}},  -- Faerie Fire
         {id=1328618,gates={{t="resource",res="combo_points",op=">=",n=5},{t="debuff",id=1079,op=">",n=3},{t="buff",id=16870,dur=15,neg=true}}},  -- Ferocious Bite
         {id=1079,gates={{t="resource",res="combo_points",op=">=",n=4},{t="debuff",id=1079,neg=true,refresh=true}}},  -- Rip
         {id=1822,gates={{t="debuff",id=1822,neg=true,refresh=true}}},  -- Rake
         {id=29166,gates={{t="any",g={{t="power",res="mana",op="<=",n=10,ispct=true},{t="starved"}}},{t="buff",id=768},{t="known",id=17056},{t="power",res="energy",op="<=",n=30},{t="all",g={{t="known",id=29166},{t="cd",id=29166}}}},w=true},  -- Innervate
         {id=5221,gates={{t="any",g={{t="any",g={{t="resource",res="combo_points",op="<",n=5},{t="debuff",id=1079,op=">",n=3}}},{t="all",g={{t="power",res="energy",op=">=",n=85},{t="debuff",id=1079,op=">=",n=1.5},{t="buff",id=16870,dur=15,neg=true}}}}}}},  -- Shred
-        {id=1082,gates={},delegated=true},  -- Claw
+        {id=1082,gates={}},  -- Claw
       },
     },
     feral_bear = {  -- presets/druid/feralbear/default
@@ -234,78 +234,81 @@ RotationImport.RegisterForever({
     default = "frost",
     arcane = {  -- presets/mage/dps/arcane
       st = {
-        {id=11366,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400625,op="=",n=3},{t="cd",id=2136}}}}},  -- Pyroblast
-        {id=2136,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="stack",id=400625,op="!=",n=3}}},  -- Fire Blast
-        {id=5143,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}}},w=true},  -- Evocation
-        {id=12043,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
-        {id=1326079,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Arcane Wrath
-        {id=2948,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Scorch
-        {id=116,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
+        {id=11366,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400625,op="=",n=3},{t="cd",id=2136}}}}},  -- Pyroblast
+        {id=2136,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="stack",id=400625,op="!=",n=3}}},  -- Fire Blast
+        {id=5143,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
+        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}}},w=true},  -- Evocation
+        {id=12043,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
+        {id=1326079,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Arcane Wrath
+        {id=2948,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Scorch
+        {id=116,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
         {id=400574,gates={}},  -- Arcane Blast
+        {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
       },
       cleave = {
-        {id=11366,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400625,op="=",n=3},{t="cd",id=2136}}}}},  -- Pyroblast
-        {id=2136,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="stack",id=400625,op="!=",n=3}}},  -- Fire Blast
-        {id=5143,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}}},w=true},  -- Evocation
-        {id=12043,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
-        {id=1326079,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Arcane Wrath
-        {id=2948,gates={{t="all",g={{t="known",id=400625},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Scorch
-        {id=116,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
+        {id=11366,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400625,op="=",n=3},{t="cd",id=2136}}}}},  -- Pyroblast
+        {id=2136,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="stack",id=400625,op="!=",n=3}}},  -- Fire Blast
+        {id=5143,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
+        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}}},w=true},  -- Evocation
+        {id=12043,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
+        {id=1326079,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Arcane Wrath
+        {id=2948,gates={{t="all",g={{t="known",id=400624},{t="targets",op="<",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Scorch
+        {id=116,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
         {id=400574,gates={}},  -- Arcane Blast
+        {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
       },
       aoe = {
         {id=2120,gates={}},  -- Flamestrike
         {id=1449,gates={{t="near",n=10}},w=true},  -- Arcane Explosion
-        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}}},w=true},  -- Evocation
-        {id=5143,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="buff",id=44404}}},  -- Arcane Missiles
-        {id=12043,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
-        {id=1326079,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="known",id=12043},{t="stack",id=400573,op=">=",n=4},{t="buff",id=12043}}}}},  -- Arcane Wrath
-        {id=11366,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="known",id=12043},{t="stack",id=400573,op=">=",n=4},{t="buff",id=12043}}}}},  -- Pyroblast
-        {id=116,gates={{t="any",g={{t="known",id=400625,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
+        {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=15,ispct=true},{t="starved"}}},{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}}},w=true},  -- Evocation
+        {id=5143,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
+        {id=12043,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="stack",id=400573,op=">=",n=4}}},  -- Presence of Mind
+        {id=1326079,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="known",id=12043},{t="stack",id=400573,op=">=",n=4},{t="buff",id=12043}}}}},  -- Arcane Wrath
+        {id=11366,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="known",id=12043},{t="stack",id=400573,op=">=",n=4},{t="buff",id=12043}}}}},  -- Pyroblast
+        {id=116,gates={{t="any",g={{t="known",id=400624,neg=true},{t="targets",op=">=",n=3}}},{t="all",g={{t="stack",id=400573,op=">=",n=4},{t="cast",id=116,op="<=",n=2.5},{t="buff",id=400573,dur=18}}}},delegated=true},  -- Frostbolt
         {id=400574,gates={}},  -- Arcane Blast
+        {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
       },
     },
     fire = {  -- presets/mage/dps/fire
       st = {
-        {id=11129,gates={{t="any",g={{t="known",id=22959,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
-        {id=400574,gates={{t="known",id=1239700},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400625},{t="stack",id=400625,op="=",n=3}}},{t="any",g={{t="buff",id=400573,dur=18,neg=true},{t="buff",id=400573,dur=18,neg=true}}}},delegated=true},  -- Arcane Blast
-        {id=11366,gates={{t="known",id=400625},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=22959},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
-        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=12536,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=400574,gates={{t="known",id=400574},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},{t="buff",id=400573,dur=18,neg=true}},delegated=true},  -- Arcane Blast
+        {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
+        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
+        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
         {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
       },
       cleave = {
-        {id=11129,gates={{t="any",g={{t="known",id=22959,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
-        {id=400574,gates={{t="known",id=1239700},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400625},{t="stack",id=400625,op="=",n=3}}},{t="any",g={{t="buff",id=400573,dur=18,neg=true},{t="buff",id=400573,dur=18,neg=true}}}},delegated=true},  -- Arcane Blast
-        {id=11366,gates={{t="known",id=400625},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=22959},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
-        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=12536,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=400574,gates={{t="known",id=400574},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},{t="buff",id=400573,dur=18,neg=true}},delegated=true},  -- Arcane Blast
+        {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
+        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
+        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
         {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
       },
       aoe = {
-        {id=11129,gates={{t="any",g={{t="known",id=22959,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=2120,gates={}},  -- Flamestrike
         {id=11113,gates={{t="near",n=10}},w=true},  -- Blast Wave
         {id=120,gates={{t="near",n=10}},w=true},  -- Cone of Cold
         {id=1449,gates={{t="near",n=10}},w=true},  -- Arcane Explosion
-        {id=11366,gates={{t="known",id=400625},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=22959},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
-        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=12536,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
+        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
+        {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
         {id=133,gates={}},  -- Fireball
         {id=5019,gates={}},  -- Shoot
@@ -316,20 +319,20 @@ RotationImport.RegisterForever({
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=20,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=120,gates={{t="buff",id=400669,dur=15},{t="stack",id=12579,op=">=",n=3,tgt=true},{t="near",n=10}},delegated=true,w=true},  -- Cone of Cold
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
-        {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
+        {id=11426,gates={{t="buff",id=1326891,dur=60,neg=true}},delegated=true},  -- Ice Barrier
         {id=5019,gates={}},  -- Shoot
       },
       cleave = {
         {id=120,gates={{t="stack",id=12579,op=">=",n=5,tgt=true},{t="targets",op=">=",n=2},{t="near",n=10}},w=true},  -- Cone of Cold
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=20,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
-        {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
+        {id=11426,gates={{t="buff",id=1326891,dur=60,neg=true}},delegated=true},  -- Ice Barrier
         {id=5019,gates={}},  -- Shoot
       },
       aoe = {
@@ -337,10 +340,10 @@ RotationImport.RegisterForever({
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=20,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=10,gates={{t="targets",op=">=",n=4}}},  -- Blizzard
         {id=1312002,gates={{t="buff",id=400669,dur=15}},delegated=true},  -- Ice Lance
-        {id=5143,gates={{t="known",id=44404},{t="buff",id=44404}}},  -- Arcane Missiles
+        {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=2136,gates={{t="any",g={{t="execute",op="<",pct=20,required=true},{t="hit"}}}}},  -- Fire Blast
         {id=116,gates={}},  -- Frostbolt
-        {id=11426,gates={{t="any",g={{t="buff",id=1326891,dur=60,neg=true},{t="buff",id=1326891,dur=60,neg=true}}}},delegated=true},  -- Ice Barrier
+        {id=11426,gates={{t="buff",id=1326891,dur=60,neg=true}},delegated=true},  -- Ice Barrier
         {id=5019,gates={}},  -- Shoot
       },
     },
@@ -377,32 +380,32 @@ RotationImport.RegisterForever({
       st = {
         {id=20154,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Righteousness
         {id=1311649,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Fury
-        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
-        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
+        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
+        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
         {id=879,gates={}},  -- Exorcism
-        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="power",res="mana",op=">=",n=70,ispct=true},{t="near",n=8}},w=true},  -- Consecration
-        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}}}},  -- Holy Strike
+        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="power",res="mana",op=">=",n=70,ispct=true},{t="near",n=8}},w=true},  -- Consecration
+        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}}}},  -- Holy Strike
         {id=1311606,gates={}},  -- Holy Shock
       },
       cleave = {
         {id=20154,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Righteousness
         {id=1311649,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Fury
-        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
-        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
+        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
+        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
         {id=879,gates={}},  -- Exorcism
-        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="targets",op=">=",n=2},{t="near",n=8}},w=true},  -- Consecration
-        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}}}},  -- Holy Strike
+        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="targets",op=">=",n=2},{t="near",n=8}},w=true},  -- Consecration
+        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}}}},  -- Holy Strike
         {id=1311606,gates={}},  -- Holy Shock
       },
       aoe = {
         {id=20154,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Righteousness
         {id=1311649,gates={{t="buff",id=20154,dur=30,neg=true},{t="buff",id=20164,dur=30,neg=true},{t="buff",id=20165,dur=30,neg=true},{t="buff",id=20166,dur=30,neg=true},{t="buff",id=20375,dur=30,neg=true},{t="buff",id=21082,dur=30,neg=true},{t="buff",id=1311649,dur=30,neg=true}}},  -- Seal of Fury
-        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
-        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
+        {id=20271,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="any",g={{t="buff",id=20154,dur=30},{t="buff",id=20164,dur=30},{t="buff",id=20165,dur=30},{t="buff",id=20166,dur=30},{t="buff",id=20375,dur=30},{t="buff",id=21082,dur=30},{t="buff",id=1311649,dur=30}}}}},  -- Judgement
+        {id=24275,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="execute",op="<",pct=20}}},  -- Hammer of Wrath
         {id=879,gates={}},  -- Exorcism
-        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}},{t="targets",op=">=",n=2},{t="near",n=8}},w=true},  -- Consecration
+        {id=26573,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}},{t="targets",op=">=",n=2},{t="near",n=8}},w=true},  -- Consecration
         {id=2812,gates={{t="near",n=20}},w=true},  -- Holy Wrath
-        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=20423,neg=true}}}}},  -- Holy Strike
+        {id=679,gates={{t="any",g={{t="known",id=1311701,neg=true},{t="known",id=1311649,neg=true}}}}},  -- Holy Strike
         {id=1311606,gates={}},  -- Holy Shock
       },
     },
@@ -413,6 +416,7 @@ RotationImport.RegisterForever({
       st = {
         {id=589,gates={{t="debuff",id=589,neg=true,refresh=true}}},  -- Shadow Word: Pain
         {id=2944,gates={}},  -- Devouring Plague
+        {id=8092,gates={}},  -- Mind Blast
         {id=14914,gates={{t="debuff",id=14914,neg=true,refresh=true}}},  -- Holy Fire
         {id=585,gates={}},  -- Smite
         {id=5019,gates={}},  -- Shoot
@@ -421,6 +425,7 @@ RotationImport.RegisterForever({
         {id=15237,gates={{t="near",n=10}},w=true},  -- Holy Nova
         {id=589,gates={{t="debuff",id=589,neg=true,refresh=true}}},  -- Shadow Word: Pain
         {id=2944,gates={}},  -- Devouring Plague
+        {id=8092,gates={}},  -- Mind Blast
         {id=14914,gates={{t="debuff",id=14914,neg=true,refresh=true}}},  -- Holy Fire
         {id=585,gates={}},  -- Smite
         {id=5019,gates={}},  -- Shoot
@@ -430,6 +435,7 @@ RotationImport.RegisterForever({
       st = {
         {id=589,gates={{t="debuff",id=589,neg=true,refresh=true}}},  -- Shadow Word: Pain
         {id=2944,gates={}},  -- Devouring Plague
+        {id=8092,gates={}},  -- Mind Blast
         {id=14914,gates={{t="debuff",id=14914,neg=true,refresh=true}}},  -- Holy Fire
         {id=585,gates={}},  -- Smite
         {id=5019,gates={}},  -- Shoot
@@ -438,6 +444,7 @@ RotationImport.RegisterForever({
         {id=15237,gates={{t="near",n=10}},w=true},  -- Holy Nova
         {id=589,gates={{t="debuff",id=589,neg=true,refresh=true}}},  -- Shadow Word: Pain
         {id=2944,gates={}},  -- Devouring Plague
+        {id=8092,gates={}},  -- Mind Blast
         {id=14914,gates={{t="debuff",id=14914,neg=true,refresh=true}}},  -- Holy Fire
         {id=585,gates={}},  -- Smite
         {id=5019,gates={}},  -- Shoot
@@ -471,6 +478,7 @@ RotationImport.RegisterForever({
     default = "combat",
     assassination = {  -- presets/rogue/dps/forever_mutilate
       st = {
+        {id=8676,gates={{t="stealth"}}},  -- Ambush
         {id=703,gates={{t="stealth"},{t="debuff",id=703,neg=true,refresh=true}}},  -- Garrote
         {id=1833,gates={{t="stealth"}}},  -- Cheap Shot
         {id=14251,gates={}},  -- Riposte
@@ -486,6 +494,7 @@ RotationImport.RegisterForever({
     },
     combat = {  -- presets/rogue/dps/combat_sinister_strike
       st = {
+        {id=8676,gates={{t="stealth"}}},  -- Ambush
         {id=703,gates={{t="stealth"},{t="debuff",id=703,neg=true,refresh=true}}},  -- Garrote
         {id=1833,gates={{t="stealth"}}},  -- Cheap Shot
         {id=14251,gates={}},  -- Riposte
@@ -555,6 +564,7 @@ RotationImport.RegisterForever({
         {id=425336,gates={}},  -- Rage of the Farseer
         {id=17364,gates={}},  -- Stormstrike
         {id=403,gates={{t="stack",id=408505,op=">=",n=5,required=true,castOnly=true}},w=true},  -- Lightning Bolt
+        {id=8042,gates={{t="debuff",id=8050,op=">",n=6}}},  -- Earth Shock
         {id=408341,gates={{t="totem",slot=1}},w=true},  -- Fire Nova
       },
       cleave = {
@@ -565,6 +575,7 @@ RotationImport.RegisterForever({
         {id=425336,gates={}},  -- Rage of the Farseer
         {id=17364,gates={}},  -- Stormstrike
         {id=403,gates={{t="stack",id=408505,op=">=",n=5,required=true,castOnly=true}},w=true},  -- Lightning Bolt
+        {id=8042,gates={{t="debuff",id=8050,op=">",n=6}}},  -- Earth Shock
         {id=408341,gates={{t="totem",slot=1}},w=true},  -- Fire Nova
       },
       aoe = {
@@ -576,6 +587,7 @@ RotationImport.RegisterForever({
         {id=425336,gates={}},  -- Rage of the Farseer
         {id=17364,gates={}},  -- Stormstrike
         {id=403,gates={{t="stack",id=408505,op=">=",n=5,required=true,castOnly=true}},w=true},  -- Lightning Bolt
+        {id=8042,gates={{t="debuff",id=8050,op=">",n=6}}},  -- Earth Shock
       },
     },
     restoration = {  -- pin:shaman_restoration
@@ -605,7 +617,7 @@ RotationImport.RegisterForever({
         {id=18288,gates={{t="debuff",id=603,neg=true}},delegated=true},  -- Amplify Curse
         {id=980,gates={{t="debuff",id=603,neg=true},{t="debuff",id=980,neg=true,refresh=true}}},  -- Bane of Agony
         {id=172,gates={{t="debuff",id=172,neg=true,refresh=true}}},  -- Corruption
-        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}},delegated=true},  -- Immolate
+        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}}},  -- Immolate
         {id=18265,gates={{t="debuff",id=18265,neg=true,refresh=true}}},  -- Siphon Life
         {id=1316697,gates={}},  -- Wrack
         {id=686,gates={}},  -- Shadow Bolt
@@ -620,7 +632,7 @@ RotationImport.RegisterForever({
         {id=980,gates={{t="targets",op=">=",n=2},{t="debuff",id=980,neg=true,refresh=true}}},  -- Bane of Agony
         {id=603,gates={}},  -- Bane of Doom
         {id=18288,gates={{t="debuff",id=603,neg=true}},delegated=true},  -- Amplify Curse
-        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}},delegated=true},  -- Immolate
+        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}}},  -- Immolate
         {id=18265,gates={{t="debuff",id=18265,neg=true,refresh=true}}},  -- Siphon Life
         {id=1316697,gates={}},  -- Wrack
         {id=686,gates={}},  -- Shadow Bolt
@@ -636,7 +648,7 @@ RotationImport.RegisterForever({
         {id=1949,gates={{t="targets",op=">=",n=3},{t="health",op=">",pct=50},{t="near",n=10}},w=true},  -- Hellfire
         {id=603,gates={}},  -- Bane of Doom
         {id=18288,gates={{t="debuff",id=603,neg=true}},delegated=true},  -- Amplify Curse
-        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}},delegated=true},  -- Immolate
+        {id=348,gates={{t="debuff",id=348,neg=true,refresh=true}}},  -- Immolate
         {id=18265,gates={{t="debuff",id=18265,neg=true,refresh=true}}},  -- Siphon Life
         {id=1316697,gates={}},  -- Wrack
         {id=686,gates={}},  -- Shadow Bolt
@@ -648,7 +660,7 @@ RotationImport.RegisterForever({
         {id=1259821,gates={{t="any",g={{t="debuff",id=980},{t="debuff",id=603}}},{t="debuff",id=172},{t="debuff",id=348}}},  -- Eureka!
         {id=20572,gates={{t="any",g={{t="all",g={{t="any",g={{t="debuff",id=980},{t="debuff",id=603}}},{t="debuff",id=172},{t="any",g={{t="debuff",id=348},{t="cast",id=348,op=">",n=1.5}}}}},{t="targets",op=">=",n=3}}}}},  -- Blood Fury
         {id=603,gates={}},  -- Bane of Doom
-        {id=5676,gates={{t="known",id=1293696},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
+        {id=5676,gates={{t="known",id=1293695},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
         {id=980,gates={{t="debuff",id=603,neg=true},{t="debuff",id=980,neg=true,refresh=true}}},  -- Bane of Agony
         {id=172,gates={{t="debuff",id=172,neg=true,refresh=true}}},  -- Corruption
         {id=440892,gates={{t="debuff",id=440892,neg=true,refresh=true}}},  -- Curse of the Elements
@@ -661,7 +673,7 @@ RotationImport.RegisterForever({
         {id=1259821,gates={{t="any",g={{t="debuff",id=980},{t="debuff",id=603}}},{t="debuff",id=172},{t="debuff",id=348}}},  -- Eureka!
         {id=20572,gates={{t="any",g={{t="all",g={{t="any",g={{t="debuff",id=980},{t="debuff",id=603}}},{t="debuff",id=172},{t="any",g={{t="debuff",id=348},{t="cast",id=348,op=">",n=1.5}}}}},{t="targets",op=">=",n=3}}}}},  -- Blood Fury
         {id=603,gates={}},  -- Bane of Doom
-        {id=5676,gates={{t="known",id=1293696},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
+        {id=5676,gates={{t="known",id=1293695},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
         {id=980,gates={{t="debuff",id=603,neg=true},{t="debuff",id=980,neg=true,refresh=true}}},  -- Bane of Agony
         {id=172,gates={{t="debuff",id=172,neg=true,refresh=true}}},  -- Corruption
         {id=440892,gates={{t="debuff",id=440892,neg=true,refresh=true}}},  -- Curse of the Elements
@@ -676,7 +688,7 @@ RotationImport.RegisterForever({
         {id=1454,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}},{t="targets",op=">=",n=4},{t="health",op=">",pct=50}},w=true},  -- Life Tap
         {id=1949,gates={{t="targets",op=">=",n=3},{t="near",n=10},{t="health",op=">",pct=50}},w=true},  -- Hellfire
         {id=603,gates={}},  -- Bane of Doom
-        {id=5676,gates={{t="known",id=1293696},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
+        {id=5676,gates={{t="known",id=1293695},{t="debuff",id=1293696,neg=true}}},  -- Searing Pain
         {id=980,gates={{t="debuff",id=603,neg=true},{t="debuff",id=980,neg=true,refresh=true}}},  -- Bane of Agony
         {id=172,gates={{t="debuff",id=172,neg=true,refresh=true}}},  -- Corruption
         {id=440892,gates={{t="debuff",id=440892,neg=true,refresh=true}}},  -- Curse of the Elements
@@ -788,7 +800,6 @@ RotationImport.RegisterForever({
         {id=12294,gates={}},  -- Mortal Strike
         {id=5308,gates={{t="execute",op="<",pct=20}}},  -- Execute
         {id=1240193,gates={},delegated=true},  -- Slam
-        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true},{t="targets",op=">=",n=2}}},  -- Rend
         {id=1310222,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="power",res="rage",op=">=",n=20}}},  -- Spearing Strike
         {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=80},{t="execute",op="<",pct=20}}}}},  -- Cleave
         {id=1715,gates={{t="cd",id=12294,neg=true},{t="cd",id=1240193,neg=true},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
@@ -848,7 +859,6 @@ RotationImport.RegisterForever({
         {id=23881,gates={}},  -- Bloodthirst
         {id=2457,gates={{t="buff",id=1282733,dur=5},{t="buff",id=2457,neg=true},{t="power",res="rage",op="<=",n=40}}},  -- Battle Stance
         {id=7384,gates={}},  -- Overpower
-        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=2458,gates={{t="buff",id=1282733,dur=5,neg=true},{t="buff",id=2458,neg=true}}},  -- Berserker Stance
         {id=845,gates={{t="targets",op=">",n=1},{t="any",g={{t="power",res="rage",op=">=",n=40},{t="execute",op="<",pct=20}}}}},  -- Cleave
         {id=1715,gates={{t="targets",op=">",n=1},{t="all",g={{t="cd",id=23881,neg=true},{t="cd",id=1680,neg=true},{t="power",res="rage",op=">",n=70}}},{t="any",g={{t="known",id=12294},{t="known",id=1240193},{t="known",id=1680},{t="known",id=23881},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
@@ -859,6 +869,7 @@ RotationImport.RegisterForever({
     protection = {  -- presets/warrior/protection/protection
       st = {
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
+        {id=7386,gates={{t="stack",id=7386,op="<",n=1,tgt=true}}},  -- Sunder Armor
         {id=1719,gates={}},  -- Recklessness
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
@@ -866,10 +877,11 @@ RotationImport.RegisterForever({
         {id=6572,gates={}},  -- Revenge
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
-        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
+        {id=1715,gates={{t="execute",op="<",pct=20,required=true}},w=true},  -- Hamstring
       },
       cleave = {
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
+        {id=7386,gates={{t="stack",id=7386,op="<",n=1,tgt=true}}},  -- Sunder Armor
         {id=1719,gates={}},  -- Recklessness
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
@@ -877,19 +889,19 @@ RotationImport.RegisterForever({
         {id=6572,gates={}},  -- Revenge
         {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
-        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
+        {id=1715,gates={{t="execute",op="<",pct=20,required=true}},w=true},  -- Hamstring
       },
       aoe = {
         {id=6673,gates={{t="buff",id=6673,dur=180,neg=true}}},  -- Battle Shout
+        {id=7386,gates={{t="stack",id=7386,op="<",n=1,tgt=true}}},  -- Sunder Armor
         {id=6343,gates={{t="targets",op=">=",n=3},{t="near",n=8}},w=true},  -- Thunder Clap
         {id=1719,gates={}},  -- Recklessness
         {id=1329555,gates={}},  -- Reckless Swings
         {id=2687,gates={{t="power",res="rage",op="<",n=90},{t="health",op=">",pct=50}},w=true},  -- Bloodrage
         {id=23922,gates={}},  -- Shield Slam
         {id=6572,gates={}},  -- Revenge
-        {id=772,gates={{t="debuff",id=772,neg=true,refresh=true}}},  -- Rend
         {id=78,gates={{t="any",g={{t="power",res="rage",op=">=",n=45},{t="all",g={{t="known",id=6572,neg=true},{t="known",id=23922,neg=true}}}}}},w=true},  -- Heroic Strike
-        {id=1715,gates={{t="any",g={{t="known",id=6572},{t="known",id=23922},{t="execute",op="<",pct=20,required=true}}}},w=true},  -- Hamstring
+        {id=1715,gates={{t="execute",op="<",pct=20,required=true}},w=true},  -- Hamstring
       },
     },
   },
@@ -1369,10 +1381,12 @@ RotationImport.RegisterForever({
   -- then 1 when a damage over time follows the hit, and that
   -- damage over time's full-duration base, per-level gain and SP coefficient when known.
   [116] = {19,0.2,4,8,0.407,5},
-  [133] = {18,0.2,1,5,0.429,3,1,2,0,0},
-  [143] = {32,0.3,6,10,0.571,3,1,3,0,0},
-  [145] = {51,0.6,12,16,0.714,3,1,6,0,0},
+  [133] = {18,0.2,1,5,0.429,3,1,2,0,0,4},
+  [143] = {32,0.3,6,10,0.571,3,1,3,0,0,6},
+  [145] = {51,0.6,12,16,0.714,3,1,6,0,0,6},
+  [172] = {0,0,4,9,0,6,1,40,0,0.8,12},
   [205] = {29,0.3,8,12,0.489,5},
+  [348] = {8,0.7,1,5,0.2,3,1,15,0,0.65,15},
   [403] = {16,0.1,1,6,0.429,4},
   [421] = {215,1.4,32,37,0.714,4},
   [529] = {30,0.1,8,13,0.571,4},
@@ -1383,6 +1397,7 @@ RotationImport.RegisterForever({
   [686] = {13,0.2,1,5,0.486,6},
   [695] = {23,0.3,6,11,0.629,6},
   [705] = {40,0.6,12,17,0.8,6},
+  [707] = {17,0.8,10,15,0.2,3,1,30,0,0.65,15},
   [837] = {46,0.5,14,18,0.597,5},
   [879] = {79,1.2,20,25,0.429,2},
   [915] = {73,0.5,20,25,0.714,4},
@@ -1391,16 +1406,18 @@ RotationImport.RegisterForever({
   [984] = {60,0.7,22,27,0.714,2},
   [1004] = {81,1,30,35,0.714,2},
   [1088] = {58,0.8,20,25,0.857,6},
+  [1094] = {32,1.2,20,25,0.2,3,1,60,0,0.65,15},
   [1106] = {78,1.2,28,33,0.857,6},
   [2136] = {28,0.6,6,11,0.429,3},
   [2137] = {58,1,14,19,0.429,3},
   [2138] = {100,1.4,22,27,0.429,3},
   [2860] = {428,2.7,48,53,0.714,4},
   [2912] = {113,1.8,20,25,1,7},
+  [2941] = {56,1.5,30,35,0.2,3,1,95,0,0.65,15},
   [2943] = {8,0,10,0,0.107,6},
   [2948] = {39,0.8,22,26,0.429,3},
   [3044] = {25,0,6,0,0,7},
-  [3140] = {77,0.9,18,22,0.857,3,1,12,0,0},
+  [3140] = {77,0.9,18,22,0.857,3,1,12,0,0,8},
   [5176] = {15,0.2,1,5,0.429,4},
   [5177] = {21,0.3,6,12,0.486,4},
   [5178] = {30,0.5,14,20,0.571,4},
@@ -1411,14 +1428,20 @@ RotationImport.RegisterForever({
   [5676] = {23,0.6,18,24,0.429,3},
   [6041] = {148,1,32,37,0.714,4},
   [6060] = {94,1.1,38,43,0.714,2},
+  [6222] = {0,0,14,19,0,6,1,65,0,1,15},
+  [6223] = {0,0,24,29,0,6,1,132,0,1.2,18},
   [6353] = {377,1.7,48,54,1,3},
   [6780] = {54,0.9,38,44,0.571,4},
   [7322] = {70,0.8,20,24,0.706,5},
   [7641] = {101,1.2,36,41,0.857,6},
+  [7648] = {0,0,34,39,0,6,1,168,0,1.2,18},
   [8042] = {20,0.5,4,9,0.386,4},
   [8044] = {36,0.7,8,13,0.386,4},
   [8045] = {67,0.9,14,19,0.386,4},
   [8046] = {130,1.1,24,29,0.386,4},
+  [8050] = {25,0.8,10,15,0.214,3,1,28,0,0.4,12},
+  [8052] = {51,1,18,23,0.214,3,1,48,0,0.4,12},
+  [8053] = {95,1.2,28,33,0.214,3,1,96,0,0.4,12},
   [8056] = {98,0.9,20,25,0.386,5},
   [8058] = {222,1.3,34,39,0.386,5},
   [8092] = {39,0.6,10,15,0.429,6},
@@ -1427,9 +1450,9 @@ RotationImport.RegisterForever({
   [8104] = {151,1.4,28,33,0.429,6},
   [8105] = {196,1.6,34,39,0.429,6},
   [8106] = {258,1.9,40,45,0.429,6},
-  [8400] = {120,1.4,24,28,1,3,1,16,0,0},
-  [8401] = {153,1.8,30,34,1,3,1,24,0,0},
-  [8402] = {187,2.3,36,40,1,3,1,24,0,0},
+  [8400] = {120,1.4,24,28,1,3,1,16,0,0,8},
+  [8401] = {153,1.8,30,34,1,3,1,24,0,0,8},
+  [8402] = {187,2.3,36,40,1,3,1,24,0,0,8},
   [8406] = {104,1.3,26,30,0.814,5},
   [8407] = {134,1.7,32,36,0.814,5},
   [8408] = {181,2,38,42,0.814,5},
@@ -1439,26 +1462,26 @@ RotationImport.RegisterForever({
   [8445] = {69,1,34,38,0.429,3},
   [8446] = {93,1.2,40,44,0.429,3},
   [8905] = {68,0.9,46,52,0.571,4},
-  [8921] = {8,0.5,4,9,0.15,7,1,12,0,0.39},
-  [8924] = {13,0.8,10,15,0.15,7,1,24,0,0.52},
-  [8925] = {22,1,16,21,0.15,7,1,36,0,0.52},
-  [8926] = {32,1.5,22,27,0.15,7,1,52,0,0.52},
-  [8927] = {47,1.5,28,33,0.15,7,1,76,0,0.52},
-  [8928] = {59,1.6,34,39,0.15,7,1,92,0,0.52},
-  [8929] = {73,1.7,40,45,0.15,7,1,124,0,0.52},
+  [8921] = {8,0.5,4,9,0.15,7,1,12,0,0.39,9},
+  [8924] = {13,0.8,10,15,0.15,7,1,24,0,0.52,12},
+  [8925] = {22,1,16,21,0.15,7,1,36,0,0.52,12},
+  [8926] = {32,1.5,22,27,0.15,7,1,52,0,0.52,12},
+  [8927] = {47,1.5,28,33,0.15,7,1,76,0,0.52,12},
+  [8928] = {59,1.6,34,39,0.15,7,1,92,0,0.52,12},
+  [8929] = {73,1.7,40,45,0.15,7,1,124,0,0.52,12},
   [8949] = {154,2.1,26,32,1,7},
   [8950] = {201,2.2,34,40,1,7},
   [8951] = {277,2.5,42,48,1,7},
-  [9833] = {91,2.7,46,51,0.15,7,1,156,0,0.52},
-  [9834] = {111,2.1,52,57,0.15,7,1,196,0,0.52},
-  [9835] = {135,2.3,58,63,0.15,7,1,240,0,0.52},
+  [9833] = {91,2.7,46,51,0.15,7,1,156,0,0.52,12},
+  [9834] = {111,2.1,52,57,0.15,7,1,196,0,0.52,12},
+  [9835] = {135,2.3,58,63,0.15,7,1,240,0,0.52,12},
   [9875] = {372,3,50,56,1,7},
   [9876] = {471,3.2,58,64,1,7},
   [9912] = {91,1,54,60,0.571,4},
-  [10148] = {235,2.2,42,46,1,3,1,32,0,0},
-  [10149] = {300,2.4,48,52,1,3,1,40,0,0},
-  [10150] = {374,2.7,54,58,1,3,1,48,0,0},
-  [10151] = {451,3,60,64,1,3,1,56,0,0},
+  [10148] = {235,2.2,42,46,1,3,1,32,0,0,8},
+  [10149] = {300,2.4,48,52,1,3,1,40,0,0,8},
+  [10150] = {374,2.7,54,58,1,3,1,48,0,0,8},
+  [10151] = {451,3,60,64,1,3,1,56,0,0,8},
   [10179] = {244,2.3,44,48,0.814,5},
   [10180] = {308,2.6,50,54,0.814,5},
   [10181] = {386,2.9,56,60,0.814,5},
@@ -1475,6 +1498,8 @@ RotationImport.RegisterForever({
   [10412] = {242,1.3,36,41,0.386,4},
   [10413] = {383,1.6,48,53,0.386,4},
   [10414] = {531,3.4,60,65,0.386,4},
+  [10447] = {164,1.4,40,45,0.214,3,1,168,0,0.4,12},
+  [10448] = {245,1.7,52,57,0.214,3,1,256,0,0.4,12},
   [10472] = {355,1.5,46,51,0.386,5},
   [10473] = {506,1.8,58,63,0.386,5},
   [10605] = {510,3.3,56,61,0.714,4},
@@ -1483,16 +1508,21 @@ RotationImport.RegisterForever({
   [10945] = {324,2.1,46,51,0.429,6},
   [10946] = {405,2.4,52,57,0.429,6},
   [10947] = {485,2.6,58,63,0.429,6},
-  [11366] = {110,1.5,20,24,1,3,1,44,0,0.6},
+  [11366] = {110,1.5,20,24,1,3,1,44,0,0.6,12},
   [11659] = {141,1.4,44,49,0.857,6},
   [11660] = {191,1.6,52,57,0.857,6},
   [11661] = {251,1.8,60,65,0.857,6},
-  [12505] = {134,1.7,24,30,1,3,1,56,0,0.6},
-  [12522] = {191,2.1,30,36,1,3,1,76,0,0.6},
-  [12523] = {245,2.4,36,42,1,3,1,100,0,0.6},
-  [12524] = {311,2.7,42,48,1,3,1,124,0,0.6},
-  [12525] = {394,3,48,54,1,3,1,152,0,0.6},
-  [12526] = {481,3.4,54,60,1,3,1,184,0,0.6},
+  [11665] = {72,1.6,40,45,0.2,3,1,125,0,0.65,15},
+  [11667] = {106,1.9,50,55,0.2,3,1,190,0,0.65,15},
+  [11668] = {146,2.3,60,65,0.2,3,1,260,0,0.65,15},
+  [11671] = {0,0,44,49,0,6,1,240,0,1.2,18},
+  [11672] = {0,0,54,59,0,6,1,342,0,1.2,18},
+  [12505] = {134,1.7,24,30,1,3,1,56,0,0.6,12},
+  [12522] = {191,2.1,30,36,1,3,1,76,0,0.6,12},
+  [12523] = {245,2.4,36,42,1,3,1,100,0,0.6,12},
+  [12524] = {311,2.7,42,48,1,3,1,124,0,0.6,12},
+  [12525] = {394,3,48,54,1,3,1,152,0,0.6,12},
+  [12526] = {481,3.4,54,60,1,3,1,184,0,0.6,12},
   [14281] = {35,0,12,0,0,7},
   [14282] = {50,0,20,0,0,7},
   [14283] = {85,0,28,0,0,7},
@@ -1500,16 +1530,16 @@ RotationImport.RegisterForever({
   [14285] = {175,0,44,0,0,7},
   [14286] = {220,0,52,0,0,7},
   [14287] = {280,0,60,0,0,7},
-  [14914] = {54,1.3,20,24,0.75,2,1,20,0,0.25},
+  [14914] = {54,1.3,20,24,0.75,2,1,20,0,0.25,10},
   [15207] = {295,1.6,50,55,0.714,4},
   [15208] = {353,2.1,56,61,0.714,4},
-  [15261] = {208,2,60,66,0.75,2,1,75,0,0.25},
-  [15262] = {63,1.4,24,30,0.75,2,1,25,0,0.25},
-  [15263] = {80,1.5,30,36,0.75,2,1,30,0,0.25},
-  [15264] = {92,1.5,36,42,0.75,2,1,35,0,0.25},
-  [15265] = {106,1.5,42,48,0.75,2,1,45,0,0.25},
-  [15266] = {139,1.7,48,54,0.75,2,1,50,0,0.25},
-  [15267] = {173,1.9,54,60,0.75,2,1,65,0,0.25},
+  [15261] = {208,2,60,66,0.75,2,1,75,0,0.25,10},
+  [15262] = {63,1.4,24,30,0.75,2,1,25,0,0.25,10},
+  [15263] = {80,1.5,30,36,0.75,2,1,30,0,0.25,10},
+  [15264] = {92,1.5,36,42,0.75,2,1,35,0,0.25,10},
+  [15265] = {106,1.5,42,48,0.75,2,1,45,0,0.25,10},
+  [15266] = {139,1.7,48,54,0.75,2,1,50,0,0.25,10},
+  [15267] = {173,1.9,54,60,0.75,2,1,65,0,0.25,10},
   [17877] = {66,0.9,20,24,0.429,6},
   [17919] = {33,0.7,26,32,0.429,3},
   [17920] = {44,0.8,34,40,0.429,3},
@@ -1518,7 +1548,7 @@ RotationImport.RegisterForever({
   [17923] = {114,1.2,58,64,0.429,3},
   [17924] = {431,1.9,56,62,1,3},
   [17962] = {146,1,40,46,0.429,3},
-  [18809] = {583,4.6,60,66,1,3,1,212,0,0.6},
+  [18809] = {583,4.6,60,66,1,3,1,212,0,0.6,12},
   [18867] = {80,1,24,30,0.429,6},
   [18868] = {118,1.3,32,38,0.429,6},
   [18869] = {148,1.3,40,46,0.429,6},
@@ -1538,8 +1568,10 @@ RotationImport.RegisterForever({
   [24530] = {500,0,60,60,1,3},
   [25298] = {533,3.4,60,66,1,7},
   [25304] = {475,3.2,60,64,0.814,5},
-  [25306] = {483,3,60,64,1,3,1,60,0,0},
+  [25306] = {483,3,60,64,1,3,1,60,0,0,8},
   [25307] = {268,1.9,60,65,0.857,6},
+  [25309] = {158,2.3,60,65,0.2,3,1,275,0,0.65,15},
+  [25311] = {0,0,60,65,0,6,1,438,0,1.2,18},
   [26363] = {178,0,56,0,0.267,4},
   [26364] = {13,0,8,0,0.267,4},
   [26365] = {24,0,16,0,0.267,4},
@@ -1553,6 +1585,7 @@ RotationImport.RegisterForever({
   [28380] = {50,0,44,0,0.267,6},
   [28381] = {70,0,52,0,0.267,6},
   [28382] = {96,0,60,0,0.267,6},
+  [29228] = {292,3.8,60,67,0.214,3,1,320,0,0.4,12},
   [400574] = {32,0.5,20,28,0.429,7},
   [400640] = {36,0.4,28,32,0,5},
   [407632] = {1,0,40,0,0,2},

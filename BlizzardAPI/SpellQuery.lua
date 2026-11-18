@@ -332,6 +332,14 @@ local function ReadForeverSpellbook()
     return out
 end
 
+--- Every castable spell in the player's spellbook (no passives, no off-spec entries, flyouts
+--- opened), read fresh. Empty when the spellbook cannot be read.
+function BlizzardAPI.ReadSpellbookSpells()
+    local ok, spells = pcall(ReadForeverSpellbook)
+    if ok and type(spells) == "table" then return spells end
+    return {}
+end
+
 local function ForeverLearnedPool()
     local RI = LibStub("JustAC-RotationImport", true)
     local out, have = {}, {}

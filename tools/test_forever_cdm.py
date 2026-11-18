@@ -205,6 +205,7 @@ def main():
     g.cvar, g.forever = True, False
     check(status()[0] == "unavailable", "retail: unavailable")
 
+    bad.extend(coverage())
     bad.extend(track_hidden())
     bad.extend(prompts())
     bad.extend(one_prompt())
@@ -213,6 +214,69 @@ def main():
         print("  FAIL", why)
     print("forever cdm: %d failure(s)" % len(bad))
     return 1 if bad else 0
+
+
+# The coverage report (read only): each periodic spell in the spellbook as tracked, hidden,
+# hidden by the player, cooldown-only or unavailable, and the tracked icon's live answer.
+COVERAGE_PRELUDE = r"""
+local SDB = LibStub("JustAC-SpellDB")
+local DOTS = { [772] = true, [1978] = true, [10797] = true, [3674] = true, [589] = true }
+SDB.IsTargetDot = function(id) return DOTS[id] == true end
+SDB.IsTrackedTargetAura = function(id) return id == 7386 end
+SDB.IsPeriodicHeal = function(id) return id == 139 end
+-- Spellbook: Rend, Serpent Sting, Starshards, Black Arrow, Shadow Word: Pain, Sunder Armor,
+-- Renew and Charge (not periodic). The shared reader already leaves passives out.
+local BOOK = { 772, 1978, 10797, 3674, 589, 7386, 139, 100 }
+LibStub:NewLibrary("JustAC-BlizzardAPI").ReadSpellbookSpells = function() return BOOK end
+entries[104] = { 1978, C.HiddenPassive }    -- hidden, never touched: can be tracked
+entries[105] = { 139, C.TrackedBuff }       -- tracked, icon answers "not active"
+entries[106] = { 10797, C.Essential }       -- a cooldown entry, no aura entry
+entries[107] = { 589, C.TrackedBar }        -- tracked, icon does not answer
+LibStub:NewLibrary("JustAC-MaintenanceTracker").IsTrackedAuraActive = function(id, diagnostic)
+    if id == 139 then return false end
+    diagnostic.reason = "no-viewer-item"
+    return nil
+end
+"""
+
+
+def coverage():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(PRELUDE)
+    lua.execute(COVERAGE_PRELUDE)
+    lua.execute((ROOT / "CdmAdvisor.lua").read_text(encoding="utf-8"))
+    CA = lua.eval('LibStub("JustAC-CdmAdvisor")')
+    g = lua.globals()
+    bad = []
+
+    def check(ok, why):
+        if not ok:
+            bad.append("coverage: " + why)
+
+    state, rows = CA.Coverage()
+    got = [(r.kind, r.id, r.status) for r in rows.values()]
+    want = [
+        ("dot", 3674, "unavailable"),       # no entry at all
+        ("dot", 772, "hidden-by-you"),      # the player set Rend to Not displayed
+        ("dot", 1978, "hidden"),            # an untouched hidden entry
+        ("dot", 10797, "cooldown-only"),    # an entry, but not an aura one
+        ("dot", 589, "tracked"),
+        ("debuff", 7386, "unavailable"),
+        ("hot", 139, "tracked"),
+    ]
+    check(state == "ok" and sorted(got) == sorted(want), "each spell classified: %s" % (got,))
+    check([r.kind for r in rows.values()] == ["dot"] * 5 + ["debuff", "hot"], "sorted DoTs, debuffs, HoTs")
+    by_id = {r.id: r for r in rows.values()}
+    check(by_id[139].reads is False, "a tracked icon's live answer is reported")
+    check(by_id[589].reads is None and by_id[589].reason == "no-viewer-item",
+          "a tracked icon that does not answer says why")
+    check(by_id[1978].reads is None and by_id[1978].reason is None, "an untracked spell is not read")
+    check(g.writes is None, "the report never writes")
+
+    g.cvar = False
+    state, rows = CA.Coverage()
+    check(state == "disabled" and len(list(rows.values())) == 0, "Cooldown Manager off: no rows")
+    return bad
 
 
 # Track every hidden buff (both clients): what counts as "Not displayed" the way Blizzard's

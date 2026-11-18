@@ -1804,7 +1804,7 @@ function DebugCommands.GlowInventory(addon)
                         local okO, o = pcall(f.HasSecretAspect, f, Enum.SecretAspect.Alpha)
                         if okO and o == true then owned = " |cffff6600[alpha ENGINE-OWNED]|r" end
                     end
-                    local pChain, p, okP = {}, f, nil
+                    local pChain, p, okP = {}, f
                     for _ = 1, 3 do
                         okP, p = pcall(p.GetParent, p)
                         if not okP or not p then break end
@@ -2059,4 +2059,183 @@ function DebugCommands.TopoffWatch(addon, arg)
         end
     end)
     addon:Print("|cff00ff00topoff watch: ON|r - stand damaged out of combat and watch which value flips with the icon. /jac inspect topoff off")
+end
+
+--------------------------------------------------------------------------------
+-- Character export (offline tooling)
+--
+-- `/jac inspect character` writes this character as one JSON object for
+-- tools/forever_sim_bench.py (--gear file:<path>): class, race, level, the highest
+-- known rank of every class ability, talents as trait node / entry / rank, and the
+-- equipped items. It reads only plain out-of-combat state, changes nothing, and is
+-- never called by the queue. The shape follows the Forever simulator planner's
+-- character message, so the same file works there.
+--
+-- Item links follow this client's own layout (Blizzard_PTRFeedback):
+--   item:itemID:enchantID:gem1:gem2:gem3:gem4:suffixID:uniqueID:linkLevel:
+--   specializationID:upgradeTypeID:instanceDifficultyID:numBonusIDs[:bonusID...]
+-- The raw item string is exported beside the parsed fields, so a wrong split can be
+-- redone offline instead of trusted.
+--------------------------------------------------------------------------------
+local EXPORT_SLOTS = 18   -- head .. ranged; tabard and bags carry nothing a sim reads
+
+local function ExportPlain(value)
+    if value == nil or IsSecret(value) then return nil end
+    return value
+end
+
+local function ExportJsonString(text)
+    return '"' .. tostring(text):gsub('[%c"\\]', function(c)
+        if c == '"' then return '\\"' end
+        if c == "\\" then return "\\\\" end
+        return string.format("\\u%04x", c:byte())
+    end) .. '"'
+end
+
+local function ExportItemLink(slot)
+    if not GetInventoryItemLink then return nil end
+    local ok, link = pcall(GetInventoryItemLink, "player", slot)
+    if not ok then return nil end
+    link = ExportPlain(link)
+    if type(link) ~= "string" then return nil end
+    local itemString = link:match("|Hitem:([^|]+)|h")
+    if not itemString then return nil end
+    -- A crafted item names its maker (a player GUID field). The field stays, emptied, so
+    -- the positions after it do not move.
+    return (itemString:gsub("Player%-[^:]*", ""))
+end
+
+--- "872:15:::::589::20:..." -> enchant id, suffix id, { bonus ids }.
+local function ExportSplitItemString(itemString)
+    local fields, n = {}, 0
+    for field in (itemString .. ":"):gmatch("([^:]*):") do
+        n = n + 1
+        fields[n] = tonumber(field) or 0
+    end
+    local bonus = {}
+    local count = fields[13] or 0
+    for i = 1, count do
+        local id = fields[13 + i]
+        if id and id ~= 0 then bonus[#bonus + 1] = id end
+    end
+    return fields[2] or 0, fields[7] or 0, bonus
+end
+
+local function ExportGear(notes)
+    local parts = {}
+    for slot = 1, EXPORT_SLOTS do
+        local ok, itemID = pcall(GetInventoryItemID, "player", slot)
+        if not ok then itemID = nil end
+        itemID = ExportPlain(itemID)
+        if type(itemID) == "number" and itemID > 0 then
+            local itemString = ExportItemLink(slot)
+            local enchant, suffix, bonus = 0, 0, {}
+            if itemString then
+                enchant, suffix, bonus = ExportSplitItemString(itemString)
+            else
+                notes[#notes + 1] = "slot " .. slot .. ": item link unreadable, item id only"
+            end
+            local piece = string.format('"%d":{"item":%d,"enchant":%d,"suffix":%d,"bonus":[%s]',
+                slot, itemID, enchant, suffix, table.concat(bonus, ","))
+            if itemString then piece = piece .. ',"link":' .. ExportJsonString(itemString) end
+            parts[#parts + 1] = piece .. "}"
+        end
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function ExportSpells(notes)
+    local RotationImport = LibStub("JustAC-RotationImport", true)
+    local set = RotationImport and RotationImport.ClassAbilityIds and RotationImport.ClassAbilityIds()
+    if not set then
+        notes[#notes + 1] = "no class ability table: spells left empty"
+        return "[]"
+    end
+    local ids = {}
+    for baseID in pairs(set) do
+        local known = RotationImport.HighestKnownRank(baseID)
+        if known then ids[#ids + 1] = known end
+    end
+    table.sort(ids)
+    return "[" .. table.concat(ids, ",") .. "]"
+end
+
+local function ExportTalents(notes)
+    if not (C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits
+            and C_Traits.GetConfigInfo and C_Traits.GetTreeNodes and C_Traits.GetNodeInfo) then
+        notes[#notes + 1] = "trait API not present: talents left empty"
+        return "[]"
+    end
+    local ok, configID = pcall(C_ClassTalents.GetActiveConfigID)
+    if not ok then configID = nil end
+    configID = ExportPlain(configID)
+    if not configID then
+        notes[#notes + 1] = "no active talent configuration: talents left empty"
+        return "[]"
+    end
+    local okInfo, configInfo = pcall(C_Traits.GetConfigInfo, configID)
+    if not okInfo or type(configInfo) ~= "table" or type(configInfo.treeIDs) ~= "table" then
+        notes[#notes + 1] = "talent configuration unreadable: talents left empty"
+        return "[]"
+    end
+    local parts = {}
+    for _, treeID in ipairs(configInfo.treeIDs) do
+        local okNodes, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
+        if okNodes and type(nodeIDs) == "table" then
+            for _, nodeID in ipairs(nodeIDs) do
+                local okNode, node = pcall(C_Traits.GetNodeInfo, configID, nodeID)
+                local entry = okNode and type(node) == "table" and node.activeEntry or nil
+                local rank = entry and ExportPlain(entry.rank) or nil
+                local entryID = entry and ExportPlain(entry.entryID) or nil
+                if type(rank) == "number" and rank > 0 and type(entryID) == "number" then
+                    parts[#parts + 1] = string.format('{"node":%d,"entry":%d,"rank":%d}', nodeID, entryID, rank)
+                end
+            end
+        end
+    end
+    return "[" .. table.concat(parts, ",") .. "]"
+end
+
+local function ExportShow(addon, text)
+    local AceGUI = LibStub("AceGUI-3.0", true)
+    if not AceGUI then
+        addon:Print(text)
+        return
+    end
+    local frame = AceGUI:Create("Frame")
+    frame:SetTitle("JustAC character export")
+    frame:SetStatusText("Ctrl+A, Ctrl+C, then save as a .json file for tools/forever_sim_bench.py")
+    frame:SetLayout("Fill")
+    frame:SetWidth(560)
+    frame:SetHeight(320)
+    frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    local box = AceGUI:Create("MultiLineEditBox")
+    box:SetLabel("")
+    box:DisableButton(true)
+    box:SetText(text)
+    frame:AddChild(box)
+    box:SetFocus()
+    box:HighlightText()
+end
+
+function DebugCommands.ExportCharacter(addon)
+    local notes = {}
+    local _, class = UnitClass("player")
+    local _, race = UnitRace("player")
+    local level = UnitLevel("player")
+    class, race, level = ExportPlain(class), ExportPlain(race), ExportPlain(level)
+    if not (class and race and level) then
+        addon:Print("character export: class, race or level is not readable right now. Try again out of combat.")
+        return
+    end
+    local interface = select(4, GetBuildInfo())
+    local text = string.format(
+        '{"type":"character","source":"JustAC","interface":%d,"class":%s,"race":%s,"level":%d,"talents":%s,"spells":%s,"gear":%s}',
+        tonumber(interface) or 0, ExportJsonString(class), ExportJsonString(race), level,
+        ExportTalents(notes), ExportSpells(notes), ExportGear(notes))
+    ExportShow(addon, text)
+    addon:Print("character export: " .. #text .. " characters. Copy the box contents into a .json file.")
+    for i = 1, #notes do
+        addon:Print("  note: " .. notes[i])
+    end
 end

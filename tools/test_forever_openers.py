@@ -186,7 +186,7 @@ def create_runtime(real_gates=False):
     wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
     helpers = "\n".join(extract(name, source) for name in (
         "ProcPriorityEnabled", "ClaimSpellID", "HeldByUserHold", "HasUserHold", "CompareOp", "ResourceGateHolds", "MissingMinimumResource",
-        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
+        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget", "IsStackPayoffContext",
         "GateVerdict", "GatesConfirmed", "ProcGateBlocks", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
         "IsUnusableNonResource", "SimcPowerType", "ThresholdGateBlocks", "StackAtLeast", "StackHolds",
         "PlaceQueueSpell"
@@ -543,6 +543,35 @@ def check_positioning_openers():
     print(f"Pre-pull positioning: {len(cases)} cases preserve attacks over self buffs, safety gates and explicit ordering")
 
 
+def check_charge_before_ranged_pull():
+    lua = create_runtime()
+    setup = """
+        specKey='WARRIOR_F'
+        pool={772,7918,100}
+        entries={{id=772},{id=7918},{id=100}}
+        ranges[772],ranges[7918],ranges[100]=false,true,true
+        castTimes[7918]=1000
+        damageEstimates[7918]=40
+        SpellDB.IsPureSelfAura=function() return false end
+        SpellDB.LandsAtTarget=function(id) return id==100 end
+        C_Spell.IsSpellHarmful=function() return true end
+    """
+    cases = [
+        ("", [100, 7918, 772], "Charge leads a ranged pull that would leave it unusable"),
+        ("pool={772,7918}; entries={{id=772},{id=7918}}", [7918, 772], "without Charge the shot still opens"),
+        ("ranges[100]=false", [7918, 772, 100], "out of range Charge does not lead the pull"),
+        ("ranges[100]=nil", [100, 7918, 772], "unknown range keeps Charge first"),
+        ("unusable[100]=true", [7918, 772, 100], "unusable Charge (in combat) never leads"),
+        ("cooldown[100]=true", [7918, 772, 100], "Charge on cooldown never leads"),
+        ("b.inCombat=true; ranges[772]=true", [772, 7918, 100], "in combat the list order is kept"),
+    ]
+    for extra, expected, label in cases:
+        lua.execute("Reset(); " + setup + extra)
+        actual = list(lua.globals().Build().values())
+        assert actual == expected, (label, actual, expected)
+    print(f"Charge before ranged pull: {len(cases)} cases passed")
+
+
 def check_queue_fast_paths():
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -778,8 +807,8 @@ def check_next_swing_priority():
          "a proc cannot re-promote an already queued next-swing ability"),
         ("ranges[2973]=true;queued[2973]=true;pool={2973,1495};ranges[1495]=true", 1495,
          "queued Raptor Strike yields to usable melee abilities too"),
-        ("pool={2973};ranges[2973]=true;queued[2973]=true", -999999999,
-         "pending next-swing alone shows WAIT instead of a requeue request"),
+        ("pool={2973};ranges[2973]=true;queued[2973]=true", 2973,
+         "a queued next-swing attack alone holds slot 1 with its swing timer, not WAIT"),
         ("pool={2973};ranges[2973]=true;queued[2973]=false", 2973,
          "the native queue clearing immediately restores the next-swing suggestion"),
         ("pool={2973,1495};ranges[2973]=true;ranges[1495]=true", 2973,
@@ -858,7 +887,7 @@ def check_next_swing_priority():
     """)
     for setup, hint, expected, why in (
         ("", True, 2973, "a shooting-range loss cues the ready next swing"),
-        ("queued[2973]=true", True, -999999999, "a positioning hint never requeues a pending swing"),
+        ("queued[2973]=true", True, 2973, "a pending swing holds slot 1 with its swing timer"),
         ("cooldown[2973]=true", True, -999999999, "a positioning hint does not bypass cooldown"),
         ("starved[2973]=true", True, -999999999, "a positioning hint does not bypass resources"),
         ("unusable[2973]=true", True, -999999999, "a positioning hint does not bypass cast conditions"),
@@ -892,7 +921,7 @@ def check_next_swing_priority():
         assert(HunterLead()==2973)
         for cycle=1,3 do
             queued[2973]=true
-            assert(HunterLead()==SpellQueue.WAIT_SENTINEL)
+            assert(HunterLead()==2973)
             queued[2973]=false;cooldown[2973]=true
             for seconds=1,6 do
                 b.now=b.now+1
@@ -926,7 +955,7 @@ def check_next_swing_priority():
     """)
     for setup, hint, expected, why in (
         ("", True, 2973, "fresh melee activity arms a melee-start pull without a shooting transition"),
-        ("queued[2973]=true", True, -999999999, "activity cannot requeue a pending next swing"),
+        ("queued[2973]=true", True, 2973, "a pending next swing holds slot 1 with its swing timer"),
         ("cooldown[2973]=true", True, -999999999, "activity cannot bypass cooldown"),
         ("starved[2973]=true", True, -999999999, "activity cannot bypass resources"),
         ("unusable[2973]=true", True, -999999999, "activity cannot bypass usability"),
@@ -976,7 +1005,7 @@ def check_next_swing_priority():
         assert(HunterLead()==2973)
         for cycle=1,3 do
             queued[2973]=true
-            assert(HunterLead()==SpellQueue.WAIT_SENTINEL)
+            assert(HunterLead()==2973)
             queued[2973]=false;cooldown[2973]=true
             for seconds=1,6 do
                 b.now=b.now+1;activityAt=b.now
@@ -1022,7 +1051,7 @@ def check_next_swing_priority():
         b.inCombat=true;SpellQueue.ResetNearMeleeHint()
         assert(HunterLead()==2973, 'real tracker retains an opening swing across combat entry')
         for cycle=1,3 do
-            queued[2973]=true;assert(HunterLead()==SpellQueue.WAIT_SENTINEL)
+            queued[2973]=true;assert(HunterLead()==2973)
             queued[2973]=false;cooldown[2973]=true
             for seconds=1,6 do
                 b.now=b.now+1
@@ -1679,4 +1708,5 @@ def main():
 if __name__ == "__main__":
     check_target_setup_openers()
     check_positioning_openers()
+    check_charge_before_ranged_pull()
     main()

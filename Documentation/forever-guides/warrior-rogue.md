@@ -30,6 +30,7 @@ Ground rules for reading this file:
 - **Cooldowns unlinked**: Recklessness, Retaliation and Shield Wall no longer share a cooldown. Retaliation and Shield Wall drop to 15 min. **Recklessness keeps its 30 min cooldown** (the deep dive lists no reduction, and the forum feedback complains about it). zockify says all three are 15 min, which disagrees with the official text.
 - **Thunder Clap**: usable in Defensive Stance, scales with AP, 6 s cooldown, hits up to 4 targets, slows attack speed by 20%. [W-BLZ, W-IVO, W-KLC]
 - **Rend** now scales heavily with AP. Rend and Sunder Armor instantly tag the mob (Oct 1). [W-BLZ, W-DEV]
+- **Default queue (2026-11-19):** against three or more enemies, no tree lists Rend. Thunder Clap leads there and costs 20 rage on a 6 s cooldown (Forever 1.60.1 spell data). A 10 rage Rend on one target during that cooldown can leave Thunder Clap short. Grade: idea from the spell data plus player report. The offline model runs one target only and could not compare packs. No long-fight exception: Rend wins only when most of its 12 s bleed ticks on several targets, and the queue has no confirmed signal for how long a pack will live. A levelling pack usually dies first, and Rend returns once the pack is down to one or two. Known cost: a long fight held at three or more (a boss with adds) loses its Rend. Candidate if that matters in game: keep Rend at three or more on a boss target only. Still to measure in game: Thunder Clap casts per pack fight with and without Rend.
 - **Sunder Armor** can be applied even when a stronger Expose Armor is up. Its threat now scales with AP, with a threat fix on Sep 24. [W-BLZ, W-DEV]
 - **Bloodrage** no longer puts you in combat, so you can use it before Charge or while eating. [W-IVO]
 - **Battle Shout** gives less AP, but Improved Battle Shout is now baseline. Improved Demoralizing Shout is baseline too. [W-BLZ]
@@ -200,7 +201,7 @@ From 16 (Shield Block) onward, consensus across Icy, KallTorak, Oli and wowtbc:
 4. **Revenge whenever it is lit.** Icy calls it the hardest hitter at 5 rage.
 5. Thunder Clap and Demoralizing Shout up. Icy and Oli say on hard mobs or multi-mob pulls only; wowtbc and KallTorak say keep both up.
 6. Rend on targets that will live.
-7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks.
+7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks. The queue recommends one early application per target to help Protection threat and increase damage; further stacking remains player-managed.
 8. Victory Rush when lit (Oli: skip it above 90% HP).
 9. Shield Slam (when talented, deep tree) as burst threat [wowtbc, wow.gg].
 10. Heroic Strike (or Cleave) only with excess rage. Oli: only below 50% HP, and Sunder first because of Improved Sunder.
@@ -266,6 +267,7 @@ No official Blizzard Rogue deep dive exists yet. The series has covered Hunter, 
 - Rogues can use 1H axes [R-MOO, R-WT, R-ZK]. New poison types exist [R-WT]. R-ZK claims Sap no longer breaks Stealth (single source, unverified).
 - Key levels: Slice and Dice 10, Expose Armor 14, **Ambush 18**, poisons 20, Hemorrhage 30 (Subtlety talent) [R-MTH, Icy Sub].
 - **No rogue tank** exists: no source publishes one, and lfcarry and mythicsim state there are only three DPS specs.
+- **Default queue (2026-11-17):** Assassination and Combat open from stealth with Ambush ahead of Garrote and Cheap Shot, following the Method and Warcraft Tavern leveling guides (both read 2026-11-17; Tavern undated and beta-era). Without a main-hand dagger the game reports Ambush unusable and Garrote leads. Subtlety keeps its sim placement.
 
 ---
 

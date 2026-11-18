@@ -338,6 +338,12 @@ end
 --- Defensive Stance, Bear Form, Righteous Fury), "taunt", "drop" (sheds threat: Fade, Feint,
 --- Feign Death) or "boost" (bonus threat: Sunder Armor). nil otherwise. Forever data, every
 --- rank; empty on retail.
+--- Is this talent tree a tank's (generated, Forever)? Its list is a damage order all the same.
+function SpellDB.IsTankTree(specKey, tree)
+    local trees = SpellDB.FOREVER_TANK_TREES and specKey and SpellDB.FOREVER_TANK_TREES[specKey]
+    return trees ~= nil and tree ~= nil and trees[tree] == true
+end
+
 function SpellDB.GetThreatRole(spellID)
     local role = SpellDB.FOREVER_THREAT_ROLES and StaticLookup(SpellDB.FOREVER_THREAT_ROLES, spellID)
     if type(role) ~= "string" then return nil end
@@ -455,6 +461,16 @@ function SpellDB.RegisterTargetAuras(t) targetAuras = t end
 function SpellDB.IsTrackedTargetAura(spellID)
     return targetAuras ~= nil and StaticLookup(targetAuras, spellID) ~= nil
 end
+-- How a tracked target aura's cast reaches the target (generated, Forever):
+-- [spellID] = { defense type (1 magic, 2 melee, 3 ranged), missile speed in yards per second }.
+local auraDelivery
+function SpellDB.RegisterAuraDelivery(t) auraDelivery = t end
+--- Defense type and missile speed of a tracked target aura's cast, or nil when unknown.
+function SpellDB.GetAuraDelivery(spellID)
+    local d = auraDelivery and StaticLookup(auraDelivery, spellID)
+    if not d then return nil end
+    return d[1], d[2]
+end
 -- Forever periodic refresh data (generated): stacking target auras and class heals over time.
 -- A recast there restarts a DoT or HoT and loses the ticks left, so these refresh by lead
 -- (BlizzardAPI.GetPeriodicRefreshLead), not by a share of their duration.
@@ -471,6 +487,16 @@ function SpellDB.GetStackingMax(spellID)
 end
 function SpellDB.IsPeriodicHeal(spellID)
     return periodicHeals ~= nil and StaticLookup(periodicHeals, spellID) ~= nil
+end
+-- Pure heals over time (generated, Forever): [spellID] = duration in seconds. Nothing lands at
+-- once, so a recast while one ticks only restarts it (Renew, Rejuvenation).
+local pureHots
+function SpellDB.RegisterPureHots(t) pureHots = t end
+--- Duration of a pure heal over time, or nil when the spell is not one.
+function SpellDB.GetPureHotDuration(spellID)
+    local duration = pureHots and StaticLookup(pureHots, spellID)
+    if type(duration) == "number" and duration > 0 then return duration end
+    return nil
 end
 -- Attacks that hit and slow movement (generated, Forever): Frostbolt, Frost Shock.
 local slowingAttacks
@@ -2701,6 +2727,12 @@ SpellDB.NEXT_SWING_SPELLS = {}
 SpellDB.FRONTAL_DOTS = {}
 function SpellDB.IsFrontalDot(spellID)
     return spellID ~= nil and StaticLookup(SpellDB.FRONTAL_DOTS, spellID) ~= nil
+end
+--- Is at least half of this spell's damage its own hit (Fireball, Moonfire)? The table holds
+--- the hit's share for a frontal spell; an older `true` entry has no share and answers false.
+function SpellDB.IsMostlyUpfrontDot(spellID)
+    local share = spellID ~= nil and StaticLookup(SpellDB.FRONTAL_DOTS, spellID)
+    return type(share) == "number" and share >= 0.5
 end
 
 SpellDB.UNIQUE_AURA_SPELLS = {

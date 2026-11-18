@@ -15,6 +15,7 @@ local GetTime          = GetTime
 local GetItemCount     = C_Item.GetItemCount
 local GetItemCooldown  = C_Item.GetItemCooldown
 local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
+local UnitLevel          = UnitLevel          ---@diagnostic disable-line: undefined-global
 local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
 local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
@@ -187,13 +188,34 @@ local function ScanEngaged(out)
     return n
 end
 
---- @param breakdown table|nil filled with the scan's per-plate reasons (diagnostics; uncached)
+-- A pack does not stop fighting because its nameplates left the screen (the player looked
+-- away). When the count falls straight from two or more to zero while the player is still
+-- in combat, the last count is kept for a short time. A fall to one is a real reading and
+-- is taken at once; leaving combat or a new positive count ends the hold.
+local ENGAGED_HOLD_SECONDS = 4
+local heldCount, heldAt = 0, -1
+
+local function HoldEngaged(scanned, now)
+    if scanned >= 2 then
+        heldCount, heldAt = scanned, now
+        return scanned
+    end
+    if scanned == 0 and heldCount >= 2 and now - heldAt <= ENGAGED_HOLD_SECONDS and UnitAffectingCombat then
+        local ok, fighting = pcall(UnitAffectingCombat, "player")
+        if ok and PlainTrue(fighting) then return heldCount end
+    end
+    heldCount = 0
+    return scanned
+end
+
+--- @param breakdown table|nil filled with the scan's per-plate reasons (diagnostics; uncached,
+---   and never held: it reports what the scan sees now)
 --- @return number enemies currently engaged with the player's side (0 if unknowable)
 function BlizzardAPI.GetEngagedEnemyCount(breakdown)
     if breakdown then return ScanEngaged(breakdown) end
     local now = GetTime()
     if now - engagedCountAt < 0.25 then return engagedCount end
-    engagedCount, engagedCountAt = ScanEngaged(nil), now
+    engagedCount, engagedCountAt = HoldEngaged(ScanEngaged(nil), now), now
     return engagedCount
 end
 
@@ -955,6 +977,20 @@ function BlizzardAPI.GetContentType()
     return CONTENT_BY_INSTANCE[instanceType] or "world"
 end
 
+--- Relative level of a regular hostile target, or nil when unknown or non-regular.
+--- UnitLevel returns -1 for skull-level targets; that is unknown here, not a numeric level.
+function BlizzardAPI.GetTargetLevelDelta()
+    local classOk, classification = pcall(UnitClassification, "target")
+    if not classOk or IsSecretValue(classification)
+       or (classification ~= "normal" and classification ~= "trivial") then return nil end
+    local targetOk, targetLevel = pcall(UnitLevel, "target")
+    local playerOk, playerLevel = pcall(UnitLevel, "player")
+    if not targetOk or not playerOk or IsSecretValue(targetLevel) or IsSecretValue(playerLevel)
+       or type(targetLevel) ~= "number" or targetLevel < 1
+       or type(playerLevel) ~= "number" or playerLevel < 1 then return nil end
+    return targetLevel - playerLevel
+end
+
 --- Is a surface set to be hidden in the content the player is in right now? `hideIn` is
 --- the surface's sparse set of hidden kinds; an empty one costs nothing but the check.
 function BlizzardAPI.HiddenInContent(hideIn)
@@ -1365,7 +1401,9 @@ end
 --
 -- HISTORY: a Feb-2026 measurement found UnitCreatureType() AND UnitGUID() secret in
 -- combat and built an OOC-only cache; the re-check below superseded it for the target.
--- Still true: UnitGUID() is secret in combat (a GUID-keyed cache is not viable), and
+-- UnitGUID() can still be secret on Retail or in restricted contexts; Forever's
+-- 2026-11-18 mob-profile sample read GUIDs plain in and out of combat on two NPC types.
+-- That sample does not establish dungeon/group readability. Guard every live read.
 -- UnitIsUnit(boss1-5) is SecretWhenUnitComparisonRestricted - boolean-testing it THROWS
 -- on an addon-restricted map, so route it via SafeUnitIsUnit. Fail-open throughout: an
 -- unknowable type means IsTargetCCImmune() answers false (assume CC-able).
@@ -1401,6 +1439,7 @@ local function BoundedGlobalCache(cacheKey, cap, key)
     end
     return c
 end
+BlizzardAPI.BoundedGlobalCache = BoundedGlobalCache   -- DotTracker's learned immunities
 
 -- Localized creature-type name -> numeric ID, built once from C_CreatureInfo
 -- (locale-correct - no hardcoded type strings).
@@ -1474,6 +1513,7 @@ local function ExtractNPCID(guid)
     end
     return nil
 end
+BlizzardAPI.NpcIDFromGUID = ExtractNPCID
 
 -- CC-failure learning: mark the current target as CC-immune for the rest of combat once
 -- something proves CC doesn't work on it.  Reset on PLAYER_TARGET_CHANGED and
@@ -1601,7 +1641,7 @@ function BlizzardAPI.RefreshTargetCreatureType()
             StoreNameType(name, creatureTypeByName[ct])
         end
     end
-    -- Extract NPC ID from GUID (only readable out of combat; secret in combat).
+    -- Extract NPC ID whenever the live GUID is readable, including in Forever combat.
     -- Used to persist CC immunity per mob TYPE across pulls within an instance.
     local guid = UnitGUID and UnitGUID("target")
     local tname = UnitName and UnitName("target")
@@ -2097,6 +2137,8 @@ local POSTCOMBAT_WINDOW_SECS = 10
 local combatEndedAt = -1e9
 function BlizzardAPI.NotePlayerLeftCombat()
     combatEndedAt = GetTime()
+    heldCount, heldAt = 0, -1
+    engagedCount, engagedCountAt = 0, -1
 end
 function BlizzardAPI.IsInPostCombatDowntime()
     return (GetTime() - combatEndedAt) <= POSTCOMBAT_WINDOW_SECS

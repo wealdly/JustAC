@@ -316,7 +316,12 @@ paraphrased; the generator's Shaman adaptation owns the resulting defaults.
   Earth Shock and Fire Nova. In AoE, Nova moves ahead of the other damage buttons.
   Below five stacks, Bolt can reset the swing timer.
 - The default queue reserves Earth Shock for interrupts instead of following the guide's
-  damage use, except as a short-cooldown fallback after observed cast pushback. It is not
+  damage use, with two exceptions: a short-cooldown fallback after observed cast pushback,
+  and (2026-11-17, agreed with the maintainer) the Enhancement filler shock after Lightning
+  Bolt against a quiet open-world target: outside instances, a live non-elite creature that
+  is not casting and has not been seen casting since it was selected
+  (`SpellQueue._InterruptFreeForDamage`, `tools/test_interrupt_filler.py`). Every unknown
+  read keeps it reserved. Elemental and Restoration do not list it. It is not
   used as damage while the target casts or after a cast has been observed on that target.
   A target not seen casting may still be a caster; Flame and Frost Shock also share Earth
   Shock's six-second cooldown. Custom queues can still include it.

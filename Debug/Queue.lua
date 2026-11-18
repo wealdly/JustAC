@@ -136,6 +136,27 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
         line("DoT not already on target", false,
             "active on target - parked at the back; returns for the pandemic refresh window")
     end
+    -- How good is the evidence behind the aura reads this ability's place depends on?
+    -- "estimated" is our cast time plus a duration, never seen on the unit.
+    if DotTracker and DotTracker.GetDotEvidence then
+        local dotActive, grade, source = DotTracker.GetDotEvidence(displayID)
+        if grade ~= "none" then
+            note(string.format("DoT evidence: %s (%s), reads %s", grade, tostring(source),
+                dotActive and "active" or "not active"))
+        end
+    end
+    local importer = LibStub("JustAC-RotationImport", true)
+    local entry = importer and importer.GetEntry
+        and (importer.GetEntry(displayID) or importer.GetEntry(spellID))
+    if entry and entry.gates and BlizzardAPI.GetBuffWindowEvidence then
+        for _, gate in ipairs(entry.gates) do
+            if gate.t == "buff" and gate.id then
+                local buffActive, grade, source = BlizzardAPI.GetBuffWindowEvidence(gate.id, gate.dur)
+                note(string.format("Buff %d evidence: %s (%s), reads %s", gate.id, grade, tostring(source),
+                    buffActive and "active" or "not active"))
+            end
+        end
+    end
     local heldByDial = SpellQueue.IsHeldByHold
         and SpellQueue.IsHeldByHold(spellID) or false
     if heldByDial then
@@ -329,6 +350,91 @@ function DebugCommands.ContextRankDiagnostics(addon)
 end
 
 --------------------------------------------------------------------------------
+-- Cooldown Manager coverage
+--------------------------------------------------------------------------------
+local COVERAGE_TEXT = {
+    tracked = "|cff00ff00tracked|r",
+    hidden = "|cffffff00hidden|r (can be tracked)",
+    ["hidden-by-you"] = "|cffffff00hidden by you|r",
+    ["cooldown-only"] = "|cffff8800cooldown entry only|r (its aura cannot be tracked)",
+    unavailable = "|cffff8800unavailable|r (no Cooldown Manager entry)",
+}
+local COVERAGE_KIND = { dot = "DoT", debuff = "debuff", hot = "HoT" }
+
+--- Each periodic spell the character knows and how the Cooldown Manager covers it. A tracked
+--- one is read exactly in combat; every other one runs on cast timing.
+function DebugCommands.CdmCoverage(addon)
+    local CdmAdvisor = LibStub("JustAC-CdmAdvisor", true)
+    if not (CdmAdvisor and CdmAdvisor.Coverage) then
+        addon:Print("|cffff0000CdmAdvisor not loaded|r")
+        return
+    end
+    local state, rows = CdmAdvisor.Coverage()
+    addon:Print("=== Cooldown Manager coverage (this character) ===")
+    if state ~= "ok" and state ~= "nolayout" then
+        addon:Print(CdmAdvisor.StateText(state))
+        return
+    end
+    local counts = {}
+    for _, row in ipairs(rows) do
+        counts[row.status] = (counts[row.status] or 0) + 1
+        local line = string.format("%s %s (%d): %s", COVERAGE_KIND[row.kind] or row.kind, row.name, row.id,
+            COVERAGE_TEXT[row.status] or row.status)
+        if row.status == "tracked" then
+            if row.reads == nil then
+                line = line .. string.format(", icon not answering (%s)", tostring(row.reason or "no reason given"))
+            elseif row.reads then
+                line = line .. ", icon answering: active"
+            else
+                line = line .. ", icon answering: not active"
+            end
+        end
+        addon:Print(line)
+    end
+    if #rows == 0 then addon:Print("|cff888888No DoT, maintained debuff or HoT in the spellbook.|r") end
+    addon:Print(string.format("tracked %d, hidden %d, hidden by you %d, cooldown entry only %d, unavailable %d",
+        counts.tracked or 0, counts.hidden or 0, counts["hidden-by-you"] or 0,
+        counts["cooldown-only"] or 0, counts.unavailable or 0))
+    if (counts.hidden or 0) > 0 then
+        addon:Print("Hidden ones can be tracked with /jac cdm track-hidden, then /reload.")
+    end
+    addon:Print("================================")
+end
+
+--- /jac inspect immunedb [clear]: what the tracker has learned about creatures a DoT does
+--- not work on, and the way to throw it away. It persists, so it must be inspectable.
+function DebugCommands.DotImmunityDB(addon, arg)
+    local DotTracker = LibStub("JustAC-DotTracker", true)
+    if not (DotTracker and DotTracker.GetImmunityInfo) then return end
+    if arg == "clear" then
+        DotTracker.ClearLearnedImmunity()
+        addon:Print("|cff00ccff== immunedb ==|r cleared.")
+        return
+    end
+    local count, threshold, npcID, entries = DotTracker.GetImmunityInfo()
+    addon:Print(string.format("|cff00ccff== immunedb ==|r %d creature id(s) saved "
+        .. "(%d sightings on different mobs to keep across sessions).", count, threshold))
+    if not npcID then
+        addon:Print("  no creature targeted, or its id is not readable")
+        return
+    end
+    if #entries == 0 then
+        addon:Print(string.format("  current target npcID=%d: nothing learned", npcID))
+        return
+    end
+    for _, entry in ipairs(entries) do
+        local state = "not held"
+        if entry.session then
+            state = "held this session"
+        elseif entry.saved >= threshold then
+            state = "held (saved)"
+        end
+        addon:Print(string.format("  current target npcID=%d: %s sightings=%d, %s",
+            npcID, SpellLabel(entry.base), entry.saved, state))
+    end
+end
+
+--------------------------------------------------------------------------------
 -- DoT Tracker Diagnostics
 --------------------------------------------------------------------------------
 --- Dumps the maintained-DoT tracking state for the current target: which tracked
@@ -352,6 +458,29 @@ function DebugCommands.DotDiagnostics(addon)
     addon:Print("=== Maintained DoT Tracking (current target) ===")
     addon:Print(string.format("Target: %s  |  pending casts: %d",
         s.hasTarget and "yes" or "|cff888888none|r", s.pending))
+    -- Misses are matched to a cast by timing alone. The last three counts mark matches that
+    -- may have been someone else's attack.
+    local m = s.misses
+    if m and m.matched > 0 then
+        local kinds = {}
+        for kind, n in pairs(m.kinds) do kinds[#kinds + 1] = kind .. "=" .. n end
+        table.sort(kinds)
+        addon:Print(string.format(
+            "Misses matched this session: %d (timer cancelled %d, stack restored %d, immune %d)  [%s]",
+            m.matched, m.cancelled, m.restored, m.immune, table.concat(kinds, " ")))
+        addon:Print(string.format(
+            "  doubtful matches: grouped %d, own melee swing in the window %d, dodge on a missile %d",
+            m.grouped, m.ownSwing, m.dodgedMissile))
+    end
+    if m and (m.notOutcome > 0 or m.toSwing > 0 or next(m.schools)) then
+        local schools = {}
+        for key, n in pairs(m.schools) do schools[#schools + 1] = key .. "=" .. n end
+        table.sort(schools)
+        addon:Print(string.format(
+            "  not given to the cast: result the cast cannot produce %d, nearer to an own auto attack %d",
+            m.notOutcome, m.toSwing))
+        addon:Print("  target results by school mask: " .. table.concat(schools, " "))
+    end
     if not s.hasTarget then
         addon:Print("|cff888888(no target)|r")
         addon:Print("================================")
@@ -370,10 +499,10 @@ function DebugCommands.DotDiagnostics(addon)
         -- DoT, where the projection fires early - the case this exists to fix.
         local engine = (e.enginePandemic == nil) and "|cff888888n/a (estimate used)|r"
             or (e.enginePandemic and "|cffffaa00INSIDE pandemic|r" or "|cff2ecc71live|r")
-        addon:Print(string.format("  %s (%d)  %s  src=%s  expiresIn=%.1fs%s  est=%s  engine=%s",
+        addon:Print(string.format("  %s (%d)  %s  src=%s (%s)  expiresIn=%.1fs%s  est=%s  engine=%s",
             spellName(e.spellID), e.spellID,
             e.active and "|cffff5555active|r" or "|cff55ff55inactive|r",
-            e.source or "unknown",
+            e.source or "unknown", e.evidence or "none",
             e.expiresIn,
             (e.pandemicIn and string.format("  pandemicIn=%.1fs", e.pandemicIn) or "")
                 .. ((e.refreshLead and e.refreshLead > 0) and string.format("  lead=%.1fs", e.refreshLead) or ""),

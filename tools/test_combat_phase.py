@@ -29,6 +29,16 @@ def group_helpers_lua():
             + section(source, "-- Group membership.", "\nfunction BlizzardAPI.IsUnitHealthBelow"))
 
 
+def target_level_helper_lua():
+    source = state_source()
+    return """
+        local UnitClassification = UnitClassification
+        local UnitLevel = UnitLevel
+        local pcall = pcall
+        local IsSecretValue = BlizzardAPI.IsSecretValue
+    """ + section(source, "function BlizzardAPI.GetTargetLevelDelta()", "\nend\n") + "\nend\n"
+
+
 def load():
     source = state_source()
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -37,9 +47,19 @@ def load():
         secret = {}
         now = 1000
         function IsSecretValue(v) return rawequal(v, secret) end
+        BlizzardAPI.IsSecretValue = IsSecretValue
         function GetTime() return now end
+        classification = "normal"
+        levels = {player=20,target=20}
+        levelError = false
+        function UnitClassification(unit) assert(unit == "target"); return classification end
+        function UnitLevel(unit)
+            if levelError then error("level read denied") end
+            return levels[unit]
+        end
         function Reset()
             groupValue, raidValue, groupError, raidError = false, false, false, false
+            classification, levels, levelError = "normal", {player=20,target=20}, false
             hasGroupAPI = true
             IsInGroup = function()
                 if groupError then error("group read denied") end
@@ -63,7 +83,7 @@ def load():
         function UnitExists(unit) assert(unit == "target"); return targetExists end
         function UnitCanAttack(a, b) assert(a == "player" and b == "target"); return attackable end
     """)
-    lua.execute(group_helpers_lua()
+    lua.execute(group_helpers_lua() + target_level_helper_lua()
                 + section(source, "local POSTCOMBAT_WINDOW_SECS", "\n-- Returns (percent, isEstimate)"))
     return lua
 
@@ -93,6 +113,18 @@ def main():
           "grouped, raid unknown: grouped callers still answer, party/raid stays unknown")
     check("groupValue, raidError = true, true", 'BlizzardAPI.GetGroupContext() == nil', "denied raid read")
     check("raidValue = secret", 'BlizzardAPI.GetGroupContext() == "solo"', "solo never asks the raid probe")
+
+    # Relative levels apply only to ordinary mobs with readable numeric levels.
+    check("levels.target = 19", "BlizzardAPI.GetTargetLevelDelta() == -1", "one level below")
+    check("levels.target = 18", "BlizzardAPI.GetTargetLevelDelta() == -2", "two levels below")
+    check("levels.target = 21", "BlizzardAPI.GetTargetLevelDelta() == 1", "one level above")
+    check("classification = 'trivial'; levels.target = 15",
+          "BlizzardAPI.GetTargetLevelDelta() == -5", "trivial ordinary mob")
+    check("classification = 'elite'", "BlizzardAPI.GetTargetLevelDelta() == nil", "elite is separate")
+    check("classification = 'rare'", "BlizzardAPI.GetTargetLevelDelta() == nil", "rare is separate")
+    check("levels.target = -1", "BlizzardAPI.GetTargetLevelDelta() == nil", "skull level is unknown")
+    check("levels.target = secret", "BlizzardAPI.GetTargetLevelDelta() == nil", "secret level is unknown")
+    check("levelError = true", "BlizzardAPI.GetTargetLevelDelta() == nil", "denied level read")
 
     # Fight ending: every clause a positive read.
     check("", "BlizzardAPI.IsFightEnding() == true and belowAsked == 20", "last dying non-boss")

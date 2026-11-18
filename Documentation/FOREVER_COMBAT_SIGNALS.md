@@ -1441,6 +1441,110 @@ preview exclusion, current-unit binding and live transitions. Test losing and
 regaining threat as both tank and non-tank. Do not infer threat percentage,
 enemy count or confirmed incoming damage from the highlight.
 
+### 6. Target profile and kill time: probe (2026-11-18)
+
+**Measured sample: GUID readable in combat; maximum health secret even out of combat.**
+
+`/jac inspect mobprofile arm` (research companion) reads every hostile NPC seen
+as target, mouseover or nameplate. It
+tallies each field plain, secret, nil or error separately for in and out of
+combat. Plain reads build a
+per-NPC profile: creature type, family, classification, level range, max health
+per level and power.
+
+Capture flushed 2026-11-18 at 10:03:16: two normal Mechanical NPC types, Harvest
+Golem (36, level 11) and Harvest Watcher (114, levels 14-15), with three solo kill
+records at player level 14. The field tallies pool target, mouseover and nameplate
+reads; repeated observations are not independent NPC samples.
+
+| Field | Out of combat (16 reads) | In combat (24 reads) |
+|---|---|---|
+| GUID, name, level, effective level, classification, creature type ID | All plain | All plain |
+| Power type, tap denied, trivial, boss | All plain | All plain |
+| Maximum health, maximum power | All secret | All secret |
+| Creature family | All nil | All nil |
+
+No field calls errored in this sample. The original OOC-only GUID hypothesis is
+not supported here: a readable live GUID can identify the NPC in combat, without
+a name-based inference. This does not establish readability on other clients,
+maps or unit contexts. The probe does not retain per-read unit tokens, build or
+instance metadata, so this capture cannot certify dungeon/group behavior.
+Keep `pcall` and secrecy checks on every live read; call failure, nil and secret
+remain distinct unknown outcomes. `InCombatLockdown() == false` labels the OOC
+bucket; it is not proof of unrestricted data access. Maximum health supplied no
+plain values to the profiles in this capture.
+
+Kill time uses only plain identity and our own clock: the pre-pull target GUID
+(or a plain in-combat swap) is stamped at player combat entry or target selection and closed by
+`PARTY_KILL`, whose victim GUID is plain. It is a per-player time-to-kill from
+that timestamp, not proof of our first hit or the mob's lifetime. Kills outside
+the group are not seen. Never derive it from health bands. Recorded intervals:
+Harvest Golem 8.2 seconds; Harvest Watcher 34.6 and 33.7 seconds. These are too few
+samples for a queue policy.
+
+Adoption needs: max health and GUID behavior confirmed per context (open world,
+dungeon, solo, grouped), kill times stable enough per NPC to separate short and
+long fights, and an explicit fallback to the existing level rule for unseen mobs.
+A profile from an earlier character level or gear set is context, not a verdict.
+
+### 7. Classic creature-type immunity rates: reference audit (2026-11-18)
+
+Source: local vMaNGOS `db-sqlite-70e38cd.zip`, `mangos.sqlite`,
+`creature_template`, revision `70e38cd10ce430f7ce41668c85fb40d2779bc646`.
+Select the greatest `patch` per `entry`: 10,381 distinct NPC templates, each
+counted once. These are template-weighted rates, not encounter-weighted rates;
+the denominator includes friendly, unused and special-purpose templates.
+
+Bleed means `mechanic_immune_mask & (1 << (15 - 1))`. Poison means the explicit
+`immunity_flags & 0x20` flag, not Nature-school resistance or immunity.
+Meanings were checked against vMaNGOS at the same revision:
+[creature flags](https://github.com/vmangos/core/blob/70e38cd10ce430f7ce41668c85fb40d2779bc646/src/game/Objects/CreatureDefines.h)
+and [their application](https://github.com/vmangos/core/blob/70e38cd10ce430f7ce41668c85fb40d2779bc646/src/game/Objects/Creature.cpp).
+
+| Creature type | NPCs | Bleed mask set | Bleed mask absent | Poison flag set | Poison flag absent |
+|---|---:|---:|---:|---:|---:|
+| Unspecified (0) | 22 | 0 (0.00%) | 22 (100.00%) | 0 (0.00%) | 22 (100.00%) |
+| Beast | 1,234 | 12 (0.97%) | 1,222 (99.03%) | 1 (0.08%) | 1,233 (99.92%) |
+| Dragonkin | 229 | 3 (1.31%) | 226 (98.69%) | 4 (1.75%) | 225 (98.25%) |
+| Demon | 266 | 4 (1.50%) | 262 (98.50%) | 5 (1.88%) | 261 (98.12%) |
+| Elemental | 324 | 236 (72.84%) | 88 (27.16%) | 73 (22.53%) | 251 (77.47%) |
+| Giant | 61 | 4 (6.56%) | 57 (93.44%) | 0 (0.00%) | 61 (100.00%) |
+| Undead | 702 | 234 (33.33%) | 468 (66.67%) | 7 (1.00%) | 695 (99.00%) |
+| Humanoid | 6,628 | 10 (0.15%) | 6,618 (99.85%) | 1 (0.02%) | 6,627 (99.98%) |
+| Critter | 99 | 0 (0.00%) | 99 (100.00%) | 0 (0.00%) | 99 (100.00%) |
+| Mechanical | 106 | 98 (92.45%) | 8 (7.55%) | 18 (16.98%) | 88 (83.02%) |
+| Not specified (10) | 616 | 19 (3.08%) | 597 (96.92%) | 2 (0.32%) | 614 (99.68%) |
+| Totem | 94 | 5 (5.32%) | 89 (94.68%) | 0 (0.00%) | 94 (100.00%) |
+
+"Absent" is an exception to a proposed blanket type rule, not evidence that the
+spell can land. This audit does not resolve aura-, script- or spell-specific
+immunity, and Classic masks are not confirmed Forever behavior. For example,
+Harvest Golem (36) has no explicit poison flag in this snapshot, while Forever's
+learned observations associate it with Serpent Sting `IMMUNE` results. Those
+events lack source/spell attribution, so neither the snapshot nor that association
+alone proves a general poison rule.
+
+The eight Mechanical bleed-mask-absent candidates are 2109 Steam Tank,
+4955 Theramore Archery Target 1, 4957 Theramore Combat Dummy 4,
+4975 Theramore Archery Target 2, 5187 Southsea Cannon, 5625 Theramore Transport,
+8447 Clunk and 8880 Mechastrider. Several names suggest special-purpose templates;
+they were not silently removed from the denominator.
+
+**Design candidate, not an adopted queue rule:** type defaults plus explicit
+NPC overrides must be per immunity category, with verified per-NPC outcomes
+taking precedence. Mechanical bleed is the strongest candidate for a small
+exception list; Elemental bleed has 88 candidate exceptions and Undead is mixed.
+Within this snapshot, defaulting Mechanical and Elemental to bleed-immune and
+other types to unmarked needs 387 NPC overrides (96 unmarked, 291 marked),
+versus listing all 625 marked templates. That is compression of this snapshot,
+not authority to classify previously unseen Forever NPCs. Explicit vulnerable,
+immune and unknown outcomes must remain distinct.
+
+Attribution: vMaNGOS contributors and the upstream MaNGOS, MaNGOSZero, Nostalrius
+and Elysium projects. Inspected source headers permit GPL-2.0-or-later; separate
+DB-dump redistribution terms still need verification before adopting data.
+This is a read-only aggregate audit, not a vendored immunity database.
+
 ## Other high-value API findings
 
 | Item | Opportunity | Required verification |

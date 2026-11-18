@@ -44,9 +44,15 @@ def main():
     queue.globals().DotTracker = queue.table_from({
         "GetTargetAuraState": lambda sid, estimate, cache=None: tracker.GetTargetAuraState(sid, estimate),
         "IsDotActiveOnCurrentTarget": lambda sid, cache=None: tracker.IsDotActiveOnCurrentTarget(sid),
+        "GetOwnStacks": lambda sid: tracker.GetOwnStacks(sid),
     })
     queue.globals().SpellDB.IsFrontalDot = lambda sid: db.IsFrontalDot(sid)
     queue.globals().SpellDB.GetForeverTotemSlot = lambda sid: db.GetForeverTotemSlot(sid)
+    queue.globals().SpellDB.IsDelayedPayoff = lambda sid: db.IsDelayedPayoff(sid)
+    queue.globals().SpellDB.GetStackingMax = lambda sid: db.GetStackingMax(sid)
+    queue.globals().SpellDB.GetThreatRole = lambda sid: db.GetThreatRole(sid)
+    queue.globals().SpellDB.IsTankTree = lambda spec, tree: db.IsTankTree(spec, tree)
+    queue.execute("RotationImport = RotationImport or {}; RotationImport.GetForeverTree = function() return foreverTree end")
 
     def validate(gates, spell):
         for gate in gates.values():
@@ -90,15 +96,25 @@ def main():
             obs.globals().now = 10.1
             assert build("b.maxIcons=1") == [sid]
 
-    # An uncorrelated target miss can only undo an estimate, never prove presence.
-    for miss in ("MISS", "RESIST", "DODGE", "PARRY"):
+    # An uncorrelated target miss can only undo an estimate, never prove presence. Holy Fire
+    # is a spell with no missile: its result comes in the same instant.
+    for miss in ("MISS", "RESIST"):
         obs.execute("now=20; tracked={}")
         tracker.Reset()
         tracker.OnCastSucceeded(14914)
-        obs.globals().now = 20.1
+        obs.globals().now = 20.05
         tracker.OnTargetCombat(miss)
         assert tracker.GetTargetAuraState(14914, True) is None, miss
         assert build() == [sid]
+    # A spell is never dodged or parried, so those results belong to another attack, and a
+    # miss well after the cast is not this cast's either: the estimate stands.
+    for miss, at in (("DODGE", 20.05), ("PARRY", 20.05), ("MISS", 20.3)):
+        obs.execute("now=20; tracked={}")
+        tracker.Reset()
+        tracker.OnCastSucceeded(14914)
+        obs.globals().now = at
+        tracker.OnTargetCombat(miss)
+        assert tracker.GetTargetAuraState(14914, True) is True, (miss, at)
 
     # CDM overrides the estimate once the cast-to-icon bridge window has passed; target
     # changes do not transfer the timer.
@@ -134,6 +150,65 @@ def main():
     assert build("b.contextOrder='off'") == [6343]
     assert db.IsTargetDot(6343) is False
     assert db.IsTrackedTargetAura(133) is False, "ordinary Fireball remains a repeatable nuke"
+
+    # Protection uses Sunder early for threat, then its own landed stack count holds it until
+    # the target changes or the debuff expires; the slow-payoff guard must not delay the opener.
+    # (The hold itself, tank tree or not, is covered in test_gate_groups.py: this runtime does
+    # not include it.)
+    obs.execute("now=60;tracked={};targetGUID='Creature-Sunder'")
+    tracker.Reset()
+    queue.execute("""
+        Reset();specKey='WARRIOR_F';foreverTree='protection';b.inCombat=true;b.now=60;b.maxIcons=1
+        entries=classes.WARRIOR_F.protection.st;pool={7386,78}
+        ranges[7386],ranges[78]=true,true
+    """)
+    assert build() == [7386], "Protection Sunder is available at the start of the fight"
+    tracker.OnCastSucceeded(7386)
+    obs.globals().now = 61
+    assert build() == [78], "a landed Sunder stack prevents repeating it on the same target"
+
+    # A group can benefit from more applications, stopping at the generated maximum.
+    obs.execute("now=70;tracked={};targetGUID='Creature-Group'")
+    tracker.Reset()
+    queue.execute("""
+        Reset();specKey='WARRIOR_F';b.inCombat=true;b.now=70;b.maxIcons=1
+        entries=classes.WARRIOR_F.protection.st;pool={7386,78}
+        ranges[7386],ranges[78]=true,true
+        BlizzardAPI.IsGrouped=function() return true end
+    """)
+    for stacks in range(5):
+        assert build() == [7386], ("group Sunder", stacks)
+        tracker.OnCastSucceeded(7386)
+        obs.globals().now += 1
+    assert build() == [78], "the generated stack maximum stops further applications"
+    obs.execute("now=80;tracked={};targetGUID='Creature-StackContext'")
+    tracker.Reset()
+    tracker.OnCastSucceeded(7386)
+    for setup, expected in (
+        ("", False),
+        ("grouped=true", True),
+        ("content='dungeon'", True),
+        ("classification='elite'", True),
+        ("delta=1", True),
+        ("delta=-1", False),
+        ("grouped=nil", False),
+        ("grouped=true;SpellQueue._rotationIsCustom=true", False),
+        ("grouped=true;forever=false", False),
+        ("grouped=true;ctx.stackApplicator=78", False),
+    ):
+        queue.execute("""
+            grouped=false;content='world';classification='normal';delta=nil
+            forever=true;SpellQueue._rotationIsCustom=false
+            BlizzardAPI.IsGrouped=function() return grouped end
+            BlizzardAPI.GetContentType=function() return content end
+            BlizzardAPI.GetTargetLevelDelta=function() return delta end
+            UnitClassification=function() return classification end
+            ctx={strict=false,stackApplicator=7386}
+        """ + setup)
+        assert queue.eval('SpellQueue._GateVerdict({t="stack",id=7386,op="<",n=1,tgt=true},ctx)') \
+            is expected, setup
+    queue.execute("BlizzardAPI.IsGrouped=nil;BlizzardAPI.GetContentType=nil;"
+                  "BlizzardAPI.GetTargetLevelDelta=nil;SpellQueue._rotationIsCustom=false;forever=true")
 
     # Another aura's presence can be tested, but not inferred from a cast or a timer.
     queue.execute("""

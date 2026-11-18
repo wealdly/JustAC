@@ -119,9 +119,12 @@ end
 -- The weapon the comparison chose against this target (in combat). It stays chosen while
 -- its moment-to-moment reads waver; target change, leaving combat or a real exclusion ends it.
 local weaponPhaseID
+-- Mana was confirmed below the conserve threshold in this fight. It stays so until combat
+-- ends, so a level hovering at the threshold does not flip the filler back and forth.
+local weaponManaLow
 
 function SpellQueue._ResetWeaponPhase()
-    weaponPhaseID = nil
+    weaponPhaseID, weaponManaLow = nil, nil
 end
 
 local EFFICIENCY_ATTACKS = {5019, 75, AUTO_ATTACK_SPELL} -- wand, Auto Shot, melee
@@ -404,7 +407,7 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
        or PushbackRead(UnitPlayerControlled, "target") ~= false then return end
     if not b.inCombat and BlizzardAPI.RefreshDamageBaseline then BlizzardAPI.RefreshDamageBaseline() end
     local best, bestDPS, bestRunning, phaseEligible
-    if not b.inCombat then weaponPhaseID = nil end
+    if not b.inCombat then weaponPhaseID, weaponManaLow = nil, nil end
     -- Wand wins equal DPS; melee never asks the player to move into reach.
     for _, id in ipairs(EFFICIENCY_ATTACKS) do
         if not SpellQueue.IsSpellBlacklisted(id, b.blacklist)
@@ -441,8 +444,17 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
     -- A cast's cycle is its cast time (longer while being hit, for pushback) plus the time
     -- base regeneration needs to earn its mana back; the weapon spends none. An unreadable
     -- cost or regeneration rate leaves the mana part out, never estimated.
+    -- While mana is confirmed at or above the conserve threshold a cast is priced on damage
+    -- alone (pushback still counts): its mana is there to spend, and the spell leads when it
+    -- is simply ahead. Below it, or with mana unreadable, the mana part and the margin apply.
+    local pct = b.profile.efficiencyManaThreshold
+    if type(pct) ~= "number" or not (pct >= 10 and pct <= 80) then pct = EFFICIENCY_DEFAULT_MANA_PCT end
+    local below = PushbackRead(BlizzardAPI.IsUnitPowerBelow, "player", pct, Enum.PowerType.Mana)
+    if below == true and b.inCombat then weaponManaLow = true end
+    fillers.manaPlenty = below == false and not weaponManaLow
+    lastCtx.weaponManaPlenty = fillers.manaPlenty
     local hitRate = Hits.Rate(b.now)
-    local regen = BlizzardAPI.GetBaselineManaRegen and BlizzardAPI.GetBaselineManaRegen()
+    local regen = not fillers.manaPlenty and BlizzardAPI.GetBaselineManaRegen and BlizzardAPI.GetBaselineManaRegen()
     for _, source in ipairs(rotationList) do
         if type(source) == "number" and source > 0 then
             local id = BlizzardAPI.GetDisplaySpellID(source)
@@ -487,7 +499,11 @@ function SpellQueue._AddWeaponFiller(id, rank, ready, rec, b)
         score = 2 * LEAD_BARRED_PENALTY + rank
         if id == b.weaponFillerID then score = LEAD_BARRED_PENALTY end
     else
-        if dps >= b.weaponFillerDPS * 1.20 then score = rank end
+        if fillers.manaPlenty then
+            if dps > b.weaponFillerDPS then score = rank end
+        elseif dps >= b.weaponFillerDPS * 1.20 then
+            score = rank
+        end
         if not fillers.leadRank or rank < fillers.leadRank then
             fillers.leadRank = rank
             lastCtx.weaponLead, lastCtx.weaponSpellDPS = id, dps
@@ -583,6 +599,35 @@ function SpellQueue._StagePushback(b, rotationList)
     end
     PlaceQueueSpell(b, best, insertAt, position)
     b.addedSpellIDs[best], b.addedSpellIDs[bestSource] = true, true
+end
+
+-- A short-cooldown interrupt that also deals damage (Earth Shock) is reserved for interrupting,
+-- so the automatic queue leaves it out. It may fill as damage only where holding it buys
+-- nothing: outside instances, on a live non-elite creature that is not casting and has not
+-- cast since it was selected. Every unknown read keeps it reserved.
+local FREE_INTERRUPT_TARGETS = { normal = true, rare = true, trivial = true, minus = true }
+
+function SpellQueue._InterruptFreeForDamage(spellID)
+    if not (BlizzardAPI.IsForever() and SpellDB and SpellDB.IsInterruptTypeSpell and RotationImport
+            and RotationImport.GetPushbackDamageCooldown and BlizzardAPI.GetTargetCastInterruptState
+            and BlizzardAPI.HasTargetCastSinceSelected) then return false end
+    if SpellDB.IsInterruptTypeSpell(spellID) ~= true then return false end
+    local cooldown = RotationImport.GetPushbackDamageCooldown(spellID)
+    if not cooldown or cooldown >= 10 then return false end
+    -- The event-cached reads first: they cost nothing, the unit reads below each a call.
+    if BlizzardAPI.GetTargetCastInterruptState() ~= false
+       or BlizzardAPI.HasTargetCastSinceSelected() ~= false then
+        return false
+    end
+    if not IsLiveAttackableTarget() then return false end
+    if PushbackRead(IsInInstance) ~= false
+       or PushbackRead(UnitIsPlayer, "target") ~= false
+       or PushbackRead(UnitPlayerControlled, "target") ~= false
+       or PushbackRead(BlizzardAPI.IsTargetBoss) ~= false
+       or FREE_INTERRUPT_TARGETS[PushbackRead(UnitClassification, "target") or ""] ~= true then
+        return false
+    end
+    return true
 end
 
 --- Can this be pressed right now: off cooldown, usable, affordable and not out of range?
@@ -702,10 +747,21 @@ function SpellQueue._StageSwingPress(b)
     if not (b.inCombat and BlizzardAPI.IsForever() and SpellDB and SpellDB.NEXT_SWING_SPELLS) then return end
     local queue, count = b.recommendedSpells, b.spellCount or 0
     local lead = queue[1]
-    if count < 2 or type(lead) ~= "number" or lead <= 0 or SpellDB.NEXT_SWING_SPELLS[lead]
-       or SpellQueue._PressableNow(lead) then
-        return
+    if type(lead) ~= "number" or lead <= 0 or SpellDB.NEXT_SWING_SPELLS[lead] then return end
+    local pressable = SpellQueue._PressableNow(lead)
+    local queuedID = b.queuedSwingID
+    if queuedID then
+        for j = 2, count do
+            if queue[j] == queuedID then queuedID = nil; break end
+        end
+        -- Cut off the end of a full queue: it comes back in, first unless the lead can be
+        -- pressed during the swing.
+        if queuedID then
+            PlaceQueueSpell(b, queuedID, pressable and math.min(2, b.maxIcons) or 1)
+            return
+        end
     end
+    if count < 2 or pressable then return end
     for j = 2, count do
         local id = queue[j]
         if type(id) == "number" and SpellDB.NEXT_SWING_SPELLS[id] then

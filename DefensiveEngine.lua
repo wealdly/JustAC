@@ -426,14 +426,14 @@ local function IsPetCombatPrioritySpec()
             or (playerClass == "WARLOCK" and tree == "demonology")
     end
 
-    function DefensiveEngine.GetPetReminderState(addon)
-        if UnitAffectingCombat("player") and not IsPetCombatPrioritySpec() then
-            return false, "combat spec not eligible"
-        end
-        return PetNeedsRez(addon)
-    end
-
     return specKey == "HUNTER_1" or specKey == "WARLOCK_2"
+end
+
+function DefensiveEngine.GetPetReminderState(addon)
+    if UnitAffectingCombat("player") and not IsPetCombatPrioritySpec() then
+        return false, "combat spec not eligible"
+    end
+    return PetNeedsRez(addon)
 end
 
 --------------------------------------------------------------------------------
@@ -877,9 +877,39 @@ local function AppendThreatCue(profile, results, alreadyAdded, maxIcons)
 end
 DefensiveEngine._AppendThreatCue = AppendThreatCue   -- tests
 
+-- A pure heal over time (SpellDB.GetPureHotDuration: Renew, Rejuvenation) is held the same
+-- way after our own cast on ourselves: a recast while it ticks restarts it and wastes the
+-- ticks left, and with no cooldown it would otherwise be offered again at once. The hold is
+-- its duration less its refresh lead, keyed by the rank base so any rank's cast holds every
+-- rank. One entry per rank base: { aura = base, hot = true, dur = the cast rank's hold, set
+-- when a cast arms it, seenTicking = the Cooldown Manager showed it since that cast }.
+local hotHoldByBase = {}    -- rank base -> entry
+local hotHoldOf = {}        -- spellID -> its entry, or false for a spell that is not a pure HoT
+
+local function HotHoldEntry(spellID)
+    local entry = hotHoldOf[spellID]
+    if entry ~= nil then return entry or nil end
+    if not (SpellDB.GetPureHotDuration and SpellDB.GetPureHotDuration(spellID)) then
+        hotHoldOf[spellID] = false
+        return nil
+    end
+    local RI = LibStub("JustAC-RotationImport", true)
+    local base = spellID
+    if RI and RI.RankBase then base = RI.RankBase(spellID) or spellID end
+    entry = hotHoldByBase[base]
+    if not entry then
+        entry = { aura = base, hot = true, dur = 0 }
+        hotHoldByBase[base] = entry
+    end
+    hotHoldOf[spellID] = entry
+    return entry
+end
+
 local function LockoutEntry(spellID)
-    if not (SpellDB and SpellDB.GetSelfLockout) then return nil end
-    return SpellDB.GetSelfLockout(spellID)
+    if not SpellDB then return nil end
+    local entry = SpellDB.GetSelfLockout and SpellDB.GetSelfLockout(spellID)
+    if entry then return entry end
+    return HotHoldEntry(spellID)
 end
 
 --- UNIT_SPELLCAST_SENT for the player: arm the hold when a lockout spell targets the player.
@@ -895,6 +925,11 @@ function DefensiveEngine.NoteSpellcastSent(targetName, castGUID, spellID)
         local ok, isSelf = pcall(UnitIsUnit, targetName, "player")
         if not ok or Unsecret(isSelf) ~= true then return end
     end
+    if entry.hot then
+        -- This rank's hold: its duration less the lead a recast needs to land as it ends.
+        local lead = BlizzardAPI.GetPeriodicRefreshLead and BlizzardAPI.GetPeriodicRefreshLead(spellID) or 0
+        entry.dur = math.max(0, SpellDB.GetPureHotDuration(spellID) - lead)
+    end
     pendingSelfLockout.guid, pendingSelfLockout.entry = castGUID, entry
 end
 
@@ -906,8 +941,28 @@ function DefensiveEngine.NoteSpellcastSucceeded(castGUID)
     local entry = pendingSelfLockout.entry
     pendingSelfLockout.guid, pendingSelfLockout.entry = nil, nil
     selfLockedUntil[entry.aura] = GetTime() + entry.dur
+    entry.seenTicking, entry.readAt = nil, nil
     if AuraClock then AuraClock.Touch() end
     return true
+end
+
+--- Has a held heal over time ended early (dispelled, cancelled)? Only the Cooldown Manager
+--- can say, and only as a change: its icon showed the heal ticking since our cast and now
+--- shows it gone. An icon that never showed it, or does not answer, ends nothing.
+local function HotEndedEarly(entry, now)
+    if not (MaintenanceTracker and MaintenanceTracker.IsTrackedAuraActive) then return false end
+    -- One icon read per tick: the queue build and the icon's clock both ask.
+    if entry.readAt == now then return entry.endedEarly end
+    entry.readAt, entry.endedEarly = now, false
+    local ok, active = pcall(MaintenanceTracker.IsTrackedAuraActive, entry.aura)
+    if not ok then return false end
+    active = Unsecret(active)
+    if active == true then
+        entry.seenTicking = true
+    elseif active == false and entry.seenTicking then
+        entry.endedEarly = true
+    end
+    return entry.endedEarly
 end
 
 --- The lockout entry holding this spell (any rank) right now, or nil.
@@ -925,6 +980,11 @@ local function HeldLockoutEntry(spellID)
     if not next(selfLockedUntil) then return nil end
     local entry = LockoutEntry(spellID)
     if not entry or entry.applyOnly or selfLockedUntil[entry.aura] == nil then return nil end
+    if entry.hot and HotEndedEarly(entry, now) then
+        selfLockedUntil[entry.aura] = nil
+        if AuraClock then AuraClock.Touch() end
+        return nil
+    end
     return entry
 end
 

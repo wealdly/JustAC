@@ -513,10 +513,9 @@ local function ScaledDamage(e, baseline, base, perLevel, coefficient)
     return nil
 end
 
-local rotationImport
 local function DamageEstimate(spellID)
     if not BlizzardAPI.IsForever() then return nil end
-    rotationImport = rotationImport or LibStub("JustAC-RotationImport", true)
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
     local RI = rotationImport
     return RI and RI.GetDirectDamageEstimate and RI.GetDirectDamageEstimate(spellID)
 end
@@ -527,6 +526,11 @@ end
 function BlizzardAPI.GetDirectSpellHit(spellID, baseline, wholeSpell)
     local e = DamageEstimate(spellID)
     if not e then return nil end
+    -- A damage over time with no hit of its own (Corruption) has only a whole-spell figure.
+    if e[1] == 0 then
+        if not wholeSpell or not e[7] or not e[8] then return nil end
+        return ScaledDamage(e, baseline, e[8], e[9], e[10])
+    end
     local hit = ScaledDamage(e, baseline, e[1], e[2], e[5])
     if not hit or not wholeSpell or not e[7] then return hit end
     if not e[8] then return nil end
@@ -537,7 +541,7 @@ end
 
 --- Baseline direct spell DPS, not a simulator: excludes talents, crit and target mitigation.
 --- baseline=true uses the explicitly captured pre-combat stats, not live combat stats.
---- A hit followed by a damage over time (e[7]) is not the spell's whole damage: unknown.
+--- A hit followed by a damage over time (e[7]) counts the part of it that runs during one cycle.
 --- Per cycle: the cast time, but never less than the global cooldown the spell triggers
 --- (measured from our own casts, BlizzardAPI.GetSpellGCD), so an instant has a DPS too. With no
 --- GCD measured yet a cast-time spell falls back to its cast time (an upper bound below one GCD)
@@ -580,11 +584,20 @@ end
 
 function BlizzardAPI.GetDirectSpellDPS(spellID, castSeconds, baseline)
     local e = DamageEstimate(spellID)
-    if not e or e[7] then return nil end
+    if not e then return nil end
     if castSeconds == nil then castSeconds = BlizzardAPI.GetSpellCycleSeconds(spellID) end
     if not PlainDamageNumber(castSeconds) or castSeconds <= 0 then return nil end
     local damage = ScaledDamage(e, baseline, e[1], e[2], e[5])
     if not damage then return nil end
+    if e[7] then
+        -- Cast back to back, the next cast replaces the damage over time, so each cast is
+        -- worth only the part that runs during its own cycle. Total or length unknown: unknown.
+        local seconds = e[11]
+        if not e[8] or not PlainDamageNumber(seconds) or seconds <= 0 then return nil end
+        local dot = ScaledDamage(e, baseline, e[8], e[9], e[10])
+        if not dot then return nil end
+        damage = damage + dot * math.min(1, castSeconds / seconds)
+    end
     local dps = damage / castSeconds
     if PlainDamageNumber(dps) and dps > 0 then return dps end
     return nil
@@ -599,8 +612,8 @@ function BlizzardAPI.GetAutoAttackDPS(spellID, baseline)
         if not UnitRangedDamage or not UnitAttackSpeed then return nil end
         ok, speed, low, high = pcall(UnitRangedDamage, "player")
         if not ok then geterrorhandler()(speed); return nil end
-        local mainSpeed, offSpeed
-        ok, mainSpeed, offSpeed, speed = pcall(UnitAttackSpeed, "player")
+        local mainSpeed, _
+        ok, mainSpeed, _, speed = pcall(UnitAttackSpeed, "player")
         if not ok then geterrorhandler()(mainSpeed); return nil end
     elseif spellID == 6603 then
         if not UnitAttackSpeed or not UnitDamage then return nil end
@@ -812,7 +825,7 @@ end
 local function BuffWindowEvidence(spellID, readCache)
     if formCache == nil then formCache = LibStub("JustAC-FormCache", true) or false end
     local formID = formCache and formCache.GetFormIDBySpellID(spellID)
-    if formID then return formCache.GetActiveForm() == formID end
+    if formID then return formCache.GetActiveForm() == formID, "form" end
     -- WoW Forever: a buff the player tracks in the Cooldown Manager is read off Blizzard's own
     -- icon - exact, and the only aura state readable in combat there. Untracked: on to the rest.
     local forever = BlizzardAPI.IsForever and BlizzardAPI.IsForever()
@@ -823,12 +836,12 @@ local function BuffWindowEvidence(spellID, readCache)
         -- Not `x and x.f()`: with the module missing that is false, read as "buff down".
         local tracked
         if maintenanceTracker then tracked = maintenanceTracker.IsTrackedAuraActive(spellID, nil, readCache) end
-        if tracked ~= nil then return tracked end
+        if tracked ~= nil then return tracked, "cooldown-manager" end
     end
     -- An attack-speed buff is proven by the swings themselves (Forever): its length can
     -- depend on combo points, and an early cancel or dispel shows as the speed going away.
     local evidence = HasteBuffEvidence(spellID)
-    if evidence ~= nil then return evidence end
+    if evidence ~= nil then return evidence, "swing-haste" end
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
         return nil
     end
@@ -856,7 +869,7 @@ local function BuffWindowEvidence(spellID, readCache)
             if type(length) == "number" and not IsSecretValue(length) and length > 0 and forever then
                 learnedDuration[spellID] = length
             end
-            return true
+            return true, "aura"
         end
     end
     -- Retail: unchanged - the cast window is the whole fallback there. (A remembered expiry
@@ -869,9 +882,36 @@ local function BuffWindowEvidence(spellID, readCache)
     local untilAt = auraUntil[spellID]
     if untilAt ~= nil and GetTime() < untilAt
        and not RemovedSince(AuraRemovedAt(spellID), auraUntilReadAt[spellID]) then
-        return true
+        return true, "remembered-expiry"
     end
     return nil
+end
+
+--- When no evidence answered: our own cast plus the buff's duration. Returns active, source.
+local function CastWindowFallback(spellID, durSecs)
+    durSecs = learnedDuration[spellID] or durSecs
+    local castAt = durSecs and ownCastAt[spellID]
+    if RemovedSince(AuraRemovedAt(spellID), castAt, REMOVAL_GRACE) then return false, "aura-removed" end
+    if castAt ~= nil then return (GetTime() - castAt) < durSecs, "cast-estimate" end
+    return false, "no-evidence"
+end
+
+-- How good each buff source is. Unlisted sources are the game's own answer: "confirmed".
+-- Estimated: inferred from swing speed, remembered from an expiry read before combat, or our
+-- cast time plus a duration.
+local BUFF_EVIDENCE = {
+    ["swing-haste"] = "estimated", ["remembered-expiry"] = "estimated",
+    ["cast-estimate"] = "estimated", ["no-evidence"] = "none",
+}
+
+--- IsBuffWindowActive's verdict with the quality of the evidence behind it: active, grade
+--- ("confirmed" / "estimated" / "none"), source. Diagnostics: read fresh, never cached, and
+--- nothing on the queue path decides from the grade.
+function BlizzardAPI.GetBuffWindowEvidence(spellID, durSecs)
+    if not spellID then return false, "none", "invalid-spell" end
+    local active, source = BuffWindowEvidence(spellID, nil)
+    if active == nil then active, source = CastWindowFallback(spellID, durSecs) end
+    return active, BUFF_EVIDENCE[source] or "confirmed", source
 end
 
 --- Seconds left on a self-buff window from plain evidence only, most reliable first:
@@ -986,10 +1026,7 @@ function BlizzardAPI.IsBuffWindowActive(spellID, durSecs, readCache)
         end
     end
     if evidence ~= nil and evidence ~= BUFF_UNKNOWN then return evidence end
-    durSecs = learnedDuration[spellID] or durSecs
-    local castAt = durSecs and ownCastAt[spellID]
-    if RemovedSince(AuraRemovedAt(spellID), castAt, REMOVAL_GRACE) then return false end
-    return castAt ~= nil and (GetTime() - castAt) < durSecs
+    return (CastWindowFallback(spellID, durSecs))
 end
 
 --- Diagnostic: which of the given self-buff ids are active right now.

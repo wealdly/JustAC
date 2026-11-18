@@ -243,6 +243,26 @@ follow the standing [runtime test sync](#runtime-test-sync) workflow.
    After validated runtime changes, sync and verify both test copies as described below.
    Do not reconcile old branches as part of an update check.
 
+### Auditing Forever immunity observations
+
+After `/reload` or logout has flushed SavedVariables, compare learned Forever
+damage-over-time immunity entries with the local Classic SQL snapshot:
+
+```powershell
+python tools/audit_forever_immunity.py --classic-db "<sources>\vmangos-db-validation\extracted\sqlite-dump\mangos.sqlite"
+```
+
+By default, the tool reads Forever account SavedVariables below
+`C:\Blizzard\World of Warcraft`. Supply one or more `JustAC.lua` paths after the
+options to audit specific accounts, or use `--wow-root` for another installation.
+The Classic snapshot is local research input, not a shipped addon database. The tool
+selects the newest creature-template patch per NPC ID and compares learned spell
+mechanics to the Classic mechanic-immunity mask. A mask match is only a Classic
+candidate, not confirmation of Forever immunity; a missing mask is not proof that
+the spell lands. The source archive used for validation is pinned outside this addon
+repository at vMaNGOS `70e38cd`; verify the database dump's redistribution terms
+before copying or shipping its contents.
+
 ### Auditing the hand-curated tables
 
 `Data/*.lua` regenerates itself, but the curated tables in `SpellDB.lua` do not, so
@@ -394,6 +414,25 @@ a Retail id that is another spell on Forever goes in `INTERRUPT_REMOVE` or
 `SOOTHE_REMOVE` (the rotation test derives these collisions from the data). A non-`mixed`
 `ABILITY_ROLES` entry keeps an interrupt out of automatic damage queues while custom lists
 can still name it.
+
+### Comparing a Forever list offline at levelling levels
+
+`python tools/forever_sim_bench.py --sim <simulator checkout> --cli <wowsimcli>` converts a
+generated list to the WoW Forever simulator's priority-list format, reports every gate as
+exact, approximated or not expressible, and compares kill time against the simulator's own
+preset and the vendored source preset on health-sized fights. It writes nothing in the
+addon. The header of the file lists the build steps for the simulator, the gear setups
+(`--gear behind|average|lucky|bare|file:<path>`), the assumptions and the limits. Only the
+warrior table is filled in. Results rank two orderings under the same assumptions; they
+are not absolute damage numbers.
+
+`/jac inspect character` (out of combat) shows the current character as JSON in a copy box:
+class, race, level, highest known ranks, talents as trait node, entry and rank, and
+equipped items with the raw item string. Save it as a `.json` file and pass it with
+`--gear file:<path>` to run the comparison on that character. The item string split and
+the talent read follow the Forever client's own source and API documentation and have not
+yet been confirmed against a live character; check the first export by eye.
+`python tools/test_character_export.py` covers the export with stubbed client values.
 
 ## Source and enum mirrors
 

@@ -100,14 +100,19 @@ def check_automatic_burst():
             IsDelayedPayoff=function() return delayed end,
             GainsOverTime=function() return overTime end,
             GetSpecKey=function() return 'ROGUE_F' end,
+            GetThreatRole=function() return threatRole end,
+            IsTankTree=function(_, tree) return tree == 'protection' end,
         }
+        RotationImport={GetForeverTree=function() return tree end}
         BlizzardAPI={
             HasGamePick=function() return pick end,
             IsSecretValue=function(v) return v==secret end,
             IsTargetBoss=function() return boss end,
+            GetTargetLevelDelta=function() return levelDelta end,
             PeekBaseCooldownSeconds=function() return seconds end,
             GetDisplaySpellID=function(id) return id end,
         }
+        levelDelta = nil
         secret={}
     """ + extract("IsWorthwhileFight", SRC.read_text(encoding="utf-8"))
         + "\n" + extract("HoldAutomaticBurst", SRC.read_text(encoding="utf-8")))
@@ -138,13 +143,29 @@ def check_automatic_burst():
         # trash does not make that one target live longer.
         ("delayed=true;selfBuff=false;seconds=0", True),
         ("delayed=true;selfBuff=false;classification='elite'", False),
+        ("delayed=true;selfBuff=false;levelDelta=-1", True),
+        ("delayed=true;selfBuff=false;levelDelta=-2", True),
+        ("delayed=true;selfBuff=false;levelDelta=1", False),
+        ("delayed=true;selfBuff=false;levelDelta=5", False),
+        ("delayed=true;selfBuff=false;levelDelta=0", True),
+        ("delayed=true;selfBuff=false;levelDelta=-1;classification='elite'", False),
         ("delayed=true;selfBuff=false;boss=true", False),
         ("delayed=true;selfBuff=false;b.ctxEnemies=2", True),
         ("delayed=true;selfBuff=false;b.ctxEnemies=2;classification='elite'", False),
+        ("delayed=false;selfBuff=false;levelDelta=-1", False),
+        ("delayed=false;selfBuff=false;levelDelta=1", False),
         ("delayed=true;selfBuff=false;SpellQueue._rotationIsCustom=true", False),
         ("delayed=true;selfBuff=false;b.contextOrder='off'", False),
+        # A threat-building armor reduction is not held in a tank tree; in any other tree it
+        # waits like the rest (Sunder Armor costs an Arms warrior damage on an ordinary target).
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection'", False),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms'", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree=nil", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms';classification='elite'", False),
+        ("delayed=true;selfBuff=false;threatRole='taunt';tree='protection'", True),
         # A normal target fought this long is no quick trash kill.
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=81", True),
+        ("delayed=true;selfBuff=false;levelDelta=-1;b.now=100;targetFightStartedAt=81", True),
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80", False),
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80;b.inCombat=false", True),
         ("seconds=180;b.now=100;targetFightStartedAt=60", False),
@@ -163,6 +184,7 @@ def check_automatic_burst():
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
             boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false;overTime=false
+            levelDelta=nil;threatRole=nil;tree=nil
             LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
             pick=false;target=true;SpellQueue._rotationIsCustom=false;SpellQueue._lowValueTarget=nil
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
@@ -291,6 +313,7 @@ def main():
     lua.execute(PRELUDE)
     lua.execute(extract("CompareOp", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
+    lua.execute(extract("IsStackPayoffContext", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
     lua.execute("castOnlyBuffSeen = {}")
     run = lua.eval("function(src) return assert(load(src))() end")
@@ -304,6 +327,11 @@ def main():
     for count in (0, 1, 2, 3, 4, 5):
         lua.globals().enemies = count
         assert run('return GateVerdict({t="targets",op=">=",n=4}, ctx)') == (count >= 4)
+        # No visible engaged enemy (zero) reads as one: single-target comparisons hold.
+        assert run('return GateVerdict({t="targets",op="<",n=3}, ctx)') == (max(count, 1) < 3)
+        assert run('return GateVerdict({t="targets",op="<=",n=1}, ctx)') == (max(count, 1) <= 1)
+        assert run('return GateVerdict({t="targets",op="=",n=1}, ctx)') == (max(count, 1) == 1)
+        assert run('return GateVerdict({t="targets",op=">=",n=2}, ctx)') == (count >= 2)
         assert run('return GateVerdict({t="any",g={{t="targets",op=">=",n=3},{t="unconfirmed"}}}, ctx)') == (count >= 3)
         signal_cases += 2
     for occupied, expected in ((None, False), (True, False), (False, True)):
@@ -489,6 +517,32 @@ targetBelow, isBoss, hasPick = {[35]=false}, false, false""")
             bad += 1
             print("  FAIL group dot %s: got %s, want %s  (%s)" % (sid, got, want, why))
     lua.execute("shortGroupFight, SpellDB = false, nil")
+    # A fast solo fight (one regular enemy at or below my level): a new DoT starts only early,
+    # and only a spell that is mostly its hit skips the higher floor.
+    lua.execute("""FAST_DOT_MIN_TARGET_PCT = 70
+SpellDB = { IsFrontalDot = function(id) return id == 8921 or id == 348 end,
+            IsMostlyUpfrontDot = function(id) return id == 8921 end }
+isBoss, hasPick = false, false""")
+    fast = [
+        ("true", "{[70]=true,[35]=false}", 772, False, "fast fight, target under 70%: no new Rend"),
+        ("true", "{[70]=false,[35]=false}", 772, None, "fast fight, target still healthy: no opinion"),
+        ("true", "{}", 772, None, "fast fight, health unreadable: no opinion"),
+        ("true", "{[70]=true,[35]=false}", 348, False, "fast fight: a one-third hit (Immolate) is not exempt"),
+        ("true", "{[70]=true,[35]=true}", 8921, None, "fast fight: a spell that is mostly its hit still goes out"),
+        ("false", "{[70]=true,[35]=false}", 772, None, "not a fast fight: only the 35% rule applies"),
+        ("false", "{[70]=true,[35]=true}", 348, None, "not a fast fight: a frontal spell keeps its exemption"),
+    ]
+    for fastFight, below, sid, want, why in fast:
+        lua.execute("fastSoloFight, targetBelow = %s, %s" % (fastFight, below))
+        got = run('return GateVerdict({t="dot",id=%d}, ctx)' % sid)
+        if got != want:
+            bad += 1
+            print("  FAIL fast dot %s: got %s, want %s  (%s)" % (sid, got, want, why))
+    lua.execute("hasPick = true; fastSoloFight, targetBelow = true, {[70]=true}")
+    if run('return GateVerdict({t="dot",id=772}, ctx)') is not None:
+        bad += 1
+        print("  FAIL fast dot: retail (game pick) must be unchanged")
+    lua.execute("fastSoloFight, hasPick, SpellDB = false, false, nil")
     # A cast-only stack requirement (Maelstrom Weapon) applies once the buff has been seen this
     # session; a player who cannot gain it (no rune) keeps a normal full-length cast.
     lua.execute("""
