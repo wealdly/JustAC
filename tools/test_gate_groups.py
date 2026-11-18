@@ -33,9 +33,22 @@ swingRem = {}
 -- The buff leaf: buffUp = the window reads up (our own cast inside its duration);
 -- hasPick = retail's game pick exists.
 buffUp, hasPick = false, false
+-- The cast leaf: castMs[id] = the live cast time GetSpellInfo reports (a table = secret).
+castMs, castSecret = {}, {}
+-- The DoT time-left leaf: timeBelow = DotTracker's answer; asked = the seconds it was asked.
+timeBelow, askedSeconds = nil, nil
+DotTracker = { IsTimeLeftBelow = function(_, s) askedSeconds = s; return timeBelow end }
 BlizzardAPI = { GetSwingRemaining = function(t) return swingRem[t] end,
                 IsBuffWindowActive = function() return buffUp end,
-                HasGamePick = function() return hasPick end }
+                HasGamePick = function() return hasPick end,
+                GetDisplaySpellID = function(id) return id == 1 and 2 or id end,
+                IsSecretValue = function(v) return rawequal(v, castSecret) end,
+                -- The shared cast-time read: plain seconds, nil when unknown or secret.
+                GetCastSeconds = function(id)
+                    local ms = castMs[id]
+                    if type(ms) ~= "number" then return nil end
+                    return ms / 1000
+                end }
 """
 
 
@@ -276,6 +289,7 @@ def check_coverage():
 def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
+    lua.execute(extract("CompareOp", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
     lua.execute("castOnlyBuffSeen = {}")
@@ -387,6 +401,37 @@ def main():
         if got != want:
             bad += 1
             print("  FAIL swing %s rem=%s got %s, want %s  (%s)" % (gate, rem, got, want, why))
+    # The cast leaf (Forever): the live cast time of the highest known rank (id 1 shows as 2).
+    cast = [
+        ("{[2]=0}", '{t="cast",id=1,op="<=",n=1.5}', True, "a proc made it instant (read at its rank)"),
+        ("{[2]=3000}", '{t="cast",id=1,op="<=",n=1.5}', False, "full cast"),
+        ("{[2]=1500}", '{t="cast",id=1,op="<",n=1.5}', False, "Slam at 1.5s: not shortened"),
+        ("{[2]=1000}", '{t="cast",id=1,op="<",n=1.5}', True, "Improved Slam"),
+        ("{[1]=0}", '{t="cast",id=1,op="<=",n=1.5}', None, "the rank shown is unreadable: no opinion"),
+        ("{[2]=castSecret}", '{t="cast",id=1,op="<=",n=1.5}', None, "secret: no opinion"),
+    ]
+    for ms, gate, want, why in cast:
+        lua.execute("castMs = %s" % ms)
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        if got != want:
+            bad += 1
+            print("  FAIL cast %s ms=%s got %s, want %s  (%s)" % (gate, ms, got, want, why))
+    # The DoT time-left leaf (Forever): my DoT's time left against N, or a spell's cast time.
+    dot = [
+        ("true", "{}", '{t="debuff",id=1079,op=">",n=3}', False, 3, "Rip under 3s: no Bite"),
+        ("false", "{}", '{t="debuff",id=1079,op=">",n=3}', True, 3, "Rip with time: Bite"),
+        ("true", "{}", '{t="debuff",id=703,op="<",n=1}', True, 1, "Garrote running out"),
+        ("nil", "{}", '{t="debuff",id=1079,op=">",n=3}', None, 3, "unknown: no opinion"),
+        ("true", "{[2]=2000}", '{t="debuff",id=980,op="<=",ncast=1}', True, 2, "against the cast time"),
+        ("true", "{}", '{t="debuff",id=980,op="<=",ncast=1}', None, None, "cast time unknown"),
+    ]
+    for below, ms, gate, want, asked, why in dot:
+        lua.execute("timeBelow, askedSeconds, castMs = %s, nil, %s" % (below, ms))
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        got_asked = lua.eval("askedSeconds")
+        if got != want or got_asked != asked:
+            bad += 1
+            print("  FAIL dot %s got %s/%s, want %s/%s  (%s)" % (gate, got, got_asked, want, asked, why))
     # A "buff down" gate in the sinking (non-strict) reading: only a provably-up buff on a
     # client with no game pick blocks (Battle Shout must sink while the shout is up).
     buff = [
@@ -475,6 +520,22 @@ BlizzardAPI.GetAuraStackAtLeast = function() return true end
         if got != want:
             bad += 1
             print("  FAIL cast-only %s: got %s, want %s  (%s)" % (setup, got, want, why))
+    # Target stacks unreadable: my own counted applications answer (Sunder Armor).
+    lua.execute("ownStacks = nil; DotTracker.GetOwnStacks = function() return ownStacks end")
+    sunder = '{t="stack",id=7386,op="<",n=1,tgt=true}'
+    own = [
+        ("nil", sunder, None, "never sundered here: no opinion"),
+        ("0", sunder, True, "known gone: apply it"),
+        ("2", sunder, False, "two of mine up: not below one"),
+        ("5", '{t="stack",id=7386,op=">=",n=5,tgt=true}', True, "five counted"),
+    ]
+    for stacks, gate, want, why in own:
+        lua.execute("ownStacks = %s" % stacks)
+        got = run("return GateVerdict(%s, ctx)" % gate)
+        if got != want:
+            bad += 1
+            print("  FAIL own stacks %s: got %s, want %s  (%s)" % (stacks, got, want, why))
+    lua.execute("DotTracker.GetOwnStacks = nil")
     lua.execute("BlizzardAPI.IsUnitHealthBelow = nil")
     # Life Tap's "starved" leaf (Forever): among the build's known mana spells none usable and
     # one short of mana. NoteManaStarved is the real function, the game's answers are stubbed.

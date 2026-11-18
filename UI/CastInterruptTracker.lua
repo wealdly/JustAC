@@ -430,7 +430,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                         or targetAlreadyCC then
                         -- CC spells unusable on immune / already CC'd targets - skip. Immunity
                         -- is per mechanic: a stun-immune mob still gets offered an incapacitate.
-                    elseif stype == "cc" and not BlizzardAPI.IsCCSpellTypeValid(sid) then
+                    elseif stype == "cc" and not BlizzardAPI.IsSpellTypeValidForTarget(sid) then
                         -- Type-restricted CC (e.g. Repentance) on an incompatible creature type - skip.
                     elseif stype == "cc" and not includeFears and entry.mech == 5 then
                         -- Fear-class CC: scatters packs / breaks on damage - skip unless opted in.

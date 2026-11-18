@@ -542,17 +542,40 @@ end
 --- (measured from our own casts, BlizzardAPI.GetSpellGCD), so an instant has a DPS too. With no
 --- GCD measured yet a cast-time spell falls back to its cast time (an upper bound below one GCD)
 --- and an instant stays unknown. An explicit castSeconds is used as given.
-function BlizzardAPI.GetSpellCycleSeconds(spellID)
-    if not BlizzardAPI.GetSpellInfo then return nil end
+--- A spell's current cast time in plain seconds (0 for an instant), or nil when unreadable.
+--- Read fresh: a proc that makes the spell instant, or haste, changes it.
+function BlizzardAPI.GetCastSeconds(spellID)
+    if not (spellID and BlizzardAPI.GetSpellInfo) then return nil end
     local ok, info = pcall(BlizzardAPI.GetSpellInfo, spellID)
     if not ok then geterrorhandler()(info); return nil end
     if IsSecretValue(info) or type(info) ~= "table" or not PlainDamageNumber(info.castTime) then return nil end
-    local cast = info.castTime / 1000
+    return info.castTime / 1000
+end
+
+function BlizzardAPI.GetSpellCycleSeconds(spellID)
+    local cast = BlizzardAPI.GetCastSeconds(spellID)
+    if not cast then return nil end
     local gcd = BlizzardAPI.GetSpellGCD and BlizzardAPI.GetSpellGCD(spellID)
     local cycle = cast
     if PlainDamageNumber(gcd) and gcd > cycle then cycle = gcd end
     if cycle <= 0 then return nil end
     return cycle, cast
+end
+
+--- Seconds before a DoT or HoT runs out at which to recast it, where a recast restarts the
+--- effect and loses the ticks left (Forever): its cast time, so the new one lands as the last
+--- tick goes and the player's own reaction puts it just after. A stacking aura adds one global
+--- cooldown (the spell's measured GCD, else the unhasted 1.5s), since a drop loses every
+--- stack. 0 for an instant that does not stack; an unreadable cast time counts as instant.
+function BlizzardAPI.GetPeriodicRefreshLead(spellID, stacking)
+    local lead = BlizzardAPI.GetCastSeconds(spellID) or 0
+    if lead < 0 then lead = 0 end
+    if stacking then
+        local gcd = BlizzardAPI.GetSpellGCD and BlizzardAPI.GetSpellGCD(spellID)
+        if not PlainDamageNumber(gcd) or gcd <= 0 then gcd = 1.5 end
+        lead = lead + gcd
+    end
+    return lead
 end
 
 function BlizzardAPI.GetDirectSpellDPS(spellID, castSeconds, baseline)

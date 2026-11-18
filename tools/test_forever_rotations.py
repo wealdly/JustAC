@@ -313,10 +313,15 @@ for context in ("st", "aoe"):
     ids = ids_of(classes.WARRIOR_F.fury[context])
     assert ids.index(1680) < ids.index(5308) < ids.index(23881) < ids.index(7384) < ids.index(772), \
         (context, "Fury: Whirlwind > Execute > Bloodthirst > Overpower > Rend")
-for tree in ("arms", "fury"):
-    ids = ids_of(classes.WARRIOR_F[tree].aoe)
-    assert ids[-1] == 1160, (tree, "Demoralizing Shout is upkeep behind the attacks")
-assert 1160 not in ids_of(classes.WARRIOR_F.protection.aoe), "a tank-only shout leaves the Protection damage list"
+# Utility debuffs (slows, roots, mitigation, healing) are the player's to manage.
+for cls, tree, sid, why in (("WARRIOR_F", "arms", 1160, "Demoralizing Shout"),
+                            ("WARRIOR_F", "fury", 1160, "Demoralizing Shout"),
+                            ("WARRIOR_F", "protection", 1160, "Demoralizing Shout"),
+                            ("MAGE_F", "frost", 122, "Frost Nova"),
+                            ("PRIEST_F", "shadow", 15286, "Vampiric Embrace")):
+    for context in ("st", "cleave", "aoe"):
+        lines = classes[cls][tree][context]
+        assert lines is None or sid not in ids_of(lines), (tree, context, why, "is utility")
 for tree in ("assassination", "combat"):
     ids = ids_of(classes.ROGUE_F[tree].st)
     assert ids.index(703) < ids.index(1833), (tree, "Garrote opens ahead of Cheap Shot")
@@ -324,7 +329,7 @@ for tree in ("assassination", "combat"):
     assert ids.index(1943) < ids.index(2098) and {"t": "resource", "res": "combo_points", "op": ">=", "n": 5} \
         in [dict(g) for g in gate_list(rupture)], (tree, "Rupture at 5 points before Eviscerate")
 shadow = ids_of(classes.PRIEST_F.shadow.st)
-assert shadow.index(1309595) < shadow.index(15286) < shadow.index(15407), "Vampiric Embrace before Mind Flay"
+assert shadow.index(1309595) < shadow.index(15407), "Shadow Word: Death before Mind Flay"
 assert ids_of(classes.WARLOCK_F.affliction.st)[-3:] == [1316697, 686, 5019], "Wrack fills before Shadow Bolt"
 assert ids_of(classes.WARLOCK_F.destruction.st)[-3:] == [412758, 686, 5019], "Incinerate fills before Shadow Bolt"
 fire = ids_of(classes.MAGE_F.fire.st)

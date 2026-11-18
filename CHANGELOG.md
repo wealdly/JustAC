@@ -3,6 +3,27 @@
 
 ## [Unreleased]
 
+## [6.4.0] - 2026-11-17
+
+### Buffs
+- Maintained buffs (group buffs, armors, shields, seals, shouts, poisons and weapon imbues) are offered for a refresh when they could run out during your next fight, rather than minutes early. Targeting a boss or an elite, or being in a group, counts as a longer fight, so the reminder comes earlier there. The damage queue follows the same timing, so a buff that will outlast the fight no longer asks for a recast mid-combat.
+
+### Damage queue
+- Spells that only work on certain kinds of creature, such as Repentance, are no longer suggested against creatures they cannot affect.
+- Forever: the damage queue is about damage in every talent build, tanks included. Utility spells such as Demoralizing Shout, Frost Nova and Vampiric Embrace are left for you to use when the situation calls for them.
+- Forever: a higher-priority attack about to come off cooldown keeps its rage or energy. A cheaper attack waits if spending now would leave you short when the better one is ready, such as Heroic Strike before Thunder Clap in a pack.
+- Forever: against an enemy that fights from range, such as a caster or an archer, a slowing attack like Frostbolt gives way to a stronger attack that does not slow, like Fireball, when you have it.
+
+### Forever: damage and heals over time
+- Damage and heals over time with a cast time come back early enough that the new cast lands as the old one finishes, instead of after it has already dropped. Stacking effects such as Lacerate come back a little earlier still, so their stacks are not lost.
+- Priorities that wait on how long your own damage over time has left now follow it, for example Feral's Ferocious Bite only while Rip has a few seconds to spare.
+- Sunder Armor counts your own applications on the target, so it is no longer suggested again while yours is still up.
+
+### Forever: priority lists
+- Protection warriors lead with Thunder Clap against three or more enemies and use it whenever it is ready, instead of waiting for its slow to wear off.
+- Exorcism and Holy Wrath are suggested only against Demons and Undead. Retribution now uses Exorcism, and Holy Wrath against packs, when the target is one.
+- Priorities that depend on a spell being fast to cast, for example after a proc that makes it instant, follow the spell's current cast time.
+
 ## [6.3.0] - 2026-11-17
 
 ### Cooldown Manager

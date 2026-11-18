@@ -23,6 +23,11 @@ encounter or target-type specifics, and fine thresholds the client cannot confir
 example a guide's attack-power breakpoint: pick the branch that fits most play, usually
 levelling). Record what was left out in the tree's notes rather than encoding it.
 
+The damage queue holds damage only, for every tree including tanks and healers: a guide's
+utility presses (slows, roots, mitigation or threat debuffs, healing, crowd control) are left
+out even when the guide puts them in its priority. Debuffs that raise the damage the target
+takes are kept. See [the damage-only queue](../FOREVER_ENGINE_DESIGN.md#damage-only-queue).
+
 ## Refreshing the launch summaries
 
 Each DPS tree's "Launch rotation" block cites one Icy Veins page. The pages follow

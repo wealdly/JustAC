@@ -374,7 +374,9 @@ function RotationImport.GetRotationGated(context)
     local out, n = {}, 0
     for i = 1, #list do
         local e = list[i]
-        if e and e.id and (not IsPlayerSpell or IsPlayerSpell(e.id)) then
+        -- Known at any rank: entries name rank 1, and a learned rank 2 (Rend, Heroic Strike at
+        -- level 12) leaves rank 1 unknown to IsPlayerSpell, which hid the entry from probes.
+        if e and e.id and (not IsPlayerSpell or RotationImport.HighestKnownRank(e.id) ~= nil) then
             n = n + 1
             out[n] = e
         end

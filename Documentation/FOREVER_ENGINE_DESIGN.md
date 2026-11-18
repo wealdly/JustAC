@@ -224,6 +224,47 @@ and mitigation presses (`TANK_ONLY` in the generator); healer pins are the guide
 damage. Tank and healer play belongs to the defensive queue and preparation, which read the
 same installed tree (Righteous Fury, a Protection seal). No group role or size is read.
 
+### Damage-only queue
+
+Every entry in a Forever list, and every spell that joins the pool as a filler, must be there
+for its damage. Guides and sims mix in utility, and each addition looks reasonable on its own,
+so this is the rule to hold the line on:
+
+| Kind | Examples | In the damage queue? |
+|---|---|---|
+| Damage, including a damaging spell with a slow or root as a side effect | Thunder Clap, Cone of Cold, Hamstring | Yes |
+| A debuff that raises the damage the target takes | Sunder Armor, Faerie Fire, Curse of the Elements, Hunter's Mark | Yes (counts as damage) |
+| A slow, root or snare whose job is control | Frost Nova | No: the player's |
+| Mitigation or threat on the enemy | Demoralizing Shout, Demoralizing Roar, taunts | No: defensive queue for tanks |
+| Healing, including healing debuffs | Vampiric Embrace | No: defensive queue |
+| Crowd control | Polymorph, Sap, Fear | No: the player's |
+
+Two consequences:
+
+- A damaging spell never waits on its own side effect. A refresh condition on a debuff that
+  deals no damage over time (Thunder Clap's slow) only delays the hit; the generator drops it
+  (`holds_hit_for_side_effect`). Refresh conditions stay for damage over time, where an early
+  recast loses ticks.
+- A guide or sim listing a utility press is not a reason to keep it. Remove it from the lists
+  and the pool (`NOT_DPS`, `TANK_ONLY`) and note it in the tree's guide file.
+
+The one narrow exception is the ranged opener on a melee target: a ranged class pulling a
+mob that will close to melee may open with a damaging slow (a mage's Frostbolt while the mob
+closes). That belongs to opener and pull handling, decided from readable range and combat
+state, never to a list entry added for the slow. Explicit non-pulling target setup
+(`foreverTargetSetup`, Hunter's Mark) is separate and must also raise damage.
+`tools/test_forever_rotations.py` asserts the removed utility presses stay
+out; extend that check when another is removed.
+
+The reverse case is a target that holds its range (a caster or an archer). There the slow
+is worth nothing, so a slowing filler (generated `SLOWING_ATTACKS`: Frostbolt) gives its place
+to the strongest pool attack that does not slow and that the list does not name (Fireball for
+an untalented mage), when it is ready, castable and in range (`_StageRangedFiller`). Evidence
+only, per target, in combat: the target casting while out of melee reach, or a lone target
+still hitting the player from out of reach after a few seconds. A target that reaches melee
+returns to the list's order. Session captures show `holdsRange=` and `rangedSwap=` in
+`queueContext`.
+
 Build selection and combat-condition evaluation are separate. The current selector uses the
 dominant tree, not archetype similarity matching. A future curated archetype selector would
 use verified talent allocation and signature talents to choose one coherent list, not blend
@@ -295,8 +336,14 @@ Inherited, evaluated by the existing code:
     favoring overlap over a long uptime gap; known durations are not capped by that fallback.
   - Active/absent-aura prerequisites require aura evidence, not an unobserved cast or an
     estimated expiry. Other-aura remaining-time comparisons retain their operator/constant
-    but remain unknown: presence cannot prove seconds or stacks. Own refreshes conservatively
-    wait for expiry rather than attempting an unverified early-refresh window.
+    but remain unknown: presence cannot prove seconds or stacks. Own refreshes have no
+    carry-over on Forever, so a DoT or HoT returns its refresh lead before expiry
+    (`BlizzardAPI.GetPeriodicRefreshLead`): its cast time, so the recast lands as the last tick
+    goes, plus one global cooldown for a stacking aura (generated `STACKING_AURAS`), whose drop
+    loses every stack. Instant non-stacking effects still return at expiry. The lead reads the
+    engine timer when an instance is held, else the cast estimate, including while a
+    Cooldown Manager icon reports the DoT active. Forever self HoTs (generated
+    `PERIODIC_HEALS`) use the same lead in the redundancy filter.
   - The legacy `dot` gate retains its target-health policy. The same policy applies to
     `debuff` refreshes, never positive prerequisites: pure applications yield below 35% target
     health, while upfront damage remains useful. Proc vetoes require confirmed aura evidence
@@ -338,6 +385,35 @@ New on Forever:
   `PLAYER_SWING` timestamp + `swingDuration`. Needed from the start: baseline Slam still
   resets the swing timer (18s cooldown; the Arms talent Improved Slam removes the reset), so
   the Arms list casts it right after a swing unless the talent is known.
+- `cast`: the spell's current cast time (`GetSpellInfo`, highest known rank, read each
+  build) against N seconds: the sims' `spellCastTime` comparisons (a proc or talent that
+  makes the cast fast). Unknown or secret is no opinion. Whether a proc such as Nightfall
+  shows in `castTime` still needs an in-game check (`/jac inspect simcgates`, `cast time ... [castTime=]`).
+  Where the launch guide keeps a spell without the shortening talent (Affliction Immolate,
+  Arms Slam), `REGATE drop_cast` removes the condition and the entry stays delegated.
+- Priority on a shared power (`SpellQueue._HoldForPriority`, lists without a game pick for the
+  reserve): a lower-ranked spender on the same continuous power waits while a higher-ranked one
+  is ready and short only of its cost, and also while a higher-ranked one comes off cooldown
+  within `_RESERVE_GCDS` (2) GCDs, unless both can be paid (`_AffordableWithin` with the other
+  cost spent first; only income known to be due counts, so none for rage). An unreadable
+  threshold never holds. This is the guides' "pool rage as Mortal Strike comes off cooldown",
+  and Thunder Clap's rage in a pack.
+- Own-DoT time left: a `debuff` gate with `op` and `n` (or `ncast`, a spell's live cast time)
+  on a DoT this class casts compares its time left (`DotTracker.IsTimeLeftBelow`): the
+  engine's timer when an instance is held, else the cast estimate for a known duration; a DoT
+  known gone has none left; never cast on this target, immune or no timer is unknown.
+  Recovers Ferocious Bite (Rip 3+ seconds), Shred's Rip branches, Ghostly Strike (Garrote)
+  and Amplify Curse (Curse of Agony). Other auras' time left stays unknown.
+- Own target stacks: a target `stack` gate whose stacks do not read falls back to
+  `DotTracker.GetOwnStacks`, my landed applications of a generated stacking aura (Sunder
+  Armor; stack-gated target auras are observed, not DoTs), capped at its maximum, renewed while
+  the last runs and reset after it lapses. A miss reported for a cast takes back only that
+  stack. Other players' stacks and chance-based stacks (Improved Scorch, Winter's Chill: a
+  different aura id from the cast) are never counted; unknown stays unknown.
+- Creature-type limits: generated `CREATURE_TYPES` (SpellTargetRestrictions, enemy-aimed
+  spells only) drop a spell in the redundancy filter when the target's type is known and
+  outside it (`BlizzardAPI.IsSpellTypeValidForTarget`, shared with the CC check). Retribution
+  lists Exorcism, and Holy Wrath for packs, on that basis. Unknown type keeps the spell.
 
 Unreadable conditions stay in the source and classify as `delegated`: the entry keeps its
 priority position with no gate, which is how the retail pipeline already fails safe.

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 15
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 16
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -1658,14 +1658,36 @@ local CC_TYPE_MASK = {
     [20066] = 118,   -- Repentance
 }
 
---- True unless the target's creature type is KNOWN and the CC spell's type restriction
---- excludes it. Fail-open (unknown type or unrestricted spell -> true) so we never
---- suppress a CC we can't prove is invalid.
-function BlizzardAPI.IsCCSpellTypeValid(spellID)
-    local mask = CC_TYPE_MASK[spellID]
+--- True unless the target's creature type is KNOWN and the spell's type restriction excludes
+--- it: the curated CC mask above, else the spell data's (SpellDB.GetCreatureTypeMask: Forever
+--- Exorcism, Holy Wrath, Shackle Undead...). Fail-open (unknown type or unrestricted spell ->
+--- true) so we never suppress a spell we can't prove is invalid.
+-- SpellDB loads after this module: resolved on first use.
+local spellDBRef
+local function GetSpellDB()
+    if not spellDBRef then spellDBRef = LibStub("JustAC-SpellDB", true) end
+    return spellDBRef
+end
+-- Asked for every queue spell every build: each spell's mask (false = none) is looked up once.
+local typeMaskBySpell = {}
+local function SpellTypeMask(spellID)
+    local mask = typeMaskBySpell[spellID]
+    if mask == nil then
+        local db = GetSpellDB()
+        if not db then return CC_TYPE_MASK[spellID] or false end
+        mask = CC_TYPE_MASK[spellID]
+            or (db.GetCreatureTypeMask and db.GetCreatureTypeMask(spellID))
+        if type(mask) ~= "number" or mask == 0 then mask = false end
+        typeMaskBySpell[spellID] = mask
+    end
+    return mask
+end
+function BlizzardAPI.IsSpellTypeValidForTarget(spellID)
+    if not spellID then return true end
+    local mask = SpellTypeMask(spellID)
     if not mask then return true end
     local tid = BlizzardAPI.GetTargetCreatureTypeID()
-    if not tid then return true end
+    if type(tid) ~= "number" or tid < 1 then return true end
     return bit.band(mask, bit.lshift(1, tid - 1)) ~= 0
 end
 
@@ -1801,6 +1823,58 @@ function BlizzardAPI.IsTargetBoss()
     end
     targetBossMemo = boss
     return boss
+end
+
+-- Buff refresh window: re-offer a maintained buff once it could lapse inside the next fight,
+-- so it never needs a recast in combat. A fraction of the buff's own duration, capped by how
+-- long a fight in this context likely runs. The target says most about the next fight (bosses
+-- and elites are targeted before the pull); without one, the group context decides.
+local BUFF_REFRESH_FRACTION = 0.30
+local FIGHT_SECONDS_SOLO    = 30
+local FIGHT_SECONDS_GROUP   = 60
+local FIGHT_SECONDS_ELITE   = 60
+local FIGHT_SECONDS_BOSS    = 180
+local LONG_FIGHT_CLASS = { elite = true, rareelite = true }
+
+--- Likely length of the next fight in seconds, from the target and then the group.
+--- Friendly, dead or unreadable targets say nothing; unknown group state reads solo,
+--- the narrower window that nags less. Kept for the current moment: one queue build asks
+--- per aura, and nothing it reads changes within one GetTime() value.
+local fightSecondsAt, fightSeconds
+local function ReadLikelyFightSeconds()
+    local ok, hostile = pcall(UnitCanAttack, "player", "target")
+    if ok and not IsSecretValue(hostile) and hostile == true then
+        local deadOk, dead = pcall(UnitIsDead, "target")
+        if not (deadOk and not IsSecretValue(dead) and dead == true) then
+            if BlizzardAPI.IsTargetBoss() then return FIGHT_SECONDS_BOSS end
+            local classOk, class = pcall(UnitClassification, "target")
+            if classOk and type(class) == "string" and not IsSecretValue(class)
+               and LONG_FIGHT_CLASS[class] then
+                return FIGHT_SECONDS_ELITE
+            end
+        end
+    end
+    if BlizzardAPI.IsGrouped() == true then return FIGHT_SECONDS_GROUP end
+    return FIGHT_SECONDS_SOLO
+end
+function BlizzardAPI.GetLikelyFightSeconds()
+    local now = GetTime()
+    if fightSecondsAt ~= now then
+        fightSecondsAt, fightSeconds = now, ReadLikelyFightSeconds()
+    end
+    return fightSeconds
+end
+
+--- Seconds left at which a buff of `duration` should be re-applied: 30% of the duration,
+--- capped by the likely fight length. Unknown or permanent duration: the cap alone. A share
+--- at or under the smallest cap needs no context read.
+function BlizzardAPI.GetBuffRefreshWindow(duration)
+    if type(duration) ~= "number" or IsSecretValue(duration) or duration <= 0 then
+        return BlizzardAPI.GetLikelyFightSeconds()
+    end
+    local share = duration * BUFF_REFRESH_FRACTION
+    if share <= FIGHT_SECONDS_SOLO then return share end
+    return math_min(BlizzardAPI.GetLikelyFightSeconds(), share)
 end
 
 --- Is the target immune to crowd control? Without `mech`: only the blanket answer (bosses,
@@ -2201,11 +2275,10 @@ end
 --- impose a lockout rather than a CC, so their own immunity replies would condemn targets
 --- that a real CC would land on just fine. CC we never suggest is excluded too: a bounced
 --- Sap says nothing about whether a stun lands, and learning is keyed by mechanic.
-local SpellDBRef = nil
 local function SuggestedCCEntry(spellID)
     if not spellID then return nil end
-    if not SpellDBRef then SpellDBRef = LibStub("JustAC-SpellDB", true) end
-    local e = SpellDBRef and SpellDBRef.GetInterruptAbility and SpellDBRef.GetInterruptAbility(spellID)
+    local db = GetSpellDB()
+    local e = db and db.GetInterruptAbility and db.GetInterruptAbility(spellID)
     return e and e.kind == "cc" and e.mech and e or nil
 end
 

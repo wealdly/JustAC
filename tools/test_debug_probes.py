@@ -647,7 +647,7 @@ def test_rotation_target_enemy_context():
     assert "1:679>678 raw=false/true helper=false/true ready=true/test source range=true gate=ok q=1" in rotation
     assert "2:20271>20271" in rotation and "ready=false/test source range=false gate=block/delegated q=-" in rotation
     assert s.last.targetContext == "plain:type=Undead typeID=6 classification=elite level=7"
-    assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679 lowValue=nil"
+    assert s.last.queueContext == "plain:simc=aoe enemies=1 outOfMelee=false dying=true execute=false pick=679 lowValue=nil holdsRange=nil rangedSwap=nil"
     assert s.last.enemyProvenance == (
         "plain:plates=4 hostile=3 threat=1 unknown=1 helper=1 widened=0 inCombatOthers=1"
     ), "provenance reports the queue helper's own breakdown (behaviour: test_efficiency)"

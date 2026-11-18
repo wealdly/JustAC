@@ -1193,21 +1193,26 @@ function SpellQueue.GetHoldResource(spellID)
     return nil
 end
 
+--- `value op n` for a gate's operator: true / false, nil for an unknown operator or value.
+local function CompareOp(value, op, n)
+    if value == nil or n == nil then return nil end
+    if     op == ">=" then return value >= n
+    elseif op == "<=" then return value <= n
+    elseif op == ">"  then return value >  n
+    elseif op == "<"  then return value <  n
+    elseif op == "="  then return value == n
+    elseif op == "!=" then return value ~= n
+    end
+    return nil
+end
+
 --- Does one countable-resource gate hold? true / false / nil (deficit with unknown max).
 local function ResourceGateHolds(g, resCount, resMax)
     local value = resCount
     if g.deficit then
         value = (type(resMax) == "number" and resMax > 0) and (resMax - resCount) or nil
     end
-    if value == nil then return nil end
-    if     g.op == ">=" then return value >= g.n
-    elseif g.op == "<=" then return value <= g.n
-    elseif g.op == ">"  then return value >  g.n
-    elseif g.op == "<"  then return value <  g.n
-    elseif g.op == "="  then return value == g.n
-    elseif g.op == "!=" then return value ~= g.n
-    end
-    return nil
+    return CompareOp(value, g.op, g.n)
 end
 
 -- SimC resource token -> Enum.PowerType, resolved lazily so a missing Enum can
@@ -1399,16 +1404,19 @@ local function GateVerdict(g, ctx)
         if within == nil then return nil end
         return within
     end
+    if t == "cast" then
+        -- The spell's current cast time in seconds, highest known rank, read fresh (a proc that
+        -- makes it instant changes it between builds): GetSpellInfo castTime is plain. Unknown
+        -- or secret is no opinion.
+        if not (g.id and BlizzardAPI.GetCastSeconds) then return nil end
+        return CompareOp(BlizzardAPI.GetCastSeconds(BlizzardAPI.GetDisplaySpellID(g.id)), g.op, g.n)
+    end
     if t == "swing" then
         -- Time to the next auto attack (Forever's PLAYER_SWING tracker): Rapid Fire just
         -- before an Auto Shot, a seal just before the main-hand swing. Unknown (no swing
         -- yet, not auto-attacking, retail) is no opinion.
         local rem = g.n and BlizzardAPI.GetSwingRemaining and BlizzardAPI.GetSwingRemaining(g.ranged and 2 or 0)
-        if rem == nil then return nil end
-        local op, n = g.op, g.n
-        if op == "<" then return rem < n elseif op == "<=" then return rem <= n
-        elseif op == ">" then return rem > n elseif op == ">=" then return rem >= n end
-        return nil
+        return CompareOp(rem, g.op, g.n)
     end
     if t == "resource" then
         if ctx.skipResource then return nil end
@@ -1468,6 +1476,11 @@ local function GateVerdict(g, ctx)
            and not (g.tgt and not UnitExists("target")) then
             holds = StackHolds(g.tgt and "target" or "player", g)
         end
+        -- Target stacks unreadable: my own landed applications, counted (Sunder Armor).
+        if holds == nil and g.tgt and g.id and g.op and g.n and DotTracker and DotTracker.GetOwnStacks
+           and UnitExists("target") then
+            holds = CompareOp(DotTracker.GetOwnStacks(BlizzardAPI.GetDisplaySpellID(g.id)), g.op, g.n)
+        end
         if holds == nil and g.required then return false end
         return holds
     end
@@ -1526,8 +1539,22 @@ local function GateVerdict(g, ctx)
         end
     end
     if t == "debuff" then
-        -- Presence cannot establish remaining seconds or stack requirements.
-        if g.op then return nil end
+        -- Time left on my own DoT (DotTracker.IsTimeLeftBelow: the engine's timer or mine from
+        -- the cast) against N seconds, or against a spell's cast time (ncast). Presence alone
+        -- cannot establish remaining seconds or stack requirements: anything else is unknown.
+        if g.op then
+            if not (g.id and DotTracker and DotTracker.IsTimeLeftBelow) then return nil end
+            local n = g.n
+            if g.ncast then
+                n = BlizzardAPI.GetCastSeconds and BlizzardAPI.GetCastSeconds(BlizzardAPI.GetDisplaySpellID(g.ncast))
+            end
+            if type(n) ~= "number" then return nil end
+            local below = DotTracker.IsTimeLeftBelow(BlizzardAPI.GetDisplaySpellID(g.id), n, ctx.auraReads)
+            if below == nil then return nil end
+            if g.op == "<" or g.op == "<=" then return below end
+            if g.op == ">" or g.op == ">=" then return not below end
+            return nil
+        end
         local id = g.id and BlizzardAPI.GetDisplaySpellID(g.id)
         if not id then return nil end
         local slot = Upkeep.DebuffGateTotemSlot(g, id)
@@ -1941,12 +1968,16 @@ end
 --- that time (the refill, plus a gap closer's gain on landing), rounded up to the next 5% step
 --- so the answer never claims too early. true / false, or nil when the cost, what is due or the
 --- threshold cannot be read.
-function SpellQueue._AffordableWithin(spellID, seconds)
+function SpellQueue._AffordableWithin(spellID, seconds, spentFirst)
     local powerType, cost = SpellQueue._ContinuousCost(spellID)
     if not (powerType and seconds) or not BlizzardAPI.IsUnitPowerBelow then return nil end
+    -- Another press on the same power paid first (`spentFirst`): both costs together. Then only
+    -- what is known to be due counts (rage income is unknowable, so none): the question is
+    -- whether paying that press now could leave the other one short.
+    if spentFirst then cost = cost + spentFirst end
     local rate = SpellQueue._IncomePerSecond(powerType)
     local gain = SpellQueue._PendingGain and SpellQueue._PendingGain(powerType, GetTime())
-    if not (rate or gain) then return nil end
+    if not (rate or gain or spentFirst) then return nil end
     local okMax, max = pcall(UnitPowerMax, "player", powerType)
     if not okMax or BlizzardAPI.IsSecretValue(max) or type(max) ~= "number" or max <= 0 then return nil end
     local pct = 100 * (cost - (rate or 0) * seconds - (gain or 0)) / max
@@ -1959,33 +1990,63 @@ end
 
 -- displayID -> rank of each resource wait this build (sunkSet value "resource").
 SpellQueue._waitRank = {}
+-- displayID -> rank of each wait held only by its cooldown this build.
+SpellQueue._cooldownRank = {}
+-- A spender coming off cooldown within this many GCDs reserves its cost (the guides' "pool rage
+-- as Mortal Strike comes off cooldown", Thunder Clap in a pack). A module field, not a local:
+-- this chunk sits near Lua 5.1's 200-local cap.
+SpellQueue._RESERVE_GCDS = 2
+SpellQueue._reserveID = {}   -- scratch for _HoldForPriority, overwritten per power each build
 
 --- A priority list means what it says on a shared resource too: a lower-priority spender does
---- not take the resource a higher-priority one is waiting on. Thunder Clap (20 rage) above
---- Heroic Strike (15) on three targets: rage arrives in chunks, so the cheaper press became
---- affordable first every time and the better one never got its rage. Any normal entry whose
---- continuous cost shares a power with a higher-ranked resource wait (ready, conditions met,
---- short only of its cost) joins the waits instead. Entries with no such cost (Attack, a
---- point spender, a free cooldown) are untouched. @return normalCount, cooldownCount
+--- not take the resource a higher-priority one needs. Thunder Clap (20 rage) above Heroic
+--- Strike (15) on three targets: rage arrives in chunks, so the cheaper press became
+--- affordable first every time and the better one never got its rage. A normal entry whose
+--- continuous cost shares a power with a higher-ranked spender joins the waits instead when
+--- that spender is
+---   * a resource wait (ready, conditions met, short only of its cost): always, or
+---   * coming off cooldown within _RESERVE_GCDS GCDs: only when both cannot be paid (unknown
+---     never holds).
+--- Entries with no such cost (Attack, a point spender, a free cooldown) are untouched.
+--- @return normalCount, cooldownCount
 function SpellQueue._HoldForPriority(normal, ranks, normalCount, waits, waitCount, sunk, tiers)
-    local waitRank = SpellQueue._waitRank
-    local best   -- power -> best (lowest) rank among its resource waits
+    local waitRank, cooldownRank = SpellQueue._waitRank, SpellQueue._cooldownRank
+    local best        -- power -> best (lowest) rank among its resource waits
+    local soonRank    -- power -> rank of the best spender coming off cooldown
+    local soonID = SpellQueue._reserveID   -- power -> that spender
+    local window      -- the reserve horizon, read once a spender off cooldown asks for it
     for i = 1, waitCount do
         local id = waits[i]
-        if sunk[id] == "resource" and (tiers[id] or 1) == 1 and waitRank[id] then
+        if (tiers[id] or 1) == 1 and sunk[id] == "resource" and waitRank[id] then
             local power = SpellQueue._ContinuousCost(id)
             if power then
                 best = best or {}
                 if not best[power] or waitRank[id] < best[power] then best[power] = waitRank[id] end
             end
+        -- With a game pick (Retail) the game times its own pooling; the reserve is for lists alone.
+        elseif (tiers[id] or 1) == 1 and cooldownRank[id] and BlizzardAPI.CooldownEndsWithin
+               and not BlizzardAPI.HasGamePick() then
+            window = window or SpellQueue._RESERVE_GCDS * SpellQueue._OneGCD()
+            local power = SpellQueue._ContinuousCost(id)
+            if power and BlizzardAPI.CooldownEndsWithin(id, window) == true then
+                soonRank = soonRank or {}
+                if not soonRank[power] or cooldownRank[id] < soonRank[power] then
+                    soonRank[power], soonID[power] = cooldownRank[id], id
+                end
+            end
         end
     end
-    if not best then return normalCount, waitCount end
+    if not (best or soonRank) then return normalCount, waitCount end
     local kept = 0
     for i = 1, normalCount do
         local id, rank = normal[i], ranks[i]
-        local power = SpellQueue._ContinuousCost(id)
-        if power and best[power] and rank > best[power] then
+        local power, cost = SpellQueue._ContinuousCost(id)
+        local held = power and best and best[power] and rank > best[power]
+        -- Held for a spender coming off cooldown only when both cannot be paid.
+        if not held and power and soonRank and soonRank[power] and rank > soonRank[power] then
+            held = SpellQueue._AffordableWithin(soonID[power], window, cost) == false
+        end
+        if held then
             waitCount = waitCount + 1
             waits[waitCount] = id
             sunk[id], waitRank[id], tiers[id] = "resource", rank, nil
@@ -2366,6 +2427,11 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             SpellQueue._waitRank[displayID] = rankOf(spellID, simcRec)
                         else
                             sunkSet[displayID] = true
+                            if not ready and not (starved or held or locLocked or missingResource or burstHeld
+                               or castBarred or outOfRange or runningSwing or gateBlocked
+                               or meleeUnconfirmed or swingLate) then
+                                SpellQueue._cooldownRank[displayID] = rankOf(spellID, simcRec)
+                            end
                         end
                         SpellQueue._NoteAuraClock(displayID, simcRec and simcRec.gates, readCache)
                         -- Keep the repeat-shot plan visible between casts, but never ahead
@@ -2817,12 +2883,13 @@ function Upkeep.ActiveBuffGate(gates, readCache, upkeepOnly)
     return nil
 end
 
---- A self-buff that is up with more than the fight horizon left cannot need a press before
---- this fight is over or long; it leaves the queue instead of sinking. If it drops, its
---- "buff missing" condition opens and it returns at its rank. Unknown time left: stays.
+--- A self-buff that is up with more than its refresh window left (the shared buff window:
+--- part of its duration, capped by the likely fight length) cannot need a press before this
+--- fight is over or long; it leaves the queue instead of sinking. If it drops, its "buff
+--- missing" condition opens and it returns at its rank. Unknown time left: stays.
 function SpellQueue._BuffUpBeyondFight(gates, readCache)
-    local _, left = Upkeep.ActiveBuffGate(gates, readCache, true)
-    return left ~= nil and left > LONG_FIGHT_SECONDS
+    local g, left = Upkeep.ActiveBuffGate(gates, readCache, true)
+    return left ~= nil and left > BlizzardAPI.GetBuffRefreshWindow(g.dur)
 end
 
 --- A refreshed "debuff" condition naming a totem is really its slot (Forever data): the slot, or nil.
@@ -3698,6 +3765,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(sunkSet)
     wipe(unavailableTier)
     wipe(SpellQueue._waitRank)
+    wipe(SpellQueue._cooldownRank)
     if queueProbeEnabled then
         wipe(queueProbeEntries)
     end
@@ -3725,6 +3793,7 @@ function SpellQueue.GetCurrentSpellQueue()
     SpellQueue._StageTail(b)           -- F: tail ordering + assembly over positions 2+
     SpellQueue._StagePushback(b, cachedRotationList)
     SpellQueue._StageFightEndRefresh(b, cachedRotationList)
+    SpellQueue._StageRangedFiller(b, cachedRotationList) -- a target holding range: no slow filler
     SpellQueue._StageSwingPress(b)     -- a pressable next-swing attack over a lead still waiting
     SpellQueue._StageBurstCue(b)       -- G: burst-ready cue at position 2
     SpellQueue._StageForeverWait(b)    -- no actionable Forever entry: reserve slot 1 for WAIT

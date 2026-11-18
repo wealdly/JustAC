@@ -53,7 +53,8 @@ local BRIDGE_WINDOW = 2.0
 -- expiry, so the DoT reappears in time to refresh inside its pandemic window.
 -- Matches WoW's 30% carry-over. Only applied when a duration estimate exists.
 -- WoW Forever has no carry-over (a recast restarts the DoT and loses the ticks left), so
--- there the DoT comes back when it runs out.
+-- there the DoT comes back its refresh lead before it runs out (BlizzardAPI.GetPeriodicRefreshLead):
+-- its cast time, plus a global cooldown for a stacking one. An instant comes back as it ends.
 local FOREVER = (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) and true or false
 local PANDEMIC_LEAD = FOREVER and 0 or 0.30
 -- Harmful auras cast by the player - Blizzard evaluates this engine-side from the
@@ -129,7 +130,11 @@ function DotTracker.OnCastSucceeded(spellID)
     -- the removal bridge / AC instead of guessing).
     local getDuration = SpellDB.GetTargetAuraDuration or SpellDB.GetTargetDotDuration
     local dur = getDuration and getDuration(spellID)
-    local pandemicPoint = dur and (now + dur * (1 - PANDEMIC_LEAD)) or nil
+    local lead = 0
+    if FOREVER and BlizzardAPI and BlizzardAPI.GetPeriodicRefreshLead then
+        lead = BlizzardAPI.GetPeriodicRefreshLead(spellID, SpellDB.IsStackingAura and SpellDB.IsStackingAura(spellID))
+    end
+    local pandemicPoint = dur and (now + math.max(0, dur * (1 - PANDEMIC_LEAD) - lead)) or nil
 
     -- Key under the cast ID, its display/override ID, and its base spell so the
     -- query (which uses the queue's ID for the same ability - possibly a different
@@ -139,10 +144,24 @@ function DotTracker.OnCastSucceeded(spellID)
     if disp and disp ~= spellID then ids[#ids + 1] = disp end
     local base = baseOf(spellID)
     if base then ids[#ids + 1] = base end
+    -- A stacking aura I apply (Sunder Armor) counts my landed applications: one more while the
+    -- last is still running, else a fresh first stack. The previous state is kept so a miss
+    -- reported for this cast takes back only this stack.
+    local maxStacks = SpellDB.GetStackingMax and SpellDB.GetStackingMax(spellID)
     for _, id in ipairs(ids) do
         local e = GetEntry(id)
+        if maxStacks then
+            local running = e.castAt and e.stacks and now < e.expiry and not e.immune
+                and not (e.hadInstance and not next(e.instances))
+            if running then
+                e.prevStacks, e.prevExpiry, e.prevCastAt = e.stacks, e.expiry, e.castAt
+                e.stacks = math.min(maxStacks, e.stacks + 1)
+            else
+                e.prevStacks, e.stacks = 0, 1
+            end
+        end
         e.expiry = now + (dur or FALLBACK_WINDOW)
-        e.pandemicPoint = pandemicPoint
+        e.pandemicPoint, e.lead = pandemicPoint, lead
         e.castAt, e.cdmSeen = now, nil
         -- A fresh application after a confirmed drop must trust the window again:
         -- hadInstance means "confirmed since the last cast that found no instance",
@@ -159,7 +178,17 @@ end
 --- The cast did not land: drop its timer, or for IMMUNE hold it sunk for this target.
 local function Missed(ids, kind)
     for _, id in ipairs(ids) do
-        if kind == "IMMUNE" then GetEntry(id).immune = true else applied[id] = nil end
+        local e = applied[id]
+        if kind == "IMMUNE" then
+            GetEntry(id).immune = true
+        elseif e and e.prevStacks and e.prevStacks > 0 then
+            -- A missed stacking cast leaves the stacks already there, on their own timer.
+            e.stacks, e.expiry, e.castAt = e.prevStacks, e.prevExpiry, e.prevCastAt
+            if e.pandemicPoint then e.pandemicPoint = e.expiry - (e.lead or 0) end
+            e.prevStacks = nil
+        else
+            applied[id] = nil
+        end
     end
 end
 
@@ -247,15 +276,21 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
     return changed
 end
 
---- Is this entry's DoT inside its pandemic window, according to the ENGINE?
---- true / false / nil (no confirmed instance, or the technique is unavailable).
---- Shared by the live query and the /jac inspect dots probe so the probe can never
---- report on a code path production does not take.
-local function EnginePandemicVerdict(e)
-    if not (e and next(e.instances) and BlizzardAPI
-            and BlizzardAPI.IsDurationBelowPercent and BlizzardAPI.GetAuraDurationObject) then
+--- Is this entry's DoT under a threshold, according to the ENGINE? With `seconds`, the
+--- aura's seconds left against them (Forever's refresh lead, a time-left gate); without,
+--- the retail pandemic share. true / false / nil (no confirmed instance, or the technique
+--- is unavailable).
+local function EngineBelow(e, seconds)
+    if not (e and next(e.instances) and BlizzardAPI and BlizzardAPI.GetAuraDurationObject) then
         return nil
     end
+    local check, threshold
+    if seconds then
+        check, threshold = BlizzardAPI.IsDurationBelowSeconds, seconds
+    else
+        check, threshold = BlizzardAPI.IsDurationBelowPercent, PANDEMIC_LEAD * 100
+    end
+    if not check then return nil end
     -- The LONGEST-lived application decides, so a single "has time left" settles it.
     -- Returning the first instance that answered would let an old or nearly-spent
     -- application outvote a fresh one - `pairs` order is arbitrary, and an entry can
@@ -265,7 +300,7 @@ local function EnginePandemicVerdict(e)
     local answered = false
     for instanceID in pairs(e.instances) do
         local durObj = BlizzardAPI.GetAuraDurationObject("target", instanceID)
-        local below = durObj and BlizzardAPI.IsDurationBelowPercent(durObj, PANDEMIC_LEAD * 100)
+        local below = durObj and check(durObj, threshold)
         if below ~= nil then
             answered = true
             if not below then return false end   -- one application still has time
@@ -273,6 +308,14 @@ local function EnginePandemicVerdict(e)
     end
     -- Answered by at least one, and every one of them was inside the window.
     return answered or nil
+end
+--- Is this entry's DoT inside its refresh window, according to the ENGINE? Shared by the
+--- live query and the /jac inspect dots probe so the probe can never report on a code path
+--- production does not take.
+local function EnginePandemicVerdict(e)
+    local lead = e and e.lead
+    if lead and lead <= 0 then lead = nil end
+    return EngineBelow(e, lead)
 end
 
 --- True when the current target already has this DoT live (so the queue should
@@ -312,6 +355,18 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
             trackedReason = "module-unavailable"
         end
         if tracked == true and e then e.cdmSeen = true end
+        -- The icon says only "ticking". With a refresh lead (a cast-time or stacking DoT) the
+        -- recast starts before it ends: the engine's timer when we hold the instance, else
+        -- our own from the cast.
+        if tracked == true and e and e.lead and e.lead > 0 then
+            local engineBelow = EnginePandemicVerdict(e)
+            if engineBelow ~= nil then
+                return not engineBelow, "engine-refresh", tracked, trackedReason, engineBelow
+            end
+            if e.pandemicPoint and GetTime() >= e.pandemicPoint then
+                return false, "estimated-refresh", tracked, trackedReason
+            end
+        end
         -- The icon trails our cast (server round trip, projectile travel). Until it has
         -- shown once, "inactive" inside the bridge window means "not applied yet", so the
         -- just-cast DoT stays sunk through the GCD. A miss/immune result still wins.
@@ -404,6 +459,44 @@ function DotTracker.GetTargetAuraState(spellID, allowEstimate, readCache)
     return nil
 end
 
+--- Has my DoT on the current target fewer than `seconds` left? true / false / nil (unknown).
+--- Forever only. The engine's own timer when an instance is held (the longest-lived one
+--- decides); else my timer from the cast, while a known duration runs; a DoT known to be
+--- off the target (Cooldown Manager inactive, its instance removed, its timer run out) has
+--- none left. Never cast on this target, immune, or no timer: unknown. Ferocious Bite while
+--- Rip has 3+ seconds, Ghostly Strike before Rupture runs out.
+local GONE = { ["cooldown-manager"] = true, ["instance-removed"] = true }
+function DotTracker.IsTimeLeftBelow(spellID, seconds, readCache)
+    if not FOREVER or type(seconds) ~= "number" then return nil end
+    local e = EntryFor(spellID)
+    if not e or e.immune then return nil end
+    if next(e.instances) then
+        if seconds <= 0 then return false end
+        local below = EngineBelow(e, seconds)
+        if below ~= nil then return below end
+    else
+        local active, source = EvaluateDot(spellID, nil, true, readCache)
+        if active == false and GONE[source] then return true end
+    end
+    -- My own timer: only for a known duration (the fallback window is a guess).
+    if not (e.castAt and e.pandemicPoint) then return nil end
+    local left = e.expiry - GetTime()
+    return left <= 0 or left < seconds
+end
+
+--- My stacks of a stacking aura on the current target (Sunder Armor), counted from my landed
+--- casts: a number, 0 once it is known gone, nil when unknown (never cast on this target,
+--- immune, not a stacking aura, or a live instance whose stacks cannot be read). Forever only;
+--- other players' stacks are not counted.
+function DotTracker.GetOwnStacks(spellID)
+    if not FOREVER then return nil end
+    local e = EntryFor(spellID)
+    if not e or e.immune or not e.stacks then return nil end
+    if e.hadInstance and not next(e.instances) then return 0 end
+    if e.castAt and GetTime() >= e.expiry and not next(e.instances) then return 0 end
+    return e.stacks
+end
+
 --- Drop all tracking. Called on target change (state is current-target only) and
 --- on leaving combat.
 function DotTracker.Reset()
@@ -469,6 +562,7 @@ function DotTracker.DebugState(spellIDs)
             confirmed = e ~= nil and next(e.instances) ~= nil,
             expiresIn = e and (e.expiry - now),
             pandemicIn = e and e.pandemicPoint and (e.pandemicPoint - now),
+            refreshLead = e and e.lead,
             enginePandemic = engineBelow,
         }
     end

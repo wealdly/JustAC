@@ -96,19 +96,16 @@ AOE_LEAD_TIERS = ["aoe"]
 EXTRA = {
     # Reactive melee attacks (usable only after a dodge, parry or kill) lead when lit; until then
     # the game reports them unusable and they trail. The sims omit them or keep them defensive.
-    # Launch guides: Demoralizing Shout is upkeep only when nobody else covers it (a missing
-    # debuff); damage trees keep it behind their attacks (Protection's is TANK_ONLY).
-    "warrior": [dict(spell="demoralizing_shout", trees=["arms", "fury"], tiers=["cleave", "aoe"],
-                     at="end", gates=["dot"]),
-                dict(spell="victory_rush", trees=["arms", "fury"], at="front"),
+    "warrior": [dict(spell="victory_rush", trees=["arms", "fury"], at="front"),
                 # Protection's sim omits Hamstring; without an entry it joined as an ungated
                 # pool filler. Listed, the finisher rule (REGATE) holds it.
                 dict(spell="hamstring", trees=["protection"], at="end"),
                 dict(spell="rend", trees=["protection"], at="before:heroic_strike", move=True),
                 # Its single-target Thunder Clap is the tank's attack-speed slow (mitigation, guides
-                # disagree on upkeep); as damage it is a pack attack, as in Arms.
+                # disagree on upkeep); as damage it is the strongest attack against a pack and
+                # leads there, as in Arms and Fury.
                 dict(spell="thunder_clap", trees=["protection"], tiers=AOE_LEAD_TIERS,
-                     at="after:revenge", move=True),
+                     at="front", move=True),
                 # Arms: Overpower > Mortal Strike > Execute > Slam; Rend only with a second
                 # enemy; Sweeping Strikes leads multi-target play.
                 dict(spell="mortal_strike", trees=["arms"], at="after:overpower", move=True),
@@ -155,9 +152,12 @@ EXTRA = {
                dict(spell="summon_hawk", trees=["survival"], at="before:raptor_strike"),
                dict(spell="aimed_shot", trees=["survival"], at="before:arcane_shot")],
     # Launch Retribution guides: Consecration before Holy Strike; Holy Shock (Shockadin) on
-    # cooldown after it. Exorcism and Holy Wrath need a creature-type signal and stay out.
+    # cooldown after it. Exorcism on cooldown, and Holy Wrath against a pack: both only hit
+    # Demons and Undead, which the queue reads from the target (SpellDB.GetCreatureTypeMask).
     "paladin": [dict(spell="consecration", trees=["retribution"], at="before:holy_strike", move=True),
-                dict(spell="holy_shock", trees=["retribution"], at="after:holy_strike")],
+                dict(spell="holy_shock", trees=["retribution"], at="after:holy_strike"),
+                dict(spell="exorcism", trees=["retribution"], at="before:consecration"),
+                dict(spell="holy_wrath", trees=["retribution"], tiers=["aoe"], at="after:consecration")],
     # Backstab is absent from the selected upstream APLs. Prefer it to Sinister Strike when
     # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
     # Spell usability handles the rear requirement; no position signal is inferred here.
@@ -187,7 +187,6 @@ EXTRA = {
     # Caster leveling guides describe wanding as a low-health/finishing fallback; keep Shoot last
     # so listed spells take precedence and spell usability hides it without a usable wand.
     "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
-             dict(spell="frost_nova", trees=["frost"], tiers=["aoe"], at="end"),
              # The Arcane and Fire sims list no AoE spell. Guide AoE (forever-guides/): Fire
              # Flamestrike > Blast Wave > Arcane Explosion, Arcane Explosion at 3+ for Arcane.
              dict(spell="flamestrike", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
@@ -206,10 +205,7 @@ EXTRA = {
                # Shadow is also the untalented default; Smite fills before Shadow attacks
                # are learned rather than yielding to the listed wand fallback.
                dict(spell="smite", trees=["shadow"], at="before:shoot"),
-               dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front"),
-               # Launch Shadow priority keeps Vampiric Embrace up after Shadow Word: Death.
-               dict(spell="vampiric_embrace", trees=["shadow"], at="after:shadow_word_death",
-                    gates=["dot"])],
+               dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
 
 
@@ -237,6 +233,10 @@ EXTRA = {
 #   or_execute: ...or while the target is below this percent. On a dying target the rage left
 #            drains out of combat anyway, and Hamstring is instant: it finishes the target while
 #            a next-swing attack waits on the swing (2026-11-17, player observation).
+#   drop_cast: remove the source's cast-time condition; the guide keeps the spell without the
+#            talent that shortens its cast (launch Affliction keeps Immolate up, launch Arms
+#            keeps Slam; the sims cast them only once a talent shortens the cast). The entry stays delegated, as before the cast
+#            gate existed, and is not flagged w.
 #   trees:   limit the entry to these trees (default: every tree).
 #   A spell list may instead be a {tree: [names]} dict (a talent style's own spenders); a tree it
 #   does not name is skipped.
@@ -244,17 +244,37 @@ WARRIOR_SPENDERS = {"arms": ["mortal_strike", "slam", "whirlwind", "bloodthirst"
                     "fury": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
                     "protection": ["revenge", "shield_slam"]}
 REGATE = {
-    "warlock": {"life_tap": dict(starved=True, health=50),
+    "warlock": {"immolate": dict(drop_cast=True, trees=["affliction"]),
+                "life_tap": dict(starved=True, health=50),
                 "hellfire": dict(health=50, near=10),
                 "shadowburn": dict(execute=20, or_known=426316)},
     "mage": {"evocation": dict(starved=True)},
     "druid": {"innervate": dict(starved=True)},
-    "warrior": {"bloodrage": dict(health=50),
+    # Slam's base cast is 1.5s; the sim casts it only under Improved Slam. The launch guide
+    # uses it whenever the cast can finish, so levelling Arms keeps it.
+    "warrior": {"slam": dict(drop_cast=True),
+                "bloodrage": dict(health=50),
                 # Each talent style names its own main spenders: Protection levels on Heroic
                 # Strike until Revenge (14) or Shield Slam (talent) arrives (forever-guides).
                 "heroic_strike": dict(or_none_known=WARRIOR_SPENDERS),
                 "hamstring": dict(needs_known=WARRIOR_SPENDERS, or_execute=20)},
 }
+
+
+def without_cast(gates):
+    """The gates with every cast-time condition removed, nested groups included. Dropping an
+    `any` member would make the group stricter, so such a group goes whole (it then holds)."""
+    out = []
+    for g in gates:
+        if g["t"] == "cast":
+            continue
+        if g["t"] in ("any", "all"):
+            members = without_cast(g["g"])
+            if not members or (g["t"] == "any" and len(members) < len(g["g"])):
+                continue
+            g = dict(g, g=members)
+        out.append(g)
+    return out
 
 
 def regate(cls, tree, entries, chains):
@@ -271,6 +291,10 @@ def regate(cls, tree, entries, chains):
             if e["id"] != sid:
                 continue
             gates = list(e["gates"])
+            if spec.get("drop_cast"):
+                e["gates"] = without_cast(gates)
+                e["delegated"] = True
+                continue
             if spec.get("starved"):
                 power = [g for g in gates if g["t"] == "power" and g.get("res") == "mana"]
                 gates = [g for g in gates if g not in power]
@@ -422,7 +446,19 @@ def gates_on_points(gates):
                or (g.get("t") in ("any", "all") and gates_on_points(g["g"])) for g in gates)
 
 
+def holds_hit_for_side_effect(e, g):
+    """A refresh condition on the entry's own debuff, where the spell hits for damage and the
+    debuff does none over time (Thunder Clap's slow): the tank sims keep the slow up as
+    mitigation. A recast loses no ticks, so in the damage queue it only delays the hit."""
+    return (g.get("t") == "debuff" and g.get("refresh") and g.get("id") == e["id"]
+            and deals_damage(e["id"]) and not applies_target_dot(e["id"]))
+
+
 def apply_core_rules(cls, tree, entries):
+    # The queue is a damage queue in every tree: no hit waits on its own side effect.
+    for e in entries:
+        if any(holds_hit_for_side_effect(e, g) for g in e["gates"]):
+            e["gates"] = [g for g in e["gates"] if not holds_hit_for_side_effect(e, g)]
     for e in entries:
         if costs_combo_points(e["id"]) and applies_target_dot(e["id"]) and not gates_on_points(e["gates"]):
             e["gates"] = list(e["gates"]) + [
@@ -659,7 +695,7 @@ class Conv:
                     gate["refresh"] = True
                 return gate
             return dict(g, neg=not g.get("neg", False))
-        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick", "targets") and g.get("op") in NOT_OP:
+        if t in ("power", "resource", "execute", "health", "stack", "swing", "tick", "targets", "cast") and g.get("op") in NOT_OP:
             return dict(g, op=NOT_OP[g["op"]])
         if t in ("any", "all"):
             members = [self.negate(m) for m in g["g"]]
@@ -824,6 +860,12 @@ class Conv:
             return g
         if name == "timeToNextEnergyTick":
             return UNK
+        if name == "spellCastTime":
+            # The spell's current cast time (GetSpellInfo, highest known rank): a proc that makes
+            # it instant (Nightfall's Shadow Bolt, Presence of Mind) or a talent that shortens
+            # it (Improved Slam) moves it under a GCD.
+            sid = self.rank1(sid_of(side.get("spellId")))
+            return {"t": "cast", "id": sid, "op": op, "n": n} if sid else UNK
         return UNK
 
 
@@ -847,6 +889,20 @@ class Conv:
         # it up. Never "not up": Judgement needs an active seal, but does not consume it.
         if not target and sid in self.by_id and op in ("<", "<=") and on_self(raw):
             return TRUE
+        # Time left on MY OWN DoT on the target (one this class casts): DotTracker reads it from
+        # the engine's timer or from my cast (Ferocious Bite while Rip has 3+ seconds, Ghostly
+        # Strike as Rupture runs out). Against a constant, or against a spell's cast time.
+        if name == "dotRemainingTime" and raw in self.by_id:
+            _, _, n, _ = cmp_parts(val)
+            gate = {"t": "debuff", "id": sid, "op": op}
+            if n is not None:
+                gate["n"] = n
+                return gate
+            rhs = val.get("rhs", {})
+            cast = sid_of(rhs["spellCastTime"].get("spellId")) if "spellCastTime" in rhs else None
+            if cast:
+                gate["ncast"] = self.rank1(cast)
+                return gate
         self.lose({"cmp": val})              # remaining time itself is secret
         if target:
             _, _, n, _ = cmp_parts(val)
@@ -1130,7 +1186,10 @@ def combat_buff(sid):
 #   Forever utility role reserves it from the automatic queue);
 #   crowd control or a taunt (Gouge, Scatter Shot, Pounce, Mind Control, Death Coil, Mocking Blow);
 #   a movement, stealth or mount buff that deals no damage (Sprint, Dash, Stealth, Divine Steed);
-#   NOT_DPS: what the data cannot tell from a combat buff or a damage spell.
+#   NOT_DPS: what the data cannot tell from a combat buff or a damage spell, and utility the
+#   player manages: a debuff whose job is a slow, root or mitigation (Demoralizing Shout,
+#   Frost Nova) or healing (Vampiric Embrace), even where a guide lists it. Debuffs that raise
+#   damage taken (Sunder Armor, Faerie Fire, Curse of the Elements, Hunter's Mark) stay.
 # List entries are never filtered: a list that names one meant it.
 INTERRUPT, TAUNT_EFFECT = 68, 114
 TAUNT_AURA, STEALTH_AURA, SPEED_AURA, MOUNT_AURA = 11, 16, 31, 78
@@ -1144,16 +1203,16 @@ NOT_DPS = {
     "paladin": ["seal_of_justice", "seal_of_light", "seal_of_wisdom"],
     "rogue":   ["redirect"],
     "hunter":  ["flare", "enchanted_flare", "freezing_trap", "frost_trap"],
+    "mage":    ["frost_nova"],
     "druid":   ["entangling_roots", "natures_grasp"],
     "warlock": ["health_funnel", "fel_domination"],
-    "warrior": ["berserker_rage"],
-    "priest":  ["focused_casting", "dark_sacrifice"],
+    "warrior": ["berserker_rage", "demoralizing_shout"],
+    "priest":  ["focused_casting", "dark_sacrifice", "vampiric_embrace"],
 }
 NOT_DPS_ALL = ["grovel"]
 # The queue is a damage queue in every tree, a tank tree included: its list is that talent
 # style's damage order. Presses whose value is threat or mitigation leave the tank lists and the
-# pool (the tank sims lead with them); tank play belongs to the defensive queue. A damage
-# tree keeps one its guides list (Demoralizing Shout upkeep in Arms and Fury).
+# pool (the tank sims lead with them); tank play belongs to the defensive queue.
 TANK_ONLY = {
     "warrior": ["shield_block", "defensive_stance", "sunder_armor", "demoralizing_shout"],
     "paladin": ["holy_shield"],
@@ -1291,7 +1350,7 @@ def condition_coverage(gates, path=""):
         elif kind in ("power", "execute", "health") and gate.get("op") not in ("<", "<=", ">", ">="):
             status, reason = "partial", "runtime supports threshold operators only"
         elif kind in ("known", "stealth", "targets", "totem", "near", "swing", "hit",
-                      "resource", "power", "execute", "health", "cd", "prev", "starved"):
+                      "resource", "power", "execute", "health", "cd", "prev", "starved", "cast"):
             status, reason = "fully supported", "runtime evaluator exists; live unknowns remain possible"
         else:
             status, reason = "partial", "no confirmed runtime evaluator"
@@ -1355,7 +1414,6 @@ def main():
                     cooldown = PUSHBACK_MAX_CD
                 if cooldown < PUSHBACK_MAX_CD:
                     pushback_damage[sid] = cooldown
-        # A damage tree may still list one by guide (Demoralizing Shout upkeep): it rejoins below.
         for name in TANK_ONLY.get(cls, []):
             if name in chains:
                 pool.discard(rank1(chains[name]))

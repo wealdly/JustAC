@@ -48,11 +48,12 @@ def test_preparation_refresh_window():
         p = lua.globals().P
         query = lua.globals().Query
         aura = lua.globals().Aura
-        for duration, boundary in ((8, 2), (30, 7.5), (60, 10), (120, 10)):
+        # The shared window: 30% of the duration, capped by the solo fight (30s).
+        for duration, boundary in ((8, 2.4), (30, 9), (60, 18), (120, 30)):
             aura(duration, boundary + 0.01)
-            assert seq(query()) == [], "a fresh short buff must not use the long upkeep window"
-            aura(duration, boundary)
-            assert seq(query()) == [pick], (duration, boundary, "refresh at the bounded threshold")
+            assert seq(query()) == [], "a buff that outlasts the next fight is not refreshed"
+            aura(duration, boundary - 0.01)
+            assert seq(query()) == [pick], (duration, boundary, "refresh inside the shared window")
             assert p.IsPreparationFamilyActive(pick) is True, "refresh does not redefine aura presence"
             assert p.IsPreparationFamilySatisfied(pick) is False, "the active member may refresh OOC"
             assert p.IsPreparationFamilySatisfied(alternate) is True, "refresh never replaces an active alternative"
