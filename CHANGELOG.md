@@ -3,6 +3,47 @@
 
 ## [Unreleased]
 
+## [6.4.1] - 2026-11-18
+
+### Forever: queue behavior
+
+- Fights against two or more enemies now follow each talent tree's own priority order. Before, area and unclassified abilities (including the wand) could be shown ahead of your main attacks.
+- When several enemies are on you and you look away for a moment, the queue keeps its multi-target order for up to four seconds instead of switching to single-target abilities. It follows newly detected enemies promptly and drops the old count when combat ends.
+- An attack that is already switched on (Attack, Auto Shot, wand Shoot) no longer takes a place in the queue, since pressing it again would only switch it off. It comes back as soon as it stops. When it is your best attack, the first slot shows WAIT so you keep attacking.
+- Heroic Strike, Cleave and Raptor Strike: once queued, the ability stays in the first slot with its swing timer until the swing lands, instead of being replaced by WAIT or dropping off the end of the queue. An ability you can press during that swing still comes first.
+- Turning off proc priority for an ability now applies to every rank of it.
+
+### Forever: damage and heals over time
+
+- Solo against a single ordinary enemy at or below your level, damage over time effects are now offered only early in the fight, when they still have time to do their damage. Tougher fights (elites, bosses, higher-level enemies, packs) are unchanged. Spells that are mostly an immediate hit, such as Fireball and Moonfire, are not affected.
+- A damage over time effect you just applied is less often suggested again because some other attack was missed, parried or dodged at about the same moment.
+- The queue now learns when a particular kind of enemy is immune to one of your damage over time spells, and stops suggesting the spell against that kind of enemy in later fights. A miss or a resist is not treated as immunity. With a pet or in a group, it confirms the result on two different enemies first. If the spell is later seen to work on that kind of enemy, it is suggested again; that requires tracking the spell in the Cooldown Manager.
+- Priests: Devouring Plague is now tracked like your other damage over time spells, including through the Cooldown Manager when you track it there.
+- Priests and druids: after you cast Renew or Rejuvenation on yourself, the defensive queue moves it behind your other ready heals until it has finished, instead of suggesting it again while it is still healing you.
+
+### Forever: casters with a wand
+
+- While you have mana to spare, your filler spell is shown ahead of the wand whenever it is the stronger attack. Once mana runs low in a fight, the wand takes over for the rest of that fight.
+- Spells that hit and then burn (Fireball, Pyroblast, Holy Fire) are now weighed against your wand like other attack spells. Before, they always stayed ahead of the wand, even while an enemy was hitting you through every cast.
+
+### Forever: priority lists
+
+- Druids (Feral): Claw can now lead the queue as your basic attack in Cat Form.
+- Hunters: a sting that misses, or hits an enemy immune to it, is now noticed when fired from range. A missed sting is suggested again.
+- Mages: abilities that depend on the Heating Up, Improved Scorch and Arcane Concentration talents now recognize them, so the queue follows the talented order for Pyroblast, Scorch, Combustion, Fire Blast, Arcane Missiles and the other affected spells. Arcane Missiles now responds to Missile Barrage; before, it was never suggested.
+- Mages (Arcane): before you learn Arcane Blast, Fireball is your filler instead of the wand.
+- Mages and warriors: single-target abilities such as Pyroblast, Fire Blast, Arcane Missiles, Scorch and Heroic Strike no longer drop down the queue for the first moment of a pull, or while no nearby enemy is attacking you yet.
+- Priests (Discipline and Holy): Mind Blast is now part of the damage queue, after your damage over time spells and ahead of Holy Fire and Smite.
+- Rogues (Assassination and Combat): Ambush now opens from stealth, ahead of Garrote and Cheap Shot. Ambush itself needs a dagger in your main hand and a position behind the target.
+- Shamans (Enhancement, and shamans without talent points): Earth Shock now appears as a filler after Lightning Bolt when you are outside an instance fighting an ordinary enemy that has not cast anything. It stays held back for interrupts in instances, against elites and bosses, and against any enemy that has started casting. Because the shocks share a cooldown, it also waits until Flame Shock has more than that cooldown left on the target, so the Flame Shock refresh is never delayed.
+- Warlocks: before a pull, the suggested opening cast is now whichever of Corruption, Immolate and Shadow Bolt does the most damage at your current ranks. Before, Corruption and Immolate were never considered as openers. Corruption only counts while it still has a cast time.
+- Warlocks (Affliction, and warlocks without talent points): in combat, Immolate can now lead the queue when it is missing from your target, after Bane of Agony and Corruption. Before, it was shown but never offered first.
+- Warlocks (Demonology): Searing Pain now recognizes the Demonic Brand talent.
+- Warriors: before a pull, Charge now comes ahead of Shoot Gun, Shoot Bow, Shoot Crossbow and Throw, since shooting first starts the fight and leaves Charge unusable. Ranged attacks still appear in combat to finish an enemy that runs away.
+- Warriors: against three or more enemies, Rend is no longer suggested in any talent tree, so your rage stays available for Thunder Clap. Rend is still suggested against one or two enemies.
+- Warriors (Protection): Sunder Armor is now an early threat-building attack. It is suggested once on an ordinary solo target; group and tougher fights can call for more stacks, up to its usual limit.
+- Warriors (Protection): Hamstring is now only suggested to finish a dying enemy. Before, it was suggested whenever you had rage to spare, which kept Heroic Strike from ever being reached.
+
 ## [6.4.0] - 2026-11-17
 
 ### Buffs

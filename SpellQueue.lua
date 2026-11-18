@@ -473,6 +473,9 @@ local function PassesSpellFilters(spellID, profile)
     return result
 end
 
+-- Declared here, above its first reader: ProcPriorityEnabled's rank-chain lookup needs it.
+local RotationImport = LibStub("JustAC-RotationImport", true)
+
 -- Rotation filter: availability + redundancy only.
 -- Skips usability so on-CD spells reach the categorization pass for
 -- de-prioritization instead of being filtered out entirely.
@@ -490,9 +493,17 @@ local function PassesRotationFilters(spellID, profile, sourceID)
         and SpellDB.GetForeverAbilityRole(spellID)
     local totemSlot = foreverAutomatic and SpellDB and SpellDB.GetForeverTotemSlot
         and SpellDB.GetForeverTotemSlot(spellID)
+    -- A role keeps a spell out of the automatic queue, "mixed" excepted. A utility-role
+    -- interrupt that also deals damage may fill where holding it buys nothing
+    -- (SpellQueue._InterruptFreeForDamage, Forever context stages).
+    local reserved = false
+    if role and role ~= "mixed" then
+        reserved = not (role == "utility" and SpellQueue._InterruptFreeForDamage ~= nil
+                        and SpellQueue._InterruptFreeForDamage(spellID))
+    end
     local result = (BlizzardAPI.IsSpellAvailable(spellID)
             or (sourceID and sourceID ~= spellID and BlizzardAPI.IsSpellAvailable(sourceID)) or false)
-       and not (role and role ~= "mixed")
+       and not reserved
        and not (totemSlot and BlizzardAPI.IsTotemSlotOccupied(totemSlot) ~= false)
        and SpellQueue.ResolvePetRecoveryPick(spellID, profile.spellBlacklist) == spellID
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
@@ -767,6 +778,11 @@ local DOT_MIN_TARGET_PCT = 35
 -- WoW Forever: a normal (not boss, elite or pack) target while grouped dies too fast for a
 -- DoT that does its damage over time; set once per build by the context stage.
 local shortGroupFight = false
+-- A fast solo fight: one regular enemy at or below my level, alone. Level and kind stand in
+-- for kill time (2026-11-18 simulation: a damage over time started late on such a target does
+-- not tick out). There a new one starts only while the target is not confirmed below this.
+local FAST_DOT_MIN_TARGET_PCT = 70
+local fastSoloFight = false
 -- WoW Forever keeps the list stable: a wait that ends within one global cooldown (the GCD,
 -- a lockout after a shot, an auto-repeat timer) keeps an entry's place instead of sinking it.
 -- One GCD is the length last measured in game (BlizzardAPI.GetGCDLength, haste included);
@@ -847,6 +863,10 @@ local function ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxO
         return RANK_SINK
     end
     if not ctxArch then return ARCH_UNK end   -- no context to match against: uniform neutral
+    -- No game pick (WoW Forever): the context is only the enemy count, which already chose the
+    -- list tier, and the archetype tags are generated from Retail spell data. The tier list's
+    -- own order stands; the confirmed reads above (execute, dying target, out of melee) remain.
+    if not BlizzardAPI.HasGamePick() then return ARCH_UNK end
     local dist = 0
     local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(spellID)
     local pat = pattern(arch, range)
@@ -979,7 +999,6 @@ end
 --- closest to what Assisted Combat is recommending surfaces first; SimC mode refines that
 --- ordering with the theorycraft rank as a tiebreaker within each fit. ctxArch is nil when
 --- the AC pick is untagged → uniform rank → no reorder.
-local RotationImport = LibStub("JustAC-RotationImport", true)
 
 -- True if any positive SimC buff-window gate is active (engine-truth via the
 -- duration-object probe). A ranked ability with its window up promotes like a proc.
@@ -1299,6 +1318,24 @@ end
 
 SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simcgates)
 
+local function IsStackPayoffContext()
+    if BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true then return true end
+    if BlizzardAPI.GetContentType then
+        local ok, content = pcall(BlizzardAPI.GetContentType)
+        if ok and not BlizzardAPI.IsSecretValue(content)
+           and (content == "dungeon" or content == "raid") then return true end
+    end
+    local ok, classification = pcall(UnitClassification, "target")
+    if ok and not BlizzardAPI.IsSecretValue(classification)
+       and (classification == "elite" or classification == "rareelite"
+            or classification == "worldboss") then return true end
+    if BlizzardAPI.GetTargetLevelDelta then
+        local delta = BlizzardAPI.GetTargetLevelDelta()
+        if type(delta) == "number" and delta >= 1 then return true end
+    end
+    return false
+end
+
 -- Stealth gate (`stealthed.rogue`, or a SimC variable that is purely stealth states). The
 -- game answers IsStealthed plainly in combat, and it covers Stealth, Vanish, Shadow Dance,
 -- Subterfuge, Prowl and Shadowmeld - the same set SimC means. neg = "not while stealthed".
@@ -1388,7 +1425,13 @@ local function GateVerdict(g, ctx)
     if t == "hit" then return SpellQueue._BeingHit ~= nil and SpellQueue._BeingHit() == true end
     if t == "targets" then
         local count = BlizzardAPI.GetEngagedEnemyCount and BlizzardAPI.GetEngagedEnemyCount()
-        if not count or count <= 0 then return false end
+        if not count then return false end
+        -- Zero is "no visible enemy has us on its threat list": the first second of a pull,
+        -- or the enemy fighting us has no nameplate. That is no evidence of a pack, so it
+        -- reads as one enemy, as the context choice already does: "at least N" still
+        -- fails, "fewer than 3" and "at most 1" hold. Measured 2026-11-18: every in-combat
+        -- drop to zero in nine sessions came from a count of one.
+        if count < 1 then count = 1 end
         return ResourceGateHolds(g, count)
     end
     if t == "totem" then
@@ -1471,15 +1514,30 @@ local function GateVerdict(g, ctx)
                 return true
             end
         end
+        local stackGate = g
+        local applicator = ctx.stackApplicator
+        local ownGate = applicator and g.id and (g.id == applicator
+            or (RotationImport and RotationImport.RankBase
+                and RotationImport.RankBase(g.id) == RotationImport.RankBase(applicator)))
+        if ownGate and g.tgt and g.id and g.op == "<" and g.n == 1
+           and not SpellQueue._rotationIsCustom and not BlizzardAPI.HasGamePick()
+           and SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(g.id)
+           and SpellDB.GetStackingMax and IsStackPayoffContext() then
+            local maxStacks = SpellDB.GetStackingMax(g.id)
+            if type(maxStacks) == "number" and maxStacks > g.n then
+                stackGate = {id = g.id, op = g.op, n = maxStacks}
+            end
+        end
         local holds
         if g.id and g.op and g.n and BlizzardAPI.GetAuraStackAtLeast
            and not (g.tgt and not UnitExists("target")) then
-            holds = StackHolds(g.tgt and "target" or "player", g)
+            holds = StackHolds(g.tgt and "target" or "player", stackGate)
         end
         -- Target stacks unreadable: my own landed applications, counted (Sunder Armor).
         if holds == nil and g.tgt and g.id and g.op and g.n and DotTracker and DotTracker.GetOwnStacks
            and UnitExists("target") then
-            holds = CompareOp(DotTracker.GetOwnStacks(BlizzardAPI.GetDisplaySpellID(g.id)), g.op, g.n)
+            holds = CompareOp(DotTracker.GetOwnStacks(BlizzardAPI.GetDisplaySpellID(g.id)),
+                              stackGate.op, stackGate.n)
         end
         if holds == nil and g.required then return false end
         return holds
@@ -1528,6 +1586,14 @@ local function GateVerdict(g, ctx)
     -- Applications, not aura prerequisites (Forever): a DoT that does its damage over time is
     -- not started where it cannot tick out, in a short group fight or on a non-boss target
     -- already below DOT_MIN_TARGET_PCT. A big upfront hit (frontal) still pays.
+    -- In a fast solo fight the floor is higher and only a spell that is mostly its hit skips it.
+    if fastSoloFight and (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
+       and not BlizzardAPI.HasGamePick()
+       and not (SpellDB and SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(g.id))
+       and BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
+       and BlizzardAPI.IsUnitHealthBelow("target", FAST_DOT_MIN_TARGET_PCT) == true then
+        return false
+    end
     if (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
        and not BlizzardAPI.HasGamePick()
        and not (SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(g.id)) then
@@ -1581,12 +1647,13 @@ SpellQueue._GateVerdict = GateVerdict          -- diagnostics (/jac inspect simc
 --- gate is positively confirmed to hold. The blocking reading fails OPEN (unknown does not
 --- block), which is right for sinking an entry and wrong for seating one in slot 1.
 --- Reached FROM the build path when the gap-filling lead mode is on, so keep it cheap.
-local function GatesConfirmed(gates, resCount, resName, resMax)
+local function GatesConfirmed(gates, resCount, resName, resMax, applicator)
     if not gates then return true end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
     gateCtx.skipResource, gateCtx.strict, gateCtx.pointCap = false, true, nil
     gateCtx.skipRefresh = nil
     gateCtx.auraReads = nil
+    gateCtx.stackApplicator = applicator
     for i = 1, #gates do
         if GateVerdict(gates[i], gateCtx) ~= true then return false end
     end
@@ -1656,13 +1723,14 @@ end
 --- Second return: a top-level "at least N points" gate is what blocks - more points
 --- are the prerequisite, so the builder that makes them should come first.
 --- Third return: a confirmed contextual veto that a proc glow must not override.
-local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource, pointCap, skipRefresh, readCache)
+local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource, pointCap, skipRefresh, readCache, applicator)
     if not gates then return false, false end
     gateCtx.resCount, gateCtx.resName, gateCtx.resMax = resCount, resName, resMax
     gateCtx.skipResource, gateCtx.strict = skipResource and true or false, false
     gateCtx.pointCap = pointCap
     gateCtx.skipRefresh = skipRefresh
     gateCtx.auraReads = readCache
+    gateCtx.stackApplicator = applicator
     local blocked, pointsShort, procBlocked = false, false, false
     for i = 1, #gates do
         local g = gates[i]
@@ -1815,6 +1883,8 @@ end
 -- elite. Release only on positive encounter evidence: zero engaged enemies at a pull
 -- boundary is not proof of a single-target fight. targetOnly: the TARGET must last (a slow
 -- payoff on it alone: Bane of Doom, an armor reduction), so a pack of trash does not count.
+-- The relative-level signal is deliberately limited to these payoffs, not ordinary damage
+-- DoTs: withholding a DoT that is a build's primary damage would violate the damage-only queue.
 local function IsWorthwhileFight(b, targetOnly)
     if not targetOnly and b.inCombat and not BlizzardAPI.IsSecretValue(b.ctxEnemies)
        and type(b.ctxEnemies) == "number" and b.ctxEnemies >= 2 then return true end
@@ -1828,6 +1898,13 @@ local function IsWorthwhileFight(b, targetOnly)
         if classOk and not BlizzardAPI.IsSecretValue(classification)
            and (classification == "elite" or classification == "rareelite"
                or classification == "worldboss") then return true end
+        if targetOnly and BlizzardAPI.GetTargetLevelDelta then
+            local levelDelta = BlizzardAPI.GetTargetLevelDelta()
+            if type(levelDelta) == "number" then
+                if levelDelta >= 1 then return true end
+                if levelDelta <= -1 then return false end
+            end
+        end
     end
     return false
 end
@@ -1875,6 +1952,15 @@ local function HoldAutomaticBurst(spellID, b)
     if SpellQueue._lowValueTarget then worthwhile = false end
     if SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID) then
         if SpellQueue._lowValueTarget then return true end
+        -- A threat-building armor reduction (Sunder Armor) is useful at once to a tank, so a
+        -- tank tree does not hold it for the long-fight threshold. Any other tree does: as
+        -- damage, one application costs a global cooldown and rage it does not pay back on an
+        -- ordinary target (2026-11-18 simulation: 4 to 5% slower at level 40).
+        if SpellDB.GetThreatRole and SpellDB.GetThreatRole(spellID) == "boost" and SpellDB.IsTankTree
+           and SpellDB.IsTankTree(spec, RotationImport and RotationImport.GetForeverTree
+                                        and RotationImport.GetForeverTree()) then
+            return false
+        end
         local lasting = b.ctxTargetWorthwhile
         if lasting == nil then lasting = IsWorthwhileFight(b, true) end
         return not lasting
@@ -2105,6 +2191,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     b.pullOpenerID = nil
     b.targetSetupID = nil
     b.automaticBurstHeld = false
+    b.droppedToggle, b.toggleLeadWait, b.toggleLeadNext, b.queuedSwingID = nil, nil, nil, nil
     -- Unpack the build context once; the body below is unchanged from the
     -- 18-positional-argument era.
     local profile, blacklist = b.profile, b.blacklist
@@ -2322,6 +2409,12 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         positioningOpener = ok and not BlizzardAPI.IsSecretValue(harmful) and harmful == true
                     end
                     local runningSwing = BlizzardAPI.RunningAutoSwing(displayID)
+                    -- An attack that is already switched on (Attack, Auto Shot, wand Shoot) takes
+                    -- no slot: pressing it again only switches it off. It returns once it stops.
+                    -- The weapon filler keeps its comparison and leaves the queue after it.
+                    local runningToggle = (displayID == AUTO_ATTACK_SPELL and runningSwing == 0)
+                        or runningSwing == 2
+                    if nextSwing and runningSwing == 0 then b.queuedSwingID = displayID end
                     -- My List Leads: slot 1 is ours, so an entry only the GAME can time
                     -- (delegated) may not take it on static rank alone - measured on
                     -- Subtlety, the queue led with Shuriken Storm at 7 combo points while the
@@ -2347,7 +2440,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     local gateBlocked, pointsShort, procGateBlocked = false, false, false
                     if simcRec then
                         gateBlocked, pointsShort, procGateBlocked = SimcGateBlocks(gates, resCount, resName, resMax,
-                            dialSet, PointGateCap(displayID, resName, ctxPointCap), alwaysShow, readCache)
+                            dialSet, PointGateCap(displayID, resName, ctxPointCap), alwaysShow, readCache, displayID)
                     elseif simcCtx == "st" and contextOrder ~= "off" and not SpellQueue._rotationIsCustom
                        and not alwaysShow and RotationImport and RotationImport.IsWideOnly
                        and RotationImport.IsWideOnly(displayID) then
@@ -2361,7 +2454,11 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         and (not simcRec or simcRec.delegated
                              or (HasPositiveBuffGate(simcRec.gates) and not windowUp))
                     local probeBucket
-                    if not b.targetSetupID and ready == true and usable == true and not notEnough
+                    if runningToggle and displayID ~= b.weaponFillerID then
+                        addedSpellIDs[spellID], addedSpellIDs[displayID] = nil, nil
+                        probeBucket = "running"
+                        b.droppedToggle = true
+                    elseif not b.targetSetupID and ready == true and usable == true and not notEnough
                        and not held and not locLocked and not missingResource and not burstHeld
                        and not castBarred and not gateBlocked and not runningSwing
                        and abilityRange == true and SpellQueue._IsTargetSetupOpener(displayID, b) then
@@ -2459,14 +2556,13 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         -- No game pick only (Forever): the list leads there, so slot 1 is the
                         -- first sunk entry when nothing is ready. Wasted presses trail waits.
                         -- Out of range is wasted too: Auto Shot inside its minimum range must not
-                        -- head the sunk spells over ones that are merely on cooldown. So is a
-                        -- running Attack (pressing it switches it off); a running Auto Shot is
-                        -- not, its timer leads the sunk spells so a hunter knows when to stand still.
+                        -- head the sunk spells over ones that are merely on cooldown. A queued
+                        -- next-swing attack is not wasted: it is what happens next.
                         if not BlizzardAPI.HasGamePick()
                            and ((simcRec and (SimcNegativeBuffBlocks(simcRec.gates, readCache)
                                 or DotGateBlocks(simcRec.gates, readCache)))
                                 or outOfRange or meleeUnconfirmed or burstHeld
-                                or runningSwing == 0
+                                or (runningSwing == 0 and not nextSwing)
                                 -- Offered only when its conditions hold (Life Tap): when they do
                                 -- not, it trails, never parked in slot 2 as a "soon". Holding
                                 -- conditions and short of a cost, it waits like any other.
@@ -2481,6 +2577,12 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         normalRank[normalCount] = rankOf(spellID, simcRec) + (leadBarred and LEAD_BARRED_PENALTY or 0)
                         if positioningOpener then
                             normalRank[normalCount] = normalRank[normalCount] - LEAD_BARRED_PENALTY
+                            -- A ready spell that carries the caster in (Charge) leads any pull
+                            -- opener: a shot that starts the fight first leaves it unusable.
+                            if abilityRange ~= false and SpellDB.LandsAtTarget
+                               and SpellDB.LandsAtTarget(displayID) then
+                                normalRank[normalCount] = -LEAD_BARRED_PENALTY - 2
+                            end
                         end
                         if pullSpell then
                             normalRank[normalCount] = -1
@@ -2550,13 +2652,35 @@ local function CategorizeAndAssembleRotation(rotationList, b)
             addedSpellIDs[b.weaponFillerID] = true
         end
         spellCount = AppendRankedBucket(fillers.ids, fillers.ranks, fillers.count, recommendedSpells, spellCount, maxIcons)
+        -- A running weapon filler leaves the queue; leading, it means "keep attacking" (WAIT).
+        if b.weaponFillerRunning then
+            for i = 1, spellCount do
+                if recommendedSpells[i] == b.weaponFillerID then
+                    for k = i, spellCount - 1 do recommendedSpells[k] = recommendedSpells[k + 1] end
+                    recommendedSpells[spellCount] = nil
+                    spellCount = spellCount - 1
+                    b.droppedToggle = true
+                    if i == 1 then
+                        b.toggleLeadWait = true
+                        b.toggleLeadNext = recommendedSpells[1]
+                    end
+                    break
+                end
+            end
+        end
         local bestRank
         for i = 1, fillers.count do
             if not bestRank or fillers.ranks[i] < bestRank then
                 bestRank, lastCtx.weaponID = fillers.ranks[i], fillers.ids[i]
             end
         end
-        if lastCtx.weaponID == b.weaponFillerID then
+        if fillers.manaPlenty then
+            if lastCtx.weaponID == b.weaponFillerID then
+                lastCtx.weaponReason = "weapon filler; spell not ahead at high mana"
+            else
+                lastCtx.weaponReason = "spell ahead at high mana"
+            end
+        elseif lastCtx.weaponID == b.weaponFillerID then
             lastCtx.weaponReason = "weapon filler; spell advantage below 20%"
         else
             lastCtx.weaponReason = "spell has at least 20% DPS advantage"
@@ -2573,7 +2697,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
         end
     end
     b.foreverWaitEligible = BlizzardAPI.IsForever() and sinkCooldowns and contextOrder ~= "off"
-        and spellCount == 0 and cooldownCount > 0
+        and spellCount == 0 and (cooldownCount > 0 or b.droppedToggle == true)
     -- Regeneration/cooldown waits precede unmet class-resource prerequisites. Wasted
     -- presses (an active buff/DoT, a running Attack, or a range failure) trail both.
     SpellQueue._OrderResourceWaits(cooldownSpells, cooldownCount, unavailableTier, sunkSet)
@@ -2755,6 +2879,15 @@ function SpellQueue._StageContext(b)
     end
     shortGroupFight = inCombat and b.ctxWorthwhile == false and BlizzardAPI.IsGrouped() == true
     lastCtx.shortGroupFight = shortGroupFight
+    -- Every clause is a positive read: an unknown level, kind, group state or enemy count is
+    -- not a fast fight, and neither is a target that has already lasted (ctxTargetWorthwhile).
+    fastSoloFight = false
+    if BlizzardAPI.IsForever() and b.ctxTargetWorthwhile == false and BlizzardAPI.IsGrouped() == false
+       and type(enemies) == "number" and enemies <= 1 and BlizzardAPI.GetTargetLevelDelta then
+        local levelDelta = BlizzardAPI.GetTargetLevelDelta()
+        fastSoloFight = type(levelDelta) == "number" and levelDelta <= 0
+    end
+    lastCtx.fastSoloFight = fastSoloFight
     local lowValue = false
     if b.profile ~= nil and b.profile.prioritizeOwnTargets == true then lowValue = SpellQueue._IsLowValueTarget(b) end
     SpellQueue._lowValueTarget = lowValue
@@ -3176,12 +3309,43 @@ end
 --- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
 --- copy into lastSpellIDs (the shared return buffer).
 function SpellQueue._StageForeverWait(b)
-    if not b.foreverWaitEligible or b.spellCount == 0 then return end
-    if not b.inCombat and not b.automaticBurstHeld and not IsLiveAttackableTarget() then return end
     local queue = b.recommendedSpells
+    local function queuedSwingAt()
+        for i = 1, b.spellCount do
+            local id = queue[i]
+            if type(id) == "number" and id > 0 and SpellDB.NEXT_SWING_SPELLS
+               and SpellDB.NEXT_SWING_SPELLS[id] and BlizzardAPI.RunningAutoSwing(id) == 0 then
+                return i
+            end
+        end
+    end
+    -- A running weapon that out-damages every spell led the queue: keep attacking, unless a
+    -- queued next-swing attack is in progress. A later stage that changed the lead stands.
+    if b.toggleLeadWait and queue[1] == b.toggleLeadNext then
+        local at = queuedSwingAt()
+        if at then
+            local id = queue[at]
+            for i = at, 2, -1 do queue[i] = queue[i - 1] end
+            queue[1] = id
+            return
+        end
+        PlaceQueueSpell(b, SpellQueue.WAIT_SENTINEL, 1)
+        b.foreverWaiting = true
+        return
+    end
+    if not b.foreverWaitEligible then return end
+    if b.spellCount == 0 and not (b.droppedToggle and b.inCombat) then return end
+    if not b.inCombat and not b.automaticBurstHeld and not IsLiveAttackableTarget() then return end
     -- A charge in flight (SpellQueue._LandingInFlight): the swing starts on arrival, so any lead,
     -- a next-swing attack included, keeps slot 1 with its tint instead of a wait.
     if b.landingMelee then return end
+    -- A queued next-swing attack (Heroic Strike) is in progress: it keeps slot 1 with its swing
+    -- timer instead of a wait.
+    local lead = queue[1]
+    if type(lead) == "number" and lead > 0 and SpellDB.NEXT_SWING_SPELLS
+       and SpellDB.NEXT_SWING_SPELLS[lead] and BlizzardAPI.RunningAutoSwing(lead) == 0 then
+        return
+    end
     -- While closing the distance (before the pull, or a gap closer still in flight short of
     -- melee) only a next-swing lead (Heroic Strike) waits: pressing it early just queues onto
     -- a swing that has not started. Any other lead keeps slot 1 with its own range or
@@ -3190,7 +3354,6 @@ function SpellQueue._StageForeverWait(b)
         or (b.ctxOutOfMelee and cachedGapCloserEngine ~= nil
             and cachedGapCloserEngine.InFlight ~= nil and cachedGapCloserEngine.InFlight())
     if closing then
-        local lead = queue[1]
         if not (lead and lead > 0 and SpellDB.NEXT_SWING_SPELLS and SpellDB.NEXT_SWING_SPELLS[lead]) then
             return
         end
@@ -3198,15 +3361,6 @@ function SpellQueue._StageForeverWait(b)
     -- A later injection (such as the burst cue) can supply an actionable spell.
     for i = 1, b.spellCount do
         if not sunkSet[queue[i]] then return end
-        local id = queue[i]
-        local running = BlizzardAPI.RunningAutoSwing(id)
-        if (running == 0 or running == 2) and PushbackRead(BlizzardAPI.AbilityInRange, id) == true
-           and not (SpellDB.NEXT_SWING_SPELLS and SpellDB.NEXT_SWING_SPELLS[id])
-           and not (BlizzardAPI.IsSpellLoCLocked and BlizzardAPI.IsSpellLoCLocked(id))
-           and not HeldByUserHold(id, id, true) then
-            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
-            if usable == true and not notEnough then return end
-        end
     end
     local count = math.min(b.spellCount + 1, b.maxIcons)
     for i = count, 2, -1 do queue[i] = queue[i - 1] end
@@ -3907,7 +4061,7 @@ function SpellQueue.SafeLeadCandidate()
                    and not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(id))
                    and not SpellQueue.IsSpellBlacklisted(id)
                    and not HeldByUserHold(id, id, true)
-                   and (not rec or GatesConfirmed(rec.gates, resCount, resName, resMax)) then
+                   and (not rec or GatesConfirmed(rec.gates, resCount, resName, resMax, id)) then
                     return id, cls
                 end
             end

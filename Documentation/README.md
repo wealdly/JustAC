@@ -16,6 +16,7 @@ module versions, constants, exports and cache invalidation live in code.
 | Lua static checks | [DEV_TOOLING.md](DEV_TOOLING.md#lua-static-analysis) |
 | Runtime test sync | [DEV_TOOLING.md](DEV_TOOLING.md#runtime-test-sync) |
 | Data refresh | [DEV_TOOLING.md](DEV_TOOLING.md#two-client-update-check-and-refresh) |
+| Refining a Forever list: goals, rules, evidence grades, open candidates | [FOREVER_DPS_PRINCIPLES.md](FOREVER_DPS_PRINCIPLES.md) |
 | Forever priority lists, interrupt and soothe tables | [DEV_TOOLING.md](DEV_TOOLING.md#changing-a-forever-priority-list) |
 | Forever rotation guides (launch summaries per tree) | [forever-guides/README.md](forever-guides/README.md) |
 | Lua patterns, modules, options and compile limits | [STYLE_GUIDE_JUSTAC.md](STYLE_GUIDE_JUSTAC.md#module-system-libstub); read only the needed section |

@@ -308,6 +308,80 @@ function CdmAdvisor.StateText(state)
     return L["CDM state unavailable"]
 end
 
+-- ── Coverage report ─────────────────────────────────────────────────────────
+-- Read only (/jac inspect coverage). The Cooldown Manager can track only what Blizzard gave an
+-- aura entry, so each of the player's periodic spells is one of: tracked, hidden (an entry
+-- that could be tracked), hidden by the player, cooldown-only (an entry, but not an aura one)
+-- or unavailable (no entry: cast timing is all there will ever be).
+
+--- The player's own periodic spells from the spellbook, one per rank base:
+--- { [base] = { id, kind } }, kind "dot", "debuff" (a maintained target aura) or "hot".
+local function KnownPeriodicSpells()
+    local out = {}
+    if not (SpellDB and BlizzardAPI and BlizzardAPI.ReadSpellbookSpells) then return out end
+    for _, id in ipairs(BlizzardAPI.ReadSpellbookSpells()) do
+        if not Secret(id) and type(id) == "number" then
+            local kind
+            if SpellDB.IsTargetDot and SpellDB.IsTargetDot(id) then
+                kind = "dot"
+            elseif SpellDB.IsTrackedTargetAura and SpellDB.IsTrackedTargetAura(id) then
+                kind = "debuff"
+            elseif SpellDB.IsPeriodicHeal and SpellDB.IsPeriodicHeal(id) then
+                kind = "hot"
+            end
+            local base = R1(id)
+            if kind and not out[base] then out[base] = { id = id, kind = kind } end
+        end
+    end
+    return out
+end
+
+local KIND_ORDER = { dot = 1, debuff = 2, hot = 3 }
+
+--- state as CdmAdvisor.Status, plus one row per known periodic spell, sorted by kind and name:
+--- { id, kind, name, status, reads, reason }. reads is the tracked icon's live answer (true /
+--- false), nil when it does not answer or the spell is not tracked; reason says why.
+function CdmAdvisor.Coverage()
+    local state = CdmAdvisor.Status()
+    if state ~= "ok" and state ~= "nolayout" then return state, {} end
+    local _, layout = LoadAndSync()
+    local r = Record() or { declined = {} }
+    local homes, tracked = AuraHomes(), TrackedCats()
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    local rows = {}
+    for _, spell in pairs(KnownPeriodicSpells()) do
+        local entries, isTracked, canAdd, playerHid = 0, false, false, false
+        for cid, default in pairs(CdmAdvisor.CooldownIDsFor(spell.id)) do
+            entries = entries + 1
+            local eff, overridden = CdmAdvisor.EffectiveCategory(layout, cid, default)
+            if tracked[eff] then
+                isTracked = true
+            elseif homes[eff] or homes[default] or tracked[default] then
+                if overridden or r.declined[cid] then playerHid = true else canAdd = true end
+            end
+        end
+        local status = "unavailable"
+        if isTracked then status = "tracked"
+        elseif canAdd then status = "hidden"
+        elseif playerHid then status = "hidden-by-you"
+        elseif entries > 0 then status = "cooldown-only" end
+        local row = { id = spell.id, kind = spell.kind, status = status }
+        row.name = C_Spell.GetSpellName(spell.id) or tostring(spell.id)
+        if isTracked and MT and MT.IsTrackedAuraActive then
+            local diagnostic = {}
+            local ok, active = pcall(MT.IsTrackedAuraActive, spell.id, diagnostic)
+            if ok and not Secret(active) then row.reads = active end
+            row.reason = diagnostic.reason
+        end
+        rows[#rows + 1] = row
+    end
+    table.sort(rows, function(x, y)
+        if x.kind ~= y.kind then return KIND_ORDER[x.kind] < KIND_ORDER[y.kind] end
+        return x.name < y.name
+    end)
+    return state, rows
+end
+
 -- ── Writes ──────────────────────────────────────────────────────────────────
 
 local function CanWrite()

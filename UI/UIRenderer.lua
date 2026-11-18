@@ -1308,7 +1308,7 @@ local C_SpellActivationOverlay_IsSpellOverlayed =
 local moveCastClassCache = {}
 -- Auto-repeat shots report cast time 0 but only fire while standing still. The API answers for
 -- known spells; the IDs back it up (Auto Shot, wand Shoot, Throw, bow/gun Shoot).
-local IsAutoRepeatSpell = (C_Spell and C_Spell.IsAutoRepeatSpell) or IsAutoRepeatSpell
+local IsAutoRepeatSpell = C_Spell and C_Spell.IsAutoRepeatSpell
 local AUTO_REPEAT_IDS = { [75] = true, [5019] = true, [2764] = true, [3018] = true }
 local function MoveCastClass(spellID, spellInfo)
     if not spellID then return nil end

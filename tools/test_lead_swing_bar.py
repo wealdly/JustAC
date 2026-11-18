@@ -38,6 +38,8 @@ def main():
         ("window={10,12}", (2, 78), (False, False, None, None), "not leading: no bar"),
         ("window=nil", (1, 78), (False, False, None, None), "no swing running: no bar"),
         ("window={10,12}", (1, 772), (False, False, None, None), "not a next-swing attack: no bar"),
+        ("window={10,12}; queued=0", (1, 78), (True, True, 10, 12),
+         "queued next-swing attack at the lead: show its swing"),
         ("window={10,12}; queued=0", (2, 78), (True, True, 10, 12), "queued anywhere: in progress, as before"),
     ):
         lua.execute("queued, window = nil, nil;" + setup)
@@ -59,6 +61,12 @@ def check_swing_press():
     lua.execute("""
         SpellQueue, sunkSet = {}, {}
         SpellDB = { NEXT_SWING_SPELLS = { [78] = true, [845] = true } }
+        function PlaceQueueSpell(b, id, insertAt)
+            local position = math.min(b.spellCount + 1, b.maxIcons)
+            b.spellCount = position
+            for i = position, insertAt + 1, -1 do b.recommendedSpells[i] = b.recommendedSpells[i - 1] end
+            b.recommendedSpells[insertAt] = id
+        end
         ready, usable, short, range, queued, forever = {}, {}, {}, {}, {}, true
         BlizzardAPI = {
             IsForever = function() return forever end,
@@ -83,10 +91,16 @@ def check_swing_press():
          "an unaffordable, unqueued Heroic Strike does not move"),
         ("ready[12294]=false;b.inCombat=false", [12294, 78, 772], "out of combat: the pull keeps its order"),
         ("ready[12294]=false;forever=false", [12294, 78, 772], "retail: no change"),
+        ("queued[78]=0;b.queuedSwingID=78;b.recommendedSpells={2687,7384,6343};b.spellCount=3;"
+         "b.maxIcons=4;ready[2687]=false",
+         [78, 2687, 7384], "a queued Heroic Strike cut off the queue's end returns to slot 1"),
+        ("queued[78]=0;b.queuedSwingID=78;b.recommendedSpells={12294,7384,6343};b.spellCount=3;"
+         "b.maxIcons=4",
+         [12294, 78, 7384], "an ability pressable during the swing keeps slot 1 over it"),
     ):
         lua.execute("""
             ready, usable, short, range, queued, forever, sunkSet = {}, {}, {}, {}, {}, true, {}
-            b = { inCombat = true, recommendedSpells = {12294, 78, 772}, spellCount = 3 }
+            b = { inCombat = true, recommendedSpells = {12294, 78, 772}, spellCount = 3, maxIcons = 4 }
         """ + setup)
         lua.execute("SpellQueue._StageSwingPress(b)")
         got = [lua.eval("b.recommendedSpells")[k] for k in (1, 2, 3)]

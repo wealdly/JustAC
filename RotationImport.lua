@@ -214,6 +214,12 @@ function RotationImport.IsClassAbility(id)
     return set[RotationImport.RankBase(id)] == true
 end
 
+--- The set of this class's ability ids (rank 1), or nil when there is no data (retail).
+--- Read-only: callers must not change it (diagnostics, character export).
+function RotationImport.ClassAbilityIds()
+    return classAbilities[CurrentSpecKey()]
+end
+
 --- The Forever tree currently installed for this character, or nil (diagnostics).
 function RotationImport.GetForeverTree()
     local specKey = CurrentSpecKey()

@@ -32,6 +32,11 @@ not the plan.
 - Combat-signal research: [Forever combat signals](FOREVER_COMBAT_SIGNALS.md)
   records existing high-value bridges and unverified next experiments. Source
   annotations alone are not combat validation.
+  The [2026-11-18 mob-profile capture](FOREVER_COMBAT_SIGNALS.md#6-target-profile-and-kill-time-probe-2026-11-18)
+  recorded plain GUIDs in and out of combat on two Forever NPC types; maximum
+  health remained secret in both states. Older Retail GUID restrictions must
+  not be treated as a universal Forever rule. Every read still needs call and
+  secrecy guards; dungeon/group behavior was not established by that capture.
 
 - Prefer existing capability helpers; this document does not prescribe a new
   capability module or client-specific TOC split.

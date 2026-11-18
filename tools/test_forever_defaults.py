@@ -140,8 +140,12 @@ def main():
               f"Forever: {name} is reserved from automatic damage queues")
     check(sdb.IsDelayedPayoff(603) is True and sdb.IsDelayedPayoff(980) is False,
           "Forever: Bane of Doom pays off only in long fights; Bane of Agony ticks at once")
+    for sid, name in ((172, "Corruption"), (589, "Shadow Word: Pain"),
+                      (980, "Bane of Agony"), (772, "Rend")):
+        check(sdb.IsTargetDot(sid) is True and sdb.IsDelayedPayoff(sid) is False,
+              f"Forever: {name} remains an ordinary damage-over-time priority, not a slow-payoff hold")
     check(r.IsDelayedPayoff(603) is False, "retail: no Forever delayed-payoff data")
-    for sid, held, why in ((7386, True, "Sunder Armor: an armor reduction pays off only over a long fight"),
+    for sid, held, why in ((7386, True, "Sunder Armor remains classified as a target armor payoff"),
                            (11597, True, "every Sunder Armor rank"), (770, True, "Faerie Fire"),
                            (704, True, "Curse of Recklessness"), (8647, True, "Expose Armor"),
                            (772, False, "Rend deals its own damage"),

@@ -226,6 +226,11 @@ Seal of Righteousness -> Judgement -> Holy Strike -> Exorcism (Undead/Demon) -> 
 
 ## Priest - Discipline
 
+**Default queue (2026-11-17):** Discipline and Holy list Mind Blast after the damage over time
+and before Holy Fire and Smite. Their Smite sim has none, but every priest learns it at 10 and
+the Method leveling guide (https://www.method.gg/wow-forever/wow-forever-priest-leveling-guide-and-talents,
+updated 2026-11-14, read 2026-11-17) casts it on cooldown from 10 in every build.
+
 **Sources**
 
 | site | URL | guide type | stated date / level | fetched |

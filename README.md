@@ -64,8 +64,10 @@ Before pulling, automatic queues without a native game pick keep a ready attack
 ahead of DPS buffs even when out of range, as a cue to move closer. Combat
 range ordering and custom/exact lists are unchanged.
 
-On Forever, automatic filler can favor a free wand or an in-reach melee attack
-until a supported cast offers at least 20% more estimated damage per second.
+On Forever, automatic filler weighs a free wand or an in-reach melee attack
+against your casts. While you have mana to spare, a supported cast leads whenever
+its estimated damage per second is ahead. Once mana runs low in a fight, the free
+attack is favored for the rest of that fight until a cast offers at least 20% more.
 The comparison uses readable pre-combat stats and observed cast pushback;
 unknown estimates and custom/exact ordering retain their usual behavior.
 
@@ -164,7 +166,7 @@ What works differently on Forever:
 - **Tiered damage finishers** - on normal enemies, aim for fewer combo points as the enemy weakens, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
 - **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
 - **Auto Shot and Attack** trade places as you move in and out of melee range.
-- **Damage over time** is timed from your own casts, including your opener: it steps back while it ticks, comes back as it runs out, and isn't suggested on a target about to die. Tracking it in the Cooldown Manager makes this exact.
+- **Damage over time** is timed from your own casts, including your opener: it steps back while it ticks, comes back as it runs out, and isn't suggested on a target about to die. Solo against one ordinary enemy at or below your level, it is only offered early in the fight. Tracking it in the Cooldown Manager makes this exact.
 - **Resource presses** - Life Tap, Evocation and Innervate come forward when you can't afford your spells; Life Tap, Bloodrage and Hellfire only while your health is above half.
 - **Area abilities** lead when two or more enemies are fighting you; pack attacks such as Thunder Clap lead from three.
 - **Shared resources** - a cheaper ability never spends the rage, energy or mana a higher-priority one is waiting for, and while everything waits the first slot shows what comes next.

@@ -106,6 +106,7 @@ without a concrete new API, composition or contradictory measurement.
 | Lua checks | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#lua-static-analysis) |
 | Runtime test sync | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#runtime-test-sync) |
 | Data refresh | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh) |
+| Refining a Forever list (start here) | [FOREVER_DPS_PRINCIPLES.md](Documentation/FOREVER_DPS_PRINCIPLES.md) |
 | Forever priority lists and interrupt tables | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#changing-a-forever-priority-list) |
 | Captures and release | Relevant section in [DEV_TOOLING.md](Documentation/DEV_TOOLING.md) |
 | Player behavior, configuration, source credits | [README.md](README.md) |

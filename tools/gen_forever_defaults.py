@@ -199,8 +199,13 @@ HEALS = {"victory_rush", "lay_on_hands", "flash_of_light", "holy_light", "desper
          "prayer_of_healing", "chain_heal", "tranquility", "healing_stream_totem"}
 CHANNEL_ATTR1 = 0x4 | 0x40   # SPELL_ATTR1_IS_CHANNELLED / IS_SELF_CHANNELLED
 NEXT_SWING_ATTR0 = 0x4       # SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Raptor Strike, Maul)
-# A DoT: APPLY_AURA (6) of PERIODIC_DAMAGE (3) on the enemy target (6).
-DOT_EFFECT, DOT_AURA, ENEMY_TARGET = "6", "3", "6"
+# A DoT: APPLY_AURA (6) of PERIODIC_DAMAGE (3) on the enemy target (6), or of PERIODIC_LEECH
+# (53): damage that also heals the caster (Devouring Plague, Siphon Life). A channeled leech
+# (Drain Life) is a cast in progress, not a maintained DoT.
+DOT_EFFECT, DOT_AURA, LEECH_AURA, ENEMY_TARGET = "6", "3", "53", "6"
+DOT_AURAS = {DOT_AURA, LEECH_AURA}
+# A heal landing at once (HEAL, 10) and a friendly single target (21): see PURE_HOTS.
+HEAL_EFFECT, ALLY_TARGET = "10", "21"
 ENEMY_AREA_TARGET, PET_TARGET = "15", "5"
 SLOW_AURA = "33"   # MOD_DECREASE_SPEED
 # A HoT: APPLY_AURA (6) of PERIODIC_HEAL (8), on anyone.
@@ -287,6 +292,12 @@ def lua(v):
 
 def class_block(var, table):
     return [f"local {var} = {{"] + [f"    {c.upper()} = {lua(v)}," for c, v in table.items()] + ["}"]
+
+
+# Talent trees whose sim list is a tank's. The queue is a damage queue there too; the runtime
+# reads this only where a threat-building press earns its place for a tank and not for anyone
+# else (Sunder Armor on an ordinary solo target). Shared with gen_forever_rotations.
+TANK_TREES = {"warrior": ["protection"], "druid": ["feral_bear"], "paladin": ["protection"]}
 
 
 def main():
@@ -460,8 +471,9 @@ def main():
     # Target DoTs, every rank with its own duration: the queue times them from the cast
     # (target debuffs are unreadable in combat) and sinks them while they run.
     dot_ids = {int(r["SpellID"]) for r in cfa.rows("SpellEffect") if r["SpellID"].isdigit()
-               and r["Effect"] == DOT_EFFECT and r["EffectAura"] == DOT_AURA
-               and r["ImplicitTarget_0"] == ENEMY_TARGET}
+               and r["Effect"] == DOT_EFFECT and r["ImplicitTarget_0"] == ENEMY_TARGET
+               and (r["EffectAura"] == DOT_AURA
+                    or (r["EffectAura"] == LEECH_AURA and int(r["SpellID"]) not in channeled))}
     # Explicit conditions observe target auras independently of damage classification.
     # Legacy dot gates also retain suppression. Summons use slot state, not target auras.
     # Run gen_forever_rotations.py first.
@@ -499,7 +511,7 @@ def main():
         hit = sum(num(e["EffectBasePointsF"]) for e in es if e["Effect"] == SCHOOL_DAMAGE)
         dur = duration(sid)
         ticks = sum(num(e["EffectBasePointsF"]) * dur / (num(e["EffectAuraPeriod"]) / 1000)
-                    for e in es if e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA
+                    for e in es if e["Effect"] == DOT_EFFECT and e["EffectAura"] in DOT_AURAS
                     and num(e["EffectAuraPeriod"]) > 0)
         return hit / (hit + ticks) if hit + ticks > 0 else 0.0
     class_ids = set().union(*(res.by_class[cls][1] for cls in CLASSES))
@@ -510,10 +522,10 @@ def main():
     # list may still carry a refresh condition on one, and its hit lands on a dying target.
     lines.append("local FRONTAL_DOTS = {")
     for sid in sorted(s for s in shares if shares[s] >= FRONTAL_SHARE):
-        lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')} ({shares[sid]:.0%} upfront)")
+        lines.append(f"    [{sid}] = {shares[sid]:.2f},  -- {names.get(str(sid), '?')} (the hit's share of its damage)")
     lines.append("}")
     def armor_debuff(fx):
-        if any(e["Effect"] in DAMAGE_EFFECTS or (e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA)
+        if any(e["Effect"] in DAMAGE_EFFECTS or (e["Effect"] == DOT_EFFECT and e["EffectAura"] in DOT_AURAS)
                for e in fx):
             return False
         return any(e["Effect"] == DOT_EFFECT and e["EffectAura"] == ARMOR_AURA
@@ -522,7 +534,7 @@ def main():
 
     lines.append("local DELAYED_PAYOFF = {")
     for sid in sorted(sid for sid in class_ids if any(
-            e["Effect"] == DOT_EFFECT and e["EffectAura"] == DOT_AURA
+            e["Effect"] == DOT_EFFECT and e["EffectAura"] in DOT_AURAS
             and num(e["EffectAuraPeriod"]) >= DELAYED_PAYOFF_MS for e in effects.get(str(sid), []))
             or armor_debuff(effects.get(str(sid), []))):
         lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
@@ -627,6 +639,20 @@ def main():
     for sid in sorted(observed_ids):
         lines.append(f"    [{sid}] = {duration(sid):g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
+    # How each tracked target aura's cast reaches the target, every rank: { defense type,
+    # missile speed }. SpellCategories.DefenseType is 1 magic, 2 melee, 3 ranged: only a melee
+    # attack is parried, only a melee or ranged one dodged. SpellMisc.Speed is yards per second,
+    # 0 for a cast that lands at once. The tracker matches a miss or immune result to the cast
+    # by these, since the result event names no attacker.
+    defense = {r["SpellID"]: int(r["DefenseType"] or 0) for r in cfa.rows("SpellCategories")
+               if r.get("DifficultyID", "0") == "0"}
+    lines.append("local AURA_DELIVERY = {")
+    for sid in sorted(dot_ids | observed_ids):
+        kind = defense.get(str(sid), 0)
+        if kind:
+            speed = float((misc.get(str(sid)) or {}).get("Speed") or 0)
+            lines.append(f"    [{sid}] = {{ {kind}, {speed:g} }},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
 
     # Short buffs (rank 1): kept up in combat, so off retail's party-buff and unique-aura
     # lists, which hide their members in combat when buffs cannot be read.
@@ -665,6 +691,24 @@ def main():
         if any(e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == HOT_AURA
                for e in effects.get(str(sid), [])):
             lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # Pure heals over time, every rank with its duration: a friendly single-target periodic
+    # heal with nothing landing at once and no channel (Renew, Rejuvenation). Casting one again
+    # while it ticks on you restarts it and wastes the ticks left, so the defensive queue holds
+    # it for that long after your own cast on yourself. A heal with a direct part (Regrowth)
+    # stays out: its hit is worth pressing whatever is ticking. So does one with a cooldown
+    # (Riptide, whose instant heal is scripted and not in the effect data): the cooldown
+    # already paces it.
+    on_cooldown = {r["SpellID"] for r in cfa.rows("SpellCooldowns")
+                   if int(r.get("RecoveryTime") or 0) > 0 or int(r.get("CategoryRecoveryTime") or 0) > 0}
+    lines.append("local PURE_HOTS = {")
+    for sid in sorted(class_ids):
+        fx = effects.get(str(sid), [])
+        if (sid not in channeled and duration(sid) > 0 and str(sid) not in on_cooldown
+                and any(e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == HOT_AURA
+                        and e["ImplicitTarget_0"] == ALLY_TARGET for e in fx)
+                and not any(e["Effect"] == HEAL_EFFECT for e in fx)):
+            lines.append(f"    [{sid}] = {duration(sid):g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
     # Spells the data limits to some creature types (SpellTargetRestrictions.TargetCreatureType,
     # bit typeID-1: Exorcism hits only Demons and Undead), every rank. With the target's type
@@ -733,6 +777,9 @@ def main():
         "SpellDB.FOREVER_LANDS_AT_TARGET = LANDS_AT_TARGET",
         "SpellDB.FOREVER_ENERGIZE = ENERGIZE",
         "SpellDB.FOREVER_THREAT_ROLES = THREAT_ROLES",
+        "SpellDB.FOREVER_TANK_TREES = {"
+        + ", ".join("%s_F = { %s }" % (cls.upper(), ", ".join("%s = true" % tree for tree in trees))
+                    for cls, trees in sorted(TANK_TREES.items())) + " }",
         "SpellDB.FOREVER_GAINS_OVER_TIME = GAINS_OVER_TIME",
         "SpellDB.FOREVER_SELF_AURA_SECONDS = SELF_AURA_SECONDS",
         "Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)",
@@ -767,10 +814,12 @@ def main():
         "-- Replaces retail's DoT list: its ids and durations are retail's.",
         "SpellDB.RegisterTargetDots(DOTS)",
         "SpellDB.RegisterTargetAuras(TARGET_AURAS)",
+        "if SpellDB.RegisterAuraDelivery then SpellDB.RegisterAuraDelivery(AURA_DELIVERY) end",
         "if SpellDB.RegisterPeriodicRefresh then SpellDB.RegisterPeriodicRefresh(STACKING_AURAS, PERIODIC_HEALS) end",
+        "if SpellDB.RegisterPureHots then SpellDB.RegisterPureHots(PURE_HOTS) end",
         "if SpellDB.RegisterCreatureTypes then SpellDB.RegisterCreatureTypes(CREATURE_TYPES) end",
         "if SpellDB.RegisterSlowingAttacks then SpellDB.RegisterSlowingAttacks(SLOWING_ATTACKS) end",
-        "for id in pairs(FRONTAL_DOTS) do SpellDB.FRONTAL_DOTS[id] = true end",
+        "for id, share in pairs(FRONTAL_DOTS) do SpellDB.FRONTAL_DOTS[id] = share end",
         "for id in pairs(NEXT_SWING) do SpellDB.NEXT_SWING_SPELLS[id] = true end",
         "",
     ])

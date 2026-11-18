@@ -93,16 +93,252 @@ end
 -- pendingCasts: array of { ids, time } awaiting an addedAura match.
 local pendingCasts = {}
 
+--------------------------------------------------------------------------------
+-- Immunity learned per kind of creature (WoW Forever).
+-- A creature's immunities are fixed per creature on the server and are in no client table,
+-- so the first cast on each mob used to be wasted. An IMMUNE result matched to our cast is
+-- remembered by (npc id, spell rank base):
+--   * fighting alone with no pet, one sighting holds the spell back on every mob of that
+--     npc id for the session: nobody else could have caused the result;
+--   * with a pet out, in a group, or when that cannot be read, the result may be theirs (the
+--     event names no attacker), so only the count below is kept;
+--   * sightings on two different mobs are kept in the account saved variables and hold the
+--     spell from then on. Counted, so a single fluke (a shield, an immune phase, another
+--     attacker's result) never counts as knowledge;
+--   * the Cooldown Manager showing the DoT on such a mob, or its aura instance arriving,
+--     forgets the entry: the creature is not immune after all.
+-- The npc id comes from the target GUID, plain in combat on Forever (measured build 70959).
+-- Never generalised to a creature type: only what was seen on that npc id.
+--------------------------------------------------------------------------------
+local NPC_IMMUNE_CONFIRM = 2     -- sightings, each on a different mob, before disk counts
+local NPC_IMMUNE_DB_CAP = 500
+local NPC_SIGHTING_CAP = 2048
+local sessionNpcImmune = {}      -- [npcID] = { [base] = true }
+local countedSightings = {}      -- [guid] = { [base] = true }: one sighting per mob
+local sightingOrder, sightingNext = {}, 1
+local immuneOwner, immuneCache, immuneOrder, immuneSlots, immuneNext
+local currentNPC                 -- npc id of the current target, or nil
+
+local function NpcIdOf(guid)
+    if type(guid) ~= "string" or not (BlizzardAPI and BlizzardAPI.NpcIDFromGUID) then return nil end
+    return BlizzardAPI.NpcIDFromGUID(guid)
+end
+
+--- The saved table (JustACGlobal.dotImmuneNPCs[npcID][base] = sightings) and its owner, or nil.
+local function ImmuneDB()
+    local g = _G.JustACGlobal
+    return g and g.dotImmuneNPCs, g
+end
+
+local function PrepareImmuneDB()
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    if not g.dotImmuneNPCs then g.dotImmuneNPCs = {} end
+    local db = g.dotImmuneNPCs
+    if immuneOwner ~= g or immuneCache ~= db then
+        immuneOwner, immuneCache, immuneOrder, immuneSlots, immuneNext = g, db, {}, {}, 1
+        for npc in pairs(db) do
+            immuneOrder[#immuneOrder + 1] = npc
+            immuneSlots[npc] = #immuneOrder
+        end
+        g.dotImmuneNPCsN = #immuneOrder
+    end
+    return db, g
+end
+
+local function RemoveImmuneNPC(npc)
+    local slot = immuneSlots[npc]
+    if not slot then return end
+    local last = #immuneOrder
+    local moved = immuneOrder[last]
+    if slot ~= last then
+        immuneOrder[slot] = moved
+        immuneSlots[moved] = slot
+    end
+    immuneOrder[last], immuneSlots[npc] = nil, nil
+    if immuneNext > #immuneOrder then immuneNext = 1 end
+end
+
+local function ImmuneBase(spellID)
+    return baseOf(spellID) or spellID
+end
+
+--- Is this spell known not to work on the current target's kind of creature?
+local function NpcImmune(spellID)
+    if not currentNPC then return false end
+    local session, db = sessionNpcImmune[currentNPC], ImmuneDB()
+    local saved = db and db[currentNPC]
+    if not (session or saved) then return false end
+    local base = ImmuneBase(spellID)
+    if session and session[base] then return true end
+    return saved ~= nil and (saved[base] or 0) >= NPC_IMMUNE_CONFIRM
+end
+
+--- Could anyone but us have produced a result on the target? True unless we are known to be
+--- fighting alone with no pet.
+local function OthersAttacking()
+    if not (BlizzardAPI and BlizzardAPI.IsGrouped) or BlizzardAPI.IsGrouped() ~= false then return true end
+    local ok, pet = pcall(UnitExists, "pet")
+    if not ok or (issecretvalue and issecretvalue(pet)) then return true end
+    return pet == true
+end
+
+--- An IMMUNE result was matched to our cast of these ids on the current target.
+local function NoteNpcImmune(ids)
+    if not (currentNPC and currentGUID) then return end
+    local base = ImmuneBase(ids[1])
+    if not OthersAttacking() then
+        local session = sessionNpcImmune[currentNPC]
+        if not session then session = {}; sessionNpcImmune[currentNPC] = session end
+        session[base] = true
+    end
+    local counted = countedSightings[currentGUID]
+    if not counted then
+        if #sightingOrder >= NPC_SIGHTING_CAP then
+            countedSightings[sightingOrder[sightingNext]] = nil
+        end
+        sightingOrder[sightingNext] = currentGUID
+        sightingNext = sightingNext % NPC_SIGHTING_CAP + 1
+        counted = {}
+        countedSightings[currentGUID] = counted
+    end
+    if counted[base] then return end
+    counted[base] = true
+    local db, g = PrepareImmuneDB()
+    local saved = db[currentNPC]
+    if not saved then
+        if #immuneOrder >= NPC_IMMUNE_DB_CAP then
+            local evicted = immuneOrder[immuneNext]
+            db[evicted], immuneSlots[evicted], sessionNpcImmune[evicted] = nil, nil, nil
+            immuneOrder[immuneNext] = currentNPC
+            immuneSlots[currentNPC] = immuneNext
+            immuneNext = immuneNext % #immuneOrder + 1
+        else
+            immuneOrder[#immuneOrder + 1] = currentNPC
+            immuneSlots[currentNPC] = #immuneOrder
+        end
+        saved = {}
+        db[currentNPC] = saved
+        g.dotImmuneNPCsN = #immuneOrder
+    end
+    saved[base] = math.min(NPC_IMMUNE_CONFIRM, (saved[base] or 0) + 1)
+end
+
+--- The spell was seen on a mob of this kind: whatever was learned about it is wrong.
+local function ForgetNpcImmune(spellID)
+    if not currentNPC then return end
+    local base = ImmuneBase(spellID)
+    local session = sessionNpcImmune[currentNPC]
+    if session then session[base] = nil end
+    local db, g = ImmuneDB()
+    local saved = db and db[currentNPC]
+    if saved and saved[base] then
+        saved[base] = nil
+        if not next(saved) then
+            PrepareImmuneDB()
+            db[currentNPC] = nil
+            RemoveImmuneNPC(currentNPC)
+            g.dotImmuneNPCsN = #immuneOrder
+        end
+    end
+end
+
 -- Did it land? UNIT_COMBAT on the target reports a dodge / parry / miss / immune as a plain
--- string in combat (measured on Forever). One that arrives within HIT_WINDOW of a DoT cast,
--- in either order, is taken to be that cast's result.
--- ponytail: an auto attack dodged in the same instant also cancels the timer; the DoT then
--- shows once more, the cheap direction.
+-- string in combat (measured on Forever). One that arrives within the cast's result window
+-- is taken to be that cast's result, with two exceptions (the event names no attacker): a
+-- result the cast cannot produce (a parried or dodged spell), and a result arriving where
+-- one of our own white swings is due to report.
+-- The window depends on how the cast travels (SpellDB.GetAuraDelivery, from the spell data;
+-- timings measured build 70959). A cast with no missile reports in the same instant, in
+-- either event order (5 of 5 melee results at 0.00s): INSTANT_WINDOW. A missile reports when
+-- it arrives (Serpent Sting immune at +0.78s): from the cast to its flight over the spell's
+-- maximum range plus FLIGHT_SLACK. A cast the data does not describe, or a missile whose
+-- range cannot be read, keeps the old HIT_WINDOW both ways.
+-- ponytail: a party member's or pet's miss, a cast landing on our swing (Heroic Strike)
+-- beside a melee DoT, or a missed Auto Shot arriving during a sting's flight still cancels
+-- the timer;
+-- the DoT then shows once more, the cheap direction.
 local MISSED = { DODGE = true, PARRY = true, MISS = true, RESIST = true, EVADE = true,
                  DEFLECT = true, REFLECT = true, IMMUNE = true }
 local HIT_WINDOW = 0.4
-local lastCast        -- { ids, time } of the latest tracked DoT cast
+local INSTANT_WINDOW = 0.1
+local FLIGHT_SLACK = 0.25
+-- The latest tracked DoT cast: { ids, time, before, after (its result window), defense (its
+-- defense type, nil when unknown), missile (it flies), cancelled (a miss already took it) }.
+local lastCast
 local lastMissAt, lastMissKind
+
+-- How good is the evidence behind each EvaluateDot source? "confirmed": the game or its own
+-- aura instance answered. "estimated": our cast time plus a duration, never seen on the
+-- target. "policy": a standing decision (immunity). Anything else is "none".
+-- GetTargetAuraState and the diagnostics share this one table.
+local EVIDENCE = {
+    ["cooldown-manager"] = "confirmed", ["aura-instance"] = "confirmed",
+    ["instance-removed"] = "confirmed", ["engine-refresh"] = "confirmed",
+    ["cast-estimate"] = "estimated", ["cast-pending"] = "estimated",
+    ["estimated-refresh"] = "estimated", ["estimated-expiry"] = "estimated",
+    ["immune-policy"] = "policy", ["immune-known"] = "policy",
+}
+
+-- Session counts of target misses matched to a tracked cast (diagnostics only; nothing
+-- reads them to decide). The match is by timing alone, so three counts mark matches that may
+-- be someone else's attack: grouped, ownSwing (our own melee swing in the same window) and
+-- dodgedMissile (a dodge matched to a missile, which a nearby melee swing explains as well).
+-- Two more count misses in the window that were NOT given to the cast: notOutcome (a result the
+-- cast cannot produce) and toSwing (nearer to our own auto attack). schools counts each
+-- result by the event's school mask, to learn whether the mask separates casts from swings.
+local missStats = { matched = 0, cancelled = 0, restored = 0, immune = 0,
+                    grouped = 0, ownSwing = 0, dodgedMissile = 0, kinds = {},
+                    notOutcome = 0, toSwing = 0, schools = {} }
+-- Which avoidance each defense type allows (SpellCategories.DefenseType: 1 magic, 2 melee,
+-- 3 ranged). A spell is never parried or dodged; a ranged attack is never parried.
+local AVOIDANCE = { DODGE = true, PARRY = true }
+local AVOIDABLE = {
+    [1] = {},
+    [2] = { DODGE = true, PARRY = true },
+    [3] = { DODGE = true },
+}
+-- Results an auto attack can produce, per swing type (0 main hand, 1 off hand).
+-- A white swing reports its result a little AFTER its PLAYER_SWING: 0.34 to 0.47s over 19
+-- swings (builds 70938 and 70959). Results that share a swing's timestamp belong to a cast
+-- landing on that swing (Heroic Strike, Raptor Strike), not to the swing.
+-- Ranged shots are left out: their result arrives after the flight, 0.4 to 1.3s later.
+local SWING_RESULTS = {
+    [0] = { DODGE = true, PARRY = true, MISS = true },
+    [1] = { DODGE = true, PARRY = true, MISS = true },
+}
+local SWING_RESULT_MIN, SWING_RESULT_MAX = 0.3, 0.52
+-- A cast with no missile reports in the same timestamp as its cast event (5 of 5 at 0.000s):
+-- a result this close to such a cast is the cast's, whatever a swing was doing.
+local SAME_INSTANT = 0.02
+local claimedSwing = {}   -- swing start time already given a result, per swing type
+
+--- A spell's plain maximum range in yards, or nil when it cannot be read.
+local function PlainMaxRange(spellID)
+    if not (BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.IsSecretValue) then return nil end
+    local ok, info = pcall(BlizzardAPI.GetCachedSpellInfo, spellID)
+    if not ok or type(info) ~= "table" then return nil end
+    local maxRange = info.maxRange
+    if BlizzardAPI.IsSecretValue(maxRange) or type(maxRange) ~= "number" or maxRange <= 0 then return nil end
+    return maxRange
+end
+
+--- A record of this cast for result matching: its window and what can avoid it.
+local function NewCast(spellID, ids, now)
+    local cast = { ids = ids, time = now, before = HIT_WINDOW, after = HIT_WINDOW }
+    local defense, speed
+    if SpellDB.GetAuraDelivery then defense, speed = SpellDB.GetAuraDelivery(spellID) end
+    if not defense then return cast end
+    cast.defense = defense
+    if not (speed and speed > 0) then
+        cast.before, cast.after = INSTANT_WINDOW, INSTANT_WINDOW
+        return cast
+    end
+    cast.missile = true
+    local maxRange = PlainMaxRange(spellID)
+    if maxRange then cast.before, cast.after = INSTANT_WINDOW, maxRange / speed + FLIGHT_SLACK end
+    return cast
+end
 
 local function GetEntry(spellID)
     local e = applied[spellID]
@@ -171,12 +407,67 @@ function DotTracker.OnCastSucceeded(spellID)
 
     pendingCasts[#pendingCasts + 1] = { ids = ids, time = now }
     PrunePending(now)
-    lastCast = { ids = ids, time = now }
-    if lastMissAt and now - lastMissAt <= HIT_WINDOW then DotTracker.OnTargetCombat(lastMissKind) end
+    lastCast = NewCast(spellID, ids, now)
+    -- A result that arrived just ahead of this cast event: OnTargetCombat applies the window.
+    if lastMissAt then DotTracker.OnTargetCombat(lastMissKind, lastMissAt) end
+end
+
+--- Can this cast produce this result? false only when its defense type rules it out.
+local function CastCanProduce(cast, kind)
+    if not AVOIDANCE[kind] then return true end
+    local allowed = AVOIDABLE[cast.defense]
+    if not allowed then return true end
+    return allowed[kind] == true
+end
+
+--- Is one of our own auto attacks the owner of this result rather than the cast? True when
+--- it arrives where a white swing's result is expected after that swing, unless it shares
+--- the timestamp of a cast with no missile. That swing is then spent: a second result in
+--- the window goes to the cast.
+local function SwingTakes(kind, missAt, cast)
+    if not (BlizzardAPI and BlizzardAPI.GetSwingWindow) then return false end
+    if not cast.missile and math.abs(missAt - cast.time) <= SAME_INSTANT then return false end
+    for swingType = 0, 1 do
+        if SWING_RESULTS[swingType][kind] then
+            local swingAt = BlizzardAPI.GetSwingWindow(swingType)
+            if type(swingAt) == "number" and claimedSwing[swingType] ~= swingAt then
+                local since = missAt - swingAt
+                if since >= SWING_RESULT_MIN and since <= SWING_RESULT_MAX then
+                    claimedSwing[swingType] = swingAt
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+--- Count a matched miss and what makes its attribution doubtful. Plain reads only; a failed
+--- or unreadable read leaves that count alone.
+local function NoteMatchedMiss(cast, kind, now)
+    local stats = missStats
+    stats.matched = stats.matched + 1
+    stats.kinds[kind] = (stats.kinds[kind] or 0) + 1
+    local e = applied[cast.ids[1]]
+    if kind == "IMMUNE" then
+        stats.immune = stats.immune + 1
+    elseif e and e.prevStacks and e.prevStacks > 0 then
+        stats.restored = stats.restored + 1
+    else
+        stats.cancelled = stats.cancelled + 1
+    end
+    if not BlizzardAPI then return end
+    if BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true then stats.grouped = stats.grouped + 1 end
+    local swingAt = BlizzardAPI.GetSwingWindow and BlizzardAPI.GetSwingWindow(0)
+    if type(swingAt) == "number" and math.abs(now - swingAt) <= HIT_WINDOW then
+        stats.ownSwing = stats.ownSwing + 1
+    end
+    if kind == "DODGE" and cast.missile then stats.dodgedMissile = stats.dodgedMissile + 1 end
 end
 
 --- The cast did not land: drop its timer, or for IMMUNE hold it sunk for this target.
 local function Missed(ids, kind)
+    if kind == "IMMUNE" then NoteNpcImmune(ids) end
     for _, id in ipairs(ids) do
         local e = applied[id]
         if kind == "IMMUNE" then
@@ -192,20 +483,49 @@ local function Missed(ids, kind)
     end
 end
 
---- UNIT_COMBAT for the target (the result string only).
-function DotTracker.OnTargetCombat(kind)
+--- UNIT_COMBAT for the target: the result string, and the school mask for the counts only.
+--- missAt is given when a result that arrived before its cast event is replayed.
+--- The result goes to the cast unless the cast cannot produce it or one of our own auto
+--- attacks is the nearer owner; either way the cast stays open for a later result.
+function DotTracker.OnTargetCombat(kind, missAt, school)
     if (issecretvalue and issecretvalue(kind)) or not MISSED[kind] then return end
-    local now = GetTime()
-    lastMissAt, lastMissKind = now, kind
-    if lastCast and now - lastCast.time <= HIT_WINDOW then
-        Missed(lastCast.ids, kind)
-        lastCast, lastMissAt = nil, nil
+    local replayed = missAt ~= nil
+    missAt = missAt or GetTime()
+    if not replayed then
+        lastMissAt, lastMissKind = missAt, kind
+        if type(school) == "number" and not (issecretvalue and issecretvalue(school)) then
+            local key = kind .. "/" .. school
+            missStats.schools[key] = (missStats.schools[key] or 0) + 1
+        end
+    end
+    if not lastCast then return end
+    local sinceCast = missAt - lastCast.time
+    if sinceCast < -lastCast.before or sinceCast > lastCast.after then return end
+    -- A miss already took this cast. Only immunity may still follow in the window (measured:
+    -- another attacker's miss 0.17s ahead of a sting's own immune result), and it wins.
+    if lastCast.cancelled and kind ~= "IMMUNE" then return end
+    lastMissAt = nil   -- judged against this cast: never replayed onto it again
+    if not CastCanProduce(lastCast, kind) then
+        missStats.notOutcome = missStats.notOutcome + 1
+        return
+    end
+    if SwingTakes(kind, missAt, lastCast) then
+        missStats.toSwing = missStats.toSwing + 1
+        return
+    end
+    NoteMatchedMiss(lastCast, kind, missAt)
+    Missed(lastCast.ids, kind)
+    if kind == "IMMUNE" then
+        lastCast = nil
+    else
+        lastCast.cancelled = true
     end
 end
 
 --- Map a confirmed player-debuff instance on the target to the cast that made it.
 local function ConfirmInstance(ids, instanceID)
     instanceToDot[instanceID] = ids
+    ForgetNpcImmune(ids[1])
     for _, id in ipairs(ids) do
         local e = GetEntry(id)
         e.instances[instanceID] = true
@@ -337,6 +657,9 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
     -- is active matters for non-DoT specs and between-target lulls.
     local e = EntryFor(spellID)
     if e and e.immune then return true, "immune-policy" end
+    -- Learned for this kind of creature. The icon read below still runs first: seeing the DoT
+    -- on the target overrules what was learned, and forgets it.
+    local knownImmune = NpcImmune(spellID)
     local tracked, trackedReason
     -- WoW Forever: a DoT the player tracks in the Cooldown Manager is read off Blizzard's own
     -- icon for the current target - it sees a dodge, a dispel and an early fall-off that cast
@@ -355,6 +678,11 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
             trackedReason = "module-unavailable"
         end
         if tracked == true and e then e.cdmSeen = true end
+        if knownImmune then
+            if tracked ~= true then return true, "immune-known", tracked, trackedReason end
+            ForgetNpcImmune(spellID)
+            knownImmune = false
+        end
         -- The icon says only "ticking". With a refresh lead (a cast-time or stacking DoT) the
         -- recast starts before it ends: the engine's timer when we hold the instance, else
         -- our own from the cast.
@@ -376,6 +704,7 @@ local function EvaluateDot(spellID, diagnostic, observation, readCache)
         end
         if tracked ~= nil then return tracked, "cooldown-manager", tracked, trackedReason end
     end
+    if knownImmune then return true, "immune-known", tracked, trackedReason end
     if not e then return false, "untracked", tracked, trackedReason end
     local now = GetTime()
     -- ENGINE TRUTH for the pandemic window, wherever we hold a confirmed instance.
@@ -447,17 +776,21 @@ end
 function DotTracker.GetTargetAuraState(spellID, allowEstimate, readCache)
     if not FOREVER then return nil end
     local active, source = EvaluateDot(spellID, nil, true, readCache)
-    if source == "cooldown-manager" or source == "aura-instance"
-       or source == "instance-removed" or source == "engine-refresh" then
-        return active
-    end
-    if allowEstimate and (source == "cast-estimate" or source == "cast-pending"
-        or source == "estimated-refresh"
-        or source == "estimated-expiry" or source == "immune-policy") then
-        return active
-    end
+    local grade = EVIDENCE[source]
+    if grade == "confirmed" then return active end
+    if allowEstimate and (grade == "estimated" or grade == "policy") then return active end
     return nil
 end
+
+--- The suppression verdict for this DoT with the quality of the evidence behind it:
+--- active, grade ("confirmed" / "estimated" / "policy" / "none"), source. Diagnostics: the
+--- queue reads IsDotActiveOnCurrentTarget, which gives the same `active`.
+function DotTracker.GetDotEvidence(spellID)
+    if not IsTrackedAura(spellID) then return false, "none", "not-tracked" end
+    local active, source = EvaluateDot(spellID)
+    return active, EVIDENCE[source] or "none", source
+end
+
 
 --- Has my DoT on the current target fewer than `seconds` left? true / false / nil (unknown).
 --- Forever only. The engine's own timer when an instance is held (the longest-lived one
@@ -504,6 +837,38 @@ function DotTracker.Reset()
     wipe(byTarget)
     wipe(pendingCasts)
     lastCast, lastMissAt, currentGUID = nil, nil, PlainTargetGUID()
+    currentNPC = NpcIdOf(currentGUID)
+end
+
+--- What has been learned about creature immunity (/jac inspect immunedb): how many npc ids
+--- are saved, the sightings needed to count, the current target's npc id and its entries
+--- as { base, saved = sightings on disk, session = held this session }.
+function DotTracker.GetImmunityInfo()
+    local db, g = ImmuneDB()
+    local entries = {}
+    if currentNPC then
+        local saved = db and db[currentNPC] or {}
+        local session = sessionNpcImmune[currentNPC] or {}
+        for base, sightings in pairs(saved) do
+            entries[#entries + 1] = { base = base, saved = sightings, session = session[base] == true }
+        end
+        for base in pairs(session) do
+            if not saved[base] then entries[#entries + 1] = { base = base, saved = 0, session = true } end
+        end
+        table.sort(entries, function(x, y) return x.base < y.base end)
+    end
+    return (g and g.dotImmuneNPCsN) or 0, NPC_IMMUNE_CONFIRM, currentNPC, entries
+end
+
+--- Throw away everything learned, on disk and for the session.
+function DotTracker.ClearLearnedImmunity()
+    local _, g = ImmuneDB()
+    if g then g.dotImmuneNPCs, g.dotImmuneNPCsN = nil, nil end
+    immuneOwner, immuneCache, immuneOrder, immuneSlots, immuneNext = nil, nil, nil, nil, nil
+    wipe(sessionNpcImmune)
+    wipe(countedSightings)
+    wipe(sightingOrder)
+    sightingNext = 1
 end
 
 --- The target changed: park the old target's record under its GUID, restore the new one's.
@@ -514,6 +879,7 @@ function DotTracker.OnTargetChanged()
     wipe(pendingCasts)
     lastCast, lastMissAt = nil, nil
     currentGUID = PlainTargetGUID()
+    currentNPC = NpcIdOf(currentGUID)
     local saved = currentGUID and byTarget[currentGUID]
     if saved then
         applied, instanceToDot = saved.applied, saved.instanceToDot
@@ -536,7 +902,9 @@ do
     -- or our own missed white hit beside a DoT cast would wipe that DoT's timer.
     if FOREVER then
         f:RegisterUnitEvent("UNIT_COMBAT", "target")
-        f:SetScript("OnEvent", function(_, _, _, kind) DotTracker.OnTargetCombat(kind) end)
+        f:SetScript("OnEvent", function(_, _, _, kind, _, _, school)
+            DotTracker.OnTargetCombat(kind, nil, school)
+        end)
     end
     local k = CreateFrame("Frame")
     k:RegisterEvent("PARTY_KILL")
@@ -546,7 +914,8 @@ end
 --- Diagnostic snapshot for the current target (/jac inspect dots). Non-secret.
 function DotTracker.DebugState(spellIDs)
     local now = GetTime()
-    local out = { hasTarget = UnitExists("target"), pending = #pendingCasts, entries = {} }
+    local out = { hasTarget = UnitExists("target"), pending = #pendingCasts, entries = {},
+                  misses = missStats }
     local seen = {}
     local function capture(spellID, e)
         if seen[spellID] then return end
@@ -557,6 +926,7 @@ function DotTracker.DebugState(spellIDs)
             spellID = spellID,
             active = active,
             source = source,
+            evidence = EVIDENCE[source] or "none",
             cooldownManager = tracked,
             cooldownManagerReason = reason or "not-consulted",
             confirmed = e ~= nil and next(e.instances) ~= nil,

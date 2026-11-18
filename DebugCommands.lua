@@ -34,7 +34,9 @@ local INSPECT_TOPICS = {
     { "perf",        "PerformanceDiagnostics",   "[reset]", "Queue build rate + threshold-gate cost (requires debug mode)" },
     { "rank",        "ContextRankDiagnostics",   nil,  "Queue context inference and per-spell ordering ranks" },
     { "dots",        "DotDiagnostics",           nil,  "Maintained-DoT tracking state for the current target" },
-    { "curses",      "CurseDiagnostics",         nil,  "Cooldown Manager curse aura signals for the current target" },
+    { "coverage",    "CdmCoverage",              nil,  "Forever: each known DoT, maintained debuff and HoT as tracked, hidden or unavailable in the Cooldown Manager" },
+    { "character",   "ExportCharacter",          nil,  "Forever: this character (level, ranks, talents, gear) as JSON for the offline list comparison tool (out of combat)" },
+    { "curses",      "CurseDiagnostics",        nil,  "Cooldown Manager curse aura signals for the current target" },
     { "gates",       "GateDiagnostics",          nil,  "SimC gate layer: buff-window tracker + live gate eval (in combat)" },
     { "simcgates",   "SimcGateProbe",            "[st|aoe|cleave]", "Evaluate this spec's SimC gates live, with their inputs" },
     { "blank",       "QueueBlankReport",         nil,  "Why the queue last went empty (run right after it vanishes)" },
@@ -47,7 +49,9 @@ local INSPECT_TOPICS = {
     { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
+    { "immunedb",    "DotImmunityDB",            "[clear]", "Forever: creatures learned to be immune to a DoT (persists across sessions)" },
     { "identity",    "IdentityProbe",            "[clear]", "Hunt a plain mob identifier: snapshot every readable target surface, diff vs last run" },
+    { "mobprofile",  "MobProfileProbe",          "[arm|off|show|clear]", "Per-NPC readable profile (type, level, max health) and kill times; plain vs secret reads in and out of combat" },
     { "timeline",    "EncounterTimelineProbe",   nil,  "Can we see a big hit coming? Boss-mechanic timeline read" },
 
     -- Capability probes: run these when a feature stops working and you need to

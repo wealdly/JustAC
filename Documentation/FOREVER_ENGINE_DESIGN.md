@@ -328,9 +328,29 @@ Inherited, evaluated by the existing code:
     references or timed gameplay caches are retained.
   - Own refreshes may use the bounded cast estimate when CDM/instance evidence cannot answer.
     A successful cast starts the spell rank's projected duration. Forever target `UNIT_COMBAT`
-    miss/resist/dodge/parry events within 0.4 seconds cancel it, in either event order.
+    miss/resist/dodge/parry events inside the cast's result window cancel it. The window comes
+    from the generated `AURA_DELIVERY` data (`SpellCategories.DefenseType`, `SpellMisc.Speed`).
+    A cast with no missile reports in the same instant (0.1 seconds, either event order). A
+    missile reports on arrival: from the cast to its maximum range at its speed plus 0.25
+    seconds. A cast the data does not describe, or an unreadable range, keeps 0.4 seconds.
     These events lack source/spell attribution: matching is best-effort, and an unrelated miss
-    can cancel an estimate. Immunity retains the existing per-target suppression policy.
+    can cancel an estimate. An immune result is also remembered by the target's creature id
+    (from its GUID) and the spell's rank base: fighting alone with no pet, one sighting holds the spell on
+    that creature id for the session (with a pet or a group the result may be theirs, so it is
+    only counted); sightings on two different mobs persist in `JustACGlobal.dotImmuneNPCs` and hold it,
+    and the DoT seen on such a mob (Cooldown Manager or aura instance) forgets the entry
+    (`/jac inspect immunedb [clear]`). It is never generalised to a creature type.
+    To compare the account's learned entries with the local Classic database snapshot, run
+    `python tools/audit_forever_immunity.py --classic-db <path-to-mangos.sqlite>`.
+    This is a read-only research comparison, not a database update or proof of Forever
+    behavior. A matching Classic mask is a candidate; an absent mask does not establish
+    that the effect lands. See [the audit procedure](DEV_TOOLING.md#auditing-forever-immunity-observations).
+    Two cases are excluded: a result the cast's defense type
+    rules out (a spell is never parried or dodged, a ranged attack never parried), and a result arriving
+    where one of our own white melee swings is due to report: 0.3 to 0.52 seconds after its
+    `PLAYER_SWING` (measured 0.34 to 0.47 over 19 swings), unless it shares the timestamp of a
+    cast with no missile. Each swing takes one result. Ranged shots are not candidates: their
+    result arrives after the flight. Both leave the cast open for a later result. Immunity retains the existing per-target suppression policy.
     Readable CDM state takes precedence; early removal without readable evidence can outlive
     the real aura until the estimate expires. Unknown duration uses a 12-second fallback,
     favoring overlap over a long uptime gap; known durations are not capped by that fallback.
@@ -344,6 +364,15 @@ Inherited, evaluated by the existing code:
     engine timer when an instance is held, else the cast estimate, including while a
     Cooldown Manager icon reports the DoT active. Forever self HoTs (generated
     `PERIODIC_HEALS`) use the same lead in the redundancy filter.
+  - Relative target level qualifies only slow target-only payoffs, such as a very late
+    periodic tick or an armor reduction. A normal/trivial target at least one level below
+    the player is not considered worthwhile for that payoff unless other positive fight
+    evidence applies; one or more levels above qualifies it. Equal, unknown and skull-level
+    reads do not force either result. This is deliberately not a blanket duration-based
+    DoT veto: ordinary damage-over-time priorities such as Rend, Corruption and Shadow
+    Word: Pain are not classified as slow payoffs, so a lower-level target cannot suppress
+    a class's core periodic damage through this rule. Damaging spells are not delayed just
+    because their own damage-over-time rider has a long duration.
   - The legacy `dot` gate retains its target-health policy. The same policy applies to
     `debuff` refreshes, never positive prerequisites: pure applications yield below 35% target
     health, while upfront damage remains useful. Proc vetoes require confirmed aura evidence
@@ -357,6 +386,10 @@ Inherited, evaluated by the existing code:
     behavior. See [capture semantics and controls](FOREVER_COMBAT_SIGNALS.md#priority-condition-coverage).
 - `cd`, `stack`, `stealth`: as retail. Target debuff stacks (Sunder Armor to 5) are unreadable:
   `delegated`, order only.
+  JustAC's own landed-stack count can still pace the applicator. In a solo ordinary fight,
+  Protection Sunder is suggested for one application; grouped, instance, elite or +1-level
+  contexts can allow further applications up to the spell's generated stack maximum.
+  This affects only the applicator's own generated stack gate, not imported/custom lists.
 
 Spellbook proc events feed candidates into the shared tail categorizer, not directly into
 display slots. Both event and overlay promotions respect confirmed contextual vetoes,

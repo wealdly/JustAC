@@ -40,6 +40,7 @@ def setup(lua, cls="PRIEST"):
         C_Spell.IsSpellUsable = function() return usable, not usable end
         function IsPlayerAbilityLockout() return false end
         function GetRedundancyFilter() return nil end
+        MT = LibStub:NewLibrary("JustAC-MaintenanceTracker")
         SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue")
         SpellQueue._rotationIsCustom = false
         SpellQueue.ResolvePetRecoveryPick = function(spellID) return spellID end
@@ -112,6 +113,64 @@ def main():
     check('DE.IsSelfLockedOut(17)')
     lua.execute("now = now + 1.5")
     check('not DE.IsSelfLockedOut(17) and Queue() == "17,2061"')
+
+    # A pure heal over time is held the same way after a self-cast: Renew ticks for 15s, and a
+    # recast would only restart it. Heals with a direct part or a cooldown are not held.
+    check("SpellDB.GetPureHotDuration(139) == 15 and SpellDB.GetPureHotDuration(6078) == 15")
+    check("SpellDB.GetPureHotDuration(774) == 12")           # Rejuvenation
+    check("SpellDB.GetPureHotDuration(2061) == nil")         # Flash Heal
+    check("SpellDB.GetPureHotDuration(8936) == nil")         # Regrowth: a direct heal too
+    check("SpellDB.GetPureHotDuration(408521) == nil")       # Riptide: paced by its cooldown
+    lua.execute("profile.defensives.classSpells.PRIEST_F.defensiveSpells = {139, 2061}")
+    check('Queue() == "139,2061"')
+    lua.execute('DE.NoteSpellcastSent("Ally", "h1", 139)')
+    check('DE.NoteSpellcastSucceeded("h1") == false and Queue() == "139,2061"')
+    lua.execute('DE.NoteSpellcastSent("Me", "h2", 6078)')    # a higher rank holds every rank
+    check('DE.NoteSpellcastSucceeded("h2") == true')
+    check('DE.IsSelfLockedOut(139) and DE.IsSelfLockedOut(6078) and not DE.IsSelfLockedOut(2061)')
+    check('Queue():sub(1, 4) == "2061" and Held() == "139"')
+    lua.execute("now = now + 13")
+    check('DE.IsSelfLockedOut(139)')
+    lua.execute("now = now + 1.5")
+    check('not DE.IsSelfLockedOut(139) and Queue() == "139,2061"')
+    # A refresh lead (a cast time) shortens the hold by that much.
+    lua.execute("""
+        LibStub("JustAC-BlizzardAPI").GetPeriodicRefreshLead = function() return 2 end
+        DE.NoteSpellcastSent("Me", "h3", 139)
+    """)
+    check('DE.NoteSpellcastSucceeded("h3") == true')
+    lua.execute("now = now + 12")
+    check('DE.IsSelfLockedOut(139)')
+    lua.execute("now = now + 1.5")
+    check('not DE.IsSelfLockedOut(139)')
+
+    # Ended early (dispelled): only a tracked icon that showed it ticking and now shows it gone
+    # ends the hold. An icon that never showed it, or does not answer, ends nothing.
+    lua.execute("""
+        LibStub("JustAC-BlizzardAPI").GetPeriodicRefreshLead = function() return 0 end
+        iconSays = nil
+        MT.IsTrackedAuraActive = function(id) if id == 139 then return iconSays end end
+        DE.NoteSpellcastSent("Me", "h4", 139)
+    """)
+    check('DE.NoteSpellcastSucceeded("h4") == true and DE.IsSelfLockedOut(139)')
+    lua.execute("iconSays = false; now = now + 0.1")
+    check('DE.IsSelfLockedOut(139)')            # not seen ticking yet: the icon trails the cast
+    lua.execute("iconSays = true; now = now + 0.1")
+    check('DE.IsSelfLockedOut(139)')
+    lua.execute("iconSays = false; now = now + 0.1")
+    check('not DE.IsSelfLockedOut(139) and Queue() == "139,2061"')
+    # A new cast starts over: the earlier sighting does not carry into it.
+    lua.execute('DE.NoteSpellcastSent("Me", "h5", 139)')
+    check('DE.NoteSpellcastSucceeded("h5") == true and DE.IsSelfLockedOut(139)')
+    lua.execute("iconSays = secret; now = now + 0.1")
+    check('DE.IsSelfLockedOut(139)')
+    lua.execute("iconSays = nil; now = now + 16")
+    check('not DE.IsSelfLockedOut(139)')
+
+    # A leech DoT is a maintained DoT like any other (Devouring Plague, every rank); a
+    # channeled leech (Drain Life) is not.
+    check("SpellDB.IsTargetDot(2944) and SpellDB.IsTargetDot(19280) and SpellDB.GetTargetDotDuration(2944) == 24")
+    check("not SpellDB.IsTargetDot(689)")
 
     # Retail: no PRIEST_F key, so no entry and no hold.
     retail = load(False)

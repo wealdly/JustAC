@@ -89,7 +89,7 @@ AOE_LEAD_TIERS = ["aoe"]
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
 # move: the ability is already on the sim list - reposition that entry instead of adding a
 # second one. Set gates to replace its source conditions when the adaptation calls for it.
-# A gate may also be a raw gate dict. drop: remove the ability from the tree's list.
+# A gate may also be a raw gate dict. drop: remove the ability and all its copies from the tree's list.
 # copy: add an entry even though the ability is already listed (a tier-specific placement).
 # A sim may list an ability twice (an AoE-only or proc copy): move takes every copy, and an
 # anchor is the copy tier_lists keeps (its last ungated entry, else its first).
@@ -100,6 +100,11 @@ EXTRA = {
                 # Protection's sim omits Hamstring; without an entry it joined as an ungated
                 # pool filler. Listed, the finisher rule (REGATE) holds it.
                 dict(spell="hamstring", trees=["protection"], at="end"),
+                # Sunder is an early armor-reduction and threat builder for Protection. One
+                # application is enough for the leveling queue; own landed stacks prevent repeats.
+                dict(spell="sunder_armor", trees=["protection"], drop=True),
+                dict(spell="sunder_armor", trees=["protection"], at="front", copy=True,
+                     gates=[{"t": "stack", "id": 7386, "op": "<", "n": 1, "tgt": True}]),
                 dict(spell="rend", trees=["protection"], at="before:heroic_strike", move=True),
                 # Its single-target Thunder Clap is the tank's attack-speed slow (mitigation, guides
                 # disagree on upkeep); as damage it is the strongest attack against a pack and
@@ -162,7 +167,14 @@ EXTRA = {
     # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
     # Spell usability handles the rear requirement; no position signal is inferred here.
     # Launch guides open with Garrote; Cheap Shot stays as the opener when Garrote cannot be used.
-    "rogue": [dict(spell="garrote", at="front", gates=["stealth", "dot"]),
+    "rogue": [
+              # Leveling guides (Method, Warcraft Tavern, read 2026-11-17) open Assassination and
+              # Combat with Ambush (level 18) when a dagger is equipped, else Garrote. Spell
+              # usability covers the dagger; Subtlety's sim already lists it. First of the
+              # front entries, which keep their listed order.
+              dict(spell="ambush", trees=["assassination", "combat"], at="front",
+                   gates=["stealth"]),
+              dict(spell="garrote", at="front", gates=["stealth", "dot"]),
               dict(spell="cheap_shot", at="front", gates=["stealth"]),
               # Assassination and Combat keep Rupture up and Eviscerate only once it runs.
               dict(spell="rupture", trees=["assassination", "combat"], at="before:eviscerate",
@@ -198,13 +210,21 @@ EXTRA = {
              dict(spell="flamestrike", trees=["arcane"], tiers=["aoe"], at="before:arcane_explosion"),
              dict(spell="cone_of_cold", trees=["fire"], tiers=["aoe"], at="after:blast_wave"),
              dict(spell="frostfire_bolt", trees=["fire"], at="before:fireball"),
-             dict(spell="shoot", at="end")],
+             dict(spell="shoot", at="end"),
+             # Arcane Blast is a level 20 talent, and the Arcane sim's other casts all wait on it
+             # or on a proc. Until it is learned, Fireball fills, as Smite does for Shadow. After
+             # it, Arcane Blast (unconditional, listed above) is always reached first.
+             dict(spell="fireball", trees=["arcane"], at="before:shoot")],
     # Wanding is a documented leveling damage fallback across Priest trees; it is only usable
     # when the character has an appropriate wand equipped.
     "priest": [dict(spell="shoot", at="end"),
                # Shadow is also the untalented default; Smite fills before Shadow attacks
                # are learned rather than yielding to the listed wand fallback.
                dict(spell="smite", trees=["shadow"], at="before:shoot"),
+               # The Smite sim has no Mind Blast, but every priest learns it at 10 and the
+               # leveling guides (Method, read 2026-11-17) cast it on cooldown in every tree.
+               # Placed as the Shadow list has it: after the damage over time, before the fillers.
+               dict(spell="mind_blast", trees=["discipline", "holy"], at="before:holy_fire"),
                dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
 
@@ -235,14 +255,21 @@ EXTRA = {
 #            a next-swing attack waits on the swing (2026-11-17, player observation).
 #   drop_cast: remove the source's cast-time condition; the guide keeps the spell without the
 #            talent that shortens its cast (launch Affliction keeps Immolate up, launch Arms
-#            keeps Slam; the sims cast them only once a talent shortens the cast). The entry stays delegated, as before the cast
-#            gate existed, and is not flagged w.
+#            keeps Slam; the sims cast them only once a talent shortens the cast). An entry left with no
+#            condition stays delegated (Slam); one that keeps a timeable condition does not
+#            (Immolate). Neither is flagged w.
 #   trees:   limit the entry to these trees (default: every tree).
 #   A spell list may instead be a {tree: [names]} dict (a talent style's own spenders); a tree it
 #   does not name is skipped.
 WARRIOR_SPENDERS = {"arms": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
                     "fury": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
                     "protection": ["revenge", "shield_slam"]}
+# Hamstring "with spare rage". Arms and Fury keep their sim's own cooldown conditions, so
+# knowing a spender is enough. Protection's spenders are reactive (Revenge) or on a cooldown
+# (Shield Slam) and its sim has no Hamstring line, so "knows one" held always: Hamstring took
+# every 10 rage Heroic Strike was saving for (2026-11-18 simulation: 17 casts in a 32s fight,
+# 16% slower). There it only finishes a dying target.
+HAMSTRING_SPENDERS = dict(WARRIOR_SPENDERS, protection=[])
 REGATE = {
     "warlock": {"immolate": dict(drop_cast=True, trees=["affliction"]),
                 "life_tap": dict(starved=True, health=50),
@@ -257,7 +284,7 @@ REGATE = {
                 # Each talent style names its own main spenders: Protection levels on Heroic
                 # Strike until Revenge (14) or Shield Slam (talent) arrives (forever-guides).
                 "heroic_strike": dict(or_none_known=WARRIOR_SPENDERS),
-                "hamstring": dict(needs_known=WARRIOR_SPENDERS, or_execute=20)},
+                "hamstring": dict(needs_known=HAMSTRING_SPENDERS, or_execute=20)},
 }
 
 
@@ -293,7 +320,12 @@ def regate(cls, tree, entries, chains):
             gates = list(e["gates"])
             if spec.get("drop_cast"):
                 e["gates"] = without_cast(gates)
-                e["delegated"] = True
+                # With a condition left that the addon can time (Immolate: missing from the
+                # target), the entry is an ordinary one and may lead. With none left (Slam) it
+                # stays left to the player: nothing says when it is the right press.
+                if not e["gates"]:
+                    e["delegated"] = True
+                    LOST[id(e)] = (LOST.get(id(e)) or []) + ["cast-time condition dropped (REGATE drop_cast)"]
                 continue
             if spec.get("starved"):
                 power = [g for g in gates if g["t"] == "power" and g.get("res") == "mana"]
@@ -320,9 +352,9 @@ def regate(cls, tree, entries, chains):
                 gates = [g for g in gates if g not in power]
                 cond = power[0] if len(power) == 1 else {"t": "all", "g": power}
                 gates.append({"t": "any", "g": [cond, {"t": "all", "g": unknown}]})
-            if spec.get("needs_known"):
+            if spec.get("needs_known") is not None:
                 known = [{"t": "known", "id": rank1(chains[n])} for n in spec["needs_known"] if chains.get(n)]
-                assert known, (cls, name, "needs_known names no learnable spell")
+                assert known or spec.get("or_execute"), (cls, name, "needs_known names no learnable spell")
                 if spec.get("or_execute"):
                     # required: an unreadable target health is "not dying", or the whole group
                     # reads unknown and the entry leaks open (2026-11-17 capture: Hamstring).
@@ -359,6 +391,7 @@ NOMINAL_POWER_MAX = 100
 NEAR_CAP_POWER = 90
 MELEE_RANGE_MAX = 5           # yards: SpellRange maximum of a melee attack
 COMBO_POINTS_POWER = 4        # SpellPower.PowerType on Forever
+POOLED_POWERS = {"1", "3"}    # SpellPower.PowerType: rage, energy
 SCHOOL_ABSORB_AURA = 69
 WAND_FALLBACK = {5019}        # Shoot (wand)
 TARGET_ENEMY_UNIT = 6         # ImplicitTarget: the chosen enemy
@@ -370,7 +403,7 @@ EXECUTE_PCT = 20
 SPELL_MODIFIER_AURAS = {107, 108}  # flat / percent spell modifier
 MOD_CAST_TIME, MOD_COST = 10, 14
 RANGED_TREES = {"hunter": {"beast_mastery", "marksmanship"}}
-TANK_TREES = {"warrior": {"protection"}, "druid": {"feral_bear"}, "paladin": {"protection"}}
+TANK_TREES = {cls: set(trees) for cls, trees in gfd.TANK_TREES.items()}
 
 @functools.lru_cache(maxsize=None)
 def _combo_point_spenders():
@@ -387,6 +420,25 @@ def _hostile_max_ranges():
 
 def costs_combo_points(sid):
     return str(sid) in _combo_point_spenders()
+
+
+@functools.lru_cache(maxsize=None)
+def _pooled_costs():
+    """SpellID -> the pooled power types (rage, energy) it costs."""
+    found = {}
+    for r in cfa.rows("SpellPower"):
+        if r["PowerType"] in POOLED_POWERS and int(r["ManaCost"] or 0) > 0:
+            found.setdefault(r["SpellID"], set()).add(r["PowerType"])
+    return found
+
+
+def pooled_costs(sid):
+    return _pooled_costs().get(str(sid), set())
+
+
+def hits_area(sid):
+    """Does sid strike every enemy in an area or cone, not one chosen enemy?"""
+    return any(targets & (ENEMY_AREAS | {ENEMY_CONE}) for _, _, _, targets, _ in effects_of(sid))
 
 
 def hostile_max_range(sid):
@@ -459,6 +511,19 @@ def apply_core_rules(cls, tree, entries):
     for e in entries:
         if any(holds_hit_for_side_effect(e, g) for g in e["gates"]):
             e["gates"] = [g for g in e["gates"] if not holds_hit_for_side_effect(e, g)]
+    # Against three or more, a one-target damage over time paid from a pooled resource (rage,
+    # energy) spends what the tree's own area attack on that resource needs, and takes a global
+    # cooldown per target to spread. It stays in the one- and two-target lists.
+    area_pools = set()
+    for e in entries:
+        if "aoe" in e["tiers"] and hits_area(e["id"]) and deals_damage(e["id"]):
+            area_pools |= pooled_costs(e["id"])
+    for e in list(entries):
+        if ("aoe" in e["tiers"] and applies_target_dot(e["id"]) and not hits_area(e["id"])
+                and pooled_costs(e["id"]) & area_pools):
+            e["tiers"] = [t for t in e["tiers"] if t != "aoe"]
+            if not e["tiers"]:
+                entries.remove(e)
     for e in entries:
         if costs_combo_points(e["id"]) and applies_target_dot(e["id"]) and not gates_on_points(e["gates"]):
             e["gates"] = list(e["gates"]) + [
@@ -531,6 +596,9 @@ def add_extras(cls, tree, entries, chains, unresolved):
                     i += 1
                 entries[i:i] = items
                 return
+            # The anchor is not on this tree's list (or is itself a "front" extra, placed last):
+            # the entry falls to the end. Reported, since that is rarely what the line meant.
+            ANCHOR_MISSES.append(f"{cls} {tree}: {x['spell']} {at} (anchor not listed; placed at the end)")
         entries.extend(items)
 
     for x in EXTRA.get(cls, []):
@@ -541,8 +609,7 @@ def add_extras(cls, tree, entries, chains, unresolved):
             continue
         mine = next((e for e in entries if e["id"] == sid), None)
         if x.get("drop"):
-            if mine:
-                entries.remove(mine)
+            entries[:] = [e for e in entries if e["id"] != sid]
             continue
         if mine and x.get("move"):
             if x.get("tiers"):
@@ -589,6 +656,7 @@ TRUE, FALSE, UNK = "TRUE", "FALSE", "UNK"
 # A buff gate needs it for the runtime's cast-observed window (IsBuffWindowActive).
 DURATION = {}
 LOST = {}   # id(entry) -> condition nodes given up, for --audit
+ANCHOR_MISSES = []   # EXTRA placements whose after:/before: anchor was not on the list
 
 
 def num(const):
@@ -613,6 +681,67 @@ def compare(k, op, n):
 def rank1(chain):
     """Rank 1 (the first-learned id) of a class_chains chain."""
     return int(chain[0][0])
+
+
+# Preset ids that are not in the 1.60.1 client, by the id the client does have (checked
+# against SpellName / Spell descriptions). A gate on a missing id can never hold.
+#   44404 -> 400589: Missile Barrage's proc aura ("your next Arcane Missiles ..."), talent 400588.
+SOURCE_ID_FIXES = {44404: 400589}
+
+
+@functools.lru_cache(maxsize=None)
+def _known_index():
+    """(spell names, talent spell ids, ids any class can learn) for known_spell_id."""
+    names = {int(r["ID"]): r["Name_lang"] for r in cfa.rows("SpellName")}
+    by_name = {}
+    for sid, name in names.items():
+        by_name.setdefault(name, []).append(sid)
+    talents = set()
+    for r in cfa.rows("TraitDefinition"):
+        for col in ("SpellID", "OverridesSpellID", "VisibleSpellID"):
+            value = r.get(col) or ""
+            if value.isdigit() and int(value):
+                talents.add(int(value))
+    learnable = set()
+    for cls in TREES:
+        chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
+        learnable.update(int(sid) for chain in chains.values() for sid, _ in chain)
+    return names, by_name, talents, learnable
+
+
+@functools.lru_cache(maxsize=None)
+def _granting_talents():
+    """Aura id -> the talents with an effect that triggers it (Arcane Concentration -> Clearcasting)."""
+    _, _, talents, _ = _known_index()
+    found = {}
+    for r in cfa.rows("SpellEffect"):
+        trigger, source = r.get("EffectTriggerSpell") or "0", r["SpellID"]
+        if trigger.isdigit() and int(trigger) and source.isdigit() and int(source) in talents:
+            found.setdefault(int(trigger), set()).add(int(source))
+    return found
+
+
+def known_spell_id(sid, by_id, aura=False):
+    """The id a "known" gate should ask IsPlayerSpell about. A sim asks whether an aura is
+    available; the game only knows learned spells and talents. So: rank 1 of the class's own
+    chain (any rank known counts, not the level-60 rank the preset names); a talent as it is;
+    else the one talent or learnable spell of the same name (Heating Up the proc aura ->
+    Heating Up the talent). Anything else stays as it is: an item or set proc the player
+    does not have reads "not known", which is right for nearly every character."""
+    sid = SOURCE_ID_FIXES.get(sid, sid)
+    if aura:
+        # "Is this aura available to me": the one talent that grants it, when the data names
+        # exactly one (Clearcasting <- Arcane Concentration, Fire Vulnerability <- Improved Scorch).
+        granting = _granting_talents().get(sid, ())
+        if len(granting) == 1:
+            return next(iter(granting))
+    if sid in by_id:
+        return rank1(by_id[sid])
+    names, by_name, talents, learnable = _known_index()
+    if sid in talents:
+        return sid
+    same = [i for i in by_name.get(names.get(sid), []) if i != sid and (i in talents or i in learnable)]
+    return same[0] if len(same) == 1 else sid
 
 
 def cmp_parts(val):
@@ -655,6 +784,7 @@ class Conv:
         return g
 
     def rank1(self, sid):
+        sid = SOURCE_ID_FIXES.get(sid, sid)
         chain = self.by_id.get(sid)
         return rank1(chain) if chain else sid
 
@@ -723,7 +853,7 @@ class Conv:
                     return FALSE
                 if g == UNK:
                     self.lose(x)
-                elif g != TRUE:
+                elif g != TRUE and g not in out:
                     out.append(g)
             return TRUE if not out else (out[0] if len(out) == 1 else {"t": "all", "g": out})
         if key == "or":
@@ -737,7 +867,7 @@ class Conv:
                     # whole alternative up instead.
                     self.lose(x)
                     return TRUE
-                if g != FALSE:
+                if g != FALSE and g not in out:
                     out.append(g)
             return FALSE if not out else (out[0] if len(out) == 1 else {"t": "any", "g": out})
         if key == "not":
@@ -762,7 +892,7 @@ class Conv:
             return {"t": "execute", "op": "<", "pct": int(m.group()) if m else 20}
         if key in ("spellIsKnown", "auraIsKnown"):
             sid = sid_of(val.get("spellId") or val.get("auraId"))
-            return {"t": "known", "id": sid} if sid else UNK
+            return {"t": "known", "id": known_spell_id(sid, self.by_id, key == "auraIsKnown")} if sid else UNK
         if key == "spellIsReady":
             sid = sid_of(val.get("spellId"))
             return {"t": "cd", "id": self.rank1(sid)} if sid else UNK
@@ -998,10 +1128,16 @@ def generalize_entries(cls, tree, entries, chains):
         # Current guide adaptations and deliberate limits: forever-guides/druid-shaman.md.
         if tree == "enhancement":
             orders = {
+                # Earth Shock is the filler shock once Flame Shock is ticking (the shocks share a
+                # cooldown) and the only instant before Flame Shock is learned. It is an
+                # interrupt: the runtime offers it as damage only against a quiet open-world
+                # target (SpellQueue._InterruptFreeForDamage) and reserves it otherwise. After
+                # Lightning Bolt, as the launch guide has it: an instant Bolt at five Maelstrom
+                # Weapon stacks comes first.
                 "st": ["strength_of_earth_totem", "magma_totem", "searing_totem", "flame_shock",
-                       "rage_of_the_farseer", "stormstrike", "lightning_bolt", "fire_nova"],
+                       "rage_of_the_farseer", "stormstrike", "lightning_bolt", "earth_shock", "fire_nova"],
                 "aoe": ["strength_of_earth_totem", "magma_totem", "searing_totem", "fire_nova",
-                        "flame_shock", "rage_of_the_farseer", "stormstrike", "lightning_bolt"],
+                        "flame_shock", "rage_of_the_farseer", "stormstrike", "lightning_bolt", "earth_shock"],
             }
         else:
             orders = {
@@ -1020,6 +1156,12 @@ def generalize_entries(cls, tree, entries, chains):
                     gates = [{"t": "totem", "slot": 1}]
                 elif name == "flame_shock":
                     gates = [{"t": "debuff", "id": sid, "neg": True, "refresh": True}]
+                elif name == "earth_shock":
+                    # The shocks share one cooldown (SpellCooldowns category, 6s in 1.60.1.70938),
+                    # so a filler Earth Shock locks Flame Shock out for that long. It fills only
+                    # while Flame Shock has more than the cooldown left: the refresh is never late.
+                    gates = [{"t": "debuff", "id": rank1(chains["flame_shock"]), "op": ">",
+                              "n": spell_meta(sid)[1]}]
                 elif name == "lightning_bolt" and tree == "enhancement":
                     gates = [{"t": "stack", "id": 408505, "op": ">=", "n": 5, "required": True}]
                 elif name == "chain_lightning" and context == "st":
@@ -1067,7 +1209,14 @@ def generalize_entries(cls, tree, entries, chains):
     if cls == "druid" and tree == "feral":
         bite = rank1(chains["ferocious_bite"])
         shifting_power = rank1(chains["shifting_power"])
+        claw = rank1(chains["claw"])
         for e in entries:
+            if e["id"] == claw and not e["gates"]:
+                # Its only source condition is "in front of the target": the sim's stand-in for
+                # "Shred cannot be used". Claw itself has no positional requirement, so nothing
+                # about it is untimed. It is the levelling cat's builder (forever-guides) and
+                # the list's one unconditional attack: it must be able to lead.
+                e["delegated"] = False
             if e["id"] == bite:
                 e["gates"] = [dict(g, op=">=") if g["t"] == "resource" and g.get("res") == "combo_points"
                               and g.get("op") == "=" and g.get("n") == 5
@@ -1119,7 +1268,8 @@ DMG_AURAS = {3, 53, 89}
 AREA_TRIGGER = 179
 ENEMY_TARGETS = {6, 15, 16, 24, 28, 53, 54}   # ImplicitTarget: enemy unit / area / cone
 SELF_TARGETS = {1, 20}                        # ImplicitTarget: the caster / caster's party
-APPLY_AURA, SUMMON, PLACE_OBJECT = 6, 28, 104
+APPLY_AURA, SUMMON, PLACE_OBJECT, SCRIPT_EFFECT = 6, 28, 104, 77
+DUMMY_AURA = 4
 SHAPESHIFT = 36
 TRAVEL_FORMS = {3, 4, 16, 27, 29}   # shapeshift form ids: Travel, Aquatic, Ghost Wolf, flight
 _effects = None
@@ -1214,7 +1364,7 @@ NOT_DPS_ALL = ["grovel"]
 # style's damage order. Presses whose value is threat or mitigation leave the tank lists and the
 # pool (the tank sims lead with them); tank play belongs to the defensive queue.
 TANK_ONLY = {
-    "warrior": ["shield_block", "defensive_stance", "sunder_armor", "demoralizing_shout"],
+    "warrior": ["shield_block", "defensive_stance", "demoralizing_shout"],
     "paladin": ["holy_shield"],
     "druid":   ["demoralizing_roar"],
 }
@@ -1270,14 +1420,43 @@ def direct_damage_estimates(spell_ids):
     for row in cfa.rows("SpellLevels"):
         if row["DifficultyID"] == "0":
             levels[int(row["SpellID"])] = row
+    cast_ms = {r["ID"]: int(r["Base"]) for r in cfa.rows("SpellCastTimes")}
+    casts = {}
     for row in cfa.rows("SpellMisc"):
         if row["DifficultyID"] == "0":
             schools[int(row["SpellID"])] = int(row["SchoolMask"])
             durations[int(row["SpellID"])] = duration_ms.get(row["DurationIndex"], 0)
+            casts[int(row["SpellID"])] = cast_ms.get(row["CastingTimeIndex"], 0)
     result = {}
     for sid, rows in effects.items():
         damage = [r for r in rows if r["Effect"] == "2"]
-        if len(damage) != 1 or any(r["DifficultyID"] != "0" for r in rows):
+        if any(r["DifficultyID"] != "0" for r in rows):
+            continue
+        if not damage:
+            # A damage over time with a cast time and no hit (Corruption) is priced by its
+            # total alone, so it can be weighed as the cast that opens a pull. An instant one
+            # gains nothing before a pull and stays unpriced.
+            level, school, duration = levels.get(sid), schools.get(sid, 0), durations.get(sid, 0)
+            if casts.get(sid, 0) <= 0 or not level or school not in (2, 4, 8, 16, 32, 64) or duration <= 0:
+                continue
+            if not all(
+                    o["Effect"] == str(APPLY_AURA) and o["EffectAura"] == "3" and o["EffectTriggerSpell"] == "0"
+                    and o["ImplicitTarget_0"] == "6" and o["ImplicitTarget_1"] == "0"
+                    and int(o["EffectAuraPeriod"]) > 0 and float(o["EffectBasePointsF"]) > 0
+                    and all(float(o[k]) == 0 for k in (
+                        "ScalingClass", "Coefficient", "ResourceCoefficient", "EffectPointsPerResource",
+                        "BonusCoefficientFromAP")) for o in rows):
+                continue
+            ticks = [duration // int(o["EffectAuraPeriod"]) for o in rows]
+            result[sid] = [
+                0, 0, int(level["SpellLevel"]), int(level["MaxLevel"]), 0, school.bit_length(), 1,
+                sum(float(o["EffectBasePointsF"]) * n for o, n in zip(rows, ticks)),
+                sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(rows, ticks)),
+                sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(rows, ticks)),
+                duration / 1000,
+            ]
+            continue
+        if len(damage) != 1:
             continue
         r = damage[0]
         if r["ImplicitTarget_0"] != "6" or r["ImplicitTarget_1"] != "0":
@@ -1288,7 +1467,12 @@ def direct_damage_estimates(spell_ids):
             continue
         # A trailing damage-over-time on the same target (Holy Fire, Fireball) keeps the hit
         # priceable, flagged partial: the hit alone is not the spell's whole damage.
-        others = [o for o in rows if o is not r]
+        # A script effect that triggers no spell (Immolate carries one) or a dummy aura that
+        # triggers none (Flame Shock) deals no damage of its own and does not make the spell
+        # unpriceable.
+        others = [o for o in rows if o is not r and not (o["EffectTriggerSpell"] == "0" and (
+            o["Effect"] == str(SCRIPT_EFFECT)
+            or (o["Effect"] == str(APPLY_AURA) and o["EffectAura"] == str(DUMMY_AURA))))]
         partial = bool(others) and all(
             o["Effect"] == str(APPLY_AURA) and o["EffectAura"] == "3" and o["EffectTriggerSpell"] == "0"
             and o["ImplicitTarget_0"] == "6" for o in others)
@@ -1317,6 +1501,7 @@ def direct_damage_estimates(spell_ids):
                     sum(float(o["EffectBasePointsF"]) * n for o, n in zip(others, ticks)),
                     sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(others, ticks)),
                     sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(others, ticks)),
+                    duration / 1000,   # seconds the damage over time runs
                 ]
     return result
 
@@ -1547,6 +1732,8 @@ def main():
             f.write(text)
         print("wrote", OUT)
     print("\n".join(report))
+    if ANCHOR_MISSES:
+        print("EXTRA anchors not found:\n  " + "\n  ".join(ANCHOR_MISSES))
     if unresolved:
         print("UNRESOLVED hand-pin tokens:\n  " + "\n  ".join(unresolved))
         sys.exit(1)
