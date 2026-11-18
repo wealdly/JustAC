@@ -25,7 +25,11 @@ def main():
     lua.execute("""
         SpellQueue, secret = {}, {}
         DISCRETE_POWER = { [4] = true }   -- combo points
-        BlizzardAPI = { IsSecretValue = function(v) return rawequal(v, secret) end }
+        BlizzardAPI = { IsSecretValue = function(v) return rawequal(v, secret) end,
+                        HasGamePick = function() return gamePick end,
+                        CooldownEndsWithin = function(id, s) window = s; return cdSoon[id] end }
+        gamePick, cdSoon = false, {}
+        SpellQueue._OneGCD = function() return 1.5 end
         costs = {}
         C_Spell = { GetSpellPowerCost = function(id)
             if costs[id] == 'error' then error('denied') end
@@ -97,6 +101,33 @@ def main():
         for id in waited:
             if id not in waits:
                 assert sk[id] == "resource", (why, "a held spender is a resource wait")
+    # The reserve: a higher-ranked spender coming off cooldown within two GCDs holds a lower one
+    # on the same power only when both cannot be paid (rage income unknowable: none counted).
+    lua.execute("""
+        power, maxPower = 0, 100
+        function UnitPowerMax() return maxPower end
+        function GetTime() return 100 end
+        function SpellQueue._PendingGain() return nil end
+        BlizzardAPI.IsUnitPowerBelow = function(_, pct) if power == nil then return nil end return power < pct end
+    """)
+
+    def reserve(setup, normal=(78,), ranks=(2,)):
+        lua.execute("wipe(SpellQueue._continuousCost); wipe(SpellQueue._waitRank); wipe(SpellQueue._cooldownRank);"
+                    "wipe(SpellQueue._incomeRate); costs = " + rage + "; gamePick, cdSoon, window = false, {[6343]=true}, nil;"
+                    "SpellQueue._cooldownRank[6343] = 1; power = 20;" + setup)
+        n, w = lua.table(*normal), lua.table(6343)
+        kept, _ = lua.globals().SpellQueue._HoldForPriority(n, lua.table(*ranks), len(normal), w, 1,
+                                                          lua.eval("{[6343]=true}"), lua.eval("{}"))
+        return [n[i + 1] for i in range(kept)]
+    assert reserve("") == [], "20 rage: Heroic Strike would leave Thunder Clap short, held"
+    assert lua.globals().window == 3.0, "two GCDs of reserve"
+    assert reserve("power = 35") == [78], "35 rage pays both: nothing held"
+    assert reserve("cdSoon = {}") == [78], "Thunder Clap further off: nothing held"
+    assert reserve("power = nil") == [78], "an unreadable threshold never holds"
+    assert reserve("gamePick = true") == [78], "with a game pick the game times its own pooling"
+    assert reserve("", ranks=(0,)) == [78], "a higher-priority spender is never held for a lower one"
+    assert reserve("", normal=(133,)) == [133], "another power is untouched"
+
     # Affordable within one GCD: one threshold at cost minus the income due, rounded up to 5%.
     lua.execute("""
         wipe(SpellQueue._continuousCost); wipe(SpellQueue._incomeRate)

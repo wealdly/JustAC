@@ -293,10 +293,10 @@ function DebugCommands.StartDiagnostics(addon, arg)
             queueContext=function()
                 local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
                 if not ctx then return nil end
-                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s lowValue=%s",
+                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s lowValue=%s holdsRange=%s rangedSwap=%s",
                     SafeSecret(ctx.simcCtx), SafeSecret(ctx.enemies), SafeSecret(ctx.outOfMelee),
                     SafeSecret(ctx.dying), SafeSecret(ctx.execute), SafeSecret(ctx.pickID),
-                    SafeSecret(ctx.lowValueTarget))
+                    SafeSecret(ctx.lowValueTarget), SafeSecret(ctx.holdsRange), SafeSecret(ctx.rangedSwap))
             end,
             enemyProvenance=function()
                 -- The engaged count and its per-plate reasons come from the queue's own scan.

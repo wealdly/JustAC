@@ -108,13 +108,15 @@ def main():
     assert offers() == [], "Imbue entry suppresses Rockbiter even when legacy reports none"
     assert redundant()[0] is True, "active Rockbiter is redundant in the offensive queue"
     assert api.GetWeaponEnhancementInfo(0, False)[0] is False, "imbue is not a weapon oil"
-    lua.execute("enchants[0][2].timeLeft = 180000")
-    assert offers() == [8017], "solo refresh at exactly three minutes"
+    lua.execute("enchants[0][2].timeLeft = 30001")
+    assert offers() == [], "solo: holds above the likely solo fight"
+    lua.execute("enchants[0][2].timeLeft = 30000")
+    assert offers() == [8017], "solo refresh at the likely solo fight length"
     assert redundant() is False, "redundancy agrees at the exact refresh threshold"
-    lua.execute("grouped = true; enchants[0][2].timeLeft = 300000")
-    assert offers() == [8017], "group refresh at exactly five minutes"
-    lua.execute("enchants[0][2].timeLeft = 300001")
-    assert offers() == [], "group buff holds above five minutes"
+    lua.execute("grouped = true; now = now + 1; enchants[0][2].timeLeft = 60000")
+    assert offers() == [8017], "group refresh at the likely group fight length"
+    lua.execute("enchants[0][2].timeLeft = 60001")
+    assert offers() == [], "group buff holds above the likely group fight"
     lua.execute("enchants[0][2].timeLeft = secret")
     assert offers() == [], "unreadable duration does not nag"
     assert redundant()[0] is True, "unreadable duration is never used in arithmetic"

@@ -375,7 +375,8 @@ function DebugCommands.DotDiagnostics(addon)
             e.active and "|cffff5555active|r" or "|cff55ff55inactive|r",
             e.source or "unknown",
             e.expiresIn,
-            e.pandemicIn and string.format("  pandemicIn=%.1fs", e.pandemicIn) or "",
+            (e.pandemicIn and string.format("  pandemicIn=%.1fs", e.pandemicIn) or "")
+                .. ((e.refreshLead and e.refreshLead > 0) and string.format("  lead=%.1fs", e.refreshLead) or ""),
             est and (est .. "s") or "unknown", engine))
     end
     addon:Print("================================")
@@ -687,6 +688,13 @@ function DebugCommands.SimcGateProbe(addon, arg)
                 elseif g.t == "hit" then
                     return string.format("being hit: casts expect pushback [now=%s]",
                         tostring(SQ._BeingHit and SQ._BeingHit()))
+                elseif g.t == "cast" then
+                    -- The live cast time the gate reads: a proc that makes the spell instant
+                    -- must show as 0 here, or the gate cannot see it.
+                    local id = BAPI.GetDisplaySpellID(g.id)
+                    local secs = BAPI.GetCastSeconds and BAPI.GetCastSeconds(id)
+                    return string.format("cast time of %s %s %ss [castTime=%ss]",
+                        tostring(id), tostring(g.op), tostring(g.n), secs and tostring(secs) or "unreadable")
                 elseif g.t == "power" then
                     -- Ask the RUNTIME for the threshold rather than recomputing it -
                     -- a probe that mirrors the logic drifts from it.

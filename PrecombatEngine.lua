@@ -97,30 +97,15 @@ local LOW_HEALTH_PCT = 35
 local TOPOFF_ONSET_SECONDS = 2
 local notFullSince = 0
 
--- Re-offer a buff once it has this much time left, rather than waiting for it to lapse
--- outright. FLAT time remaining, not a fraction of the duration: what matters is whether
--- the buff outlasts the pull, and a 60-minute flask with 20 minutes on it needs nothing.
--- Wider in a group, where a recast covers everyone and wants to land while people are
--- still standing around rather than mid-pull. Applies to long-duration upkeep categories -
--- flasks, food, runes, oils, poisons, imbues, raid buffs. Short preparation uses its own cap.
-local PRECOMBAT_REFRESH_SOLO  = 180   -- 3 minutes
-local PRECOMBAT_REFRESH_GROUP = 300   -- 5 minutes
-local PREPARATION_REFRESH_FRACTION = 0.25
-local PREPARATION_REFRESH_MAX = 10
-
-local function RefreshWindow()
-    -- Unknown group state means we cannot establish a group, and the narrower window is
-    -- the one that nags less.
-    if BlizzardAPI and BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true then
-        return PRECOMBAT_REFRESH_GROUP
-    end
-    return PRECOMBAT_REFRESH_SOLO
+-- Re-offer a buff once it could lapse inside the next fight, so it never needs a recast in
+-- combat. One shared window (BlizzardAPI.GetBuffRefreshWindow): a fraction of the buff's own
+-- duration, capped by the likely fight length from the target and group context. The
+-- redundancy filter reads the same function, so the queue stops hiding a recast at the
+-- moment this checklist starts offering it. Applies to upkeep (flasks, food, runes, oils,
+-- poisons, imbues, raid buffs) and preparation alike.
+local function RefreshWindow(duration)
+    return BlizzardAPI.GetBuffRefreshWindow(duration)
 end
-
--- Exported because the redundancy filter has to agree with us: it decides when a buff that
--- IS up stops being reason enough to hide the recast, and that has to be the same moment we
--- start offering it. Two numbers here meant the queue nagged long before we did.
-PrecombatEngine.RefreshWindow = RefreshWindow
 
 -- Is this aura close enough to lapsing to be worth re-applying now?
 -- A permanent aura (duration 0) never lapses. Unreadable timing answers "no": a buff we
@@ -131,7 +116,7 @@ local function IsLapsing(aura)
     local dur, exp = aura.duration, aura.expirationTime
     if issecretvalue and (issecretvalue(dur) or issecretvalue(exp)) then return false end
     if type(dur) ~= "number" or type(exp) ~= "number" or dur <= 0 then return false end
-    return (exp - GetTime()) <= RefreshWindow()
+    return (exp - GetTime()) <= RefreshWindow(dur)
 end
 
 -- Weapon expiry is milliseconds remaining, not an aura expiration timestamp.
@@ -816,7 +801,7 @@ local function PreparationRefreshSpell(group, aura, auraID)
     if IsSecret(duration) or IsSecret(expiration)
        or type(duration) ~= "number" or type(expiration) ~= "number"
        or duration <= 0 or expiration <= 0
-       or expiration - GetTime() > math.min(PREPARATION_REFRESH_MAX, duration * PREPARATION_REFRESH_FRACTION) then
+       or expiration - GetTime() > RefreshWindow(duration) then
         return nil
     end
     -- Refresh only the identified active member, never a default or competing seal.

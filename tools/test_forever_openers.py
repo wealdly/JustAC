@@ -6,6 +6,7 @@ from pathlib import Path
 from lupa import LuaRuntime  # type: ignore[import-not-found]
 
 from test_gate_groups import extract
+from test_buff_refresh_window import buff_window_lua
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -167,6 +168,7 @@ end
 def create_runtime(real_gates=False):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(PRELUDE)
+    lua.execute(buff_window_lua("BlizzardAPI"))
     lua.execute((ROOT / "Data" / "Forever" / "Rotations.lua").read_text(encoding="utf-8"))
     lua.execute((ROOT / "Data" / "SpellCategories.lua").read_text(encoding="utf-8"))
     db_source = (ROOT / "SpellDB.lua").read_text(encoding="utf-8")
@@ -183,7 +185,7 @@ def create_runtime(real_gates=False):
     wait_start = source.index("function SpellQueue._StageForeverWait(")
     wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
     helpers = "\n".join(extract(name, source) for name in (
-        "ProcPriorityEnabled", "ClaimSpellID", "HeldByUserHold", "HasUserHold", "ResourceGateHolds", "MissingMinimumResource",
+        "ProcPriorityEnabled", "ClaimSpellID", "HeldByUserHold", "HasUserHold", "CompareOp", "ResourceGateHolds", "MissingMinimumResource",
         "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget",
         "GateVerdict", "GatesConfirmed", "ProcGateBlocks", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
         "IsUnusableNonResource", "SimcPowerType", "ThresholdGateBlocks", "StackAtLeast", "StackHolds",

@@ -455,6 +455,36 @@ function SpellDB.RegisterTargetAuras(t) targetAuras = t end
 function SpellDB.IsTrackedTargetAura(spellID)
     return targetAuras ~= nil and StaticLookup(targetAuras, spellID) ~= nil
 end
+-- Forever periodic refresh data (generated): stacking target auras and class heals over time.
+-- A recast there restarts a DoT or HoT and loses the ticks left, so these refresh by lead
+-- (BlizzardAPI.GetPeriodicRefreshLead), not by a share of their duration.
+local stackingAuras, periodicHeals
+function SpellDB.RegisterPeriodicRefresh(stacking, heals) stackingAuras, periodicHeals = stacking, heals end
+function SpellDB.IsStackingAura(spellID)
+    return stackingAuras ~= nil and StaticLookup(stackingAuras, spellID) ~= nil
+end
+--- Most stacks a stacking target aura holds (Sunder Armor: 5), or nil.
+function SpellDB.GetStackingMax(spellID)
+    local n = stackingAuras and StaticLookup(stackingAuras, spellID)
+    if type(n) == "number" and n > 1 then return n end
+    return nil
+end
+function SpellDB.IsPeriodicHeal(spellID)
+    return periodicHeals ~= nil and StaticLookup(periodicHeals, spellID) ~= nil
+end
+-- Attacks that hit and slow movement (generated, Forever): Frostbolt, Frost Shock.
+local slowingAttacks
+function SpellDB.RegisterSlowingAttacks(t) slowingAttacks = t end
+function SpellDB.IsSlowingAttack(spellID)
+    return slowingAttacks ~= nil and StaticLookup(slowingAttacks, spellID) ~= nil
+end
+-- Creature-type limits from spell data (generated, Forever): [spellID] = bitmask of allowed
+-- types (bit typeID-1). Exorcism hits only Demons and Undead.
+local creatureTypeMasks
+function SpellDB.RegisterCreatureTypes(t) creatureTypeMasks = t end
+function SpellDB.GetCreatureTypeMask(spellID)
+    return creatureTypeMasks and StaticLookup(creatureTypeMasks, spellID) or nil
+end
 function SpellDB.GetTargetAuraDuration(spellID)
     local duration = targetAuras and StaticLookup(targetAuras, spellID)
     if duration and duration > 0 then return duration end

@@ -356,14 +356,18 @@ Use this for guide-driven order changes, new list entries, safety gates and the 
 interrupt/CC tables. Read [the launch guide summary](forever-guides/README.md) for the tree
 first.
 
-1. **Check for a recorded decision.** Search the tree's guide file for "default queue"
+1. **Check that it is damage.** The queue recommends damage only, in every tree. A utility
+   press a guide lists (slow, root, mitigation or threat debuff, healing, crowd control) does
+   not get an entry; it goes in `NOT_DPS` or `TANK_ONLY` instead. See
+   [the damage-only queue](FOREVER_ENGINE_DESIGN.md#damage-only-queue).
+2. **Check for a recorded decision.** Search the tree's guide file for "default queue"
    and the existing assertions in `tools/test_forever_rotations.py`. A failing assertion may
    encode a deliberate choice (Earth Shock is reserved for interrupts; Serpent Sting opens
    with Auto Shot), not stale data. Change it only with the user's agreement.
-2. **Resolve ids from the Forever data.** Names map to rank 1 through
+3. **Resolve ids from the Forever data.** Names map to rank 1 through
    `check_forever_apl.class_chains(cfa.CLASS_MASK[cls])`; Forever ids differ from Retail
    (Slam 1240193, Shadow Word: Death 1309595). Check every new spell is learnable there.
-3. **Edit the right layer** in `tools/gen_forever_rotations.py`:
+4. **Edit the right layer** in `tools/gen_forever_rotations.py`:
 
    | Layer | Use it for |
    |---|---|
@@ -374,15 +378,15 @@ first.
 
    A sim may list a spell twice (an AoE-only copy, a proc copy): `tier_lists` keeps one per
    context, so move every copy (`all`) or anchor on the plain one (`last`).
-4. **Regenerate and check** with `python tools/forever_regen.py`. It runs
+5. **Regenerate and check** with `python tools/forever_regen.py`. It runs
    `gen_forever_rotations.py` then `gen_forever_defaults.py` (defaults read the generated
    debuff gates to build the tracked target auras; without it a new debuff gate fails
    `test_forever_aura_policy.py` with "refresh condition without an observation route"),
    prints only the list contexts and Defaults lines that changed, runs the Forever tests and
    `tools/check.ps1` on the generated Lua. Only intended rows should change. Add an assertion
    per change to `test_forever_rotations.py`; use `--all` for every `tools/test_*.py`.
-5. **Review a tree** with `python tools/forever_queue_dump.py CLASS [tree]`.
-6. **Deploy** with `python tools/deploy_runtime.py --apply` and add a player note.
+6. **Review a tree** with `python tools/forever_queue_dump.py CLASS [tree]`.
+7. **Deploy** with `python tools/deploy_runtime.py --apply` and add a player note.
 
 Interrupt and enrage-dispel tables: `Data/InterruptAbilities.lua` is shared and keyed by
 Retail ids. Forever additions live in `INTERRUPTS` in `tools/gen_forever_defaults.py`;

@@ -126,7 +126,7 @@ Recovery setting until explicitly changed. Combined food/drink qualifies for
 either enabled need and appears once, including when also suggested for its buff.
 
 - Out of combat, the defensive queue shows buffs you're **missing but own** - flask, food, augment rune, weapon enchant, poisons, shields, imbues and the group buffs - as icons you can click to use.
-- On Forever, a missing Paladin seal also appears in pre-combat preparation. Out of combat, timed preparation buffs refresh during their final 25%, capped at 10 seconds, only with readable timing and a ready, usable cooldown-free spell. Refresh preserves the active buff choice; permanent effects, forms and unreadable timers stay quiet. Combat remains missing-only.
+- On Forever, a missing Paladin seal also appears in pre-combat preparation. Out of combat, timed preparation buffs are offered again once they could run out during your next fight, only with readable timing and a ready, usable cooldown-free spell. Refresh preserves the active buff choice; permanent effects, forms and unreadable timers stay quiet. Combat remains missing-only.
 - Preparation and recovery heals appear before consumables on the pre-combat bar, without duplicating DPS slot 1. Hidden or disabled preparation leaves the DPS fallback available.
 - Missing critical preparation and safe OOC refreshes get animated violet emphasis with a live hostile targeted, including in Proc Only mode. Genuine gold procs retain precedence.
 - Forever also prepares Protection's Righteous Fury, Shadowform, Balance's Moonkin Form and Battle Shout when usable; missing stances follow the installed tree, and Survival Hunters default to Aspect of the Beast when no aspect is active. Retail includes specialization-appropriate Druid forms, Shadowform and Paladin weapon rites.
@@ -148,7 +148,7 @@ either enabled need and appears once, including when also suggested for its buff
 
 ## WoW Forever
 
-JustAC 6.3 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
+JustAC 6.4 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
 WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
 

@@ -88,9 +88,13 @@ def main():
           "kept-up debuffs (Faerie Fire, Hunter's Mark) observed separately from damage")
     check(sdb.IsTargetDot(770) is True and sdb.IsTargetDot(1130) is True,
           "existing maintained-debuff suppression remains available for custom queues")
-    for sid in (14914, 15261, 6343, 11581):
+    for sid in (14914, 15261):
         check(sdb.IsTrackedTargetAura(sid) is True and sdb.IsTargetDot(sid) is False,
               "explicit maintenance does not turn a nuke into an unconditional DoT sink")
+    check(sdb.IsTrackedTargetAura(6343) is False and sdb.IsTargetDot(6343) is False,
+          "Thunder Clap's slow is no list's upkeep any more: not observed")
+    check(sdb.IsSlowingAttack(116) is True and sdb.IsSlowingAttack(133) is False,
+          "Frostbolt slows, Fireball does not")
     check(sdb.IsTargetDot(3599) is False, "a totem is not on the target")
     check(sdb.IsFrontalDot(8921) is True and sdb.IsFrontalDot(14914) is True and sdb.IsFrontalDot(772) is False,
           "Moonfire / Holy Fire hit up front; Rend does not")

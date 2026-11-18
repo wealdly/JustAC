@@ -40,6 +40,13 @@ version, dependencies and load order; do not duplicate changing inventories here
   scenario. Leave situational strategy to the player (kiting, slows, positioning,
   crowd-control timing, encounter-specific play); do not add list entries, gates or
   probes to advise it. Prefer a simple general rule over a special case.
+- The offensive queue recommends damage only, in every talent tree, tank and healer
+  trees included. Utility stays with the player even when a guide or sim lists it:
+  slows, roots, mitigation or threat debuffs, healing, crowd control. Debuffs that raise
+  the damage a target takes count as damage. A damaging spell never waits on its own
+  non-damaging side effect. The one exception is a ranged opener on a melee target.
+  Tank and healer help belongs in the defensive queue. See
+  [utility scope](Documentation/FOREVER_ENGINE_DESIGN.md#damage-only-queue).
 - Never guess WoW API behavior. Check the matching client's generated API docs,
   caller implementation and saved in-game evidence. Source annotations describe
   contracts, not proof of live taint/secrecy behavior.

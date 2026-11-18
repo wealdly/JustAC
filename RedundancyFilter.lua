@@ -172,10 +172,6 @@ end
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
--- Time-remaining threshold for long-duration buffs (poisons, raid buffs, etc). When less
--- than this many seconds remain, stop filtering - show the recast suggestion so the player
--- can reapply before or immediately after entering combat. Owned by PrecombatEngine so the
--- queue hides a buff for exactly as long as the pre-combat checklist stays quiet about it.
 -- expirationTime is cached out of combat as a plain Lua number (GetTime() timestamp),
 -- so remaining = expirationTime - GetTime() is valid arithmetic even in combat.
 -- auraInstanceID → expirationTime mapping (instanceToTimingMap) carries this into combat.
@@ -184,14 +180,12 @@ local function GetPrecombatEngine()
     precombatEngine = precombatEngine or LibStub("JustAC-PrecombatEngine", true)
     return precombatEngine
 end
-local function RefreshWindow()
-    local PE = GetPrecombatEngine()
-    if PE and PE.RefreshWindow then
-        return PE.RefreshWindow()
-    end
-    return 180  -- solo default, if the checklist module ever isn't loaded
+-- The shared buff refresh window (BlizzardAPI.GetBuffRefreshWindow): the checklist reads the
+-- same function, so the queue stops hiding a recast at the moment the checklist offers it.
+local function RefreshWindow(duration)
+    return BlizzardAPI.GetBuffRefreshWindow(duration)
 end
-local LONG_BUFF_DURATION_CUTOFF = 600  -- Only apply the flat window to buffs >= 10 min
+local LONG_BUFF_DURATION_CUTOFF = 600  -- Trusted-cache expiry skip: buffs >= 10 min only
 
 -- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
 -- UNIT_AURA events invalidate the cache, so 0.5s is safe and reduces API calls by 60%
@@ -653,7 +647,7 @@ local function MergeTrustedCacheFallback(now)
             local skipExpiring = info
                 and info.expirationTime and info.expirationTime > 0
                 and info.duration and info.duration >= LONG_BUFF_DURATION_CUTOFF
-                and (info.expirationTime - now) < RefreshWindow()
+                and (info.expirationTime - now) < RefreshWindow(info.duration)
             if not skipExpiring then
                 cachedAuras.byID[spellID] = v
             end
@@ -991,18 +985,20 @@ local function IsInPandemicWindow(spellID)
     local now = GetTime()
     local remaining = expirationTime - now
 
-    -- Allow refresh if remaining time is less than pandemic threshold
-    local pandemicTime = duration * PANDEMIC_THRESHOLD
-
-    -- For long-duration buffs (>= 10 min, e.g. poisons, Mark of the Wild) the pandemic
-    -- fraction is the wrong shape entirely: 30% of a 60-minute buff is 18 minutes, so the
-    -- recast would sit in the queue for most of an evening. Use the flat pre-combat window
-    -- instead - what matters is whether the buff outlasts the pull, not what fraction is left.
+    -- Allow the refresh once the buff could lapse inside the next fight: 30% of its duration,
+    -- capped by the likely fight length (BlizzardAPI.GetBuffRefreshWindow). The cap is what
+    -- keeps a 60-minute buff out of the queue until it would actually drop mid-fight.
     -- expirationTime is a plain Lua number cached out of combat - arithmetic is safe in combat.
-    -- The auraInstanceID → timing mapping (instanceToTimingMap) carries this value into combat
+    -- The auraInstanceID -> timing mapping (instanceToTimingMap) carries this value into combat
     -- even when the aura API returns secret values for expirationTime directly.
-    if duration >= LONG_BUFF_DURATION_CUTOFF then
-        pandemicTime = RefreshWindow()
+    -- A heal over time where a recast restarts it and loses the ticks left (Forever's
+    -- generated PERIODIC_HEALS): it comes back its refresh lead before it ends (its cast time;
+    -- an instant HoT as it runs out). Anything else: the shared buff window.
+    local pandemicTime
+    if SpellDB and SpellDB.IsPeriodicHeal and SpellDB.IsPeriodicHeal(spellID) then
+        pandemicTime = BlizzardAPI.GetPeriodicRefreshLead(spellID, SpellDB.IsStackingAura(spellID))
+    else
+        pandemicTime = RefreshWindow(duration)
     end
 
     return remaining <= pandemicTime
@@ -1196,7 +1192,7 @@ local function CountActivePoisonBuffs()
                 local auraInfo = auras.auraInfo and auras.auraInfo[spellID]
                 local expiringSoon = auraInfo
                     and auraInfo.expirationTime and auraInfo.expirationTime > 0
-                    and (auraInfo.expirationTime - now_poison) < RefreshWindow()
+                    and (auraInfo.expirationTime - now_poison) < RefreshWindow(auraInfo.duration)
                 if not expiringSoon then
                     local spellInfo = GetCachedSpellInfo(spellID)
                     local name = spellInfo and spellInfo.name
@@ -1273,6 +1269,14 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         if PE and PE.IsOfferedNow and PE.IsOfferedNow(spellID, profile) then
             return true, "already offered as a pre-combat buff on the defensive bar"
         end
+    end
+
+    -- WRONG CREATURE TYPE. The spell data limits some spells to creature types (Forever
+    -- Exorcism: Demons and Undead). With the target's type known and outside it, the spell
+    -- cannot land. Unknown type keeps the spell.
+    if not isDefensiveCheck and BlizzardAPI.IsSpellTypeValidForTarget
+       and BlizzardAPI.IsSpellTypeValidForTarget(spellID) == false then
+        return true, "it cannot be used on this kind of creature"
     end
 
     -- AUTO ATTACKS (Forever). A running one is never redundant: the queue sinks it and shows its

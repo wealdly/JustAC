@@ -201,6 +201,10 @@ CHANNEL_ATTR1 = 0x4 | 0x40   # SPELL_ATTR1_IS_CHANNELLED / IS_SELF_CHANNELLED
 NEXT_SWING_ATTR0 = 0x4       # SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Raptor Strike, Maul)
 # A DoT: APPLY_AURA (6) of PERIODIC_DAMAGE (3) on the enemy target (6).
 DOT_EFFECT, DOT_AURA, ENEMY_TARGET = "6", "3", "6"
+ENEMY_AREA_TARGET, PET_TARGET = "15", "5"
+SLOW_AURA = "33"   # MOD_DECREASE_SPEED
+# A HoT: APPLY_AURA (6) of PERIODIC_HEAL (8), on anyone.
+HOT_AURA = "8"
 CHARGE_EFFECT = "96"   # SPELL_EFFECT_CHARGE: the caster moves to the target (Charge, Intercept, Feral Charge)
 # Resource gains a cast grants the caster: ENERGIZE (power type in EffectMiscValue_0; rage is
 # stored in tenths) and ADD_COMBO_POINTS. Emitted as power type, amount in the game's units.
@@ -476,6 +480,9 @@ def main():
     # Preserve existing suppression for maintained low/no-upfront-damage debuffs.
     # Observation additionally covers nukes, without making those unconditional sinks.
     dot_ids |= observed_ids | target_ranks("dot")
+    # A stack condition on my own target aura (Sunder Armor) is observed too (not a DoT: no unconditional sinking): the tracker counts
+    # my landed applications, since target stacks do not read in combat.
+    observed_ids |= target_ranks("stack")
     # Upfront share per id (see NUKE_SHARE): nukes leave the DoT list, frontal DoTs are marked.
     effects = {}
     for r in cfa.rows("SpellEffect"):
@@ -639,6 +646,55 @@ def main():
             if dur > 0:
                 lines.append(f"    [{sid}] = {dur:g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
+    # Forever has no carry-over: a recast restarts a DoT or HoT and loses the ticks left, so it
+    # is recast as it runs out, its cast time early. A stacking one (SpellAuraOptions
+    # CumulativeAura above 1: Fire Vulnerability, Lacerate) loses every stack if it drops, so
+    # it is recast a global cooldown earlier still. Tracked target auras, every rank.
+    stacks = {}
+    for r in cfa.rows("SpellAuraOptions"):
+        n = int(r.get("CumulativeAura") or 0)
+        if n > 1:
+            stacks[r["SpellID"]] = n
+    lines.append("local STACKING_AURAS = {")
+    for sid in sorted(s for s in (dot_ids | observed_ids) if str(s) in stacks):
+        lines.append(f"    [{sid}] = {stacks[str(sid)]},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # Class heals over time, every rank: refreshed on the same rule as DoTs.
+    lines.append("local PERIODIC_HEALS = {")
+    for sid in sorted(class_ids):
+        if any(e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == HOT_AURA
+               for e in effects.get(str(sid), [])):
+            lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # Spells the data limits to some creature types (SpellTargetRestrictions.TargetCreatureType,
+    # bit typeID-1: Exorcism hits only Demons and Undead), every rank. With the target's type
+    # known and outside the mask the queue drops the spell: it cannot land.
+    type_masks = {}
+    for r in cfa.rows("SpellTargetRestrictions"):
+        m = int(r.get("TargetCreatureType") or 0)
+        if m and r.get("DifficultyID", "0") == "0" and r["SpellID"].isdigit():
+            type_masks[int(r["SpellID"])] = type_masks.get(int(r["SpellID"]), 0) | m
+    # Only spells aimed at an enemy (target enemy 6, enemy area 15) and never at the pet (5):
+    # Bestial Wrath's beast-only mask describes the pet it buffs, not the mob.
+    def hits_enemy(sid):
+        targets = {e.get(k) for e in effects.get(str(sid), []) for k in ("ImplicitTarget_0", "ImplicitTarget_1")}
+        return bool(targets & {ENEMY_TARGET, ENEMY_AREA_TARGET}) and PET_TARGET not in targets
+    # Attacks that hit and slow movement (Frostbolt, Frost Shock, Hamstring), every rank. The
+    # slow is worth a lower-damage filler only while the target is closing on the player; once a
+    # target holds its range, the queue prefers a stronger filler that does not slow.
+    lines.append("local SLOWING_ATTACKS = {")
+    for sid in sorted(class_ids):
+        fx = effects.get(str(sid), [])
+        hits = any(e["Effect"] in DAMAGE_EFFECTS for e in fx)
+        slows = any(e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == SLOW_AURA
+                    and ENEMY_TARGET in (e.get("ImplicitTarget_0"), e.get("ImplicitTarget_1")) for e in fx)
+        if hits and slows:
+            lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    lines.append("local CREATURE_TYPES = {")
+    for sid in sorted(s for s in class_ids if s in type_masks and hits_enemy(s)):
+        lines.append(f"    [{sid}] = {type_masks[sid]},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
 
     if res.missing:
         print("UNRESOLVED - not learnable on Forever:\n  " + "\n  ".join(sorted(set(res.missing))))
@@ -711,6 +767,9 @@ def main():
         "-- Replaces retail's DoT list: its ids and durations are retail's.",
         "SpellDB.RegisterTargetDots(DOTS)",
         "SpellDB.RegisterTargetAuras(TARGET_AURAS)",
+        "if SpellDB.RegisterPeriodicRefresh then SpellDB.RegisterPeriodicRefresh(STACKING_AURAS, PERIODIC_HEALS) end",
+        "if SpellDB.RegisterCreatureTypes then SpellDB.RegisterCreatureTypes(CREATURE_TYPES) end",
+        "if SpellDB.RegisterSlowingAttacks then SpellDB.RegisterSlowingAttacks(SLOWING_ATTACKS) end",
         "for id in pairs(FRONTAL_DOTS) do SpellDB.FRONTAL_DOTS[id] = true end",
         "for id in pairs(NEXT_SWING) do SpellDB.NEXT_SWING_SPELLS[id] = true end",
         "",

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 from test_forever_defaults import PRELUDE
 from test_combat_phase import group_helpers_lua
+from test_buff_refresh_window import buff_window_lua
 
 CLASSES = [
     "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE",
@@ -103,6 +104,7 @@ def new_runtime(forever=True, precombat=True, consumables=False):
     lua.execute(PRELUDE + BASE_STUBS)
     lua.execute('local BlizzardAPI = LibStub("JustAC-BlizzardAPI")\n'
                 "local IsSecretValue = issecretvalue\n" + group_helpers_lua())
+    lua.execute(buff_window_lua())
     if forever:
         lua.execute("WOW_PROJECT_CAMELOT = 18; WOW_PROJECT_ID = 18")
         lua.execute("""
@@ -180,7 +182,9 @@ def test_generated_member_aura_mappings():
         check(sibling not in fresh, f"{cls}: fresh active sibling was offered: {fresh}")
         lua.globals().SetActive(cls, group_index, sibling, aura_id, 20)
         lapsing = seq(lua.globals().Query())
-        expected = [] if group.preparation else [sibling]
+        # One shared refresh window: 20s left of an hour is inside the solo fight for
+        # upkeep and preparation alike.
+        expected = [sibling]
         check(lapsing == expected,
               f"{cls}: lapsing sibling {sibling} was misidentified: {lapsing}")
         tests += 2
@@ -194,7 +198,7 @@ def test_generated_member_aura_mappings():
                 continue
             lua.globals().SetActive(cls, group_index, member, rank_id, 20)
             ranked = seq(lua.globals().Query())
-            expected = [] if group.preparation else [member]
+            expected = [member]
             check(ranked == expected,
                   f"{cls}: ranked aura {rank_id} did not resolve to member {member}: {ranked}")
             tests += 1

@@ -20,6 +20,9 @@ local GetTime = GetTime
 local UnitExists = UnitExists
 local UnitCanAttack = UnitCanAttack
 local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
+local UnitGUID = UnitGUID ---@diagnostic disable-line: undefined-global
+local UnitCastingInfo = UnitCastingInfo ---@diagnostic disable-line: undefined-global
+local UnitChannelInfo = UnitChannelInfo ---@diagnostic disable-line: undefined-global
 local wipe = wipe
 local type = type
 local ipairs = ipairs
@@ -589,6 +592,104 @@ function SpellQueue._PressableNow(id)
     local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
     if usable ~= true or notEnough == true then return false end
     return BlizzardAPI.AbilityInRange(id) ~= false
+end
+
+-- A target that holds its range (a caster or an archer) is never slowed into melee, so an
+-- attack whose extra value is its slow (Frostbolt) is worth less than a stronger one that does
+-- not slow (Fireball). Evidence only, per target (plain GUID on Forever), in combat: the target
+-- casting while out of melee reach, or the player being hit by a lone target that has stayed
+-- out of reach for a few seconds. A target that reaches melee, or no evidence, keeps the list's
+-- own order: the slow is what a melee mob closing on a ranged player is worth slowing for.
+local HOLD_RANGE_AFTER = 3
+local holdGUID, holdSince, holdConfirmed
+
+local function TargetCasting()
+    for _, read in ipairs({ UnitCastingInfo, UnitChannelInfo }) do
+        if read then
+            local ok, name = pcall(read, "target")
+            if ok and name ~= nil and not BlizzardAPI.IsSecretValue(name) then return true end
+        end
+    end
+    return false
+end
+
+function SpellQueue._TargetHoldsRange(b)
+    if not b.inCombat then holdGUID, holdSince, holdConfirmed = nil, nil, false; return false end
+    local ok, guid = pcall(UnitGUID, "target")
+    if not ok or BlizzardAPI.IsSecretValue(guid) or type(guid) ~= "string" then return false end
+    if guid ~= holdGUID then holdGUID, holdSince, holdConfirmed = guid, b.now, false end
+    local within = SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5)
+    if within == true then
+        holdSince, holdConfirmed = b.now, false
+        return false
+    end
+    if within == false and not holdConfirmed then
+        if TargetCasting() then
+            holdConfirmed = true
+        elseif b.ctxEnemies == 1 and b.now - holdSince >= HOLD_RANGE_AFTER and SpellQueue._BeingHit(b.now) then
+            holdConfirmed = true
+        end
+    end
+    return holdConfirmed
+end
+
+--- Whole damage per second of one cast (its hit plus any damage over time that follows), from
+--- the data model: nil when unknown.
+local function WholeSpellDPS(id)
+    local hit = PushbackRead(BlizzardAPI.GetDirectSpellHit, id, nil, true)
+    local cycle = BlizzardAPI.GetSpellCycleSeconds and BlizzardAPI.GetSpellCycleSeconds(id)
+    if type(hit) ~= "number" or type(cycle) ~= "number" or cycle <= 0 then return nil end
+    return hit / cycle
+end
+
+--- Against a target holding its range, the first slowing attack in the queue gives its place to
+--- the strongest pool attack that does not slow and the list does not name (the list's own
+--- order stands when it names both), ready, castable and in range now.
+function SpellQueue._StageRangedFiller(b, rotationList)
+    lastCtx.holdsRange, lastCtx.rangedSwap = nil, nil
+    if not BlizzardAPI.IsForever() or SpellQueue._rotationIsCustom or b.spellCount == 0
+       or not (SpellDB.IsSlowingAttack and BlizzardAPI.GetDirectSpellHit and rotationList) then return end
+    local holds = SpellQueue._TargetHoldsRange(b)
+    lastCtx.holdsRange = holds
+    if not holds then return end
+    local queue = b.recommendedSpells
+    local slowAt
+    for i = 1, b.spellCount do
+        local id = queue[i]
+        if type(id) == "number" and id > 0 and not sunkSet[id] and SpellDB.IsSlowingAttack(id) then
+            slowAt = i
+            break
+        end
+    end
+    if not slowAt then return end
+    local slowDPS = WholeSpellDPS(queue[slowAt])
+    if not slowDPS then return end
+    local best, bestDPS
+    for _, source in ipairs(rotationList) do
+        local id = type(source) == "number" and source > 0 and BlizzardAPI.GetDisplaySpellID(source)
+        if id and not SpellDB.IsSlowingAttack(id)
+           and not (RotationImport and RotationImport.GetEntry and RotationImport.GetEntry(id, b.simcCtx))
+           and not SpellQueue.IsSpellBlacklisted(id, b.blacklist)
+           and PassesRotationFilters(id, b.profile, source) and not HeldByUserHold(id, id, true)
+           and PushbackReady(id) and PushbackRead(BlizzardAPI.AbilityInRange, id) == true then
+            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
+            local dps = usable == true and not notEnough and WholeSpellDPS(id)
+            if dps and dps > slowDPS and (not bestDPS or dps > bestDPS) then best, bestDPS = id, dps end
+        end
+    end
+    if not best then return end
+    -- Out of its old place, then into the slow attack's.
+    for i = 1, b.spellCount do
+        if queue[i] == best then
+            for k = i, b.spellCount - 1 do queue[k] = queue[k + 1] end
+            queue[b.spellCount] = nil
+            b.spellCount = b.spellCount - 1
+            if i < slowAt then slowAt = slowAt - 1 end
+            break
+        end
+    end
+    PlaceQueueSpell(b, best, slowAt)
+    lastCtx.rangedSwap = best
 end
 
 -- A next-swing attack (Heroic Strike) costs no global cooldown: queued now, it lands on the
