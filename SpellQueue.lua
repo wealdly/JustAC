@@ -780,7 +780,8 @@ local DOT_MIN_TARGET_PCT = 35
 local shortGroupFight = false
 -- A fast solo fight: one regular enemy at or below my level, alone. Level and kind stand in
 -- for kill time (2026-11-18 simulation: a damage over time started late on such a target does
--- not tick out). There a new one starts only while the target is not confirmed below this.
+-- not tick out). There a first application starts only while the target is not confirmed below
+-- this; a DoT that already ran on this target may be renewed, since the target outlived it.
 local FAST_DOT_MIN_TARGET_PCT = 70
 local fastSoloFight = false
 -- WoW Forever keeps the list stable: a wait that ends within one global cooldown (the GCD,
@@ -917,7 +918,7 @@ local function IsRearAttackBlocked(spellID, readCache)
     if BlizzardAPI.IsSecretValue(stealthed) or stealthed ~= false then return false end
     if BlizzardAPI.SafeUnitIsUnit("targettarget", "player", nil) ~= true then return false end
     if requirement.talent then
-        local knownOk, known = pcall(IsPlayerSpell, requirement.talent)
+        local knownOk, known = pcall(C_SpellBook.IsSpellKnown, requirement.talent)
         if not knownOk then
             geterrorhandler()(known)
             return false
@@ -1382,7 +1383,7 @@ local function NoteManaStarved(rotationList)
     local short = false
     for i = 1, #rotationList do
         local id = rotationList[i]
-        if IsPlayerSpell(id) and CostsMana(id) then
+        if C_SpellBook.IsSpellKnown(id) and CostsMana(id) then
             local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
             if usable == true then buildStarved = false; return end
             if notEnough == true then short = true end
@@ -1414,10 +1415,15 @@ local function GateVerdict(g, ctx)
         local stealthed = (IsStealthed and IsStealthed()) and true or false
         return (g.neg == true) ~= stealthed
     end
+    if t == "group" then
+        -- In a party or raid, on a confirmed read only. Unknown is not a group: what this guards
+        -- (Vanish, which resets a fight fought alone) must never be offered on a guess.
+        return (g.neg == true) ~= (BlizzardAPI.IsGrouped() == true)
+    end
     if t == "known" then
         -- Forever lists: a talent / rank check (Improved Slam). IsPlayerSpell is static.
-        if not (g.id and IsPlayerSpell) then return nil end
-        return (g.neg == true) ~= (IsPlayerSpell(g.id) and true or false)
+        if not (g.id and C_SpellBook.IsSpellKnown) then return nil end
+        return (g.neg == true) ~= (C_SpellBook.IsSpellKnown(g.id) and true or false)
     end
     if t == "starved" then return buildStarved end
     if t == "unconfirmed" then return false end
@@ -1519,7 +1525,8 @@ local function GateVerdict(g, ctx)
         local ownGate = applicator and g.id and (g.id == applicator
             or (RotationImport and RotationImport.RankBase
                 and RotationImport.RankBase(g.id) == RotationImport.RankBase(applicator)))
-        if ownGate and g.tgt and g.id and g.op == "<" and g.n == 1
+        -- `once`: a pack list stops at one application per target, whatever the fight.
+        if ownGate and g.tgt and g.id and g.op == "<" and g.n == 1 and not g.once
            and not SpellQueue._rotationIsCustom and not BlizzardAPI.HasGamePick()
            and SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(g.id)
            and SpellDB.GetStackingMax and IsStackPayoffContext() then
@@ -1554,7 +1561,7 @@ local function GateVerdict(g, ctx)
         -- Forever: a spell not learned yet is as unavailable as one on cooldown. "Serpent Sting
         -- while Aimed Shot is on cooldown" must hold for a hunter who has no Aimed Shot - read
         -- as "ready", it kept the opener off the queue entirely while levelling.
-        if not onCd and not BlizzardAPI.HasGamePick() and IsPlayerSpell and not IsPlayerSpell(id) then
+        if not onCd and not BlizzardAPI.HasGamePick() and C_SpellBook.IsSpellKnown and not C_SpellBook.IsSpellKnown(id) then
             onCd = true
         end
         return (g.neg == true) == onCd
@@ -1585,23 +1592,33 @@ local function GateVerdict(g, ctx)
     if t == "debuff" and g.refresh and ctx.skipRefresh then return nil end
     -- Applications, not aura prerequisites (Forever): a DoT that does its damage over time is
     -- not started where it cannot tick out, in a short group fight or on a non-boss target
-    -- already below DOT_MIN_TARGET_PCT. A big upfront hit (frontal) still pays.
-    -- In a fast solo fight the floor is higher and only a spell that is mostly its hit skips it.
+    -- already below DOT_MIN_TARGET_PCT. A big upfront hit (frontal) still pays, but on a dying
+    -- target a cast-time spell must be mostly its hit: the cast costs more than a part-hit returns.
+    -- In a fast solo fight a first application has a higher floor, and only a spell that is mostly
+    -- its hit skips it. A DoT that already ran on this target is past that question.
     if fastSoloFight and (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
        and not BlizzardAPI.HasGamePick()
        and not (SpellDB and SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(g.id))
        and BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
-       and BlizzardAPI.IsUnitHealthBelow("target", FAST_DOT_MIN_TARGET_PCT) == true then
+       and BlizzardAPI.IsUnitHealthBelow("target", FAST_DOT_MIN_TARGET_PCT) == true
+       and not (g.id and DotTracker and DotTracker.HasRunOnTarget
+                and DotTracker.HasRunOnTarget(BlizzardAPI.GetDisplaySpellID(g.id))) then
         return false
     end
     if (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
-       and not BlizzardAPI.HasGamePick()
-       and not (SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(g.id)) then
-        if shortGroupFight or SpellQueue._lowValueTarget == "others" then return false end
+       and not BlizzardAPI.HasGamePick() then
+        local frontal = SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(g.id)
+        if not frontal and (shortGroupFight or SpellQueue._lowValueTarget == "others") then return false end
         if BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
            and BlizzardAPI.IsUnitHealthBelow("target", DOT_MIN_TARGET_PCT) == true
            and not (BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss()) then
-            return false
+            local hitPays = frontal
+            if frontal and not (SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(g.id)) then
+                local cast = BlizzardAPI.GetCastSeconds
+                    and BlizzardAPI.GetCastSeconds(BlizzardAPI.GetDisplaySpellID(g.id))
+                hitPays = not (type(cast) == "number" and cast > 0)
+            end
+            if not hitPays then return false end
         end
     end
     if t == "debuff" then
@@ -1708,7 +1725,7 @@ local function ProcGateBlocks(g, ctx)
         return false
     elseif g.t == "prev" and not BlizzardAPI.WasLastCast then
         return false
-    elseif g.t == "known" and not (g.id and IsPlayerSpell) then
+    elseif g.t == "known" and not (g.id and C_SpellBook.IsSpellKnown) then
         return false
     end
     return GateVerdict(g, ctx) == false
@@ -1827,6 +1844,25 @@ function SpellQueue._IsTargetSetupOpener(spellID, b)
     return preparation and preparation.GetTargetDebuffState
         and preparation.GetTargetDebuffState(policy.auraIDs) == false
 end
+--- A class ability the installed tree's list deliberately keeps out here (Fury's Hamstring) is
+--- not an unranked filler (RotationImport.IsLeftOut). Custom lists, exact order and an Always
+--- Show pin on either id keep it. The one rule for every stage that walks the pool.
+--- A Forever list is closed: a class ability the installed tree names in none of its lists is
+--- left out too, so nothing the list never planned for (a form, a self buff, another tree's
+--- attack) fills slot 1 while the rotation waits. Kept: the weapon attacks (Attack, Shoot, wand,
+--- Throw), weighed by their own stage. Gap closers (Charge, Intercept) are the gap closer
+--- feature's (its Forever class lists), not the damage list's.
+function SpellQueue._IsLeftOut(displayID, sourceID, b)
+    if pinnedAlwaysShow[displayID] or pinnedAlwaysShow[sourceID] or b.contextOrder == "off"
+       or SpellQueue._rotationIsCustom or not RotationImport then return false end
+    if RotationImport.IsLeftOut(displayID, b.simcCtx) then return true end
+    if not RotationImport.IsNamed or displayID == AUTO_ATTACK_SPELL
+       or (SpellDB.IsForeverRangedFiller and SpellDB.IsForeverRangedFiller(displayID)) then
+        return false
+    end
+    return not (RotationImport.IsNamed(displayID) or (sourceID and RotationImport.IsNamed(sourceID)))
+end
+
 
 -- Before a pull nothing can push a cast back and its cast time costs no fight time, so any
 -- ready hardcast the damage model can price is an opener. An instant costs the same GCD in
@@ -1837,6 +1873,8 @@ function SpellQueue._IsForeverOpener(spellID, simcRec, b)
     if not (RotationImport.GetDirectDamageEstimate and RotationImport.GetDirectDamageEstimate(spellID)) then
         return false
     end
+    -- An instant damage over time is priced for measured damage only (its data says instant).
+    if BlizzardAPI.IsMeasureOnlyEstimate and BlizzardAPI.IsMeasureOnlyEstimate(spellID) then return false end
     if not BlizzardAPI.GetCachedSpellInfo then return false end
     local ok, info = pcall(BlizzardAPI.GetCachedSpellInfo, spellID)
     if not ok or type(info) ~= "table" then return false end
@@ -1863,12 +1901,13 @@ end
 -- with the biggest estimated whole damage (hit plus any damage over time) opens.
 -- One unknown estimate keeps list order: an unpriced spell is never assumed smaller.
 local pullSlots, pullHits = {}, {}
+SpellQueue._pullBase = {}   -- each pull candidate's own list rank, before the opener boost
 function SpellQueue._OrderPullsByHit(b, count)
-    if not BlizzardAPI.GetDirectSpellHit then return end
+    if not BlizzardAPI.GetDirectSpellHit then return nil end
     local best, bestHit = nil, nil
     for k = 1, count do
         local hit = BlizzardAPI.GetDirectSpellHit(normalSpells[pullSlots[k]], nil, true)
-        if not hit then return end
+        if not hit then return nil end
         pullHits[k] = hit
         if not bestHit or hit > bestHit then best, bestHit = k, hit end
     end
@@ -1876,20 +1915,43 @@ function SpellQueue._OrderPullsByHit(b, count)
         local slot = pullSlots[k]
         normalRank[slot] = normalRank[slot] - pullHits[k] / (bestHit + 1)
     end
-    b.pullOpenerID = normalSpells[pullSlots[best]]
+    return best
 end
 
--- A fight long or dangerous enough for a long cooldown or a slow payoff: a pack, a boss or an
--- elite. Release only on positive encounter evidence: zero engaged enemies at a pull
+-- Only one cast opens the pull. The other candidates go back to their own list rank, so slot 2
+-- names what follows the opener once the fight starts: before, every hardcast kept the boost and
+-- Smite showed second behind a Mind Blast opener, then Shadow Word: Pain (first on the list,
+-- an instant, never an opener) jumped to slot 1 the moment combat began (2026-11-22 capture).
+-- The opener is the strongest by hit, or with a hit unknown the best-ranked by the list.
+function SpellQueue._KeepOneOpener(b, count)
+    local base = SpellQueue._pullBase
+    local opener = count > 1 and SpellQueue._OrderPullsByHit(b, count) or nil
+    if not opener then
+        opener = 1
+        for k = 2, count do
+            if base[k] < base[opener] then opener = k end
+        end
+    end
+    for k = 1, count do
+        if k ~= opener then normalRank[pullSlots[k]] = base[k] end
+    end
+    b.pullOpenerID = normalSpells[pullSlots[opener]]
+end
+
+-- A fight long or dangerous enough for a long cooldown or a slow payoff: a pack, a boss, an
+-- elite or a regular target three or more levels above. Long cooldowns are also the player's
+-- safety margin: one spent to shorten an ordinary kill is missing on the pull that needs it.
+-- Release only on positive encounter evidence: zero engaged enemies at a pull
 -- boundary is not proof of a single-target fight. targetOnly: the TARGET must last (a slow
 -- payoff on it alone: Bane of Doom, an armor reduction), so a pack of trash does not count.
+-- ignoreAge: time already spent on the target is no evidence (damage still a minute away).
 -- The relative-level signal is deliberately limited to these payoffs, not ordinary damage
 -- DoTs: withholding a DoT that is a build's primary damage would violate the damage-only queue.
-local function IsWorthwhileFight(b, targetOnly)
+local function IsWorthwhileFight(b, targetOnly, ignoreAge)
     if not targetOnly and b.inCombat and not BlizzardAPI.IsSecretValue(b.ctxEnemies)
        and type(b.ctxEnemies) == "number" and b.ctxEnemies >= 2 then return true end
     -- A target that has already taken this long is not a quick trash kill.
-    if b.inCombat and targetFightStartedAt and type(b.now) == "number"
+    if not ignoreAge and b.inCombat and targetFightStartedAt and type(b.now) == "number"
        and b.now - targetFightStartedAt >= LONG_FIGHT_SECONDS then return true end
     if IsLiveAttackableTarget() then
         local ok, boss = pcall(BlizzardAPI.IsTargetBoss)
@@ -1898,12 +1960,15 @@ local function IsWorthwhileFight(b, targetOnly)
         if classOk and not BlizzardAPI.IsSecretValue(classification)
            and (classification == "elite" or classification == "rareelite"
                or classification == "worldboss") then return true end
-        if targetOnly and BlizzardAPI.GetTargetLevelDelta then
+        if BlizzardAPI.GetTargetLevelDelta then
+            -- A regular target this far above the player is a long, dangerous fight for
+            -- anything: long cooldowns are kept for it, so they are released on it.
+            local HIGHER_LEVEL_FIGHT = 3
+            -- A slow payoff on the target alone asks less: any higher level will outlast it.
+            local need = HIGHER_LEVEL_FIGHT
+            if targetOnly then need = 1 end
             local levelDelta = BlizzardAPI.GetTargetLevelDelta()
-            if type(levelDelta) == "number" then
-                if levelDelta >= 1 then return true end
-                if levelDelta <= -1 then return false end
-            end
+            if type(levelDelta) == "number" and levelDelta >= need then return true end
         end
     end
     return false
@@ -1947,22 +2012,27 @@ local function HoldAutomaticBurst(spellID, b)
     if b.ctxDying == true and SpellDB and SpellDB.GainsOverTime and SpellDB.GainsOverTime(spellID) then
         return true
     end
-    local worthwhile = b.ctxWorthwhile
-    if worthwhile == nil then worthwhile = IsWorthwhileFight(b) end
-    if SpellQueue._lowValueTarget then worthwhile = false end
     if SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID) then
         if SpellQueue._lowValueTarget then return true end
-        -- A threat-building armor reduction (Sunder Armor) is useful at once to a tank, so a
-        -- tank tree does not hold it for the long-fight threshold. Any other tree does: as
-        -- damage, one application costs a global cooldown and rage it does not pay back on an
-        -- ordinary target (2026-11-18 simulation: 4 to 5% slower at level 40).
-        if SpellDB.GetThreatRole and SpellDB.GetThreatRole(spellID) == "boost" and SpellDB.IsTankTree
-           and SpellDB.IsTankTree(spec, RotationImport and RotationImport.GetForeverTree
-                                        and RotationImport.GetForeverTree()) then
-            return false
+        -- A threat-building armor reduction (Sunder Armor) is useful at once to a tank, and to a
+        -- tree whose physical hits repay it at once (Arms), so those do not hold it for the
+        -- long-fight threshold. Any other tree does: as damage, one application costs a global
+        -- cooldown and rage it does not pay back on an ordinary target.
+        if SpellDB.GetThreatRole and SpellDB.GetThreatRole(spellID) == "boost" then
+            local tree = RotationImport and RotationImport.GetForeverTree and RotationImport.GetForeverTree()
+            if (SpellDB.IsTankTree and SpellDB.IsTankTree(spec, tree))
+               or (SpellDB.IsEarlyArmorTree and SpellDB.IsEarlyArmorTree(spec, tree)) then
+                return false
+            end
         end
         local lasting = b.ctxTargetWorthwhile
-        if lasting == nil then lasting = IsWorthwhileFight(b, true) end
+        -- Damage that lands a minute from now (Bane of Doom) needs a target that will outlast
+        -- it. How long this one has already lasted says nothing about that.
+        if SpellDB.IsTargetDot and SpellDB.IsTargetDot(spellID) then
+            lasting = IsWorthwhileFight(b, true, true)
+        elseif lasting == nil then
+            lasting = IsWorthwhileFight(b, true)
+        end
         return not lasting
     end
     if not (SpellDB and SpellDB.IsPureSelfAura and BlizzardAPI.PeekBaseCooldownSeconds) then return false end
@@ -1971,7 +2041,12 @@ local function HoldAutomaticBurst(spellID, b)
     local cooldownOk, seconds = pcall(BlizzardAPI.PeekBaseCooldownSeconds, spellID)
     if not cooldownOk or BlizzardAPI.IsSecretValue(seconds)
        or type(seconds) ~= "number" or seconds < 120 then return false end
-    return not worthwhile
+    if SpellQueue._lowValueTarget then return true end
+    -- A long cooldown is also the safety margin for the next dangerous pull. Time already spent
+    -- on an ordinary target does not make it one: spent late in that kill, it is missing after.
+    local dangerous = b.ctxCooldownFight
+    if dangerous == nil then dangerous = IsWorthwhileFight(b, false, true) end
+    return not dangerous
 end
 SpellQueue._HoldAutomaticBurst = HoldAutomaticBurst
 
@@ -2192,6 +2267,18 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     b.targetSetupID = nil
     b.automaticBurstHeld = false
     b.droppedToggle, b.toggleLeadWait, b.toggleLeadNext, b.queuedSwingID = nil, nil, nil, nil
+    -- A next-swing attack already waiting for the coming swing (Cleave queued): known before the
+    -- walk, so the walk can hold every other next-swing attack back. Pressing one would only
+    -- swap it for the queued one (net damage, FOREVER_DPS_PRINCIPLES.md).
+    if BlizzardAPI.IsForever() and SpellDB and SpellDB.NEXT_SWING_SPELLS then
+        for _, source in ipairs(rotationList) do
+            local id = type(source) == "number" and source > 0 and BlizzardAPI.GetDisplaySpellID(source)
+            if id and SpellDB.NEXT_SWING_SPELLS[id] and BlizzardAPI.RunningAutoSwing(id) == 0 then
+                b.queuedSwingID = id
+                break
+            end
+        end
+    end
     -- Unpack the build context once; the body below is unchanged from the
     -- 18-positional-argument era.
     local profile, blacklist = b.profile, b.blacklist
@@ -2282,7 +2369,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                 -- press and must not appear twice.
                 if displayID and formBase then addedSpellIDs[formBase] = true end
                 local alwaysShow = pinnedAlwaysShow[spellID]
-                if displayID
+                if displayID and not SpellQueue._IsLeftOut(displayID, spellID, b)
                    and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
                    and (PassesRotationFilters(displayID, profile, formBase or spellID)
                         or (alwaysShow and BlizzardAPI.IsSpellAvailable(displayID))) then
@@ -2388,8 +2475,10 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                         and SpellDB.NEXT_SWING_SPELLS[displayID]
                     -- On a dying target a next-swing attack lands only with the swing; with that
                     -- swing more than a global cooldown away an instant finishes the target first.
-                    local swingLate = nextSwing and b.ctxDying == true and contextOrder ~= "off"
-                        and not SpellQueue._rotationIsCustom and SpellQueue._SwingFarOff()
+                    -- And while another next-swing attack is queued, this one would only replace it.
+                    local swingLate = nextSwing and contextOrder ~= "off" and not SpellQueue._rotationIsCustom
+                        and ((b.ctxDying == true and SpellQueue._SwingFarOff())
+                             or (b.queuedSwingID ~= nil and b.queuedSwingID ~= displayID))
                     local meleeUnconfirmed = nextSwing and contextOrder ~= "off"
                         and not SpellQueue._rotationIsCustom and abilityRange ~= true
                         and not (abilityRange == nil and b.nearMeleeHint
@@ -2585,13 +2674,14 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                             end
                         end
                         if pullSpell then
+                            pullCount = pullCount + 1
+                            pullSlots[pullCount] = normalCount
+                            SpellQueue._pullBase[pullCount] = normalRank[normalCount]
                             normalRank[normalCount] = -1
                             if positioningOpener then
                                 normalRank[normalCount] = -LEAD_BARRED_PENALTY - 1
                             end
                             b.pullOpenerID = displayID
-                            pullCount = pullCount + 1
-                            pullSlots[pullCount] = normalCount
                         end
                         if not leadBarred then anyTimeable = true end
                     end
@@ -2639,7 +2729,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
         pickLeads = pickDisplay
     end
 
-    if pullCount > 1 then SpellQueue._OrderPullsByHit(b, pullCount) end
+    if pullCount > 1 then SpellQueue._KeepOneOpener(b, pullCount) end
     normalCount, cooldownCount = SpellQueue._HoldForPriority(normalSpells, normalRank, normalCount,
         cooldownSpells, cooldownCount, sunkSet, unavailableTier)
     -- Protected priorities precede the comparable filler bucket; unavailable spells trail.
@@ -2749,6 +2839,7 @@ end
 --- New target: whatever the old one revealed about its health no longer applies.
 function SpellQueue.OnTargetChanged()
     executeLatch = false
+    SpellQueue.NoteLeadEvent()
     if SpellQueue._ResetWeaponPhase then SpellQueue._ResetWeaponPhase() end
     targetFightStartedAt = nil
     SpellQueue.ResetNearMeleeHint()
@@ -2758,14 +2849,19 @@ end
 --- Stage E - context inference: the AC pick's archetype/range/role/execute
 --- tags, enemy-count promotion, sticky/latch temporal smoothing, the
 --- out-of-melee probe, and the /jac inspect rank snapshot. Fills b.ctx*.
---- Is the next main-hand swing more than one global cooldown away? The swing is plain on
---- Forever while swinging (PLAYER_SWING tracker); the GCD length is the last one observed on
---- the GCD reference spell (it follows haste and the GCD each spell triggers). Either unknown
---- answers false: no change.
+--- Is the next main-hand swing more than one global cooldown away, counted from the moment the
+--- player can next press a spell on the global cooldown (when the running one ends)? The swing
+--- is plain on Forever while swinging (PLAYER_SWING tracker); the GCD length is the last one
+--- observed on the GCD reference spell (it follows haste and the GCD each spell triggers).
+--- Decided for that moment, the answer holds while a GCD runs, because the swing and the GCD
+--- count down together: it changes when a swing lands or the player acts, not as the timer
+--- ticks. Asked of the clock, Heroic Strike and Hamstring swapped twice a swing on a dying
+--- target (2026-11-20 capture, level 14 warrior). Either unknown answers false: no change.
 function SpellQueue._SwingFarOff()
     local remaining = BlizzardAPI.GetSwingRemaining and BlizzardAPI.GetSwingRemaining(0)
     local gcd = BlizzardAPI.GetGCDLength and BlizzardAPI.GetGCDLength()
-    return remaining ~= nil and gcd ~= nil and remaining > gcd
+    if remaining == nil or gcd == nil then return false end
+    return remaining - BlizzardAPI.GetGCDRemaining() > gcd
 end
 
 function SpellQueue._StageContext(b)
@@ -2872,10 +2968,11 @@ function SpellQueue._StageContext(b)
     b.ctxEnemies = enemies
     -- Read once per build: the burst hold and the DoT rule share it. Retail has a game pick.
     if BlizzardAPI.HasGamePick() then
-        b.ctxWorthwhile, b.ctxTargetWorthwhile = nil, nil
+        b.ctxWorthwhile, b.ctxTargetWorthwhile, b.ctxCooldownFight = nil, nil, nil
     else
         b.ctxWorthwhile = IsWorthwhileFight(b)
         b.ctxTargetWorthwhile = IsWorthwhileFight(b, true)
+        b.ctxCooldownFight = IsWorthwhileFight(b, false, true)   -- for a long cooldown: age is no reason
     end
     shortGroupFight = inCombat and b.ctxWorthwhile == false and BlizzardAPI.IsGrouped() == true
     lastCtx.shortGroupFight = shortGroupFight
@@ -3306,6 +3403,50 @@ function SpellQueue.IsSafeLead(spellID)
     return safeLeadID ~= nil and spellID == safeLeadID
 end
 
+--- Incumbent advantage for the first slot (the stable output principle). The queue is rebuilt
+--- many times a second, and a read that flickers for a build or two (a cost met and lost, an
+--- enemy entering and leaving the count, a target at the edge of melee) used to change the
+--- first slot each time. With the hold, once the build's first slot differs from the shown one
+--- it must keep differing for the hold time before the shown one gives way. Released at once
+--- by what matters: the player's own cast or a new target (SpellQueue.NoteLeadEvent), a proc
+--- on the challenger, the shown entry leaving the queue, and the end of combat. Lists alone:
+--- with a game pick the first slot is the game's.
+--- TRIAL: off unless profile.leadHoldSeconds is a positive number, while its effect on flips
+--- per press is measured (the stability capture marks held builds as leadHeld).
+SpellQueue._leadHold = {}
+SpellQueue._LEAD_EVENT_SECONDS = 0.5   -- how long an event keeps releasing the next change
+
+function SpellQueue.NoteLeadEvent()
+    SpellQueue._leadHold.eventAt = GetTime()
+end
+
+function SpellQueue._StageLeadHold(b)
+    local hold = SpellQueue._leadHold
+    local lead, now = lastSpellIDs[1], b.now
+    local seconds = b.profile and b.profile.leadHoldSeconds
+    lastCtx.leadHeld = nil
+    local held = false
+    if type(seconds) == "number" and seconds > 0 and b.inCombat and type(now) == "number"
+       and lead ~= nil and hold.shown ~= nil and lead ~= hold.shown and not BlizzardAPI.HasGamePick() then
+        local at
+        for i = 2, #lastSpellIDs do
+            if lastSpellIDs[i] == hold.shown then at = i break end
+        end
+        local eventAt = hold.eventAt
+        hold.lostAt = hold.lostAt or now
+        held = at ~= nil and now - hold.lostAt < seconds
+            and not (eventAt ~= nil and now - eventAt <= SpellQueue._LEAD_EVENT_SECONDS)
+            and not (lead > 0 and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(lead) == true)
+        if held then
+            -- The shown entry keeps the first slot and the challenger follows.
+            table.remove(lastSpellIDs, at)
+            table.insert(lastSpellIDs, 1, hold.shown)
+            lastCtx.leadHeld = true
+        end
+    end
+    if not held then hold.shown, hold.lostAt = lead, nil end
+end
+
 --- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
 --- copy into lastSpellIDs (the shared return buffer).
 function SpellQueue._StageForeverWait(b)
@@ -3431,6 +3572,7 @@ function SpellQueue._StageFinalize(b)
             end
         end
     end
+    SpellQueue._StageLeadHold(b)
     -- Last, so the candidate judges the finished queue.
     SpellQueue._ApplySafeLead(b)
     SpellQueue._NoteAttackKeySpell()
@@ -3948,7 +4090,9 @@ function SpellQueue.GetCurrentSpellQueue()
     SpellQueue._StagePushback(b, cachedRotationList)
     SpellQueue._StageFightEndRefresh(b, cachedRotationList)
     SpellQueue._StageRangedFiller(b, cachedRotationList) -- a target holding range: no slow filler
+    SpellQueue._StageOnTheMove(b)      -- moving: attacks castable on the move come first
     SpellQueue._StageSwingPress(b)     -- a pressable next-swing attack over a lead still waiting
+    SpellQueue._StageNextPress(b)      -- slot 2 forecasts the press after slot 1
     SpellQueue._StageBurstCue(b)       -- G: burst-ready cue at position 2
     SpellQueue._StageForeverWait(b)    -- no actionable Forever entry: reserve slot 1 for WAIT
     SpellQueue._StageEfficiency(b)     -- opt-in low-mana finishing policy

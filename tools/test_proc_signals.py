@@ -3,7 +3,7 @@
 # Proc overlay API failures degrade safely and remain diagnosable.
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -17,7 +17,7 @@ if not DebugCommands then return end
 -- new ones next to the thing they diagnose rather than at the end.
 --------------------------------------------------------------------------------
 local INSPECT_TOPICS = {
-    { "start",       "StartDiagnostics",         "[question]", "Start the shared diagnostic session; a research question id focuses it" },
+    { "start",       "StartDiagnostics",         "[full|question]", "Start THE capture session; full adds the audit snapshots, a research question id narrows it" },
     { "questions",   "ResearchQuestions",        "[id]", "Research questions, their controls and marks (Research companion)" },
     { "mark",        "MarkScenario",             "<label>", "Timestamp a scenario control in the running diagnostic session" },
     { "stop",        "StopDiagnostics",          nil, "Stop session-owned captures; preserve results for /reload" },
@@ -42,23 +42,24 @@ local INSPECT_TOPICS = {
     { "blank",       "QueueBlankReport",         nil,  "Why the queue last went empty (run right after it vanishes)" },
     { "glows",       "GlowInventory",            nil,  "Inventory frames overlapping the queue (orphan-glow reports)" },
     { "maintenance", "MaintenanceProbe",         nil,  "Can the tank maintenance slot bind its aura exactly? (in combat)" },
-    { "maintlog",    "MaintenanceLog",           "[on|off|clear]", "Record maintenance state 1/s to SavedVariables" },
+    { "maintlog",    "MaintenanceLog",           "[on|off]", "Maintenance state transitions by hand (the standard capture records them already)" },
     { "enemies",     "EnemyCountProbe",          nil,  "Why the direct enemy count reads what it reads (run in combat with a pack)" },
     { "overrides",   "OverrideApiDiff",          nil,  "Spellbook walk: where FindSpellOverrideByID and C_Spell.GetOverrideSpell disagree" },
     { "window",      "FightWindowDump",          "[selftest]", "The last abilities the game served and you used this fight, and what they imply" },
-    { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
+    { "picklog",     "PickLog",                  "[on|off]", "The game's pick + readable facts by hand (the standard capture records them already)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
     { "immunedb",    "DotImmunityDB",            "[clear]", "Forever: creatures learned to be immune to a DoT (persists across sessions)" },
     { "identity",    "IdentityProbe",            "[clear]", "Hunt a plain mob identifier: snapshot every readable target surface, diff vs last run" },
-    { "mobprofile",  "MobProfileProbe",          "[arm|off|show|clear]", "Per-NPC readable profile (type, level, max health) and kill times; plain vs secret reads in and out of combat" },
+    { "mobprofile",  "MobProfileProbe",          "[arm|off|show|clear]", "Armed by the standard capture. Per-NPC readable profile (type, level, max health) and kill times; plain vs secret reads in and out of combat" },
+    { "petprofile",  "PetProfileProbe",          "[arm|off|show|clear]", "Armed by the standard capture. Your pet's stats per pet level (stats, attack power, damage, armour, health), out of combat, for the offline simulator" },
     { "timeline",    "EncounterTimelineProbe",   nil,  "Can we see a big hit coming? Boss-mechanic timeline read" },
 
     -- Capability probes: run these when a feature stops working and you need to
     -- know whether the CLIENT changed or the addon did.
     { "cdmlayout",   "CdmLayoutProbe",           "[add <spellID>|add all]", "Forever: can JustAC add the rotation's critical buffs to the Cooldown Manager? (decode/round-trip/active layout; add writes them, then /reload)" },
     { "foreverauras", "ForeverAuraProbe",        nil,  "Forever: every aura route on player/target/pet, plus auras remembered from out of combat" },
-    { "forever",     "ForeverProbe",             "[arm|off|toggle]", "Forever: snapshot of every signal; arm/off/toggle = one switch for a whole probe session (recorder + errors + audit)" },
+    { "forever",     "ForeverProbe",             "[arm|off|toggle]", "Forever: snapshot of every signal; arm/off/toggle = start full / stop (kept for macros)" },
     { "validate",    "ValidateAssumptions",      "[arm|show]", "START HERE if something stopped working: every secrecy/API assumption plus a self-test of each technique the addon rides on; arm = quiet combat enter/exit comparison, show = print it" },
     { "errors",      "ErrorCapture",             "[off|clear|show]", "Capture taint/secret errors (run after a fight)" },
     { "secrecy",     "SecrecyProbe",             nil,  "Measure which combat values read plain vs secret (in AND out of combat)" },
@@ -89,12 +90,12 @@ local INSPECT_TOPICS = {
     { "aurapanels",  "AuraPanelProbe",           nil,  "Blizzard's own aura panels: is each one live, and what do its buttons expose?" },
     { "audioalerts", "AudioAlertProbe",          nil,  "Combat audio alerts: is it on, and are its stored health/power percents readable?" },
     { "hotkeys",     "HotkeyProbe",              nil,  "Why a queue icon has no keybind (run it WHILE channeling)" },
-    { "enragelog",   "EnrageLog",                "[off|clear]", "Log enrage detections to SavedVariables" },
+    { "enragelog",   "EnrageLog",                "[off]", "Enrage detections by hand (the standard capture records them already)" },
     { "castdiag",    "CastDiagnostics",          nil,  "Arm a one-shot cast-interruptibility probe" },
     { "chargediag",  "ChargeDiagnostics",        "[spell]", "Arm a 60s charge-event/secrecy probe" },
     { "selfcast",    "SelfCastProbe",            nil,  "Arm a capture of own-cast info secrecy (cast + channel something)" },
     { "locwatch",    "LossOfControlWatch",       nil,  "Arm a 10min loss-of-control capture (get CC'd; prints real locType)" },
-    { "audit",       "ProbeSession",             "[off|clear]", "ARM the probe battery: auto-snapshots on combat enter/exit" },
+    { "audit",       "AuditSession",             "[off|clear]", "Same as start full / stop (kept for macros); clear empties the log" },
 }
 
 --- topic -> method name, for the slash dispatch.

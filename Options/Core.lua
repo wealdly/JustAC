@@ -11,6 +11,7 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local General       = LibStub("JustAC-OptionsGeneral", true)
 local Display       = LibStub("JustAC-OptionsDisplay", true)
 local Offensive     = LibStub("JustAC-OptionsOffensive", true)
+local Forever       = LibStub("JustAC-OptionsForever", true)
 local Abilities     = LibStub("JustAC-OptionsAbilities", true)
 local Defensives    = LibStub("JustAC-OptionsDefensives", true)
 local Profiles      = LibStub("JustAC-OptionsProfiles", true)
@@ -38,8 +39,8 @@ end
 Options.UpdateHotkeyOverrideOptions = Options.UpdateBlacklistOptions
 
 -------------------------------------------------------------------------------
--- WoW Forever: settings with nothing to act on there - no game pick, one spec per class,
--- no Forever gap-closer defaults. Greyed rather than hidden, the reason in the
+-- WoW Forever: settings with nothing to act on there - no game pick, one spec per class.
+-- (Gap-closer defaults exist there: Data/Forever/Defaults.lua GAP_CLOSER.) Greyed rather than hidden, the reason in the
 -- tooltip, so a player who knows them from retail is not left guessing. Applied after
 -- every rebuild (RefreshAllDynamic runs before every way into the panel), because a
 -- rebuilt sub-tree is a fresh table. Paths are option keys, the `args` levels implied.
@@ -48,7 +49,6 @@ local FOREVER_UNUSED = {
     "general.disableBlizzardHighlight",                                 -- the assisted-highlight CVar
     "offensive.customQueue.spellListGroup.leadMode",                    -- always "your list" there
     "offensive.customQueue.queueContentGroup.includeHiddenAbilities",   -- only fed the game's pick
-    "offensive.gapClosers.spellListGroup.gapRestore",                   -- no Forever defaults to restore
     "profiles.specSwitching",                                           -- one spec per class
     -- NOT showMaintenanceSlot: the same slot carries the crowd-control escape, which works.
 }
@@ -140,6 +140,9 @@ local function CreateOptionsTable(addon)
     -- Each sub-module contributes its tab via CreateTabArgs
     if General then
         args.general = General.CreateTabArgs(addon)
+    end
+    if Forever then
+        args.forever = Forever.CreateTabArgs(addon)   -- hidden off Forever
     end
     if Display then
         args.display = Display.CreateTabArgs(addon)

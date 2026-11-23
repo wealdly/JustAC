@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 6.4.1
+## Version: 6.5.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -80,6 +80,7 @@ CdmAdvisor.lua
 AuraClock.lua
 SpellQueue.lua
 SpellQueueForever.lua
+SpellQueueMovement.lua
 
 # UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UISootheCue/UIMaintenanceAura → UIRenderer → UINameplateOverlay)
 UI\UIAnimations.lua
@@ -117,6 +118,7 @@ Options\LiveSearchPopup.lua
 Options\General.lua
 Options\StandardQueue.lua
 Options\Offensive.lua
+Options\Forever.lua
 Options\CustomQueue.lua
 Options\Overlay.lua
 Options\Display.lua

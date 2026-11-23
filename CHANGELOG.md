@@ -3,6 +3,69 @@
 
 ## [Unreleased]
 
+## [6.5.0] - 2026-11-22
+
+### Both clients
+
+- New On the Move option (DPS Queue, Queue Content): while you keep moving in combat, attacks you can cast on the move rise ahead of spells that need you to stand still. On by default for ranged and healers, off for melee. Custom lists keep their order, and on Retail the first slot stays the game's recommendation.
+- The queue no longer drops out of its multi-target order when several enemy nameplates leave the screen at once, for example when you turn the camera away mid-fight.
+- Gap closers the game will not let you use right now, such as Charge in combat on WoW Forever, no longer take the first slot.
+
+### WoW Forever: options
+
+- A new WoW Forever section gathers what exists only there. Play Style chooses which talent tree's priority the queue follows when your talent points do not match how you play (Automatic is the default), and shows which one it follows now and why. Tracking your rotation's buffs in the Cooldown Manager moved here from General.
+- Gap-Closer Suggestions: Restore Class Defaults now works on WoW Forever, and druids get Dash in Cat Form alongside Feral Charge in Bear Form. A druid list saved before picks up Dash with Restore Class Defaults.
+- Automatic skips a tree whose attacks need gear you are not wearing: warriors with Protection points follow Protection only with a shield, and Protection paladins holding a two-handed weapon follow Retribution. A swap made in combat applies when the fight ends.
+
+### WoW Forever: queue behavior
+
+- The queue now suggests only what your class and talent tree's priority uses, plus your weapon attacks. Abilities it does not plan for, such as a form you are not in, a self buff or another tree's attack, no longer take the first slot while your main attacks are on cooldown or waiting for rage or energy. Charge and Intercept are offered by Gap-Closer Suggestions. Custom lists and Always Show abilities are unchanged.
+- The choice between a weapon attack (wand, Auto Shot or melee) and a cast like Smite now learns from the game's damage meter after each fight how much each really deals, including talents, crits, misses and your weapon skill, and keeps up as you change gear. Damage over time, like Shadow Word: Pain, is learned from fights against a single enemy. Only fights you play solo count, and what it learns is kept between sessions until you change talents. The same measured damage orders the opening press and which attack replaces a slowing one against an enemy that keeps its distance.
+- The second slot shows what you will press next:
+  - the spell after the first, including one that finishes its cooldown while the first is being cast (Mind Blast during Smite);
+  - before a pull, what follows your opening cast once the fight starts (Shadow Word: Pain after a Mind Blast opener);
+  - while you finish off a target with another enemy still fighting you, what you will open the next one with, so it no longer appears without warning after the kill.
+- Instant attacks keep their place in the list instead of being pushed behind your melee swing or Auto Shot, which keep going while you use them.
+- While one next-swing attack (Heroic Strike, Cleave, Maul, Raptor Strike) is already queued, the queue no longer offers another one that would only replace it.
+- Attack no longer flashes into the first slot for an instant right after a wand shot when an enemy is in melee reach.
+- Long cooldowns are also offered against an ordinary enemy three or more levels above you, as they already are against elites, bosses and packs. They stay saved on easier targets however long the fight lasts, so they are ready for the pull that needs them.
+- Damage over time:
+  - A damage over time that runs out during a quick solo fight is renewed instead of waiting.
+  - Immolate, Serpent Sting, Devouring Plague and Lacerate no longer appear on a target that is about to die.
+
+### WoW Forever: classes
+
+- Druids get a caster queue (Wrath, Moonfire) in caster form until they learn Cat Form at 20, with or without Feral talents, and their bear queue in Bear Form whatever their talents. Caster spells such as Moonfire are no longer suggested in Bear or Cat Form. In Bear Form, Maul no longer waits for 25 rage before Lacerate or Primal Bite is learned, and Enrage starts the fight's rage while you are healthy.
+- Arcane mages: Evocation and Arcane Missiles on a Missile Barrage proc no longer need the Heating Up talent.
+- Protection paladins use Hammer of the Righteous from level 40, ahead of Holy Strike.
+- Night Elf priests use Starshards after Mind Blast. Dwarf priests keep Chastise for themselves.
+- Rogues:
+  - Subtlety: Hemorrhage and Eviscerate are offered as soon as they can be used, instead of waiting for energy that Sinister Strike spent first. Vanish is offered only in a group, where it sets up another opener; alone it would end the fight, so the queue leaves it to you.
+  - Combat: Eviscerate is offered from two combo points instead of waiting for five.
+- Shamans: Enhancement's Earth Shock fills between Flame Shocks at every level, not only with the talent that shortens the shock cooldown. Restoration keeps Flame Shock up ahead of Lightning Bolt.
+- Affliction warlocks no longer swap back and forth between Bane of Agony and Bane of Doom against several enemies, and Bane of Doom is saved for bosses, elites and higher-level enemies.
+- Warriors:
+  - Arms applies its first Sunder Armor right away on ordinary targets once Slam is learned, and offers Slam only once Improved Slam shortens its cast. Before that, Sunder Armor waits for an elite, a higher-level enemy or a longer fight, where it pays. Hamstring is used only to spend spare rage.
+  - Fury uses Sunder Armor after its main attacks on a single target. Arms and Fury stop at one Sunder Armor per target against packs of three or more.
+  - Protection uses Thunder Clap on single targets too, after Shield Slam and Revenge. Sunder Armor follows Shield Slam, Revenge and Rend and is left out against packs of three or more, Cleave joins the pack list, and Heroic Strike spends spare rage sooner.
+  - Fury and Protection no longer see Hamstring in the queue.
+  - On a target that is nearly dead, Heroic Strike and Hamstring no longer swap places in the first slot with every swing.
+
+### WoW Forever: defensives
+
+- When your health runs low, warriors are offered Demoralizing Shout, druids Demoralizing Roar and priests Hex of Weakness, each not again while it is still running on your target. Priests are also offered Heal and Lesser Heal, so a priest below level 20 has a heal in combat. Saved defensive lists you never changed pick these up; lists you edited stay as they are.
+
+### Keybinds
+
+- Macros show the right key in more cases:
+  - `/castsequence` keeps the first spell after a reset option and reads every `;` branch with its own conditions.
+  - `/castrandom` and `/userandom` are read.
+  - A spell behind `[combat]`, `[nocombat]`, `[stealth]` or `[nostealth]` keeps its key whether or not that condition is true right now.
+  - A macro that also works without a modifier, such as `[mod][]`, shows the plain key.
+  - `[known]` understands lists, passive talents and any learned rank, and `[noknown]` is honored.
+  - `[equipped]`, `[worn]` and their `no` forms are honored, so a macro's key follows the gear you have on.
+  - Text that only mentions a command, such as `/say /cast Fireball`, no longer counts as casting it.
+
 ## [6.4.1] - 2026-11-18
 
 ### Forever: queue behavior

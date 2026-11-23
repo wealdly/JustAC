@@ -20,10 +20,12 @@ local pcall = pcall
 local wipe = wipe
 
 local GetTime = GetTime
-local UnitAffectingCombat = UnitAffectingCombat
-local IsStealthed = IsStealthed
-local IsSpellKnown = IsSpellKnown
-local IsPlayerSpell = IsPlayerSpell
+local IsPlayerSpell = C_SpellBook.IsSpellKnown
+local function IsSpellInBook(spellID, isPet)
+    local bank = isPet and Enum.SpellBookSpellBank.Pet or Enum.SpellBookSpellBank.Player
+    return C_SpellBook.IsSpellInSpellBook(spellID, bank, false)
+end
+local FindBaseSpellByID = C_SpellBook and C_SpellBook.FindBaseSpellByID
 
 local parsedMacroCache = {}
 local spellOverrideCache = {}
@@ -88,38 +90,81 @@ local function SafeGetActionText(slot)
     return ok and result or nil
 end
 
-local function IsInCombat()
-    return UnitAffectingCombat and UnitAffectingCombat("player") or false
+-- Is this spell learned, at any rank? Passive talents and spells waiting on a weapon count:
+-- [known] asks what the character has learned, not what can be pressed right now.
+local function IsSpellLearned(spellID)
+    if IsPlayerSpell and IsPlayerSpell(spellID) then return true end
+    if IsSpellInBook and (IsSpellInBook(spellID) or IsSpellInBook(spellID, true)) then return true end
+    local RotationImport = LibStub("JustAC-RotationImport", true)
+    return RotationImport ~= nil and RotationImport.HighestKnownRank ~= nil
+        and RotationImport.HighestKnownRank(spellID) ~= nil
 end
 
-local function IsInStealth()
-    return IsStealthed and IsStealthed() or false
-end
-
-local function IsSpellKnownByIdentifier(identifier)
-    if not identifier or identifier == "" then return false end
-    
+-- One [known:] entry: true / false, nil when a name cannot be resolved to a spell.
+local function IsIdentifierKnown(identifier)
     local spellID = tonumber(identifier)
-    if spellID then
-        if BlizzardAPI and BlizzardAPI.IsSpellAvailable then
-            return BlizzardAPI.IsSpellAvailable(spellID)
-        elseif IsSpellKnown then
-            return IsSpellKnown(spellID) or (IsPlayerSpell and IsPlayerSpell(spellID)) or false
+    if spellID then return IsSpellLearned(spellID) end
+    if not (C_Spell and C_Spell.GetSpellInfo) then return nil end
+    local ok, spellInfo = pcall(C_Spell.GetSpellInfo, identifier)
+    if not ok or not spellInfo or not spellInfo.spellID then return nil end
+    return IsSpellLearned(spellInfo.spellID)
+end
+
+-- A "/" list holds when any entry does. true / false, nil when it cannot be settled.
+local function IsKnownListMet(list)
+    local unknown = false
+    for identifier in string_gmatch(list, "[^/]+") do
+        local known = IsIdentifierKnown(identifier:match("^%s*(.-)%s*$"))
+        if known == true then return true end
+        if known == nil then unknown = true end
+    end
+    if unknown then return nil end
+    return false
+end
+
+-- Macros take an item type in any case; the equipment query is given the client's own spelling
+-- of it. Lowercase name -> client name, for every weapon and armor type, in the client's language.
+local equippedTypeNames
+local function EquippedTypeName(lowerType)
+    if not equippedTypeNames then
+        local classes = Enum and Enum.ItemClass
+        if not (classes and classes.Weapon and classes.Armor and C_Item and C_Item.GetItemSubClassInfo) then
+            return nil
         end
-    else
-        if C_Spell and C_Spell.GetSpellInfo then
-            local ok, spellInfo = pcall(C_Spell.GetSpellInfo, identifier)
-            if ok and spellInfo and spellInfo.spellID then
-                local sid = spellInfo.spellID
-                if BlizzardAPI and BlizzardAPI.IsSpellAvailable then
-                    return BlizzardAPI.IsSpellAvailable(sid)
-                elseif IsSpellKnown then
-                    return IsSpellKnown(sid) or (IsPlayerSpell and IsPlayerSpell(sid)) or false
+        local names = {}
+        for classID, subclasses in pairs({ [classes.Weapon] = Enum.ItemWeaponSubclass,
+                                           [classes.Armor] = Enum.ItemArmorSubclass }) do
+            for _, subclassID in pairs(subclasses or {}) do
+                local ok, name = pcall(C_Item.GetItemSubClassInfo, classID, subclassID)
+                if ok and type(name) == "string"
+                   and not (BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(name)) then
+                    names[GetLowercase(name)] = name
                 end
             end
         end
+        if not next(names) then return nil end
+        equippedTypeNames = names
     end
-    
+    return equippedTypeNames[lowerType]
+end
+
+-- An [equipped:] / [worn:] list holds when any item type in it is worn (shields/daggers).
+-- true / false, nil when a type is not recognized or the answer cannot be read.
+local function IsEquippedListMet(list)
+    if not (C_Item and C_Item.IsEquippedItemType) then return nil end
+    local unknown = false
+    for itemType in string_gmatch(list, "[^/]+") do
+        local typeName = EquippedTypeName(itemType:match("^%s*(.-)%s*$"))
+        local ok, equipped = false, nil
+        if typeName then ok, equipped = pcall(C_Item.IsEquippedItemType, typeName) end
+        if not ok or type(equipped) ~= "boolean"
+           or (BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(equipped)) then
+            unknown = true
+        elseif equipped then
+            return true
+        end
+    end
+    if unknown then return nil end
     return false
 end
 
@@ -246,17 +291,16 @@ local function DoesSpellMatch(spellPart, targetSpells)
 end
 
 -- Shared macro-line walk for AnalyzeMacroExecutionFlow and ParseMacroForSpell.
--- Invokes callback once per /use, /cast, or /castsequence command line with the
--- line's clauses pre-split:
+-- Invokes callback once per spell command line with the line's clauses pre-split:
 --   entries[i] = { entry = raw clause text, spellPart, conditionGroups }
--- /cast and /use clauses are semicolon-separated fallbacks with per-clause
--- [condition] brackets; /castsequence entries are comma-separated, only trimmed,
--- and all share the sequence-level condition groups (after the reset= clause is
--- stripped). Comment (#) lines are always skipped. skipInertLines additionally
--- skips blank and /stopcasting lines: execution-flow analysis skips them, keybind
--- parsing historically does not (behavior-identical either way, since neither
--- kind of line can match a command pattern, but the drift is kept explicit).
+-- The command is the line's first word, as the client reads it, so text that merely mentions
+-- a command (/say /cast X) is not one. Every command splits into semicolon-separated branches
+-- with their own [condition] brackets. /castsequence, /castrandom and /userandom then hold a
+-- comma-separated list in each branch, after any reset= clause.
 -- A non-nil callback return stops the walk and is returned.
+local CLAUSE_COMMANDS = { ["/cast"] = true, ["/use"] = true }
+local LIST_COMMANDS = { ["/castsequence"] = true, ["/castrandom"] = true, ["/userandom"] = true }
+
 -- "/startattack [conditions]" starts the Attack spell (6603) under those conditions, so it
 -- reads as a cast of Attack, by its localized name.
 local attackName
@@ -276,64 +320,51 @@ local function StartAttackCommand(lowerLine)
     return conds .. " " .. name
 end
 
-local function ForEachCommandLine(macroBody, skipInertLines, callback)
+local function ForEachCommandLine(macroBody, callback)
     local commandIndex = 0
 
     for line in string_gmatch(macroBody, "[^\r\n]+") do
         local lowerLine = GetLowercase(line)
-
-        local skipped = string_match(lowerLine, "^%s*#") ~= nil
-        if not skipped and skipInertLines then
-            skipped = string_match(lowerLine, "^%s*$") ~= nil
-                or string_match(lowerLine, "^%s*/stopcasting") ~= nil
+        local slashCommand, arguments = string_match(lowerLine, "^%s*(/%S+)%s+(.+)$")
+        local isList = LIST_COMMANDS[slashCommand] == true
+        local command
+        if isList or CLAUSE_COMMANDS[slashCommand] then command = arguments end
+        local isAttackLine = false
+        if not command then
+            command = StartAttackCommand(lowerLine)
+            isAttackLine = command ~= nil
         end
 
-        if not skipped then
-            local command = string_match(lowerLine, "/use%s+(.+)") or
-                            string_match(lowerLine, "/cast%s+(.+)")
-            local isAttackLine = false
-            if not command then
-                command = StartAttackCommand(lowerLine)
-                isAttackLine = command ~= nil
-            end
-            local castseqGroups  -- sequence-level condition groups for /castsequence
+        if command then
+            -- A /startattack line does not move the count: "/startattack" + "/cast X"
+            -- keeps X as the macro's first command, as it always scored.
+            local index = commandIndex + 1
+            if not isAttackLine then commandIndex = index end
+            local entries = {}
 
-            if not command then
-                local castseq = string_match(lowerLine, "/castsequence%s+(.+)")
-                if castseq then
-                    local seqSpellPart, seqGroups = StripBracketConditions(castseq)
-                    castseqGroups = seqGroups
-                    command = seqSpellPart:gsub("^reset=[^,]+,%s*", ""):gsub("^reset=[^%s]+%s*", "")
-                end
-            end
-
-            if command then
-                -- A /startattack line does not move the count: "/startattack" + "/cast X"
-                -- keeps X as the macro's first command, as it always scored.
-                local index = commandIndex + 1
-                if not isAttackLine then commandIndex = index end
-                local isCastseq = castseqGroups ~= nil
-                local entries = {}
-                local entryPattern = isCastseq and "[^,]+" or "[^;]+"
-
-                for spellEntry in string_gmatch(command, entryPattern) do
-                    local spellPart, conditionGroups
-                    if isCastseq then
-                        spellPart = spellEntry:match("^%s*(.-)%s*$") or ""
-                        conditionGroups = castseqGroups
-                    else
-                        spellPart, conditionGroups = StripBracketConditions(spellEntry)
+            for clause in string_gmatch(command, "[^;]+") do
+                local spellPart, conditionGroups = StripBracketConditions(clause)
+                if isList then
+                    -- The reset clause ends at its first space or comma: the first spell follows.
+                    local actions = spellPart:gsub("^reset=[^%s,]+[%s,]*", "")
+                    for action in string_gmatch(actions, "[^,]+") do
+                        table_insert(entries, {
+                            entry = action,
+                            spellPart = action:match("^%s*(.-)%s*$") or "",
+                            conditionGroups = conditionGroups,
+                        })
                     end
+                else
                     table_insert(entries, {
-                        entry = spellEntry,
+                        entry = clause,
                         spellPart = spellPart,
                         conditionGroups = conditionGroups,
                     })
                 end
-
-                local result = callback(index, isCastseq, entries)
-                if result ~= nil then return result end
             end
+
+            local result = callback(index, entries)
+            if result ~= nil then return result end
         end
     end
 
@@ -341,7 +372,7 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
 end
 
 local function AnalyzeMacroExecutionFlow(macroBody, targetSpells)
-    return ForEachCommandLine(macroBody, true, function(commandIndex, isCastseq, entries)
+    return ForEachCommandLine(macroBody, function(commandIndex, entries)
         local totalInLine = 0
         local clauseEntries = {}
         local targetSpellFound = false
@@ -434,7 +465,8 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
 end
 
 -- ponytail: hand-rolled subset of Blizzard's macro-conditional grammar; unhandled
--- clauses (target/mounted/outdoors/...) fail-open. Drifts as Blizzard adds
+-- clauses (target/combat/stealth/mounted/outdoors/...) fail-open: they change what fires
+-- this moment, not which key the spell is on. Drifts as Blizzard adds
 -- conditionals - deliberately NOT SecureCmdOptionParse, which answers "what fires
 -- right now" and would blank/churn a static keybind display.
 local function EvaluateConditions(conditionString, currentSpec, currentForm)
@@ -521,38 +553,32 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             if match then formMatched = true end
             if not match then allConditionsMet = false; break end
 
-        elseif trimmed:match("^known") then
-            local spellIdentifier = trimmed:match("known:(.+)")
-            if spellIdentifier and not IsSpellKnownByIdentifier(spellIdentifier) then
+        elseif trimmed:match("^noknown:") then
+            if IsKnownListMet(trimmed:match("^noknown:(.+)") or "") == true then
                 allConditionsMet = false
                 break
             end
 
-        elseif trimmed:match("^combat") then
-            if not IsInCombat() then
+        elseif trimmed:match("^known:") then
+            if IsKnownListMet(trimmed:match("^known:(.+)") or "") == false then
                 allConditionsMet = false
                 break
             end
 
-        elseif trimmed:match("^nocombat") then
-            if IsInCombat() then
+        -- Worn gear decides which branch the key casts, as a form does.
+        elseif trimmed:match("^noequipped:") or trimmed:match("^noworn:") then
+            if IsEquippedListMet(trimmed:match(":(.+)$") or "") == true then
                 allConditionsMet = false
                 break
             end
 
-        elseif trimmed:match("^stealth") then
-            if not IsInStealth() then
+        elseif trimmed:match("^equipped:") or trimmed:match("^worn:") then
+            if IsEquippedListMet(trimmed:match(":(.+)$") or "") == false then
                 allConditionsMet = false
                 break
             end
 
-        elseif trimmed:match("^nostealth") then
-            if IsInStealth() then
-                allConditionsMet = false
-                break
-            end
-
-        -- Target/mounted/outdoors conditions ignored - don't affect which key to press
+        -- Target/combat/stealth/mounted/outdoors conditions ignored - don't affect which key to press
         end
     end
 
@@ -572,7 +598,7 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
     local bestMatch = nil
 
-    ForEachCommandLine(macroBody, false, function(commandIndex, isCastseq, entries)
+    ForEachCommandLine(macroBody, function(_, entries)
         for _, clause in ipairs(entries) do
             local spellPart = clause.spellPart
             local conditionGroups = clause.conditionGroups
@@ -592,21 +618,17 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                 local requiresModifier = false
 
                 if conditionGroups and #conditionGroups > 0 then
-                    -- OR-cascade: first passing bracket group wins
+                    -- OR-cascade: any passing bracket group casts it. A group needing no
+                    -- modifier decides, so [mod:shift][] is a plain press of the key.
                     conditionsMet = false
                     for _, conditionString in ipairs(conditionGroups) do
-                        if conditionString == "" then
-                            -- bare [] = unconditional fallback
-                            conditionsMet = true
-                            break
-                        end
                         local groupMet, groupMods, _, groupReq = EvaluateConditions(conditionString, currentSpec, currentForm)
-                        if groupMet then
+                        if groupMet and (not conditionsMet or not groupReq) then
                             conditionsMet = true
                             modifiers = groupMods
                             requiresModifier = groupReq
-                            break
                         end
+                        if groupMet and not groupReq then break end
                     end
                 end
 
@@ -650,7 +672,7 @@ local function AutoAttackOnly(macroBody, targetSpellID, targetSpellName)
     end
     local targetSpells = GetSpellAndOverride(targetSpellID, targetSpellName)
     local found, other = false, false
-    ForEachCommandLine(macroBody, false, function(_, _, entries)
+    ForEachCommandLine(macroBody, function(_, entries)
         for _, clause in ipairs(entries) do
             if DoesSpellMatch(clause.spellPart, targetSpells) then found = true
             else other = true end

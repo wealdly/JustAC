@@ -165,7 +165,8 @@ Seal of Command and Seal of Righteousness right after each auto attack. Not avai
 **Forever-specific changes**
 - Seal of Fury (new): small Holy damage per swing; with a shield equipped you gain an absorb worth 50% of the Holy damage; Judgement of it taunts 4 s.
 - First real taunt for Paladins; Righteous Fury, Retribution Aura at 16; Consecration at 20; Templar's Bulwark at 30.
-- Hammer of the Righteous at 40+ (target + 3 nearby, 6 s CD - kami).
+- Hammer of the Righteous at 40+ (target + 3 nearby, 6 s CD - kami). JustAC lists it ahead of Holy Strike (2026-11-22).
+- Seal of Command (Retribution talent) is left to the player: Command or Righteousness follows weapon speed, and the seal entries already wait while any seal is up (2026-11-22).
 - Stats: spell power valued for threat (icy: SP first); mobalytics: Stamina first then Str/Agi. Disagreement.
 
 **Gaps**
@@ -226,10 +227,28 @@ Seal of Righteousness -> Judgement -> Holy Strike -> Exorcism (Undead/Demon) -> 
 
 ## Priest - Discipline
 
+**Levels 10 to 20 (2026-11-20).** The popular solo hybrid (Mobalytics leveling guide,
+https://mobalytics.gg/wow-forever/classes/priest-leveling-guide-1-60, Nov 9, read 2026-11-20):
+Wand Specialization 2/2 first, then Spirit Tap 5/5 and Improved Shadow Word: Pain 2/2, with a
+Discipline turn for Meditation for dungeon healing. Play: shield and Renew before the pull, Mind
+Blast only on tougher mobs, Shadow Word: Pain on as many mobs as can be tanked, wand them down;
+Smite leaves once a good wand is in hand; Mind Flay waits for 40. Simulation of the Shadow list
+(levels 10 to 20, crafted Lesser then Greater Magic Wand): the list stands. Dropping Smite
+doubled kill time at 10 to 14; holding Smite to 40% mana cost almost nothing on ordinary
+targets; holding it to 60% helped elites at 16 to 18 by about 10% but cost ordinary fights 6 to
+9 seconds; holding Mind Blast for mana hurt. The wand-or-Smite choice in game is the weapon
+comparison's, which now learns each attack's real damage from the meter after every fight.
+
 **Default queue (2026-11-17):** Discipline and Holy list Mind Blast after the damage over time
 and before Holy Fire and Smite. Their Smite sim has none, but every priest learns it at 10 and
 the Method leveling guide (https://www.method.gg/wow-forever/wow-forever-priest-leveling-guide-and-talents,
 updated 2026-11-14, read 2026-11-17) casts it on cooldown from 10 in every build.
+
+**Race spells (2026-11-22):** no guide or sim covers these; client data only, not yet measured.
+Starshards (Night Elf, 10) is a 6 s channel for 162 damage at rank 1, 50 mana, 30 s cooldown:
+about Mind Blast's damage per second and twice Smite's at 10 to 16. Every tree lists it after
+Mind Blast (Shadow: after Shadow Word: Death, before Mind Flay). Chastise (Dwarf, 20) is left to
+the player: 46 damage on a 2 min cooldown, humanoids only, and its root is crowd control.
 
 **Sources**
 

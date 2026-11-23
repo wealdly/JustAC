@@ -3,7 +3,7 @@
 # Range-reference verdicts use the real shared distance evaluator.
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,6 +41,7 @@ def main():
         function GetTime() return now end
         function wipe(t) for k in pairs(t) do t[k] = nil end end
         function IsSpellKnown(id) return known[id] ~= false end
+        function IsSpellInBook(id, isPet) return IsSpellKnown(id, isPet) end
         function LibStub()
             return {
                 RankChain = function(id) return ranks[id] end,

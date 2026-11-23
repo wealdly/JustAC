@@ -23,6 +23,7 @@ local UnitClassification = UnitClassification ---@diagnostic disable-line: undef
 local UnitGUID = UnitGUID ---@diagnostic disable-line: undefined-global
 local UnitCastingInfo = UnitCastingInfo ---@diagnostic disable-line: undefined-global
 local UnitChannelInfo = UnitChannelInfo ---@diagnostic disable-line: undefined-global
+local UnitDetailedThreatSituation = UnitDetailedThreatSituation ---@diagnostic disable-line: undefined-global
 local wipe = wipe
 local type = type
 local ipairs = ipairs
@@ -143,7 +144,7 @@ end
 local function EfficiencyFreeAttack(id, b)
     if SpellQueue.IsSpellBlacklisted(id, b.blacklist) then return false, "blacklisted" end
     if SpellQueue.IsCasterSuppressedPick(id, b.profile) then return false, "caster filler" end
-    if EfficiencyRead(IsPlayerSpell, id) ~= true then return false, "not learned or unknown" end
+    if EfficiencyRead(C_SpellBook.IsSpellKnown, id) ~= true then return false, "not learned or unknown" end
     if EfficiencyRead(BlizzardAPI.HasRequiredAttackWeapon, id) ~= true then
         return false, "required weapon missing or unknown"
     end
@@ -388,6 +389,16 @@ function SpellQueue._UpdateNearMeleeHint(b)
     useMeleeActivity()
 end
 
+-- A ranged shot fired this recently was fired at a target in range: the game fires only then.
+local SHOT_IN_RANGE_SECONDS = 0.5
+
+--- Did the ranged weapon id just fire (within SHOT_IN_RANGE_SECONDS)?
+local function JustFired(id, now)
+    if id ~= 5019 and id ~= 75 then return false end
+    local start = BlizzardAPI.GetSwingWindow and BlizzardAPI.GetSwingWindow(2)
+    return type(start) == "number" and now - start >= 0 and now - start <= SHOT_IN_RANGE_SECONDS
+end
+
 function SpellQueue._PrepareWeaponFillers(rotationList, b)
     local fillers = SpellQueue._weaponFillers
     wipe(fillers.ids)
@@ -406,21 +417,28 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
        or PushbackRead(UnitIsPlayer, "target") ~= false
        or PushbackRead(UnitPlayerControlled, "target") ~= false then return end
     if not b.inCombat and BlizzardAPI.RefreshDamageBaseline then BlizzardAPI.RefreshDamageBaseline() end
-    local best, bestDPS, bestRunning, phaseEligible
+    local best, bestDPS, bestRunning
     if not b.inCombat then weaponPhaseID, weaponManaLow = nil, nil end
     -- Wand wins equal DPS; melee never asks the player to move into reach.
+    local phasePending   -- the phase weapon passed every real exclusion but not its momentary reads
     for _, id in ipairs(EFFICIENCY_ATTACKS) do
+        -- The phase weapon was confirmed in range against this target: a range read that is
+        -- unknown for a moment does not drop it, nor one that reads out of range right after it
+        -- fired (the wand's button reddened for a frame 34 ms after a shot, 2026-11-20 capture);
+        -- out of range with no shot since does.
+        local range = PushbackRead(BlizzardAPI.AbilityInRange, id)
         if not SpellQueue.IsSpellBlacklisted(id, b.blacklist)
            and PassesRotationFilters(id, b.profile, id)
            and PushbackRead(BlizzardAPI.IsSpellAvailable, id) == true
-           and PushbackRead(BlizzardAPI.AbilityInRange, id) == true
+           and (range == true or (id == weaponPhaseID and (range == nil or JustFired(id, b.now or GetTime()))))
            and not (BlizzardAPI.IsSpellLoCLocked and BlizzardAPI.IsSpellLoCLocked(id))
            and not HeldByUserHold(id, id, true) then
-            if id == weaponPhaseID then phaseEligible = true end
+            if id == weaponPhaseID then phasePending = true end
             local running = BlizzardAPI.RunningAutoSwing(id)
             local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
             if usable == true and not notEnough
                and (running == 0 or running == 2 or PushbackReady(id)) then
+                if id == weaponPhaseID then phasePending = false end
                 local dps = PushbackRead(BlizzardAPI.GetAutoAttackDPS, id, true)
                 if type(dps) == "number" and dps > 0
                    and (not bestDPS or dps > bestDPS) then
@@ -430,8 +448,11 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
         end
     end
     -- The phase weapon still passes every real exclusion; only its moment-to-moment reads
-    -- (usable, running, between shots) wavered, so it stays the choice for this target.
-    if not best and phaseEligible then
+    -- (usable, running, between shots) wavered, so it stays the choice for this target, even
+    -- when another weapon is ready that moment: just after each wand shot Shoot reads a real
+    -- cooldown, and melee in reach took slot 1 for one frame (2026-11-20 priest capture, twice,
+    -- 26 and 35 ms after a shot). Another weapon takes over only by beating it when both read ready.
+    if phasePending then
         local dps = PushbackRead(BlizzardAPI.GetAutoAttackDPS, weaponPhaseID, true)
         if type(dps) == "number" and dps > 0 then
             best, bestDPS, bestRunning = weaponPhaseID, dps, BlizzardAPI.RunningAutoSwing(weaponPhaseID)
@@ -467,6 +488,10 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
                 if dps and BlizzardAPI.GetSpellCycleSeconds then
                     base, cast = BlizzardAPI.GetSpellCycleSeconds(id)
                 end
+                -- Net damage: melee swings and Auto Shot keep going through an instant, so an
+                -- instant is not their alternative and keeps the list's order. A cast delays them,
+                -- and the wand stops for any cast and its global cooldown: those are weighed.
+                if base and cast == 0 and best ~= 5019 then base = nil end
                 if base then
                     local cycle = base
                     if cast > 0 then cycle = cycle + Hits.Expected(cast, hitRate) end
@@ -481,6 +506,16 @@ function SpellQueue._PrepareWeaponFillers(rotationList, b)
     if not next(fillers.dps) then lastCtx.weaponReason = "no comparable spell filler"; return end
     b.weaponFillerID, b.weaponFillerDPS = best, bestDPS
     b.weaponFillerRunning = bestRunning
+end
+
+--- Does the comparable cast id beat the chosen weapon this build: with mana to spare, by being
+--- ahead at all; conserving, by at least 20%? nil when id is not a comparable cast or no weapon.
+function SpellQueue._SpellBeatsWeapon(id, b)
+    local fillers = SpellQueue._weaponFillers
+    local dps = fillers.dps[id]
+    if not (dps and b.weaponFillerID and b.weaponFillerDPS) then return nil end
+    if fillers.manaPlenty then return dps > b.weaponFillerDPS end
+    return dps >= b.weaponFillerDPS * 1.20
 end
 
 function SpellQueue._AddWeaponFiller(id, rank, ready, rec, b)
@@ -499,11 +534,7 @@ function SpellQueue._AddWeaponFiller(id, rank, ready, rec, b)
         score = 2 * LEAD_BARRED_PENALTY + rank
         if id == b.weaponFillerID then score = LEAD_BARRED_PENALTY end
     else
-        if fillers.manaPlenty then
-            if dps > b.weaponFillerDPS then score = rank end
-        elseif dps >= b.weaponFillerDPS * 1.20 then
-            score = rank
-        end
+        if SpellQueue._SpellBeatsWeapon(id, b) then score = rank end
         if not fillers.leadRank or rank < fillers.leadRank then
             fillers.leadRank = rank
             lastCtx.weaponLead, lastCtx.weaponSpellDPS = id, dps
@@ -548,6 +579,7 @@ function SpellQueue._StagePushback(b, rotationList)
             local id = BlizzardAPI.GetDisplaySpellID(source)
             if cooldown and cooldown < 10 and id and not PUSHBACK_AUTOS[id]
                and not SpellDB.IsForeverRangedFiller(id) and not sunkSet[id]
+               and not SpellQueue._IsLeftOut(id, source, b)
                and not SpellQueue.IsSpellBlacklisted(source, b.blacklist)
                and not SpellQueue.IsSpellBlacklisted(id, b.blacklist)
                and SpellDB.IsOffensiveSpell(id)
@@ -642,8 +674,9 @@ end
 -- A target that holds its range (a caster or an archer) is never slowed into melee, so an
 -- attack whose extra value is its slow (Frostbolt) is worth less than a stronger one that does
 -- not slow (Fireball). Evidence only, per target (plain GUID on Forever), in combat: the target
--- casting while out of melee reach, or the player being hit by a lone target that has stayed
--- out of reach for a few seconds. A target that reaches melee, or no evidence, keeps the list's
+-- casting while out of melee reach, or a lone target the threat read confirms is attacking the
+-- player still hitting them from out of reach after a few seconds. A hit alone is no evidence:
+-- another mob may have landed it. A target that reaches melee, or no evidence, keeps the list's
 -- own order: the slow is what a melee mob closing on a ranged player is worth slowing for.
 local HOLD_RANGE_AFTER = 3
 local holdGUID, holdSince, holdConfirmed
@@ -671,7 +704,8 @@ function SpellQueue._TargetHoldsRange(b)
     if within == false and not holdConfirmed then
         if TargetCasting() then
             holdConfirmed = true
-        elseif b.ctxEnemies == 1 and b.now - holdSince >= HOLD_RANGE_AFTER and SpellQueue._BeingHit(b.now) then
+        elseif b.ctxEnemies == 1 and b.now - holdSince >= HOLD_RANGE_AFTER and SpellQueue._BeingHit(b.now)
+           and PushbackRead(UnitDetailedThreatSituation, "player", "target") == true then
             holdConfirmed = true
         end
     end
@@ -714,6 +748,7 @@ function SpellQueue._StageRangedFiller(b, rotationList)
         local id = type(source) == "number" and source > 0 and BlizzardAPI.GetDisplaySpellID(source)
         if id and not SpellDB.IsSlowingAttack(id)
            and not (RotationImport and RotationImport.GetEntry and RotationImport.GetEntry(id, b.simcCtx))
+           and not SpellQueue._IsLeftOut(id, source, b)
            and not SpellQueue.IsSpellBlacklisted(id, b.blacklist)
            and PassesRotationFilters(id, b.profile, source) and not HeldByUserHold(id, id, true)
            and PushbackReady(id) and PushbackRead(BlizzardAPI.AbilityInRange, id) == true then
@@ -735,6 +770,83 @@ function SpellQueue._StageRangedFiller(b, rotationList)
     end
     PlaceQueueSpell(b, best, slowAt)
     lastCtx.rangedSwap = best
+end
+
+--- Slot 2 forecasts the next press: what will lead once the player can act again after
+--- pressing slot 1, which is after any GCD running now plus the longer of slot 1's cast and a
+--- GCD. A spell waiting only on its cooldown that will be ready by then, and that the queue
+--- ranks above slot 2's choice, takes slot 2; against a weapon in slot 2 it must also beat the
+--- weapon by the comparison's own rule. Slot 1 is untouched. (2026-11-20 captures: slot 2
+--- named the next press on 40 of 55 presses of slot 1; 9 misses were Mind Blast ending its
+--- cooldown during Smite's cast while slot 2 showed the wand.)
+local function ForecastRank(id, b)
+    local rank = SpellQueue._cooldownRank[id]
+    if rank then return rank end
+    if id == b.weaponFillerID then return math.huge end
+    local rec = RotationImport and RotationImport.GetEntry and RotationImport.GetEntry(id, b.simcCtx)
+    return rec and rec.rank or math.huge
+end
+
+--- The opener on a fresh target: the best-ranked queued entry whose condition is its own debuff
+--- missing from the target (Shadow Word: Pain), ready within two GCDs, and where it sits.
+local function FreshTargetOpener(b)
+    local queue, best, bestAt, bestRank = b.recommendedSpells, nil, nil, nil
+    for i = 2, b.spellCount do
+        local id = queue[i]
+        local rec = type(id) == "number" and id > 0 and RotationImport.GetEntry(id, b.simcCtx)
+        if rec and rec.gates and (not bestRank or rec.rank < bestRank) then
+            local base = RotationImport.RankBase(id)
+            for _, g in ipairs(rec.gates) do
+                if g.t == "debuff" and g.neg and g.id and RotationImport.RankBase(g.id) == base then
+                    if BlizzardAPI.CooldownEndsWithin(id, 2 * SpellQueue._OneGCD()) ~= false then
+                        best, bestAt, bestRank = id, i, rec.rank
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return best, bestAt
+end
+
+function SpellQueue._StageNextPress(b)
+    lastCtx.nextPressID = nil
+    if not BlizzardAPI.IsForever() or SpellQueue._rotationIsCustom or b.contextOrder == "off"
+       or BlizzardAPI.HasGamePick() or (b.spellCount or 0) < 2 or not BlizzardAPI.CooldownEndsWithin
+       or not (RotationImport and RotationImport.GetEntry and RotationImport.RankBase) then return end
+    local queue = b.recommendedSpells
+    -- Closing on the target (its execute range) with another enemy engaged: the next lead comes
+    -- after the kill, the opener on a fresh target. Slot 2 names it so the change is expected;
+    -- it never asks for a target switch, the kill makes it. (2026-11-20/22 captures: 38 of 224
+    -- first-slot changes were Shadow Word: Pain leading on the next mob right after a kill.)
+    if b.inCombat and b.ctxExecute == true and (b.ctxEnemies or 0) >= 2 then
+        local opener, at = FreshTargetOpener(b)
+        if opener then
+            if at > 2 then PlaceQueueSpell(b, opener, 2, at) end
+            lastCtx.nextPressID = opener
+            return
+        end
+    end
+    if b.spellCount < 3 then return end
+    local lead, second = queue[1], queue[2]
+    if type(lead) ~= "number" or lead <= 0 or sunkSet[lead] or type(second) ~= "number" or second <= 0 then return end
+    local best, bestAt, bestRank = nil, nil, ForecastRank(second, b)
+    local horizon
+    for i = 3, b.spellCount do
+        local id = queue[i]
+        local rank = type(id) == "number" and SpellQueue._cooldownRank[id]
+        if rank and rank < bestRank
+           and (second ~= b.weaponFillerID or SpellQueue._SpellBeatsWeapon(id, b) ~= false) then
+            if not horizon then
+                local cast = BlizzardAPI.GetCastSeconds and BlizzardAPI.GetCastSeconds(lead) or 0
+                horizon = BlizzardAPI.GetGCDRemaining(b.now) + math.max(SpellQueue._OneGCD(), cast)
+            end
+            if BlizzardAPI.CooldownEndsWithin(id, horizon) == true then best, bestAt, bestRank = id, i, rank end
+        end
+    end
+    if not best then return end
+    PlaceQueueSpell(b, best, 2, bestAt)
+    lastCtx.nextPressID = best
 end
 
 -- A next-swing attack (Heroic Strike) costs no global cooldown: queued now, it lands on the

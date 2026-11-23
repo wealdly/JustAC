@@ -531,6 +531,7 @@ def test_primary_pet_recovery():
     lua.execute("""
         SpellQueue.NoteQueueBlank=function() end
         SpellQueue._ApplySafeLead=function() end
+        SpellQueue._StageLeadHold=function() end
         lastSpellIDs={883,19574}
         reviveUsable=false
     """)

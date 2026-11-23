@@ -218,6 +218,35 @@ reads Forever's talent frame uses). Re-evaluated on `TRAIT_CONFIG_UPDATED` / lev
 combat. No points spent: the class `default` list. A player's own list always wins, as it
 does today. Group ids map to tree names through `displayName` once, recorded in the data.
 
+Points say which style the player is building; worn gear says which they are fighting in
+(2026-11-20). A tree whose own listed attacks need gear the player is not wearing is skipped:
+most points wins among the trees the gear allows, then the class default if the gear allows
+it, then most points. The requirement is generated (`FOREVER_TREE_GEAR` in
+`tools/gen_forever_defaults.py`): gear that an attack unique to the tree's lists needs and no
+attack the class's trees share needs. Today that is one row, the Protection warrior list and
+Shield Slam's shield. An unreadable item rules nothing out. Gear changes re-pick out of combat
+only; a swap during a fight waits for its end, so the list never changes under the player.
+The Feral cat or bear choice by form is the same idea and predates it. A tree whose list leads
+with keeping a combat form up (the generator marks such an entry `form=true`; today only Feral's
+Cat Form) is skipped the same way while that form is not learned (2026-11-22): every levelling
+Feral build spends its points from 10 but Cat Form comes at 20, so in caster form the druid
+follows the class default (Balance: Wrath opener, Moonfire, Wrath) and in Bear Form its bear
+list. The Play Style read-out names the reason ("form"); a chosen tree is kept. With no points and
+the class default unplayable too (a druid under 10: the Feral default needs Cat Form), the pick
+falls back to the first playable tree by name (Balance), never a form's own sub-list. In Bear
+Form the bear list is installed whatever the tree, and an unlisted class ability whose form mask
+(client `SpellShapeshift.ShapeshiftMask`, generated per ability) leaves out the current form is
+left out (`RotationImport.IsLeftOut`): casting Moonfire from Bear Form left the form and cost a
+global cooldown to shift back (2026-11-22 report).
+**Model** (2026-11-20, `behind` gear, `--other-lists`): a shield warrior on the Arms list was
+46% slower at 20 and 134% at 40; an Arms warrior on the Protection list was within 2% to
+level 20 and 19% slower at 30. Not covered: a tree with no gear-bound attack of its own
+(Protection paladin), and intent the game does not show (a shaman with Elemental points who
+melees was 47 to 122% slower on the Elemental list). The Play Style option answers those: the
+player names the tree (`profile.playStyle[specKey]`, read first by `PickTree`), and everything
+that reads the installed tree follows it. A chosen Feral still follows Bear Form. Not checked
+in game.
+
 The queue is a damage queue whatever role the player plays, so a class has several lists only
 for its talent STYLES: each tree's list is that style's damage order. Tank lists drop threat
 and mitigation presses (`TANK_ONLY` in the generator); healer pins are the guides' levelling
@@ -235,7 +264,8 @@ so this is the rule to hold the line on:
 | Damage, including a damaging spell with a slow or root as a side effect | Thunder Clap, Cone of Cold, Hamstring | Yes |
 | A debuff that raises the damage the target takes | Sunder Armor, Faerie Fire, Curse of the Elements, Hunter's Mark | Yes (counts as damage) |
 | A slow, root or snare whose job is control | Frost Nova | No: the player's |
-| Mitigation or threat on the enemy | Demoralizing Shout, Demoralizing Roar, taunts | No: defensive queue for tanks |
+| Mitigation on the enemy | Demoralizing Shout, Demoralizing Roar, Hex of Weakness | No: the defensive queue at low health, held while it runs |
+| Threat | Taunts | No: defensive queue for tanks (threat cues) |
 | Healing, including healing debuffs | Vampiric Embrace | No: defensive queue |
 | Crowd control | Polymorph, Sap, Fear | No: the player's |
 
@@ -247,6 +277,23 @@ Two consequences:
   recast loses ticks.
 - A guide or sim listing a utility press is not a reason to keep it. Remove it from the lists
   and the pool (`NOT_DPS`, `TANK_ONLY`) and note it in the tree's guide file.
+- A class ability one tree uses and another should not (Hamstring: Arms' spare rage only) is
+  dropped from that tree with an `EXTRA` `drop` row. The generator writes it as left out for
+  each tier whose list does not name it, and the queue keeps it out there instead of offering it
+  as an unranked filler (`RotationImport.IsLeftOut`). Custom lists, exact order and Always Show
+  pins still show it.
+- The lists are closed (2026-11-22): the automatic queue offers only class abilities the
+  installed tree names in some tier (`RotationImport.IsNamed`, applied by
+  `SpellQueue._IsLeftOut` in every stage that walks the pool). An unlisted ability used to rank
+  behind every ready listed entry but ahead of every listed entry that was waiting, so whenever
+  the rotation waited on rage, energy or a cooldown, slot 1 went to whatever unplanned ability
+  was ready: a form the player was not in, a self buff, another tree's attack (the audit found
+  Shuriken Toss, Hamstring, Throw and Moonfire in Bear Form were all this one rule). Kept: Attack
+  and the ranged weapon attacks (`foreverRanged`), which the weapon stage weighs. Gap closers
+  (Charge, Intercept) belong to the gap closer feature and its Forever class lists. Custom
+  lists, exact order and Always Show pins are unchanged. A damaging ability no tree of its class
+  names is never offered; `tools/test_closed_lists.py` lists those and fails when the set
+  changes, so each is added to a list or recorded as left to the player.
 
 The one narrow exception is the ranged opener on a melee target: a ranged class pulling a
 mob that will close to melee may open with a damaging slow (a mage's Frostbolt while the mob

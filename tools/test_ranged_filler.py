@@ -31,6 +31,11 @@ def main():
             if casting then return casting end   -- a secret name
         end
         function UnitChannelInfo() return nil end
+        tanking = true   -- the target is attacking the player
+        function UnitDetailedThreatSituation()
+            if tanking == "error" then error("denied") end
+            return tanking
+        end
         BlizzardAPI = {
             IsForever = function() return true end,
             IsSecretValue = function(v) return rawequal(v, secret) end,
@@ -48,6 +53,7 @@ def main():
         SpellQueue = {
             IsSpellBlacklisted = function() return false end,
             _BeingHit = function() return hit end,
+            _IsLeftOut = function(id) return leftOut == id end,
         }
         function PushbackRead(fn, ...) return fn(...) end
         function PushbackReady() return true end
@@ -85,6 +91,14 @@ def main():
     lua.execute("within, guid, casting = false, 'Creature-B', true")
     first, _, _ = build(7)
     assert first == FIREBALL, "a new target casting from range"
+    for value, why in (("false", "another mob is hitting the player"),
+                       ("nil", "the target has not engaged the player"),
+                       ("secret", "an unreadable threat read proves nothing")):
+        lua.execute(f"guid, casting, hit, tanking = 'Threat-{value}', false, true, {value}")
+        build(60)
+        first, _, holds = build(64)
+        assert first == FROSTBOLT and holds is False, why
+    lua.execute("tanking = true")
     lua.execute("guid, casting, hit = 'Creature-C', false, true")
     first, _, _ = build(20, 2)
     assert first == FROSTBOLT, "being hit in a pack proves nothing about this target"

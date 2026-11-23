@@ -11,15 +11,15 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 if not (SpellDB and SpellDB.IsForever and SpellDB.IsForever()) then return end
 
 local DEFENSIVE = {
-    WARRIOR = {12975, 871, 402927, 20594, 1299026},
+    WARRIOR = {12975, 871, 402927, 1160, 20594, 1299026},
     PALADIN = {642, 498, 1022, 1311015, 633, 19750, 635, 20594, 1299026},
     HUNTER = {19263, 5384, 20594, 1299026},
     ROGUE = {5277, 1856, 20594, 1299026},
-    PRIEST = {17, 13908, 2651, 139, 2061, 20594, 1299026},
+    PRIEST = {17, 13908, 2651, 9035, 139, 2061, 2054, 2050, 20594, 1299026},
     SHAMAN = {8004, 331, 8071, 20594, 1299026},
     MAGE = {11958, 11426, 1463, 20594, 1299026},
     WARLOCK = {6789, 6229, 689, 20594, 1299026},
-    DRUID = {22812, 22842, 774, 8936, 5185, 20594, 1299026},
+    DRUID = {22812, 22842, 99, 774, 8936, 5185, 20594, 1299026},
 }
 local PET_HEAL = {
     HUNTER = {136},
@@ -45,7 +45,7 @@ local EMERGENCY = {
 local GAP_CLOSER = {
     WARRIOR = {100, 20252},
     ROGUE = {2983},
-    DRUID = {1238122},
+    DRUID = {1238122, 1850},
 }
 local BURST = {
     WARRIOR = {1719, 12328},
@@ -63,13 +63,16 @@ local TOPOFF = {
     SHAMAN = {8004, 331},
 }
 local PREVIOUS_DEFENSIVE = {
-    PALADIN = {642, 498, 1022, 633, 19750, 635, 20594, 1299026},
-    PRIEST = {17, 13908, 139, 2061, 20594, 1299026},
-    SHAMAN = {8004, 331, 20594, 1299026},
+    PALADIN = {{642, 498, 1022, 633, 19750, 635, 20594, 1299026}},
+    PRIEST = {{17, 13908, 139, 2061, 20594, 1299026}, {17, 13908, 2651, 139, 2061, 20594, 1299026}},
+    SHAMAN = {{8004, 331, 20594, 1299026}},
+    WARRIOR = {{12975, 871, 402927, 20594, 1299026}},
+    DRUID = {{22812, 22842, 774, 8936, 5185, 20594, 1299026}},
 }
 local ABILITY_ROLES = {
     [17] = "protection",  -- Power Word: Shield
     [72] = "utility",  -- Shield Bash
+    [99] = "protection",  -- Demoralizing Roar
     [126] = "utility",  -- Eye of Kilrogg
     [130] = "utility",  -- Slow Fall
     [139] = "healing",  -- Renew
@@ -85,11 +88,14 @@ local ABILITY_ROLES = {
     [871] = "protection",  -- Shield Wall
     [1002] = "utility",  -- Eyes of the Beast
     [1022] = "protection",  -- Blessing of Protection
+    [1160] = "protection",  -- Demoralizing Shout
     [1463] = "protection",  -- Mana Shield
     [1515] = "utility",  -- Tame Beast
     [1706] = "utility",  -- Levitate
     [1856] = "protection",  -- Vanish
     [1953] = "utility",  -- Blink
+    [2050] = "healing",  -- Lesser Heal
+    [2054] = "healing",  -- Heal
     [2061] = "healing",  -- Flash Heal
     [2096] = "utility",  -- Mind Vision
     [2484] = "utility",  -- Earthbind Totem
@@ -118,6 +124,7 @@ local ABILITY_ROLES = {
     [8181] = "protection",  -- Frost Resistance Totem
     [8184] = "protection",  -- Fire Resistance Totem
     [8936] = "healing",  -- Regrowth
+    [9035] = "protection",  -- Hex of Weakness
     [10595] = "protection",  -- Nature Resistance Totem
     [11426] = "protection",  -- Ice Barrier
     [11958] = "protection",  -- Ice Block
@@ -166,6 +173,24 @@ local TOTEM_SLOTS = {
     [6495] = 4,  -- Sentry Totem
 }
 local MAINTAINED_PROTECTION = { [8071] = true }
+local ENEMY_MITIGATION = {
+    [99] = 30,  -- Demoralizing Roar
+    [1735] = 30,  -- Demoralizing Roar
+    [9490] = 30,  -- Demoralizing Roar
+    [9747] = 30,  -- Demoralizing Roar
+    [9898] = 30,  -- Demoralizing Roar
+    [9035] = 120,  -- Hex of Weakness
+    [19281] = 120,  -- Hex of Weakness
+    [19282] = 120,  -- Hex of Weakness
+    [19283] = 120,  -- Hex of Weakness
+    [19284] = 120,  -- Hex of Weakness
+    [19285] = 120,  -- Hex of Weakness
+    [1160] = 45,  -- Demoralizing Shout
+    [6190] = 45,  -- Demoralizing Shout
+    [11554] = 45,  -- Demoralizing Shout
+    [11555] = 45,  -- Demoralizing Shout
+    [11556] = 45,  -- Demoralizing Shout
+}
 local MAINTAINED = {
     PRIEST = { { group = {1243, 21562}, default = 1243, memberAuraIDs = { [1243] = {1243, 1244, 1245, 2791, 10937, 10938}, [21562] = {21562, 21564} }, raidWide = true, auraIDs = {1243, 1244, 1245, 2791, 10937, 10938, 21562, 21564} }, { group = {14752, 27681}, default = 14752, memberAuraIDs = { [14752] = {14752, 14818, 14819, 27841}, [27681] = {27681} }, raidWide = true, auraIDs = {14752, 14818, 14819, 27841, 27681} }, { group = {976, 27683}, default = 976, memberAuraIDs = { [976] = {976, 10957, 10958}, [27683] = {27683} }, raidWide = true, auraIDs = {976, 10957, 10958, 27683} }, { group = {588}, default = 588, memberAuraIDs = { [588] = {588, 7128, 602, 1006, 10951, 10952} }, auraIDs = {588, 7128, 602, 1006, 10951, 10952} }, { group = {15473}, default = 15473, memberAuraIDs = { [15473] = {15473} }, preparation = true, tree = "shadow", form = true, combatCritical = true, auraIDs = {15473} } },
     MAGE = { { group = {1459, 23028}, default = 1459, memberAuraIDs = { [1459] = {1459, 1460, 1461, 10156, 10157}, [23028] = {23028} }, raidWide = true, auraIDs = {1459, 1460, 1461, 10156, 10157, 23028} }, { group = {168, 7302, 6117}, default = 168, memberAuraIDs = { [168] = {168, 7300, 7301}, [7302] = {7302, 7320, 10219, 10220}, [6117] = {6117, 22782, 22783} }, auraIDs = {168, 7300, 7301, 7302, 7320, 10219, 10220, 6117, 22782, 22783} } },
@@ -228,13 +253,15 @@ local TIERS = {
     [5277] = 4,  -- Evasion
     [19263] = 4,  -- Deterrence
 }
-local CATEGORIES = { defensive = { [17] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1463] = true, [1856] = true, [2651] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [8071] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true, [1311015] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [12809] = true, [19503] = true, [19577] = true, [20549] = true } }
+local CATEGORIES = { defensive = { [17] = true, [99] = true, [498] = true, [642] = true, [871] = true, [1022] = true, [1160] = true, [1463] = true, [1856] = true, [2651] = true, [5277] = true, [5384] = true, [6229] = true, [6789] = true, [7744] = true, [8071] = true, [9035] = true, [11426] = true, [11958] = true, [12975] = true, [19263] = true, [20589] = true, [20594] = true, [22812] = true, [1259718] = true, [1299026] = true, [1311015] = true }, healing = { [136] = true, [139] = true, [331] = true, [596] = true, [633] = true, [635] = true, [689] = true, [740] = true, [755] = true, [774] = true, [1064] = true, [2050] = true, [2054] = true, [2061] = true, [5185] = true, [5394] = true, [8004] = true, [8936] = true, [13908] = true, [19750] = true, [22842] = true, [402927] = true }, cc = { [118] = true, [5211] = true, [5782] = true, [6789] = true, [12809] = true, [19503] = true, [19577] = true, [20549] = true } }
 CATEGORIES.defensive[17] = true
+CATEGORIES.defensive[99] = true
 CATEGORIES.defensive[498] = true
 CATEGORIES.defensive[543] = true
 CATEGORIES.defensive[642] = true
 CATEGORIES.defensive[871] = true
 CATEGORIES.defensive[1022] = true
+CATEGORIES.defensive[1160] = true
 CATEGORIES.defensive[1463] = true
 CATEGORIES.defensive[1856] = true
 CATEGORIES.defensive[2565] = true
@@ -252,6 +279,7 @@ CATEGORIES.defensive[8170] = true
 CATEGORIES.defensive[8177] = true
 CATEGORIES.defensive[8181] = true
 CATEGORIES.defensive[8184] = true
+CATEGORIES.defensive[9035] = true
 CATEGORIES.defensive[10595] = true
 CATEGORIES.defensive[11426] = true
 CATEGORIES.defensive[11958] = true
@@ -903,6 +931,7 @@ local TARGET_AURAS = {
     [1978] = 15,  -- Serpent Sting
     [2767] = 18,  -- Shadow Word: Pain
     [2941] = 15,  -- Immolate
+    [2944] = 24,  -- Devouring Plague
     [5570] = 12,  -- Insect Swarm
     [6217] = 24,  -- Bane of Agony
     [6222] = 15,  -- Corruption
@@ -990,6 +1019,11 @@ local TARGET_AURAS = {
     [18879] = 30,  -- Siphon Life
     [18880] = 30,  -- Siphon Life
     [18881] = 30,  -- Siphon Life
+    [19276] = 24,  -- Devouring Plague
+    [19277] = 24,  -- Devouring Plague
+    [19278] = 24,  -- Devouring Plague
+    [19279] = 24,  -- Devouring Plague
+    [19280] = 24,  -- Devouring Plague
     [22959] = 30,  -- Fire Vulnerability
     [24974] = 12,  -- Insect Swarm
     [24975] = 12,  -- Insect Swarm
@@ -999,7 +1033,10 @@ local TARGET_AURAS = {
     [25309] = 15,  -- Immolate
     [25311] = 18,  -- Corruption
     [29228] = 12,  -- Flame Shock
+    [414644] = 15,  -- Lacerate
     [440892] = 300,  -- Curse of the Elements
+    [1235826] = 15,  -- Lacerate
+    [1235827] = 15,  -- Lacerate
     [1311676] = 300,  -- Curse of the Elements
     [1311677] = 300,  -- Curse of the Elements
     [1311680] = 300,  -- Curse of the Elements
@@ -1007,6 +1044,8 @@ local TARGET_AURAS = {
     [1325756] = 6,  -- Death Mark
     [1325757] = 6,  -- Death Mark
     [1325758] = 6,  -- Death Mark
+    [1328616] = 15,  -- Lacerate
+    [1328617] = 15,  -- Lacerate
 }
 local AURA_DELIVERY = {
     [172] = { 1, 0 },  -- Corruption
@@ -1622,6 +1661,8 @@ local function Put(tbl, lists, byClass)
 end
 Put(SpellDB.CLASS_DEFENSIVE_DEFAULTS, DEFENSIVE)
 SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE
+SpellDB.FOREVER_DEFENSIVE_DEFAULTS_VERSION = 2
+SpellDB.FOREVER_ENEMY_MITIGATION = ENEMY_MITIGATION
 SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES
 SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS
 SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION
@@ -1630,6 +1671,8 @@ SpellDB.FOREVER_LANDS_AT_TARGET = LANDS_AT_TARGET
 SpellDB.FOREVER_ENERGIZE = ENERGIZE
 SpellDB.FOREVER_THREAT_ROLES = THREAT_ROLES
 SpellDB.FOREVER_TANK_TREES = {DRUID_F = { feral_bear = true }, PALADIN_F = { protection = true }, WARRIOR_F = { protection = true } }
+SpellDB.FOREVER_EARLY_ARMOR_TREES = {WARRIOR_F = { arms = { 12294, 1240193, 1680, 23881 } } }
+SpellDB.FOREVER_TREE_GEAR = {PALADIN_F = { protection = { {2, 145} } }, WARRIOR_F = { protection = { {4, 64} } } }
 SpellDB.FOREVER_GAINS_OVER_TIME = GAINS_OVER_TIME
 SpellDB.FOREVER_SELF_AURA_SECONDS = SELF_AURA_SECONDS
 Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)

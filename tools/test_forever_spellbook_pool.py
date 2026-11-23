@@ -3,7 +3,7 @@
 # Real rotation-pool API with controlled player spellbook and bar contents.
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 

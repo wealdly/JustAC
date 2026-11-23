@@ -32,7 +32,7 @@ C_ActionBar = { FindSpellActionButtons = function(id)
     table.sort(out)
     return out
 end }
-FindBaseSpellByID = function(id) return id end
+C_SpellBook = { FindBaseSpellByID = function(id) return id end }
 HasAction = function(slot) return BAR[slot] ~= nil end
 GetBindingKey = function(cmd) return BINDS[cmd] end
 local libs = {}

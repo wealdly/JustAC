@@ -3,10 +3,10 @@
 """The engaged-enemy count keeps a pack's count briefly when its nameplates vanish.
 
 Loads the real count section of BlizzardAPI/StateHelpers.lua with stubbed unit reads: a
-count that falls straight from two or more to zero while the player is still in combat is
-held for four seconds; fresh counts are reacquired on the next quarter-second scan.
-A fall to one, leaving combat, an expired hold and the diagnostic breakdown are all
-taken as scanned. Runs on both clients.
+count that falls by two or more in one scan while the player is still in combat is held for
+four seconds; fresh counts are reacquired on the next quarter-second scan. A rise, a fall
+of one, leaving combat, an expired hold and the diagnostic breakdown are all taken as
+scanned. Runs on both clients.
 
 Run: python tools/test_enemy_count_hold.py
 """
@@ -64,23 +64,29 @@ def check_client(forever):
     assert at(7.25, 3) == 3, "a reacquired pack replaces the hold within a quarter second"
     assert at(11.25, 0) == 3, "reacquisition renews the hold from the fresh pack reading"
     assert at(11.5, 0) == 0, "cached held counts never renew the hold"
-    assert at(12, 3) == 3 and at(13, 1) == 1, "a fall to one is a real reading"
-    assert at(14, 0) == 0, "nothing is held after a count of one"
-    assert at(15, 3) == 3 and at(16, 0, combat=False) == 0, "leaving combat ends the hold"
-    assert at(17, 0) == 0, "and it does not come back"
-    assert at(18, 2) == 2 and at(19, 0, combat=g.secret) == 0, "an unreadable combat state holds nothing"
-    assert at(20, 4) == 4 and at(21, 0) == 4, "a pack is held before combat ends"
-    g.now, g.inCombat = 21.125, False
+    assert at(12, 3) == 3 and at(13, 2) == 2 and at(13.5, 1) == 1, "enemies dying one at a time are real readings"
+    assert at(14, 0) == 0, "and so is the last of them"
+    assert at(14.5, 2) == 2 and at(14.75, 5) == 5, "a rise is taken at once, however large"
+    assert at(15.5, 1) == 5, "five to one in a single scan is suspect: the pack is kept"
+    assert at(15.75, 4) == 4, "a fall of one from the kept count is real"
+    assert at(16.5, 2) == 4 and at(19.75, 2) == 4, "a fall of two is kept for four seconds"
+    assert at(20.0, 2) == 2, "and accepted once the lower count has lasted"
+    at(20.5, 0, combat=False)
+    assert at(25, 3) == 3 and at(26, 0, combat=False) == 0, "leaving combat ends the hold"
+    assert at(27, 0) == 0, "and it does not come back"
+    assert at(28, 2) == 2 and at(29, 0, combat=g.secret) == 0, "an unreadable combat state holds nothing"
+    assert at(30, 4) == 4 and at(31, 0) == 4, "a pack is held before combat ends"
+    g.now, g.inCombat = 31.125, False
     g.BlizzardAPI.NotePlayerLeftCombat()
-    assert at(21.125, 0) == 0, "combat-end notification clears the cache even on rapid reengagement"
-    assert at(21.5, 0) == 0, "the previous fight's held pack cannot return"
+    assert at(31.125, 0) == 0, "combat-end notification clears the cache even on rapid reengagement"
+    assert at(31.5, 0) == 0, "the previous fight's held pack cannot return"
 
 
 def main():
     for forever in (False, True):
         check_client(forever)
     print("enemy count hold: both clients passed four-second expiry, quarter-second "
-          "reacquisition, renewal, one, combat end, unknown and diagnostics")
+          "reacquisition, renewal, steps of one, sudden drops, rises, combat end, unknown and diagnostics")
 
 
 if __name__ == "__main__":

@@ -459,23 +459,27 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
 
     -- Only unchanged old defaults migrate. Order changes, additions and removals
     -- are customization, including an empty list.
+    -- Each earlier default list that shipped is checked once per defaults version.
     local previous = SpellDB and SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS
         and SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS[playerClass]
-    if previous and not cs.foreverProtectionDefaultsUpdated then
-        cs.foreverProtectionDefaultsUpdated = true
+    local version = SpellDB and SpellDB.FOREVER_DEFENSIVE_DEFAULTS_VERSION
+    if previous and version and cs.foreverDefensiveDefaults ~= version then
+        cs.foreverDefensiveDefaults = version
         local stored = cs.defensiveSpells
-        if stored then
+        local untouched = false
+        for _, list in ipairs(stored and previous or {}) do
             local index, unchanged = 1, true
             for _, id in ipairs(stored) do
                 if id ~= SpellDB.EMERGENCY_POTION then
-                    if id ~= previous[index] then unchanged = false; break end
+                    if id ~= list[index] then unchanged = false; break end
                     index = index + 1
                 end
             end
-            if unchanged and index == #previous + 1 then
-                local defaults = SpellDB.ResolveDefaults(SpellDB.CLASS_DEFENSIVE_DEFAULTS, specKey, playerClass)
-                CopySpellList(cs, "defensiveSpells", defaults)
-            end
+            if unchanged and index == #list + 1 then untouched = true; break end
+        end
+        if untouched then
+            local defaults = SpellDB.ResolveDefaults(SpellDB.CLASS_DEFENSIVE_DEFAULTS, specKey, playerClass)
+            CopySpellList(cs, "defensiveSpells", defaults)
         end
     end
 
@@ -853,7 +857,7 @@ local function ThreatSpell(role)
         local id
         if RI and RI.HighestKnownRank then
             id = RI.HighestKnownRank(base)
-        elseif IsPlayerSpell and IsPlayerSpell(base) then
+        elseif C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(base) then
             id = base
         end
         if id and BlizzardAPI.IsSpellReady(id) == true then
@@ -905,11 +909,35 @@ local function HotHoldEntry(spellID)
     return entry
 end
 
+-- A debuff that weakens the enemy (Demoralizing Shout, Hex of Weakness) is held like a heal
+-- over time: from your own confirmed cast, for its duration, since the enemy's debuffs are
+-- unreadable in combat. Whoever it was cast on, and dropped on a new target (OnTargetChanged).
+local enemyHoldOf, enemyHoldByBase = {}, {}
+local function EnemyHoldEntry(spellID)
+    local entry = enemyHoldOf[spellID]
+    if entry ~= nil then return entry or nil end
+    local seconds = SpellDB.GetEnemyMitigationDuration and SpellDB.GetEnemyMitigationDuration(spellID)
+    if not seconds then
+        enemyHoldOf[spellID] = false
+        return nil
+    end
+    local RI = LibStub("JustAC-RotationImport", true)
+    local base = spellID
+    if RI and RI.RankBase then base = RI.RankBase(spellID) or spellID end
+    entry = enemyHoldByBase[base]
+    if not entry then
+        entry = { aura = base, enemy = true, selfOnly = true, dur = seconds }
+        enemyHoldByBase[base] = entry
+    end
+    enemyHoldOf[spellID] = entry
+    return entry
+end
+
 local function LockoutEntry(spellID)
     if not SpellDB then return nil end
     local entry = SpellDB.GetSelfLockout and SpellDB.GetSelfLockout(spellID)
     if entry then return entry end
-    return HotHoldEntry(spellID)
+    return HotHoldEntry(spellID) or EnemyHoldEntry(spellID)
 end
 
 --- UNIT_SPELLCAST_SENT for the player: arm the hold when a lockout spell targets the player.
@@ -925,7 +953,9 @@ function DefensiveEngine.NoteSpellcastSent(targetName, castGUID, spellID)
         local ok, isSelf = pcall(UnitIsUnit, targetName, "player")
         if not ok or Unsecret(isSelf) ~= true then return end
     end
-    if entry.hot then
+    if entry.enemy then
+        entry.dur = SpellDB.GetEnemyMitigationDuration(spellID) or entry.dur
+    elseif entry.hot then
         -- This rank's hold: its duration less the lead a recast needs to land as it ends.
         local lead = BlizzardAPI.GetPeriodicRefreshLead and BlizzardAPI.GetPeriodicRefreshLead(spellID) or 0
         entry.dur = math.max(0, SpellDB.GetPureHotDuration(spellID) - lead)
@@ -986,6 +1016,17 @@ local function HeldLockoutEntry(spellID)
         return nil
     end
     return entry
+end
+
+--- A new target: a debuff held on the last one says nothing about this one.
+function DefensiveEngine.OnTargetChanged()
+    local dropped = false
+    for aura in pairs(enemyHoldByBase) do
+        if selfLockedUntil[aura] then
+            selfLockedUntil[aura], dropped = nil, true
+        end
+    end
+    if dropped and AuraClock then AuraClock.Touch() end
 end
 
 --- Is this spell (any rank) inside a self-lockout hold?

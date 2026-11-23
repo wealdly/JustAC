@@ -9,6 +9,7 @@ local ProbeRead = DebugCommands._Common.ProbeRead
 local ProbeLogStore = DebugCommands._Capture.ProbeLogStore
 local ProbeLogEmit = DebugCommands._Capture.ProbeLogEmit
 local LogProxy = DebugCommands._Capture.LogProxy
+local QuietProxy = DebugCommands._Capture.QuietProxy
 
 
 -- Chat output stays short: the session's own state, warnings and the next step.
@@ -89,6 +90,9 @@ function DebugCommands.StopDiagnostics(addon)
     if s.signalCleanup then s.signalCleanup() end
     s.signalReads, s.signalEvent, s.signalCleanup = nil, nil, nil
     local logOnly = LogProxy(addon)
+    if s.ownsWatch and DebugCommands._ForeverWatch then DebugCommands._ForeverWatch(false) end
+    local quiet = QuietProxy(addon)
+    for _, name in ipairs(s.ownedLoggers or {}) do DebugCommands[name](quiet, "off") end
     if s.ownsAudit and DebugCommands._probeSession == s.audit then DebugCommands.ProbeSession(logOnly, "off") end
     if s.ownsErrors and DebugCommands._errorCapture == s.errors then DebugCommands.ErrorCapture(logOnly, "off") end
     ProbeLogEmit(string.format("DIAGNOSTICS STOP session=%s samples=%d changes=%d pulls=%d failures=%d t=%.3f marks=%d",
@@ -293,10 +297,10 @@ function DebugCommands.StartDiagnostics(addon, arg)
             queueContext=function()
                 local ctx = SQ and SQ.DebugContextState and SQ.DebugContextState()
                 if not ctx then return nil end
-                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s lowValue=%s holdsRange=%s rangedSwap=%s",
+                return string.format("simc=%s enemies=%s outOfMelee=%s dying=%s execute=%s pick=%s lowValue=%s holdsRange=%s rangedSwap=%s onTheMove=%s",
                     SafeSecret(ctx.simcCtx), SafeSecret(ctx.enemies), SafeSecret(ctx.outOfMelee),
                     SafeSecret(ctx.dying), SafeSecret(ctx.execute), SafeSecret(ctx.pickID),
-                    SafeSecret(ctx.lowValueTarget), SafeSecret(ctx.holdsRange), SafeSecret(ctx.rangedSwap))
+                    SafeSecret(ctx.lowValueTarget), SafeSecret(ctx.holdsRange), SafeSecret(ctx.rangedSwap), SafeSecret(ctx.onTheMove))
             end,
             enemyProvenance=function()
                 -- The engaged count and its per-plate reasons come from the queue's own scan.
@@ -702,13 +706,47 @@ function DebugCommands.StartDiagnostics(addon, arg)
     s.limit = limit
     s.errorsAtStart = _G.JustACGlobal and _G.JustACGlobal.errorLog and #_G.JustACGlobal.errorLog or 0
     local logOnly = LogProxy(addon)
-    if s.ownsErrors then DebugCommands.ErrorCapture(logOnly, "on") end
-    if s.ownsAudit then DebugCommands.ProbeSession(logOnly, "on") end
-    s.audit, s.errors = DebugCommands._probeSession, DebugCommands._errorCapture
+    -- The start row comes first: every row after it belongs to this session, so what the
+    -- recorders below write as they start (the audit baseline above all) is kept with it.
     -- Self-describing capture: the analyzer scores against these rows, not the
     -- registry it happens to find on disk later.
     ProbeLogEmit(string.format("DIAGNOSTICS START session=%s t=%.3f question=%s mode=%s limit=%d",
         s.id, GetTime(), question and question.id or "all", s.mode, limit))
+    -- Which deployed build this is (written at deploy time into the Research companion), so a
+    -- session read weeks later still says what code produced it.
+    if DebugCommands._buildStamp then
+        ProbeLogEmit("DIAGNOSTICS BUILD session=" .. s.id .. " " .. DebugCommands._buildStamp)
+    end
+    if s.ownsErrors then DebugCommands.ErrorCapture(logOnly, "on") end
+    if s.ownsAudit then DebugCommands.ProbeSession(logOnly, "on") end
+    s.audit, s.errors = DebugCommands._probeSession, DebugCommands._errorCapture
+    -- The standard capture runs the passive recorders too: what each used to record on its own
+    -- switch. The change-only loggers write into the same log; the mob and pet profiles keep
+    -- their own tables (the offline simulator reads them) and are simply armed for the session.
+    -- One already running by hand is left to its owner. The pick logger needs a game pick, so
+    -- it stays off where there is none. A focused session runs only what its question asks for.
+    if not question then
+        local quiet = QuietProxy(addon)
+        s.ownedLoggers = {}
+        for _, logger in ipairs({ { "MaintenanceLog", "_maintLog" }, { "TopoffWatch", "_topoffWatch" },
+                                  { "EnrageLog", "_enrageLog" }, { "PickLog", "_pickLog", gamePick = true },
+                                  { "MobProfileProbe", "_mobProfileOn", start = "arm" },
+                                  { "PetProfileProbe", "_petProfileOn", start = "arm" } }) do
+            local name, state = logger[1], logger[2]
+            if DebugCommands[name] and not DebugCommands[state]
+               and (not logger.gamePick or (B and B.HasGamePick and B.HasGamePick())) then
+                DebugCommands[name](quiet, logger.start or "on")
+                s.ownedLoggers[#s.ownedLoggers + 1] = name
+            end
+        end
+    end
+    -- Full mode on Forever also runs the event recorder (Research companion), unless one is
+    -- already running on its own.
+    if full and DebugCommands._ForeverWatch and not DebugCommands._foreverWatch
+       and B and B.IsForever and B.IsForever() then
+        s.ownsWatch = true
+        DebugCommands._ForeverWatch(true)
+    end
     ProbeLogEmit("DIAGNOSTICS KEYS session=" .. s.id .. " keys=" .. table.concat(keys, ","))
     if #missing > 0 then
         ProbeLogEmit("DIAGNOSTICS MISSING session=" .. s.id .. " keys=" .. table.concat(missing, ","))
@@ -760,12 +798,36 @@ end
 
 
 --------------------------------------------------------------------------------
+-- /jac inspect audit: the standard session in its full mode. There is one capture; this name
+-- stays for macros and older test plans. `clear` empties the log; `off` also stops a battery
+-- that was started on its own before this routed through the session.
+function DebugCommands.AuditSession(addon, arg)
+    arg = arg and arg:lower() or nil
+    if arg == "clear" then
+        DebugCommands.ProbeSession(addon, "clear")
+    elseif arg == "off" or (not arg and DebugCommands._diagnosticSession) then
+        if DebugCommands._diagnosticSession then
+            DebugCommands.StopDiagnostics(addon)
+        elseif DebugCommands._probeSession then
+            DebugCommands.ProbeSession(addon, "off")
+        else
+            addon:Print("diagnostics: already OFF")
+        end
+    else
+        DebugCommands.StartDiagnostics(addon, "full")
+    end
+end
+
+-- The audit battery: snapshots at the baseline, in combat and at its end. Run by the standard
+-- session's full mode (StartDiagnostics); not a command of its own.
 function DebugCommands.ProbeSession(addon, arg)
     arg = arg and arg:lower() or nil
     if arg == "clear" then
         if _G.JustACGlobal then
             _G.JustACGlobal.probeLog = nil
             _G.JustACGlobal.probeLogDropped = nil
+            -- The lists the maintenance and pick loggers kept before they wrote here.
+            _G.JustACGlobal.maintLog, _G.JustACGlobal.pickLog = nil, nil
         end
         addon:Print("audit: log cleared")
         return
@@ -875,7 +937,7 @@ function DebugCommands.ProbeSession(addon, arg)
         return
     end
     addon:Print("audit: ON - baseline captured; combat snapshots are automatic")
-    addon:Print("  /jac inspect audit off, then /reload to save")
+    addon:Print("  /jac inspect stop, then /reload to save")
 end
 
 --------------------------------------------------------------------------------

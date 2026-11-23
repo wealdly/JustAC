@@ -29,24 +29,42 @@ CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", 
 
 # --- per-class lists (order matters where the table is a priority) ---------------------
 # Personal defensives: instants first, cast-time heals last (the retail table's rule).
+# A debuff that weakens the enemy (Demoralizing Shout and Roar, Hex of Weakness) follows the big
+# instant defensives: it is the cheap early answer at low health, and it is kept out of the
+# damage queue (gen_forever_rotations NOT_DPS / TANK_ONLY), so this is its one way in
+# (2026-11-20 audit: before it, a solo character was never offered one). ENEMY_MITIGATION
+# holds it while it runs.
 DEFENSIVE = {
-    "warrior": ["last_stand", "shield_wall", "victory_rush"],
+    "warrior": ["last_stand", "shield_wall", "victory_rush", "demoralizing_shout"],
     "paladin": ["divine_shield", "divine_protection", "blessing_of_protection", "templars_bulwark", "lay_on_hands",
                 "flash_of_light", "holy_light"],
     "hunter":  ["deterrence", "feign_death"],
     "rogue":   ["evasion", "vanish"],
-    "priest":  ["power_word_shield", "desperate_prayer", "elunes_grace", "renew", "flash_heal"],
+    "priest":  ["power_word_shield", "desperate_prayer", "elunes_grace", "hex_of_weakness", "renew", "flash_heal",
+                "heal", "lesser_heal"],
     "shaman":  ["lesser_healing_wave", "healing_wave", "stoneskin_totem"],
     "mage":    ["ice_block", "ice_barrier", "mana_shield"],
     "warlock": ["death_coil", "shadow_ward", "drain_life"],
-    "druid":   ["barkskin", "frenzied_regeneration", "rejuvenation", "regrowth", "healing_touch"],
+    "druid":   ["barkskin", "frenzied_regeneration", "demoralizing_roar", "rejuvenation", "regrowth",
+                "healing_touch"],
 }
+# Earlier default lists, every version that shipped. A saved list identical to one of them is
+# an untouched default and is replaced by the current one once per version
+# (DEFENSIVE_DEFAULTS_VERSION); anything else is the player's and stays.
 PREVIOUS_DEFENSIVE = {
-    "paladin": ["divine_shield", "divine_protection", "blessing_of_protection", "lay_on_hands",
-                "flash_of_light", "holy_light"],
-    "priest": ["power_word_shield", "desperate_prayer", "renew", "flash_heal"],
-    "shaman": ["lesser_healing_wave", "healing_wave"],
+    "paladin": [["divine_shield", "divine_protection", "blessing_of_protection", "lay_on_hands",
+                 "flash_of_light", "holy_light"]],
+    "priest": [["power_word_shield", "desperate_prayer", "renew", "flash_heal"],
+               ["power_word_shield", "desperate_prayer", "elunes_grace", "renew", "flash_heal"]],
+    "shaman": [["lesser_healing_wave", "healing_wave"]],
+    "warrior": [["last_stand", "shield_wall", "victory_rush"]],
+    "druid": [["barkskin", "frenzied_regeneration", "rejuvenation", "regrowth", "healing_touch"]],
 }
+DEFENSIVE_DEFAULTS_VERSION = 2
+# Debuffs that weaken the enemy, held in the defensive queue while they run (every rank, its
+# duration from the client data). Unreadable on the enemy in combat, so timed from your cast.
+ENEMY_MITIGATION = {"warrior": ["demoralizing_shout"], "druid": ["demoralizing_roar"],
+                    "priest": ["hex_of_weakness"]}
 # Roles describe routing, not whether an effect can ever cause damage. Ward reflection
 # remains protection; damage/heal and tank-rotation buttons keep their offensive role.
 ABILITY_ROLES = {
@@ -86,7 +104,11 @@ GROUP_HELP = {"warrior": [], "mage": [], "shaman": ["healing_stream_totem"]}
 GROUP_HEAL = {"priest": ["prayer_of_healing"], "shaman": ["chain_heal"], "druid": ["tranquility"]}
 EMERGENCY = {"druid": ["tranquility"]}
 # Melee gap closers (the table's presence also marks the class as melee).
-GAP_CLOSER = {"warrior": ["charge", "intercept"], "rogue": ["sprint"], "druid": ["feral_charge"]}
+# Druids: Feral Charge in Bear Form, Dash in Cat Form (the cat's Sprint); each is skipped while
+# the game reports it unusable, so only the current form's offers. Paladins, shamans and hunters
+# have no gap closer in the Forever data (2026-11-22 scan: Ghost Wolf is a travel form, Aspect of
+# the Cheetah dazes when hit).
+GAP_CLOSER = {"warrior": ["charge", "intercept"], "rogue": ["sprint"], "druid": ["feral_charge", "dash"]}
 # Major offensive cooldowns: the burst-ready cue.
 BURST = {
     "warrior": ["recklessness", "death_wish"],
@@ -195,7 +217,7 @@ TIERS = {
 }
 HEALS = {"victory_rush", "lay_on_hands", "flash_of_light", "holy_light", "desperate_prayer", "renew",
          "flash_heal", "lesser_healing_wave", "healing_wave", "drain_life", "rejuvenation", "regrowth",
-         "healing_touch", "lesser_heal", "frenzied_regeneration", "mend_pet", "health_funnel",
+         "healing_touch", "lesser_heal", "heal", "frenzied_regeneration", "mend_pet", "health_funnel",
          "prayer_of_healing", "chain_heal", "tranquility", "healing_stream_totem"}
 CHANNEL_ATTR1 = 0x4 | 0x40   # SPELL_ATTR1_IS_CHANNELLED / IS_SELF_CHANNELLED
 NEXT_SWING_ATTR0 = 0x4       # SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Raptor Strike, Maul)
@@ -298,6 +320,63 @@ def class_block(var, table):
 # reads this only where a threat-building press earns its place for a tank and not for anyone
 # else (Sunder Armor on an ordinary solo target). Shared with gen_forever_rotations.
 TANK_TREES = {"warrior": ["protection"], "druid": ["feral_bear"], "paladin": ["protection"]}
+# Talent trees whose physical hits repay one armor reduction on an ordinary target at once
+# (Arms, 2026-11-18 simulation: up to 8 to 9% faster kills at levels 24 to 30), once one of the
+# tree's main weapon spenders is learned. Before that the armor reduction's rage and global
+# cooldown buy nothing back (2026-11-20 simulation: Arms without Sunder Armor 3 to 19% faster
+# at level 14 on targets up to three levels below; with it 7 to 11% faster at 20 and 30, once
+# Slam is learned at 20). Named here, written out as rank-1 ids.
+EARLY_ARMOR_TREES = {"warrior": {"arms": ["mortal_strike", "slam", "whirlwind", "bloodthirst"]}}
+ITEM_CLASS_WEAPON, ITEM_CLASS_ARMOR = 2, 4
+
+
+def early_armor_spenders():
+    """class -> tree -> rank-1 ids of the main spenders named in EARLY_ARMOR_TREES."""
+    out = {}
+    for cls, trees in EARLY_ARMOR_TREES.items():
+        chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
+        for tree, names in trees.items():
+            missing = [n for n in names if n not in chains]
+            assert not missing, (cls, tree, "unknown spender", missing)
+            out.setdefault(cls, {})[tree] = [int(chains[n][0][0]) for n in names]
+    return out
+
+
+def tree_gear(rot):
+    """class key -> tree -> [(item class, subclass mask)]: gear that a tree's own listed attacks
+    need and no attack the class's trees share needs (Shield Slam's shield). A tree whose own
+    attacks need gear the player is not wearing is not how that player fights, however the
+    talent points fall: the runtime skips it when picking the list (RotationImport.PickTree)."""
+    listed, cls, tree = {}, None, None
+    for line in rot.splitlines():
+        m = re.match(r'  \["(\w+)"\] = \{\s*$', line)
+        if m:
+            cls, tree = m.group(1), None
+            continue
+        if re.match(r'  \["\w+"\] = \{.*\},?\s*$', line):
+            cls = None   # the one-line class tables after the lists
+            continue
+        m = re.match(r"    (\w+) = \{", line)
+        if m and cls:
+            tree = m.group(1)
+            continue
+        m = re.match(r"\s+\{id=(\d+),", line)
+        if m and cls and tree:
+            listed.setdefault(cls, {}).setdefault(tree, set()).add(m.group(1))
+    needs = {}
+    for r in cfa.rows("SpellEquippedItems"):
+        item_class, mask = int(r["EquippedItemClass"] or -1), int(r["EquippedItemSubclass"] or 0)
+        if item_class in (ITEM_CLASS_WEAPON, ITEM_CLASS_ARMOR) and mask:
+            needs[r["SpellID"]] = (item_class, mask)
+    out = {}
+    for cls, trees in sorted(listed.items()):
+        for tree, ids in sorted(trees.items()):
+            others = set().union(*[v for k, v in trees.items() if k != tree])
+            shared = {needs[i] for i in ids & others if i in needs}
+            own = sorted({needs[i] for i in ids - others if i in needs} - shared)
+            if own:
+                out.setdefault(cls, {})[tree] = own
+    return out
 
 
 def main():
@@ -309,14 +388,17 @@ def main():
     lines = []
     for var, src in [("DEFENSIVE", DEFENSIVE), ("PET_HEAL", PET_HEAL), ("PET_REZ", PET_REZ),
                      ("GROUP_HELP", GROUP_HELP), ("GROUP_HEAL", GROUP_HEAL), ("EMERGENCY", EMERGENCY),
-                     ("GAP_CLOSER", GAP_CLOSER), ("BURST", BURST), ("TOPOFF", TOPOFF),
-                     ("PREVIOUS_DEFENSIVE", PREVIOUS_DEFENSIVE)]:
+                     ("GAP_CLOSER", GAP_CLOSER), ("BURST", BURST), ("TOPOFF", TOPOFF)]:
         table = {c: ids(res, c, n) for c, n in src.items()}
-        if var in ("DEFENSIVE", "PREVIOUS_DEFENSIVE"):
+        if var == "DEFENSIVE":
             # Defensive racials close every class's list; the engine shows only the ones this
             # character knows (its race's).
             table = {c: v + cfa.racial_ids("defensive") for c, v in table.items()}
         lines += class_block(var, table)
+    # Every earlier default list, each closed by the racials as the list it replaced was.
+    lines += class_block("PREVIOUS_DEFENSIVE", {
+        c: [ids(res, c, version) + cfa.racial_ids("defensive") for version in versions]
+        for c, versions in PREVIOUS_DEFENSIVE.items()})
 
     roles = {}
     for cls, nlist in DEFENSIVE.items():
@@ -360,6 +442,16 @@ def main():
         m = misc.get(str(sid))
         return secs.get(m["DurationIndex"], 0) if m else 0
 
+    # ENEMY_MITIGATION, every rank: how long the debuff runs after your cast.
+    lines.append("local ENEMY_MITIGATION = {")
+    for cls, mitigation in sorted(ENEMY_MITIGATION.items()):
+        chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
+        for name in mitigation:
+            for sid, _level in chains[name]:
+                seconds = duration(sid)
+                assert seconds > 0, (cls, name, sid, "no duration in the data")
+                lines.append(f"    [{sid}] = {seconds:g},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
     lines.append("local MAINTAINED = {")
     for cls in dict.fromkeys((*MAINTAINED, *PREPARATION)):
         groups = [(group, default, raid, {})
@@ -478,6 +570,7 @@ def main():
     # Legacy dot gates also retain suppression. Summons use slot state, not target auras.
     # Run gen_forever_rotations.py first.
     rot = open(os.path.join(ROOT, "Data", "Forever", "Rotations.lua"), encoding="utf-8").read()
+    gear = tree_gear(rot)
     summons = {r["SpellID"] for r in cfa.rows("SpellEffect") if r["Effect"] in SUMMON_EFFECTS}
     def target_ranks(kind):
         ranks = set()
@@ -770,6 +863,8 @@ def main():
         "end",
         "Put(SpellDB.CLASS_DEFENSIVE_DEFAULTS, DEFENSIVE)",
         "SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE",
+        "SpellDB.FOREVER_DEFENSIVE_DEFAULTS_VERSION = %d" % DEFENSIVE_DEFAULTS_VERSION,
+        "SpellDB.FOREVER_ENEMY_MITIGATION = ENEMY_MITIGATION",
         "SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES",
         "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
         "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",
@@ -780,6 +875,15 @@ def main():
         "SpellDB.FOREVER_TANK_TREES = {"
         + ", ".join("%s_F = { %s }" % (cls.upper(), ", ".join("%s = true" % tree for tree in trees))
                     for cls, trees in sorted(TANK_TREES.items())) + " }",
+        "SpellDB.FOREVER_EARLY_ARMOR_TREES = {"
+        + ", ".join("%s_F = { %s }" % (cls.upper(), ", ".join(
+            "%s = { %s }" % (tree, ", ".join(str(sid) for sid in spenders))
+            for tree, spenders in sorted(trees.items())))
+            for cls, trees in sorted(early_armor_spenders().items())) + " }",
+        "SpellDB.FOREVER_TREE_GEAR = {"
+        + ", ".join("%s = { %s }" % (cls, ", ".join(
+            "%s = { %s }" % (tree, ", ".join("{%d, %d}" % need for need in needs))
+            for tree, needs in sorted(trees.items()))) for cls, trees in sorted(gear.items())) + " }",
         "SpellDB.FOREVER_GAINS_OVER_TIME = GAINS_OVER_TIME",
         "SpellDB.FOREVER_SELF_AURA_SECONDS = SELF_AURA_SECONDS",
         "Put(SpellDB.CLASS_PETHEAL_DEFAULTS, PET_HEAL, true)",

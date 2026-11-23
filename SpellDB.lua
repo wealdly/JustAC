@@ -4,6 +4,7 @@
 local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 22)
 if not SpellDB then return end
 
+local IsPlayerSpell = C_SpellBook.IsSpellKnown
 local pcall = pcall
 local geterrorhandler = geterrorhandler
 local issecretvalue = issecretvalue
@@ -344,6 +345,21 @@ function SpellDB.IsTankTree(specKey, tree)
     return trees ~= nil and tree ~= nil and trees[tree] == true
 end
 
+--- Does this talent tree's damage repay an armor reduction at once (generated, Forever)? Only
+--- once one of the tree's main weapon spenders is learned (Slam for a levelling Arms warrior):
+--- before that the reduction's rage and global cooldown buy nothing back. A spender the client
+--- cannot answer for counts as not learned, so the armor reduction waits like other slow payoffs.
+function SpellDB.IsEarlyArmorTree(specKey, tree)
+    local trees = SpellDB.FOREVER_EARLY_ARMOR_TREES and specKey and SpellDB.FOREVER_EARLY_ARMOR_TREES[specKey]
+    local spenders = trees and tree and trees[tree]
+    if type(spenders) ~= "table" or not IsPlayerSpell then return false end
+    for i = 1, #spenders do
+        local ok, known = pcall(IsPlayerSpell, spenders[i])
+        if ok and known == true then return true end
+    end
+    return false
+end
+
 function SpellDB.GetThreatRole(spellID)
     local role = SpellDB.FOREVER_THREAT_ROLES and StaticLookup(SpellDB.FOREVER_THREAT_ROLES, spellID)
     if type(role) ~= "string" then return nil end
@@ -529,6 +545,70 @@ function SpellDB.RegisterChanneledSpells(t)
 end
 function SpellDB.IsChanneled(spellID)
     return channeledSpells ~= nil and StaticLookup(channeledSpells, spellID) == true
+end
+
+do
+    -- Move-cast marker classification. A spell is castable while moving when it is
+    -- INSTANT right now: base instants always, hardcasts only while a proc has made
+    -- them instant (Hot Streak, Lava Surge, ...). Channels are excluded (movement
+    -- breaks them) even though they also report cast time 0.
+    --
+    -- The static class is cached per spell; the proc state is read live per render.
+    -- castTime is static spell metadata (not a live/secret value), but the compare is
+    -- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
+    local issecretvalue = issecretvalue
+    local C_SpellActivationOverlay_IsSpellOverlayed =
+        C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+    local moveCastClassCache = {}
+    -- Auto-repeat shots report cast time 0 but only fire while standing still. The API answers for
+    -- known spells; the IDs back it up (Auto Shot, wand Shoot, Throw, bow/gun Shoot).
+    local IsAutoRepeatSpell = C_Spell and C_Spell.IsAutoRepeatSpell
+    local AUTO_REPEAT_IDS = { [75] = true, [5019] = true, [2764] = true, [3018] = true }
+    local function MoveCastClass(spellID, spellInfo)
+        if not spellID then return nil end
+        local cached = moveCastClassCache[spellID]
+        if cached ~= nil then return cached end
+        if SpellDB.IsChanneled(spellID) then
+            moveCastClassCache[spellID] = "channel"
+            return "channel"
+        end
+        local autoOk, autoRepeat = false, false
+        if IsAutoRepeatSpell then autoOk, autoRepeat = pcall(IsAutoRepeatSpell, spellID) end
+        if issecretvalue and issecretvalue(autoRepeat) then autoOk = false end
+        if AUTO_REPEAT_IDS[spellID] or (autoOk and autoRepeat == true) then
+            moveCastClassCache[spellID] = "autorepeat"
+            return "autorepeat"
+        end
+        local ct = spellInfo and spellInfo.castTime
+        if ct == nil then return nil end               -- no info yet; retry next render
+        if issecretvalue and issecretvalue(ct) then return "hardcast" end  -- unreadable; proc-gate it
+        local class = (ct == 0) and "instant" or "hardcast"
+        moveCastClassCache[spellID] = class
+        return class
+    end
+
+    -- A hardcast is castable while moving only while a proc has made it instant. Reuse
+    -- Blizzard's spell-activation overlay (the same "proc ready" cue that glows the
+    -- icon) as the live signal. Fail-safe: any error / secret -> not proc'd (no mark),
+    -- never a wrong "cast while moving" claim.
+    local function IsSpellProcActive(spellID)
+        if not (spellID and C_SpellActivationOverlay_IsSpellOverlayed) then return false end
+        local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
+        if not ok then return false end
+        if issecretvalue and issecretvalue(overlayed) then return false end
+        return overlayed == true
+    end
+
+    --- Can the spell be cast while moving right now? true / false, nil before its info is available.
+    function SpellDB.IsMoveCastableNow(spellID, spellInfo)
+        local class = MoveCastClass(spellID, spellInfo)
+        if class == nil then return nil end
+        if class == "instant" then return true end
+        if class == "hardcast" then return IsSpellProcActive(spellID) end
+        -- "channel" / "autorepeat" / nil. Auto-repeat shots (Auto Shot, wands) start on the move but
+        -- fire only standing still - no marker; their swing bar turns green when it is time to stop.
+        return false
+    end
 end
 
 -- Form / stealth / caster-aura CASTABILITY gating was removed: the never-secret
@@ -902,7 +982,6 @@ function SpellDB.GetPrecombatBuffItems(cat)
 end
 
 local PlayerHasToy = PlayerHasToy
-local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
 
 -- Bag ownership memo for the consumable scans: [itemID] = true/false. The buff and
 -- recovery lists hold hundreds of items, and a scan asked GetItemCount for every one
@@ -1073,7 +1152,9 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
 end
 
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
-local IsSpellKnown = IsSpellKnown
+local function IsSpellInBook(spellID)
+    return C_SpellBook.IsSpellInSpellBook(spellID, Enum.SpellBookSpellBank.Player, false)
+end
 
 --- Is the current target within `yards`? Returns true / false / nil (unknown).
 --- Uses curated on-target abilities, with readable range endpoints for the known rank,
@@ -1199,7 +1280,7 @@ local function RefreshRangeSnapshot()
                 id = RotationImport_.HighestKnownRank(refID)
             end
             -- Known, not castable: form, cooldown and resource gates do not change reach.
-            if id and (not IsSpellKnown or ReadRangeValue(api, IsSpellKnown, false, id) == true) then
+            if id and ReadRangeValue(api, IsSpellInBook, false, id) == true then
                 local probe = { id = id, baseID = refID, ref = ref }
                 local info = ReadRangeValue(api, api and api.GetCachedSpellInfo, false, id)
                 if type(info) == "table" then
@@ -2088,6 +2169,14 @@ SpellDB.SELF_LOCKOUTS = {
                      applyOnly = true },
     },
 }
+
+--- How long a debuff that weakens the enemy runs after your cast (Demoralizing Shout, Hex of
+--- Weakness; generated, Forever, every rank), in seconds, or nil.
+function SpellDB.GetEnemyMitigationDuration(spellID)
+    local t = SpellDB.FOREVER_ENEMY_MITIGATION
+    if not (t and spellID) then return nil end
+    return StaticLookup(t, spellID)
+end
 
 --- The current spec's self-lockout entry for a spell (any rank), or nil.
 function SpellDB.GetSelfLockout(spellID)

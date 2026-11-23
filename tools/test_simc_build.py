@@ -15,11 +15,11 @@
 import sys
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
-from gen_simc_rotations import merge  # noqa: E402
+from gen_simc_rotations import merge  # noqa: E402
 
 PRELUDE = """
 local libs = {}

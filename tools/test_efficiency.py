@@ -2,10 +2,12 @@
 # Copyright (C) 2024-2026 wealdly
 from pathlib import Path
 
-from lupa.lua51 import LuaRuntime
+from lupa.lua51 import LuaRuntime as _LuaRuntime
+from wow_stubs import with_spellbook
+LuaRuntime = with_spellbook(_LuaRuntime)
 
 from test_combat_phase import group_helpers_lua
-from test_forever_openers import aura_clock_source
+from test_forever_openers import aura_clock_source
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -95,6 +97,7 @@ def check_attack_equipment():
         function IsSecretValue(v) return rawequal(v,secret) end
         function IsPassiveID() return false end
         function IsSpellKnown() return true end
+        function IsSpellInBook(id, isPet) return IsSpellKnown(id, isPet) end
         Enum={ItemClass={Weapon=2}, ItemWeaponSubclass={
             Bows=2,Guns=3,Thrown=16,Crossbow=18,Wand=19}}
         equipped={}
@@ -172,13 +175,19 @@ def check_attack_equipment():
         BlizzardAPI.ClearAvailabilityCache=function() refreshed.availability=true end
         SpellQueue={InvalidateRotationCache=function() refreshed.rotation=true end}
         SpellSearch={InvalidateSpellbookCache=function() refreshed.search=true end}
+        LibStub=function(name)
+            if name == "JustAC-RotationImport" then
+                return {OnGearChanged=function() refreshed.tree=true end}
+            end
+        end
         function JustAC:ForceUpdateAll() refreshed.queues=true end
+        function JustAC:InvalidateCaches(flags) refreshed.macros,refreshed.hotkeys=flags.macros,flags.hotkeys end
     """)
     lua.execute(core[start:end])
     lua.execute("""
         JustAC:OnEquipmentChanged('PLAYER_EQUIPMENT_CHANGED',18,false)
-        assert(refreshed.items and refreshed.availability and refreshed.rotation
-            and refreshed.search and refreshed.queues)
+        assert(refreshed.items and refreshed.availability and refreshed.rotation and refreshed.tree
+            and refreshed.search and refreshed.queues and refreshed.macros and refreshed.hotkeys)
     """)
     print("efficiency: shared equipment checks reject unequipped ranged attacks, including cached availability and weapon swaps")
 

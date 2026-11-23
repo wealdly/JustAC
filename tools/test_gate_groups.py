@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 SRC = Path(__file__).resolve().parent.parent / "SpellQueue.lua"
 
@@ -98,10 +98,12 @@ def check_automatic_burst():
         SpellDB={
             IsPureSelfAura=function() return selfBuff end,
             IsDelayedPayoff=function() return delayed end,
+            IsTargetDot=function() return targetDot end,
             GainsOverTime=function() return overTime end,
             GetSpecKey=function() return 'ROGUE_F' end,
             GetThreatRole=function() return threatRole end,
             IsTankTree=function(_, tree) return tree == 'protection' end,
+            IsEarlyArmorTree=function(_, tree) return tree == 'arms' end,
         }
         RotationImport={GetForeverTree=function() return tree end}
         BlizzardAPI={
@@ -159,16 +161,34 @@ def check_automatic_burst():
         # A threat-building armor reduction is not held in a tank tree; in any other tree it
         # waits like the rest (Sunder Armor costs an Arms warrior damage on an ordinary target).
         ("delayed=true;selfBuff=false;threatRole='boost';tree='protection'", False),
-        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms'", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms'", False),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='fury'", True),
+        ("delayed=true;selfBuff=false;threatRole=nil;tree='arms'", True),
         ("delayed=true;selfBuff=false;threatRole='boost';tree=nil", True),
-        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms';classification='elite'", False),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='fury';classification='elite'", False),
         ("delayed=true;selfBuff=false;threatRole='taunt';tree='protection'", True),
         # A normal target fought this long is no quick trash kill.
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=81", True),
         ("delayed=true;selfBuff=false;levelDelta=-1;b.now=100;targetFightStartedAt=81", True),
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80", False),
         ("delayed=true;selfBuff=false;b.now=100;targetFightStartedAt=80;b.inCombat=false", True),
-        ("seconds=180;b.now=100;targetFightStartedAt=60", False),
+        # Damage a minute away (Bane of Doom): time already spent on the target proves nothing.
+        ("delayed=true;targetDot=true;selfBuff=false;b.now=100;targetFightStartedAt=40", True),
+        ("delayed=true;targetDot=true;selfBuff=false;b.ctxTargetWorthwhile=true", True),
+        ("delayed=true;targetDot=true;selfBuff=false;classification='elite'", False),
+        ("delayed=true;targetDot=true;selfBuff=false;levelDelta=1", False),
+        ("delayed=true;targetDot=true;selfBuff=false;boss=true", False),
+        # Time spent on an ordinary target does not release a long cooldown; a cached verdict
+        # that counted that time does not either.
+        ("seconds=180;b.now=100;targetFightStartedAt=60", True),
+        ("seconds=180;b.now=100;targetFightStartedAt=60;b.ctxWorthwhile=true", True),
+        ("seconds=180;b.now=100;targetFightStartedAt=60;classification='elite'", False),
+        # A long cooldown is kept for the fights that need it: a regular target three or more
+        # levels above releases it, a smaller gap or an unknown level does not.
+        ("levelDelta=3", False), ("levelDelta=5", False),
+        ("levelDelta=2", True), ("levelDelta=1", True), ("levelDelta=0", True), ("levelDelta=-3", True),
+        ("levelDelta=3;SpellQueue._lowValueTarget=true", True),
+        ("levelDelta=3;target=false", True),
         # "Prioritize Your Own Targets": a low-value target is never worthwhile.
         ("SpellQueue._lowValueTarget=true;classification='elite'", True),
         ("SpellQueue._lowValueTarget=true;delayed=true;selfBuff=false;boss=true", True),
@@ -184,7 +204,7 @@ def check_automatic_burst():
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
             boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false;overTime=false
-            levelDelta=nil;threatRole=nil;tree=nil
+            levelDelta=nil;threatRole=nil;tree=nil;targetDot=false
             LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
             pick=false;target=true;SpellQueue._rotationIsCustom=false;SpellQueue._lowValueTarget=nil
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
@@ -343,6 +363,13 @@ def main():
         assert run('return GateVerdict({t="unconfirmed"}, ctx)') is False
         signal_cases += 1
     lua.globals().ctx.strict = False
+    # In a group: a confirmed read only. Unknown is not a group (Vanish must never be a guess).
+    for grouped, expected in ((True, True), (False, False), (None, False)):
+        lua.globals().grouped = grouped
+        lua.execute("BlizzardAPI.IsGrouped = function() return grouped end")
+        assert run('return GateVerdict({t="group"}, ctx)') is expected, grouped
+        assert run('return GateVerdict({t="group",neg=true}, ctx)') is (not expected), grouped
+        signal_cases += 2
     # Being hit (Fire Blast's "a cast would not finish as planned"): our own hits, never unknown.
     lua.execute("beingHit = nil; SpellQueue._BeingHit = function() return beingHit end")
     for hit, expected in ((True, True), (False, False), (None, False)):
@@ -538,6 +565,38 @@ isBoss, hasPick = false, false""")
         if got != want:
             bad += 1
             print("  FAIL fast dot %s: got %s, want %s  (%s)" % (sid, got, want, why))
+    # A DoT that already ran on this target may be renewed; the ordinary floor still applies.
+    lua.execute("ranOnTarget = true; DotTracker.HasRunOnTarget = function() return ranOnTarget end")
+    renew = [
+        ("true", "{[70]=true,[35]=false}", None, "fast fight: a DoT that ran out is renewed"),
+        ("true", "{[70]=true,[35]=true}", False, "renewal still stops on a dying target"),
+        ("false", "{[70]=true,[35]=false}", False, "first application in a fast fight stays blocked"),
+    ]
+    for ran, below, want, why in renew:
+        lua.execute("fastSoloFight, ranOnTarget, targetBelow = true, %s, %s" % (ran, below))
+        got = run('return GateVerdict({t="dot",id=772}, ctx)')
+        if got != want:
+            bad += 1
+            print("  FAIL renew ran=%s: got %s, want %s  (%s)" % (ran, got, want, why))
+    # On a dying target a frontal DoT keeps its exemption only if instant or mostly its hit.
+    lua.execute("fastSoloFight, ranOnTarget, targetBelow = false, false, {[70]=true,[35]=true}")
+    dying = [
+        ("{[348]=2000}", 348, False, "hard-cast Immolate: most of it would be lost"),
+        ("{[348]=0}", 348, None, "made instant: the hit is free to take"),
+        ("{}", 348, None, "cast time unknown: keeps the exemption"),
+        ("{[8921]=2000}", 8921, None, "a cast that is mostly its hit still pays"),
+    ]
+    for ms, sid, want, why in dying:
+        lua.execute("castMs = %s" % ms)
+        got = run('return GateVerdict({t="dot",id=%d}, ctx)' % sid)
+        if got != want:
+            bad += 1
+            print("  FAIL dying frontal %s ms=%s: got %s, want %s  (%s)" % (sid, ms, got, want, why))
+    lua.execute("castMs, targetBelow, shortGroupFight = {[348]=2000}, {[35]=false}, true")
+    if run('return GateVerdict({t="dot",id=348}, ctx)') is not None:
+        bad += 1
+        print("  FAIL short group fight: a hard-cast frontal DoT on a healthy target still goes out")
+    lua.execute("castMs, shortGroupFight = {}, false; DotTracker.HasRunOnTarget = nil")
     lua.execute("hasPick = true; fastSoloFight, targetBelow = true, {[70]=true}")
     if run('return GateVerdict({t="dot",id=772}, ctx)') is not None:
         bad += 1

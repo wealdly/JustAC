@@ -19,6 +19,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **Burst-ready cue** - your major cooldown glows orange when a burst window is actually called for, not merely when it's off cooldown, and moves up to the second slot. Trigger lists come from SimulationCraft per spec and can be edited under DPS Queue → Burst.
 - **Gap-closers** - melee specs get a blue movement cue when the target is out of range (DPS Queue → Gap-Closers).
 - **Mana Conservation** (both clients, off by default; tune Forever first) - under DPS Queue → General → Queue Content, choose Solo Only or Always (PvE). With one detected normal enemy and safe player health, an available free attack can lead ahead of a mana-costing single-target attack, including the game's recommendation, when mana is low or recovery would be slow. Multiple detected enemies or recent cleave/AoE context block conservation. Prefers confirmed reach; unknown/out-of-range attacks can still lead, leaving positioning to you. No level cutoff; custom/exact lists, procs and utility picks remain unchanged.
+- **On the Move** - while you keep moving in combat, attacks you can cast on the move rise ahead of spells that need you to stand still. On by default for ranged and healers (DPS Queue → General → Queue Content).
 - **Prioritize Your Own Targets** *(off by default)* - on an enemy that isn't attacking you, long cooldowns and burst wait for one you get credit for; on another player's enemy, damage over time waits too. Openers are never held.
 - **Ability markers** - a dot marks abilities you can cast while moving, and (optionally) abilities that don't trigger the global cooldown.
 - Spells, trinkets and on-use items are all supported. Icons grey out during casts and channels so you can see what's next.
@@ -68,8 +69,13 @@ On Forever, automatic filler weighs a free wand or an in-reach melee attack
 against your casts. While you have mana to spare, a supported cast leads whenever
 its estimated damage per second is ahead. Once mana runs low in a fight, the free
 attack is favored for the rest of that fight until a cast offers at least 20% more.
-The comparison uses readable pre-combat stats and observed cast pushback;
-unknown estimates and custom/exact ordering retain their usual behavior.
+The comparison uses readable pre-combat stats and observed cast pushback, and
+learns from the game's damage meter after each fight how much your weapons and
+your casts really deal (talents, crits and misses included; damage over time from
+fights against one enemy), so a new weapon or a higher weapon skill shows up
+within a few fights. The opening press and the attack used against an enemy that
+keeps its distance are ordered by the same measured damage. Unknown estimates
+and custom/exact ordering retain their usual behavior.
 
 - **Three orders, one queue** - tabs show the game's order, the theorycraft order and your own list, one line per ability with what it waits for. Looking at a tab never changes the queue; **Use This Order** does, and a green dot marks the one in use.
 - **Your own list** (per spec) - start from **Export to My List** or **Merge** from another tab, then drag rows to reorder. Click a row for its settings, right-click to open it on the Overrides tab, and undo the last ten changes. If the game's rotation changes later, **Merge Changes** brings your list up to date without reordering it.
@@ -150,14 +156,15 @@ either enabled need and appears once, including when also suggested for its buff
 
 ## WoW Forever
 
-JustAC 6.4 supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
+JustAC supports Retail and WoW Forever from the same download. The addon is no longer a beta release; the Forever client is still in beta, and the in-game testing caveats below still apply.
 
-WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling) plus learned damage abilities from your spellbook. Macros and abilities without bindings are included; action-bar ranks are preferred. An eligible filler such as Throw can lead unavailable melee attacks even without an imported priority.
+WoW Forever has no Assisted Combat, so JustAC builds the queue itself. The first slot is JustAC's own pick rather than the game's, and the order comes from a priority for every class and talent tree (from the Forever simulations, tuned for levelling). The queue suggests only what that priority uses, plus your weapon attacks (Attack, Auto Shot, wand, Throw); anything it leaves out, such as forms and self buffs, stays with you, and Charge and Intercept come from Gap-Closer Suggestions. Macros and abilities without bindings are included; action-bar ranks are preferred. Throw or a ranged weapon can lead while your melee attacks are out of reach.
 
 These are general-purpose priorities, intended to be useful in most ordinary fights, not optimal in every situation. Specialized simulator sequences and seal twisting are not part of the defaults. Conditions use the client signals JustAC can reliably check; unavailable information is not guessed. Your custom priority list and explicit settings remain your choice.
 
 What works differently on Forever:
 
+- **Play Style** *(WoW Forever section of the options)* - which talent tree's priority the queue follows. Automatic follows your talent points, but skips a tree whose attacks need gear you are not wearing (Protection without a shield, for example), and druids follow their caster or bear priority by form. The section shows which priority is in use and why.
 - **Spell ranks** - the queue shows the rank you have on your bars, with its keybind, and finds any rank in your lists.
 - **WAIT** - with Unavailable Last and ranked ordering, the timer icon leads when every DPS ability is unavailable. The waiting abilities stay behind it, and an eligible suggestion replaces it. Out of combat this requires a live enemy you can attack; no-target previews are unchanged.
 - **Save burst for worthwhile fights** - automatic priorities reserve confirmed self-buffs with a base cooldown of at least two minutes until an elite, boss or multiple engaged enemies are confirmed. The reservation persists before and after combat and through missing encounter information; unknown spell classification or cooldown does not qualify a spell for reservation. Custom lists, Always Show, explicit Hold Until settings and custom burst triggers retain control. With no other eligible ability, WAIT leads instead of spending the cooldown.
@@ -186,7 +193,7 @@ Still being checked in game: the rear-attack targeting heuristic, WAIT transitio
 
 ## Configuration
 
-Options are organized into 6 tabs:
+Options are organized into 6 tabs, plus a seventh on WoW Forever:
 
 | Tab | Purpose |
 |-----|--------|
@@ -196,6 +203,7 @@ Options are organized into 6 tabs:
 | **Defensive Queue** | 2 sub-tabs: General (the priority lists, Help Your Group, ordering, Sustain slot: tank maintenance, CC escape, pet heal), Pre-Combat Buffs |
 | **Overrides** | Everything set on one spell or item: visibility (the blacklist) and taking it off your action bars, queue and item settings, situational sets, hotkey label. Lists everything you've customized; click an entry to open its settings under it |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
+| **WoW Forever** | Shown only on WoW Forever: Play Style (which talent tree's priority the queue follows, and why) and tracking your rotation's buffs in the Cooldown Manager |
 
 - **Localization** - English, German, French, Italian, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
 

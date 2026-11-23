@@ -445,6 +445,31 @@ def test_fight_wide_marks():
     assert checks["window"]["hits"] == 0, "a fixed window misses a mark typed before the pull"
 
 
+def test_ratio_counts_rows_per_rows():
+    rows = ["DIAGNOSTICS START session=S7 t=0.000 question=stability mode=question limit=1200",
+            "DIAGNOSTICS KEYS session=S7 keys=combat",
+            "QUESTION DEF session=S7 q=s title=S keys= rows=flip audit= marks=",
+            "QUESTION CONTROL session=S7 q=s name=c row=EVIDENCE%20flip%20 has=event=press repeats=1",
+            "QUESTION CHECK session=S7 q=s name=perPress kind=ratio row=EVIDENCE%20flip%20"
+            " has=event=flip,combat=true per=event=press,combat=true",
+            "QUESTION CHECK session=S7 q=s name=nothing kind=ratio row=EVIDENCE%20flip%20"
+            " has=event=flip per=event=never",
+            "DIAG session=S7 sample=1 elapsed=0 t=100.000 epoch=0 BASELINE pull=1", "  combat=plain:true",
+            "EVIDENCE flip session=S7 t=101.000 epoch=0 event=press spell=100 lead=100 match=true combat=true",
+            "EVIDENCE flip session=S7 t=101.100 epoch=0 event=flip from=100 to=200 gap=1.000 back=false combat=true",
+            "EVIDENCE flip session=S7 t=101.200 epoch=0 event=flip from=200 to=100 gap=0.100 back=true combat=true",
+            "EVIDENCE flip session=S7 t=102.000 epoch=0 event=press spell=100 lead=100 match=true combat=true",
+            "EVIDENCE flip session=S7 t=102.500 epoch=0 event=flip from=100 to=300 gap=1.300 back=false combat=true",
+            "EVIDENCE flip session=S7 t=130.000 epoch=0 event=flip from=300 to=none gap=27.500 back=false combat=false",
+            "DIAGNOSTICS STOP session=S7 samples=1 changes=1 pulls=1 failures=0 t=140.000 marks=0"]
+    checks = {c["name"]: c for c in ap.analyze_session(ap.split_sessions(rows)[0])["questions"][0]["checks"]}
+    assert checks["perPress"] == {"name": "perPress", "kind": "ratio", "numerator": 3, "denominator": 2,
+                                  "ratio": 1.5}, checks["perPress"]
+    assert checks["nothing"]["ratio"] is None, "no denominator rows: no ratio"
+    assert ap._format_check(checks["perPress"]) == "perPress: 1.5 (3 per 2)"
+    assert ap._format_check(checks["nothing"]) == "nothing: n/a (4 per 0)"
+
+
 def main():
     for test in (test_registry_is_valid, test_clean_capture_meets_controls,
                  test_contradictions_and_reset_marks, test_combat_exit_releases_latches,
@@ -452,7 +477,7 @@ def main():
                  test_fingerprint_classes, test_compare_detects_behavior_changes,
                  test_baseline_accept_and_compare_end_to_end, test_followed_by_independent_evidence,
                  test_fight_wide_marks, test_stats_summarize_numeric_fields,
-                 test_tally_honors_has_and_lacks):
+                 test_tally_honors_has_and_lacks, test_ratio_counts_rows_per_rows):
         test()
     print("analyze probe: registry validity, capture parsing, controls, checks, verdicts, legacy captures,"
           " evidence explanations, fingerprints, baseline comparison, accept flow and independent follow-up evidence passed")

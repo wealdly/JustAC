@@ -163,6 +163,11 @@ addon = { db = { profile = {}, char = {} }, Print = function(_, text) message = 
     options = lua.eval(
         'LibStub("JustAC-OptionsGeneral").CreateTabArgs(addon).args'
     )
+    # The aura-tracking buttons live in the WoW Forever section (Options/Forever.lua).
+    lua.execute((SRC.parent / "Forever.lua").read_text(encoding="utf-8"))
+    buttons = lua.eval(
+        'LibStub("JustAC-OptionsForever").CreateTabArgs(addon).args.cdmTrackGroup.args'
+    )
     cases = [
         ("ok", 1, 1, False, False),
         ("ok", 0, 0, True, True),
@@ -175,9 +180,9 @@ addon = { db = { profile = {}, char = {} }, Print = function(_, text) message = 
     bad = []
     for state, candidates, added, add_disabled, remove_disabled in cases:
         lua.globals().SetAdvisor(state, candidates, added)
-        if options.cdmTrackAdd.disabled() != add_disabled:
+        if buttons.cdmTrackAdd.disabled() != add_disabled:
             bad.append(f"CDM add availability: {state}, candidates={candidates}")
-        if options.cdmTrackRemove.disabled() != remove_disabled:
+        if buttons.cdmTrackRemove.disabled() != remove_disabled:
             bad.append(f"CDM remove availability: {state}, added={added}")
     toggle = options.cooldownManagerEnable
     toggle.set(None, True)
@@ -239,7 +244,8 @@ Apply(retail)
         (o.general.args.disableBlizzardHighlight.desc == "d\n\n" + NOTE, "string desc noted once"),
         (cq.spellListGroup.args.leadMode.desc() == "lm\n\n" + NOTE, "function desc wrapped once"),
         (cq.queueContentGroup.args.includeHiddenAbilities.desc == NOTE, "no desc -> the note alone"),
-        (o.offensive.args.gapClosers.args.spellListGroup.args.gapRestore.disabled is True, "button greyed"),
+        (o.offensive.args.gapClosers.args.spellListGroup.args.gapRestore.disabled is None,
+         "gap-closer Restore Defaults stays usable: Forever has gap-closer defaults"),
         (o.profiles.args.specSwitching.disabled is True, "whole group greyed"),
         (lua.eval("#Options.foreverUnresolved") == 0, "every listed path resolved and recorded"),
         (lua.eval("retail.optionsTable.args.general.args.disableBlizzardHighlight.disabled") is None,

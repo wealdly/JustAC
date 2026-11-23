@@ -3,10 +3,10 @@
 # Real generated data, tracker and shared queue stage with controlled aura evidence.
 from pathlib import Path
 
-from lupa import LuaRuntime
+from wow_stubs import LuaRuntime
 
 from test_forever_defaults import PRELUDE
-from test_forever_openers import create_runtime
+from test_forever_openers import create_runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -207,6 +207,9 @@ def main():
         """ + setup)
         assert queue.eval('SpellQueue._GateVerdict({t="stack",id=7386,op="<",n=1,tgt=true},ctx)') \
             is expected, setup
+    queue.execute("grouped=true;ctx={strict=false,stackApplicator=7386}")
+    assert queue.eval('SpellQueue._GateVerdict({t="stack",id=7386,op="<",n=1,tgt=true,once=true},ctx)') is False, \
+        "a pack list stops at one application, even in a group"
     queue.execute("BlizzardAPI.IsGrouped=nil;BlizzardAPI.GetContentType=nil;"
                   "BlizzardAPI.GetTargetLevelDelta=nil;SpellQueue._rotationIsCustom=false;forever=true")
 

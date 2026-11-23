@@ -2,7 +2,7 @@
 # Copyright (C) 2024-2026 wealdly
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 from gen_forever_rotations import (
     Conv, UNK, actions_of, on_enemy, tier_lists,
@@ -211,7 +211,7 @@ def check_pushback_priority():
         lua.execute(f"""
             local saved = DotTracker
             DotTracker = {{ IsTimeLeftBelow = function(id, seconds)
-                assert(id == 8050 and seconds == 6)
+                assert(id == 8050 and seconds == 4)
                 return {below}
             end }}
             SpellQueue.NotePushback()
@@ -220,7 +220,7 @@ def check_pushback_priority():
             SpellQueue._StagePushback(b, pool)
             DotTracker = saved
             assert(b.recommendedSpells[1] == 403 and b.recommendedSpells[2] == {expected},
-                   "Flame Shock below 6s left = {below}")
+                   "Flame Shock below 4s left = {below}")
         """)
     lua.globals().SetupPushback()
     lua.execute("""
@@ -332,7 +332,7 @@ def check_pushback_weapon_dps():
             running={}
             hits=2
             manaRegen,manaCost=nil,0
-            Enum = Enum or { PowerType = { Mana = 0 } }
+            Enum = Enum or {}; Enum.PowerType = Enum.PowerType or { Mana = 0 }
             BlizzardAPI.GetBaseManaRegen=function() return manaRegen end
             C_Spell.GetSpellPowerCost=function(id)
                 if id == 585 then return {{type=0,cost=manaCost}} end
@@ -386,6 +386,8 @@ def check_pushback_weapon_dps():
         ("rangedSpeed=secret", 585, "secret current ranged speed"),
         ("rangedSpeed=nil", 585, "missing current ranged speed"),
         ("meleeReach=true", 6603, "stronger melee when already in reach"),
+        ("equipment[5019]=false;meleeReach=true;normalCastTime=0", 585,
+         "an instant adds to the melee swing, so melee never takes its place"),
         ("meleeReach=true;meleeLow=10;meleeHigh=14", 5019, "wand wins equal weapon DPS"),
         ("meleeReach=nil", 5019, "unknown melee reach never promotes melee"),
         ("equipment[5019]=false;meleeReach=true", 6603, "no wand: melee remains available"),
@@ -529,12 +531,35 @@ def check_pushback_weapon_dps():
         ("cooldown[5019]=true; briefWait[5019]=true; blacklisted[5019]=true", 585, "a blacklist ends the phase"),
         ("cooldown[5019]=true; briefWait[5019]=true; SpellQueue._ResetWeaponPhase()", 585,
          "a new target (choice cleared) starts over"),
+        # Just after a shot Shoot reads a real cooldown: a stronger melee attack in reach that
+        # moment must not take the wand's place (2026-11-20 capture: one-frame melee blips).
+        ("cooldown[5019]=true; briefWait[5019]=true; meleeReach=true", 5019,
+         "a ready melee attack does not replace a wavering wand"),
+        ("ranges[5019]=false; meleeReach=true", 6603, "out of range, melee in reach takes over"),
+        ("meleeReach=true", 6603, "a stronger melee attack still wins when both read ready"),
     ):
         lua.globals().SetupWeapons()
         assert lua.eval("WeaponResult()") == 5019, why
         lua.execute(setup)
         actual = lua.eval("WeaponResult()")
         assert actual == expected, (why, actual, expected)
+    # A weaker melee attack (priced before the fight) in reach while the wand's range reads
+    # unknown for a moment: the wand stays; out of range is what drops it.
+    lua.globals().SetupWeapons()
+    lua.execute("meleeLow,meleeHigh=6,6")
+    assert lua.eval("WeaponResult()") == 5019
+    lua.execute("ranges[5019]=nil; meleeReach=true")
+    assert lua.eval("WeaponResult()") == 5019, "a range read unknown for a moment keeps the wand"
+    # Right after a shot the wand's button can read out of range for a frame (2026-11-20 capture):
+    # a shot just fired was fired at a target in range, so the wand stays.
+    lua.execute("ranges[5019]=false; BlizzardAPI.GetSwingWindow=function(t) if t==2 then return shotAt end end")
+    lua.execute("shotAt=b.now-0.03")
+    lua.eval("WeaponResult()")
+    assert lua.eval("b.weaponFillerID") == 5019, "out of range for a frame right after a shot keeps the wand"
+    lua.execute("shotAt=b.now-2")
+    lua.eval("WeaponResult()")
+    assert lua.eval("b.weaponFillerID") == 6603, "out of range, the melee attack in reach becomes the weapon"
+    lua.execute("BlizzardAPI.GetSwingWindow=nil")
     for setup, expected, why in (
         ("", 5019, "strong wand leads without pushback or mana conservation"),
         ("b.inCombat=false;b.ctxEnemies=0", 585, "a ready pull nuke opens before the wand"),
@@ -627,10 +652,21 @@ def check_pushback_weapon_dps():
         ("wandLow,wandHigh=18,18;manaRegen=nil;manaBelow=true", 5019, "low mana keeps the 20% margin"),
         ("wandLow,wandHigh=30,30;manaRegen=nil;manaBelow=false", 5019,
          "mana to spare never promotes a weaker cast"),
+        # Measured damage over paper damage scales each side (talents, crits, misses).
+        ("wandLow,wandHigh=16,16;manaBelow=false;"
+         "BlizzardAPI.GetMeasuredDamageRatio=function(id) if id==5019 then return 1.5 end end", 5019,
+         "a wand measured above its sheet damage overtakes the cast"),
+        ("wandLow,wandHigh=16,16;manaBelow=false;"
+         "BlizzardAPI.GetMeasuredDamageRatio=function(id) if id==585 then return 0.5 end end", 5019,
+         "a cast measured below its paper damage loses to the wand"),
+        ("wandLow,wandHigh=30,30;manaRegen=nil;manaBelow=false;"
+         "BlizzardAPI.GetMeasuredDamageRatio=function(id) if id==5019 then return 0.5 end end", 585,
+         "a wand that misses a lot loses to the cast"),
     ):
         lua.globals().SetupWeapons()
         lua.execute("""
             manaBelow, manaAt = nil, nil
+            BlizzardAPI.GetMeasuredDamageRatio = nil
             SpellQueue._ResetWeaponPhase()
             b.profile.efficiencyManaThreshold = nil
             manaRegen, manaCost = 10, 10
@@ -643,6 +679,7 @@ def check_pushback_weapon_dps():
         assert actual == expected, (why, actual, expected)
     lua.globals().SetupWeapons()
     lua.execute("""
+        BlizzardAPI.GetMeasuredDamageRatio = nil
         wandLow,wandHigh=16,16
         manaRegen, manaCost = 10, 10
         SpellQueue._ResetWeaponPhase()

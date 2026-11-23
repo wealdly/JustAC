@@ -3,7 +3,7 @@
 # Real Forever entries and queue assembly, with controlled readiness and range.
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 from test_gate_groups import extract
 from test_buff_refresh_window import buff_window_lua
@@ -39,6 +39,8 @@ end
 function RI.RankBase(id) return rankBases[id] or id end
 function RI.RankChain(id) return rankChains[RI.RankBase(id)] end
 function RI.IsWideOnly(id) return wideOnly ~= nil and wideOnly[RI.RankBase(id)] == true end
+function RI.IsLeftOut(id, ctx) return leftOut ~= nil and leftOut[ctx or "st"] ~= nil and leftOut[ctx or "st"][RI.RankBase(id)] == true end
+function RI.IsNamed(id) return named == nil or named[RI.RankBase(id)] == true end
 function RI.GetPushbackDamageCooldown(id) return pushbackDamage[RI.RankBase(id)] end
 function RI.GetDirectDamageEstimate(id) if unpriced[id] then return nil end return damageEstimates[id] end
 RotationImport = RI
@@ -132,6 +134,8 @@ function Reset()
     targetDead = false
     cachedGapCloserEngine = nil
     wideOnly = {}
+    leftOut = nil
+    named = nil
     activityAt = nil
     ranges, cooldown, unusable, starved, locked, filtered, blacklisted, procs =
         {[403] = true, [8042] = true}, {}, {}, {}, {}, {}, {}, {}
@@ -454,6 +458,63 @@ def check_wide_only_sinks():
     print("Wide-only abilities: single-target sink, cleave, exact, custom and pinned passed")
 
 
+def check_left_out():
+    lua = create_runtime()
+    for setup, shown, why in (
+        ("", True, "without left-out data an unlisted ability still fills the queue"),
+        ("leftOut={st={[1715]=true}}", False, "a left-out ability is not offered at all"),
+        ("leftOut={aoe={[1715]=true}}", True, "left out only in another context: offered here"),
+        ("leftOut={st={[1715]=true}};b.contextOrder='off'", True, "exact ordering is preserved"),
+        ("leftOut={st={[1715]=true}};SpellQueue._rotationIsCustom=true", True, "custom lists are preserved"),
+        ("leftOut={st={[1715]=true}};pinnedAlwaysShow[1715]=true", True, "an Always Show pin is preserved"),
+    ):
+        lua.execute("""
+            Reset()
+            b.inCombat=true;b.leadMode='mylist';b.simcCtx='st'
+            entries={{id=78}}
+            pool={1715,78}
+            cooldown[78]=true
+        """ + setup)
+        queue = lua.globals().Build()
+        ids = [queue[i] for i in range(1, 10) if queue[i] is not None]
+        assert (1715 in ids) == shown, (why, ids)
+    print("Left-out abilities: kept out, other context, exact, custom and pinned passed")
+
+
+def check_closed_list():
+    """A Forever list is closed: a ready class ability the tree names nowhere never fills in while
+    the listed rotation waits. Weapon attacks stay; custom, exact order and pins keep it."""
+    lua = create_runtime()
+    for setup, shown, why in (
+        ("", True, "without list data (retail) an unlisted ability still fills the queue"),
+        ("named={[78]=true}", False, "an ability the tree names nowhere is not offered"),
+        ("named={[78]=true,[1715]=true}", True, "named in some list: offered"),
+        ("named={[78]=true};b.contextOrder='off'", True, "exact ordering is preserved"),
+        ("named={[78]=true};SpellQueue._rotationIsCustom=true", True, "custom lists are preserved"),
+        ("named={[78]=true};pinnedAlwaysShow[1715]=true", True, "an Always Show pin is preserved"),
+    ):
+        lua.execute("""
+            Reset()
+            b.inCombat=true;b.leadMode='mylist';b.simcCtx='st'
+            entries={{id=78}}
+            pool={1715,78}
+            cooldown[78]=true
+        """ + setup)
+        queue = lua.globals().Build()
+        ids = [queue[i] for i in range(1, 10) if queue[i] is not None]
+        assert (1715 in ids) == shown, (why, ids)
+    lua.execute("Reset(); named={}")
+    g = lua.globals()
+    check = g.SpellQueue._IsLeftOut
+    b = g.b
+    assert check(2764, 2764, b) is False, "Throw (a weapon attack) stays unlisted"
+    assert check(6603, 6603, b) is False, "Attack stays unlisted"
+    assert check(100, 100, b) is True, "Charge is the gap closer feature's, not the damage list's"
+    lua.execute("named={[1715]=true}")
+    assert check(7372, 1715, b) is False, "the pool entry's own rank keeps a named spell"
+    print("Closed list: unnamed abilities kept out; weapons, exact, custom and pinned kept")
+
+
 def check_trash_burst_wait():
     lua = create_runtime()
     for setup, should_wait in (
@@ -564,6 +625,8 @@ def check_charge_before_ranged_pull():
         ("unusable[100]=true", [7918, 772, 100], "unusable Charge (in combat) never leads"),
         ("cooldown[100]=true", [7918, 772, 100], "Charge on cooldown never leads"),
         ("b.inCombat=true; ranges[772]=true", [772, 7918, 100], "in combat the list order is kept"),
+        ("named={[772]=true,[7918]=true}", [7918, 772],
+         "a closed list leaves Charge to the gap closer feature"),
     ]
     for extra, expected, label in cases:
         lua.execute("Reset(); " + setup + extra)
@@ -863,8 +926,18 @@ def check_next_swing_priority():
     for spell in (78, 845, 6807, 14260):
         lua.execute(f"SetupHunter();pool={{{spell},3044}};entries={{{{id={spell}}},{{id=3044}}}}")
         assert lua.globals().HunterLead() == 3044, ("shared next-swing melee admission", spell)
+    # A queued next-swing attack is never displaced by another one (Cleave queued, Heroic Strike
+    # ready): pressing the second would only swap it for the first.
+    lua.execute("SetupHunter();pool={845,78};entries={{id=845},{id=78}};"
+                "ranges[845],ranges[78]=true,true;queued[845]=true")
+    assert lua.globals().HunterLead() == 845, "the queued Cleave keeps its swing"
+    assert 78 not in list(lua.eval("b.recommendedSpells").values())[:1], "Heroic Strike does not lead over it"
+    lua.execute("SetupHunter();pool={845,78};entries={{id=845},{id=78}};ranges[845],ranges[78]=true,true")
+    assert lua.globals().HunterLead() == 845, "with nothing queued the list's order stands"
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
-    for name in ("_ClearSituationMemory", "OnTargetChanged"):
+    for name in ("_ClearSituationMemory", "NoteLeadEvent", "OnTargetChanged"):
+        if name == "NoteLeadEvent":
+            lua.execute("SpellQueue._leadHold = {}; GetTime = GetTime or function() return 0 end")
         start = source.index(f"function SpellQueue.{name}(")
         lua.execute(source[start:source.index("\nend", start) + len("\nend")])
     lua.execute("""
@@ -1289,6 +1362,8 @@ def main():
     check_spellbook_proc_pipeline()
     check_shared_proc_stage()
     check_wide_only_sinks()
+    check_left_out()
+    check_closed_list()
     check_trash_burst_wait()
     lua = create_runtime()
     source = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
@@ -1358,11 +1433,14 @@ def main():
     nukes = (priest + "pool = {589, 585, 14914, 8092}; "
              "entries = {{id=589}, {id=585}, {id=14914}, {id=8092}}; "
              "hits = {[585]=40, [14914]=90, [8092]=70}; ")
+    # One cast opens the pull; the other candidates keep their list rank, so slot 2 names what
+    # follows the opener once the fight starts (Shadow Word: Pain, first on the list).
     cases.extend([
-        (nukes, [14914, 8092, 585, 589], "biggest estimated hit opens"),
-        (nukes + "hits[14914] = 60", [8092, 14914, 585, 589], "a bigger faster hit beats a slower cast"),
-        (nukes + "hits[14914] = nil", [585, 14914, 8092, 589], "one unknown estimate keeps list order"),
-        (nukes + "cooldown[8092] = true", [14914, 585, 589, 8092], "an unready nuke never opens"),
+        (nukes, [14914, 589, 585, 8092], "biggest estimated hit opens; the list follows"),
+        (nukes + "hits[14914] = 60", [8092, 589, 585, 14914], "a bigger faster hit beats a slower cast"),
+        (nukes + "hits[14914] = nil", [585, 589, 14914, 8092],
+         "one unknown estimate: the best-ranked candidate opens"),
+        (nukes + "cooldown[8092] = true", [14914, 589, 585, 8092], "an unready nuke never opens"),
         (nukes + "b.inCombat = true", [589, 585, 14914, 8092], "combat order returns after the pull"),
     ])
     rogue = """

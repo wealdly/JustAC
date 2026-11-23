@@ -126,17 +126,25 @@ Threshold-gating an aura needs its `auraInstanceID`, and the route depends on se
 
 ## THE SCOPE RULE
 
-These answer **questions**, never **values**.
+Thresholds start from **questions**: boundaries come from *what a feature does
+differently*. Three health bands exist because the defensive cluster orders itself
+three ways.
 
-Asking one threshold to make one decision is what the engine's curve mechanism is
-for. Chaining many to binary-search the hidden number back out is precisely what the
-secret-value system exists to prevent, would break every legitimate use here when it
-got patched, and is not something this addon does. **There is no "what percent is it"
-function, and there should not be one.**
+An **estimate** of a hidden value is allowed when a feature's decision needs one (revised
+2026-11-19; it follows the inference rule in
+[FOREVER_DPS_PRINCIPLES.md](FOREVER_DPS_PRINCIPLES.md#3-what-a-condition-may-use)):
 
-Practically: boundaries must come from *what a feature does differently*, never from
-wanting resolution. Three health bands exist because the defensive cluster orders
-itself three ways - not to locate health within 25%.
+- only through supported calls the client accepts, never by working around a restriction
+  or an error;
+- with a bounded cost: a few memoised evaluations per decision, never an open-ended sweep
+  or a binary search run every frame;
+- treated as an estimate with its uncertainty (a band, not an exact number) in code and
+  diagnostics;
+- with a fallback that keeps the feature working if the client closes the route. The
+  secret-value system is deliberate, and the finer an estimate, the more likely a later
+  build stops it.
+
+Public text still never describes how hidden values are read (AGENTS.md).
 
 Imported threshold gates may opt into `required=true` when a recommendation needs
 positive evidence. Unknown then blocks that condition, and a proc cannot override it.

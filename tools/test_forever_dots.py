@@ -96,6 +96,15 @@ def main():
     at(200); check(D.IsDotActiveOnCurrentTarget(772) is True, "immune target: stays sunk")
     D.Reset(); check(D.IsDotActiveOnCurrentTarget(772) is False, "new target: immunity forgotten")
 
+    # Has this DoT already run on the target? It stays true after the DoT ends.
+    D.Reset(); check(D.HasRunOnTarget(772) is False, "never cast here: has not run")
+    at(51); D.OnCastSucceeded(772); check(D.HasRunOnTarget(772) is True, "landed: has run")
+    at(60.5); check(D.HasRunOnTarget(772) is True, "ran out: still has run on this target")
+    D.Reset(); at(51); D.OnCastSucceeded(772); at(51.1); unit_combat("DODGE")
+    check(D.HasRunOnTarget(772) is False, "dodged: it never ran")
+    D.Reset(); at(51); D.OnCastSucceeded(772); at(51.1); unit_combat("IMMUNE")
+    check(D.HasRunOnTarget(772) is False, "immune: it never ran")
+
     # Target swaps (plain GUIDs, Forever): each mob keeps its own Rend timer.
     D.Reset(); at(60); D.OnCastSucceeded(772)                # Rend on A
     at(62); swap("Creature-B")

@@ -273,9 +273,9 @@ def audit_decode(path=None):
     if not hits or not hits[-1].exists():
         sys.exit("no SavedVariables/JustAC.lua found - record with /jac inspect picklog, /reload, then re-run")
     text = hits[-1].read_text(encoding="utf-8", errors="replace")
-    rows = re.findall(r'"[\d.]+ (\w+_\d) pick=(\d+) combat=(\S) enemies=(\S+) pts=(\S+)/(\S+) pow=(\S+) thp=(\S+?)(?: lead=[^"]*)?"', text)
+    rows = re.findall(r'"(?:PICK )?[\d.]+ (\w+_\d) pick=(\d+) combat=(\S) enemies=(\S+) pts=(\S+)/(\S+) pow=(\S+) thp=(\S+?)(?: lead=[^"]*)?"', text)
     if not rows:
-        sys.exit(f"no pickLog samples in {hits[-1]} (record, then /reload to flush)")
+        sys.exit(f"no PICK rows in {hits[-1]} (run /jac inspect start in a fight, then /reload)")
     names, steps = spell_names(), steps_with_rules()
     single = multi = unknown = 0
     seen = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))

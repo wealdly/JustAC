@@ -122,6 +122,7 @@ local defaults = {
         },
         -- Cue dots on queue icons. showMoveCastDot is deliberately NOT declared here:
         -- nil means "per-spec auto" (ranged/healer on, melee off) - see MoveCastDotEnabled.
+        -- promoteOnTheMove is left undeclared for the same reason (SpellQueue.OnTheMoveEnabled).
         -- Off by default: the arrow keys off AC re-recommending an active DoT, and not
         -- every spec's rotation re-recommends on those terms - unreliable spec-dependent.
         showDotSpreadArrow = false,        -- Switch-target arrow on the AC slot when its DoT is already up
@@ -1537,6 +1538,13 @@ function JustAC:OnCombatEvent(event)
         if BlizzardAPI and BlizzardAPI.BackfillCCImmunity then
             BlizzardAPI.BackfillCCImmunity()
         end
+        -- A gear change made during the fight may pick another Forever list now.
+        local RotationImport = LibStub("JustAC-RotationImport", true)
+        if RotationImport and RotationImport.OnGearChanged and RotationImport.OnGearChanged()
+           and SpellQueue and SpellQueue.InvalidateRotationCache then
+            SpellQueue.InvalidateRotationCache()
+            self:ForceUpdateAll()
+        end
         -- UnitCreatureType() is readable again out of combat; refresh for next pull
         if BlizzardAPI and BlizzardAPI.RefreshTargetCreatureType then
             BlizzardAPI.RefreshTargetCreatureType()
@@ -1961,6 +1969,7 @@ end
 
 function JustAC:OnTargetChanged()
     if SpellDB and SpellDB.InvalidateRangeCache then SpellDB.InvalidateRangeCache() end
+    if DefensiveEngine and DefensiveEngine.OnTargetChanged then DefensiveEngine.OnTargetChanged() end
     local preparation = LibStub("JustAC-PrecombatEngine", true)
     if preparation and preparation.InvalidateTargetDebuffs then preparation.InvalidateTargetDebuffs() end
     -- Neither distance evidence nor approach debounce belongs to the previous target.
@@ -2088,8 +2097,14 @@ function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
         BlizzardAPI.RefreshItemSpellCache()
     end
     if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then BlizzardAPI.ClearAvailabilityCache() end
+    -- Forever: gear can pick another list (a shield tree needs its shield). RotationImport
+    -- decides, and holds a change made in combat until the fight ends.
+    local RotationImport = LibStub("JustAC-RotationImport", true)
+    if RotationImport and RotationImport.OnGearChanged then RotationImport.OnGearChanged() end
     if SpellQueue and SpellQueue.InvalidateRotationCache then SpellQueue.InvalidateRotationCache() end
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then SpellSearch.InvalidateSpellbookCache() end
+    -- A macro's [equipped:] branches decide which spell its key casts.
+    self:InvalidateCaches({macros = true, hotkeys = true})
     -- Equipment can change defensive item availability (trinkets/belt/gloves),
     -- so refresh both queues immediately instead of waiting for defensive cadence.
     self:ForceUpdateAll()
@@ -2110,6 +2125,8 @@ end
 -- and only for spells with a SpellDB.SELF_LOCKOUTS entry. See DefensiveEngine.
 function JustAC:OnSpellcastSent(event, unit, target, castGUID, spellID)
     if unit ~= "player" then return end
+    -- The player's own press is a reason for the first slot to change at once.
+    if SpellQueue and SpellQueue.NoteLeadEvent then SpellQueue.NoteLeadEvent() end
     if DefensiveEngine and DefensiveEngine.NoteSpellcastSent then
         DefensiveEngine.NoteSpellcastSent(target, castGUID, spellID)
     end
@@ -2130,6 +2147,7 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     end
 
     if BlizzardAPI and BlizzardAPI.NoteOwnCast then BlizzardAPI.NoteOwnCast(spellID) end
+    if SpellQueue and SpellQueue.NoteLeadEvent then SpellQueue.NoteLeadEvent() end
     if SpellQueue and SpellQueue.NoteLandingCast then SpellQueue.NoteLandingCast(spellID) end
     local FightWindow = LibStub("JustAC-FightWindow", true)
     if FightWindow and UnitAffectingCombat("player") then FightWindow.Used(spellID) end

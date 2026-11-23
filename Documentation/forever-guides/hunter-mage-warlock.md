@@ -26,6 +26,14 @@ Cross-class facts that matter for a suggestion engine:
 - "Legacy" account perk (Talented rank 5) can grant up to 5 extra talent points
   at 30; every guide gives a separate recommendation for those points.
 
+**Left to the player (JustAC, 2026-11-22).** The automatic lists offer only what they name
+(tools/test_closed_lists.py). Damaging abilities no list names, and why:
+- Hunter: Explosive Trap (placed at your feet, so where the fight happens is yours); Black Arrow
+  (50, beyond the guides' levels; revisit when one covers it). Pet abilities are the pet's.
+- Mage: Felfire (60, no guide or sim names it).
+- Warlock: Drain Life (guides cast it for health), Drain Soul (for soul shards), Soul Fire (48,
+  guides use it only as Decimation's execute, which no list models yet).
+
 ---
 
 ## Hunter - Beast Mastery
@@ -284,6 +292,8 @@ Survival Tactics (+hit on traps and Feign Death); Survivalist's Discipline
 cooldown for Strider Kick; WGG names (Runner's Strike, Expose Weakness, Rending
 Strikes) appear to be an older build of the same talents.
 
+- **Default queue (2026-11-20, no change):** Wing Clip stays as the melee filler while Strider Kick is unavailable. Dropping it was 11% slower on regular targets at 40 and 60 and 12 to 22% faster on elites, so it is not clearly better. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game). A narrower condition for long fights is untested.
+
 ---
 
 ## Mage - Arcane
@@ -364,6 +374,8 @@ Ward vs casters; Improved Channeling (pushback protection); Polymorph; Countersp
 **Gaps**: no source gives a tested mana-threshold rule for when to stop
 blasting; Evocation/gem timing only in general terms; Arcane Power at 30 not
 covered by IV/MOB.
+
+- **Default queue (2026-11-20):** Evocation and Arcane Missiles on a Missile Barrage proc no longer ask for the Heating Up talent, which the source list requires of its whole single-target branch. Without it an Arcane mage cast Arcane Blast until the mana was gone. Kills are 62% faster at 60 and long fights 20 to 65% faster; short low-level fights are unchanged. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game). The other Heating Up entries (Pyroblast, Fire Blast, Presence of Mind, Arcane Wrath) keep the talent condition.
 
 ---
 
@@ -709,6 +721,8 @@ Sacrifice, Demonic Aegis.
 
 **Gaps**: no tested Soul Fire/Decimation execute rotation; Sacrifice-vs-Soul
 Link choice at 60 unresolved.
+
+- **Default queue (2026-11-20, no change):** Searing Pain applies Demonic Brand, which only pays through the demon's attacks. With no demon out the entry repeats for nothing; the lists have no condition for a pet, and the tree is not played without one, so it is left to the player.
 
 ---
 

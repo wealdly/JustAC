@@ -189,22 +189,22 @@ local function ScanEngaged(out)
 end
 
 -- A pack does not stop fighting because its nameplates left the screen (the player looked
--- away). When the count falls straight from two or more to zero while the player is still
--- in combat, the last count is kept for a short time. A fall to one is a real reading and
--- is taken at once; leaving combat or a new positive count ends the hold.
+-- away). Enemies die and join one at a time, so a rise, or a fall of one, is a real reading
+-- and is taken at once. A fall of ENGAGED_SUSPECT_DROP or more in a single scan is suspect:
+-- while the player is still in combat the last count is kept until the lower one has lasted
+-- ENGAGED_HOLD_SECONDS. Several enemies really dying at once keeps the pack order that long,
+-- which still deals damage; leaving combat ends the hold.
 local ENGAGED_HOLD_SECONDS = 4
+local ENGAGED_SUSPECT_DROP = 2
 local heldCount, heldAt = 0, -1
 
 local function HoldEngaged(scanned, now)
-    if scanned >= 2 then
-        heldCount, heldAt = scanned, now
-        return scanned
-    end
-    if scanned == 0 and heldCount >= 2 and now - heldAt <= ENGAGED_HOLD_SECONDS and UnitAffectingCombat then
+    if heldCount - scanned >= ENGAGED_SUSPECT_DROP and now - heldAt <= ENGAGED_HOLD_SECONDS
+       and UnitAffectingCombat then
         local ok, fighting = pcall(UnitAffectingCombat, "player")
         if ok and PlainTrue(fighting) then return heldCount end
     end
-    heldCount = 0
+    heldCount, heldAt = scanned, now
     return scanned
 end
 

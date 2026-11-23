@@ -89,7 +89,8 @@ AOE_LEAD_TIERS = ["aoe"]
 # "stealth" = only from stealth. Melee abilities need no gate: out of range sinks them.
 # move: the ability is already on the sim list - reposition that entry instead of adding a
 # second one. Set gates to replace its source conditions when the adaptation calls for it.
-# A gate may also be a raw gate dict. drop: remove the ability and all its copies from the tree's list.
+# A gate may also be a raw gate dict. drop: remove the ability and all its copies from the tree's list
+# and keep it out of the queue there (left out); a copy= row after it brings it back to its tiers.
 # copy: add an entry even though the ability is already listed (a tier-specific placement).
 # A sim may list an ability twice (an AoE-only or proc copy): move takes every copy, and an
 # anchor is the copy tier_lists keeps (its last ungated entry, else its first).
@@ -97,20 +98,32 @@ EXTRA = {
     # Reactive melee attacks (usable only after a dodge, parry or kill) lead when lit; until then
     # the game reports them unusable and they trail. The sims omit them or keep them defensive.
     "warrior": [dict(spell="victory_rush", trees=["arms", "fury"], at="front"),
-                # Protection's sim omits Hamstring; without an entry it joined as an ungated
-                # pool filler. Listed, the finisher rule (REGATE) holds it.
-                dict(spell="hamstring", trees=["protection"], at="end"),
-                # Sunder is an early armor-reduction and threat builder for Protection. One
-                # application is enough for the leveling queue; own landed stacks prevent repeats.
-                dict(spell="sunder_armor", trees=["protection"], drop=True),
-                dict(spell="sunder_armor", trees=["protection"], at="front", copy=True,
-                     gates=[{"t": "stack", "id": 7386, "op": "<", "n": 1, "tgt": True}]),
+                # Hamstring's damage repays its rage only as Arms' spare-rage press (REGATE). As a
+                # rage dump it cost Fury 2 to 6% from level 24 and Protection 16%, and as a
+                # finisher on a dying target it changed nothing in any tree (2026-11-18 and
+                # 2026-11-20 simulations): those trees leave it to the player.
+                dict(spell="hamstring", trees=["fury", "protection"], drop=True),
                 dict(spell="rend", trees=["protection"], at="before:heroic_strike", move=True),
-                # Its single-target Thunder Clap is the tank's attack-speed slow (mitigation, guides
-                # disagree on upkeep); as damage it is the strongest attack against a pack and
-                # leads there, as in Arms and Fury.
+                # Protection's Sunder follows its main attacks: ahead of them it delayed Revenge and
+                # Shield Slam (2026-11-18 simulation, shield in Defensive Stance: 2 to 4% faster
+                # kills on regular targets, 7 to 8% on elites and long fights at five stacks). One
+                # application here; the runtime stacks it where stacks pay. Against a pack it spends
+                # rage and a global cooldown on one enemy, so it leaves the list.
+                dict(spell="sunder_armor", trees=["protection"], drop=True),
+                dict(spell="sunder_armor", trees=["protection"], tiers=["st", "cleave"],
+                     at="before:heroic_strike", copy=True,
+                     gates=[{"t": "stack", "id": 7386, "op": "<", "n": 1, "tgt": True}]),
+                # Spare rage against a pack (same simulation: 4% more damage on three, 8% on five).
+                dict(spell="cleave", trees=["protection"], tiers=["aoe"], at="before:heroic_strike", w=True,
+                     gates=[{"t": "power", "res": "rage", "op": ">=", "n": 30}]),
+                # Against a pack Thunder Clap is the strongest attack and leads, as in Arms and Fury.
                 dict(spell="thunder_clap", trees=["protection"], tiers=AOE_LEAD_TIERS,
                      at="front", move=True),
+                # It deals damage, its slow a side effect, so one and two targets keep it where the
+                # sim had it, after Shield Slam and Revenge (leaving it out there cost 6 to 15% at
+                # every level, 2026-11-20 simulation).
+                dict(spell="thunder_clap", trees=["protection"], tiers=["st", "cleave"],
+                     at="after:revenge", copy=True),
                 # Arms: Overpower > Mortal Strike > Execute > Slam; Rend only with a second
                 # enemy; Sweeping Strikes leads multi-target play.
                 dict(spell="mortal_strike", trees=["arms"], at="after:overpower", move=True),
@@ -162,7 +175,11 @@ EXTRA = {
     "paladin": [dict(spell="consecration", trees=["retribution"], at="before:holy_strike", move=True),
                 dict(spell="holy_shock", trees=["retribution"], at="after:holy_strike"),
                 dict(spell="exorcism", trees=["retribution"], at="before:consecration"),
-                dict(spell="holy_wrath", trees=["retribution"], tiers=["aoe"], at="after:consecration")],
+                dict(spell="holy_wrath", trees=["retribution"], tiers=["aoe"], at="after:consecration"),
+                # Hammer of the Righteous (40): Protection's weapon strike on the target and up to
+                # three more, 6 s cooldown (kami). No sim lists it; it joins Protection's attacks
+                # ahead of Holy Strike. Holy and Retribution do not use it in any guide.
+                dict(spell="hammer_of_the_righteous", trees=["protection"], at="before:holy_strike")],
     # Backstab is absent from the selected upstream APLs. Prefer it to Sinister Strike when
     # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
     # Spell usability handles the rear requirement; no position signal is inferred here.
@@ -188,6 +205,13 @@ EXTRA = {
               dict(spell="sinister_strike", trees=["assassination"], at="after:mutilate"),
               dict(spell="backstab", trees=["assassination"], at="before:sinister_strike")],
     "druid": [dict(spell="rake", trees=["feral"], at="front", gates=["dot"]),
+              # The bear sim list has no rage starter. Enrage is the bear's Bloodrage and takes the
+              # warrior lists' conditions for it: low rage, and health above half because it lowers
+              # armor while it runs (2026-11-20 simulation: kills 6 to 16% faster on regular
+              # targets at 25, 40 and 60, 4 to 5% on elites).
+              dict(spell="enrage", trees=["feral_bear"], at="front", w=True,
+                   gates=[{"t": "power", "res": "rage", "op": "<", "n": 10},
+                          {"t": "health", "op": ">", "pct": 50.0}]),
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
               dict(spell="wrath", trees=["balance"], at="end")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate"),
@@ -225,6 +249,14 @@ EXTRA = {
                # leveling guides (Method, read 2026-11-17) cast it on cooldown in every tree.
                # Placed as the Shadow list has it: after the damage over time, before the fillers.
                dict(spell="mind_blast", trees=["discipline", "holy"], at="before:holy_fire"),
+               # Starshards (Night Elf, 10): a 6 s channel, 162 damage at rank 1 for 50 mana on a
+               # 30 s cooldown (client data), about Mind Blast's damage per second and twice
+               # Smite's at 10 to 16. No sim or guide lists it; placed after Mind Blast, as
+               # Devouring Plague (another race spell) sits by the damage over time. Chastise
+               # (Dwarf) stays with the player: one Smite of damage per 2 min, and its root is
+               # crowd control (tools/test_closed_lists.py).
+               dict(spell="starshards", trees=["discipline", "holy"], at="after:mind_blast"),
+               dict(spell="starshards", trees=["shadow"], at="before:mind_flay"),
                dict(spell="holy_nova", tiers=["cleave", "aoe"], at="front")],
 }
 
@@ -250,42 +282,91 @@ EXTRA = {
 #   needs_known: only once at least one of these spells is learned. Hamstring "with spare
 #            rage" has no spare rage before a main spender exists: at 10-14 rage it would
 #            otherwise spend what Heroic Strike (15) is building toward.
-#   or_execute: ...or while the target is below this percent. On a dying target the rage left
-#            drains out of combat anyway, and Hamstring is instant: it finishes the target while
-#            a next-swing attack waits on the swing (2026-11-17, player observation).
 #   drop_cast: remove the source's cast-time condition; the guide keeps the spell without the
 #            talent that shortens its cast (launch Affliction keeps Immolate up, launch Arms
 #            keeps Slam; the sims cast them only once a talent shortens the cast). An entry left with no
 #            condition stays delegated (Slam); one that keeps a timeable condition does not
 #            (Immolate). Neither is flagged w.
 #   trees:   limit the entry to these trees (default: every tree).
+#   at:      {tree: {resource: n}}: in that tree the entry's "resource >= ..." condition asks for
+#            n instead of the source's number. `was` ({tree: {resource: n}}) names the source's
+#            number where the value is taken ahead of a source refresh: the build stops when
+#            the source no longer says it, so the row is revisited instead of going stale.
+#   drop:    {tree: [gate pattern]}: in that tree, conditions matching a pattern leave the
+#            entry. A pattern is the gate fields to match; `has` matches a group by a member.
+#   add:     {tree: [gate]}: in that tree the entry also needs these conditions.
+#   A row with only trees / at / was / drop / add changes conditions and nothing else: the entry is
+#   not flagged w and keeps its place among the timed entries.
 #   A spell list may instead be a {tree: [names]} dict (a talent style's own spenders); a tree it
 #   does not name is skipped.
 WARRIOR_SPENDERS = {"arms": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
                     "fury": ["mortal_strike", "slam", "whirlwind", "bloodthirst"],
                     "protection": ["revenge", "shield_slam"]}
-# Hamstring "with spare rage". Arms and Fury keep their sim's own cooldown conditions, so
-# knowing a spender is enough. Protection's spenders are reactive (Revenge) or on a cooldown
-# (Shield Slam) and its sim has no Hamstring line, so "knows one" held always: Hamstring took
-# every 10 rage Heroic Strike was saving for (2026-11-18 simulation: 17 casts in a 32s fight,
-# 16% slower). There it only finishes a dying target.
-HAMSTRING_SPENDERS = dict(WARRIOR_SPENDERS, protection=[])
+# Hamstring "with spare rage" (Arms only; EXTRA keeps it out of Fury and Protection): Arms keeps
+# its sim's own cooldown conditions, so knowing a spender is enough (5 to 7% faster at 20).
+ENERGY_FLOOR = {"t": "power", "res": "energy", "op": ">="}
+HEATING_UP_BRANCH = {"t": "all", "has": {"t": "known", "id": 400624}}
+IN_A_GROUP = {"t": "group"}
+CONDITIONS_ONLY = {"trees", "at", "was", "drop", "add"}   # REGATE options that add no safety gate
 REGATE = {
     "warlock": {"immolate": dict(drop_cast=True, trees=["affliction"]),
                 "life_tap": dict(starved=True, health=50),
                 "hellfire": dict(health=50, near=10),
                 "shadowburn": dict(execute=20, or_known=426316)},
-    "mage": {"evocation": dict(starved=True)},
-    "druid": {"innervate": dict(starved=True)},
-    # Slam's base cast is 1.5s; the sim casts it only under Improved Slam. The launch guide
-    # uses it whenever the cast can finish, so levelling Arms keeps it.
-    "warrior": {"slam": dict(drop_cast=True),
-                "bloodrage": dict(health=50),
+    # The Arcane sim's whole single-target branch asks for the Heating Up talent (400624).
+    # Recovering mana and spending a Missile Barrage proc do not depend on it: without them an
+    # Arcane mage who has not taken it casts Arcane Blast until the mana is gone (2026-11-20
+    # simulation: kills 62% faster at 60, long fights 20 to 65% faster; no change on short
+    # low-level fights). The sim's other Heating Up entries keep the condition.
+    "mage": {"evocation": dict(starved=True, drop={"arcane": [HEATING_UP_BRANCH]}),
+             "arcane_missiles": dict(drop={"arcane": [HEATING_UP_BRANCH]})},
+    "rogue": {
+        # Subtlety: the sim saves energy before Hemorrhage (60) and Eviscerate (80). In a
+        # priority list the Sinister Strike below them spends first, so the energy never
+        # arrives and neither was cast (2026-11-20 simulation without the thresholds: kills 7%
+        # faster at 40, 15% at 60, 10 to 18% on elites; no change at 25).
+        "hemorrhage": dict(drop={"subtlety": [ENERGY_FLOOR]}),
+        # Vanish carried the same unreachable energy threshold. Without it the sim re-opens from
+        # stealth far more often (2026-11-20 simulation: kills 31% faster at 40, 16% at 60, 6 to
+        # 8% on elites). Fought alone, Vanish drops the fight: the enemy resets, so that is not
+        # damage a solo player gets, and it is the rogue's escape. Offered in a group only,
+        # where someone else holds the enemy. Not checked in game.
+        "vanish": dict(drop={"subtlety": [ENERGY_FLOOR]}, add={"subtlety": [IN_A_GROUP]}),
+        # Combat: the source now spends Eviscerate from 2 combo points, not 5 (preset mirror
+        # after our pin: engine commit 69fcaca9c1, app #1021). Taken here by hand because the
+        # rest of that refresh costs other trees (2026-11-20 simulation of this change: kills 2
+        # to 4% faster at 25 and 40, 14 to 17% at 60, 7% on a level 60 elite). `was` stops the
+        # build once the pin moves past that commit, when this row can go.
+        "eviscerate": dict(drop={"subtlety": [ENERGY_FLOOR]},
+                           at={"combat": {"combo_points": 2}}, was={"combat": {"combo_points": 5}}),
+    },
+    # Maul banks 25 rage for Lacerate and Primal Bite (the sim's level 60 setup). Before either is
+    # learned (Lacerate 25, Primal Bite 40) it is the bear's only single-target spender, and the
+    # rage it waited on had nothing else to buy: it spends at its cost, as Heroic Strike does.
+    "druid": {"innervate": dict(starved=True),
+              "maul": dict(or_none_known={"feral_bear": ["lacerate", "primal_bite"]})},
+    # Slam keeps the sim's cast-time condition (only once Improved Slam shortens the cast):
+    # dropping it, as the launch guide plays, cost 3% at 30 and 10% at 40 once Mortal Strike
+    # arrives, for 3% at 20 (2026-11-20 simulation).
+    "warrior": {"bloodrage": dict(health=50),
                 # Each talent style names its own main spenders: Protection levels on Heroic
                 # Strike until Revenge (14) or Shield Slam (talent) arrives (forever-guides).
-                "heroic_strike": dict(or_none_known=WARRIOR_SPENDERS),
-                "hamstring": dict(needs_known=HAMSTRING_SPENDERS, or_execute=20)},
+                # Protection spends earlier: 30 rage killed regular targets 1 to 2% faster than
+                # the sim's 45 and cost nothing on long fights (2026-11-18 simulation).
+                "heroic_strike": dict(or_none_known=WARRIOR_SPENDERS, at={"protection": {"rage": 30}}),
+                "hamstring": dict(needs_known={"arms": WARRIOR_SPENDERS["arms"]})},
 }
+
+
+def gate_matches(g, pattern):
+    """Does gate g carry every field of the pattern? `has` asks for a group member that does."""
+    for key, want in pattern.items():
+        if key == "has":
+            if not any(gate_matches(member, want) for member in g.get("g", [])):
+                return False
+        elif g.get(key) != want:
+            return False
+    return True
 
 
 def without_cast(gates):
@@ -318,6 +399,20 @@ def regate(cls, tree, entries, chains):
             if e["id"] != sid:
                 continue
             gates = list(e["gates"])
+            at, was = (spec.get("at") or {}).get(tree) or {}, (spec.get("was") or {}).get(tree) or {}
+            for i, g in enumerate(gates):
+                if g["t"] in ("power", "resource") and g.get("res") in at and g.get("op") == ">=":
+                    if g["res"] in was and g["n"] != was[g["res"]]:
+                        raise SystemExit("REGATE %s %s: the source now says %s >= %s, not %s; revisit the row"
+                                         % (cls, name, g["res"], g["n"], was[g["res"]]))
+                    gates[i] = dict(g, n=at[g["res"]])
+            drop = (spec.get("drop") or {}).get(tree)
+            if drop:
+                gates = [g for g in gates if not any(gate_matches(g, pattern) for pattern in drop)]
+            gates += [dict(g) for g in (spec.get("add") or {}).get(tree) or [] if g not in gates]
+            if not set(spec) - CONDITIONS_ONLY:
+                e["gates"] = gates
+                continue
             if spec.get("drop_cast"):
                 e["gates"] = without_cast(gates)
                 # With a condition left that the addon can time (Immolate: missing from the
@@ -354,11 +449,7 @@ def regate(cls, tree, entries, chains):
                 gates.append({"t": "any", "g": [cond, {"t": "all", "g": unknown}]})
             if spec.get("needs_known") is not None:
                 known = [{"t": "known", "id": rank1(chains[n])} for n in spec["needs_known"] if chains.get(n)]
-                assert known or spec.get("or_execute"), (cls, name, "needs_known names no learnable spell")
-                if spec.get("or_execute"):
-                    # required: an unreadable target health is "not dying", or the whole group
-                    # reads unknown and the entry leaks open (2026-11-17 capture: Hamstring).
-                    known.append({"t": "execute", "op": "<", "pct": spec["or_execute"], "required": True})
+                assert known, (cls, name, "needs_known names no learnable spell")
                 gates.append(known[0] if len(known) == 1 else {"t": "any", "g": known})
             e["gates"], e["w"] = gates, True
 
@@ -385,6 +476,10 @@ def regate(cls, tree, entries, chains):
 #   7. A stack requirement on a buff whose every effect only shortens cast time or cost
 #      (Maelstrom Weapon) is marked castOnly: before a pull a cast cannot be pushed back, so
 #      the runtime may open with the spell without those stacks.
+#   8. A damage over time with no hit of its own and no condition on its own debuff (Bane of Doom,
+#      Devouring Plague) gets the keep-it-up condition, so the dying-target rules reach it too.
+#   9. Against a pack a stacking debuff stops at one application per target (`once`): the runtime
+#      does not raise it to the full stack there, whatever the fight (FOREVER_DPS_PRINCIPLES).
 # ---------------------------------------------------------------------------------------------
 FINISHER_MIN_POINTS = 4
 NOMINAL_POWER_MAX = 100
@@ -498,6 +593,23 @@ def gates_on_points(gates):
                or (g.get("t") in ("any", "all") and gates_on_points(g["g"])) for g in gates)
 
 
+@functools.lru_cache(maxsize=None)
+def _channeled():
+    return frozenset(r["SpellID"] for r in cfa.rows("SpellMisc")
+                     if int(r.get("Attributes_1") or 0) & gfd.CHANNEL_ATTR1)
+
+
+def is_pure_dot(sid):
+    """All of the spell's damage comes over time on the target, and it is not a channel."""
+    return (applies_target_dot(sid) and str(sid) not in _channeled()
+            and not any(eff in DMG_EFFECTS for eff, *_ in effects_of(sid)))
+
+
+def names_own_debuff(gates, sid):
+    return any((g.get("t") in ("debuff", "dot") and g.get("id") == sid)
+               or (g.get("t") in ("any", "all") and names_own_debuff(g["g"], sid)) for g in gates)
+
+
 def holds_hit_for_side_effect(e, g):
     """A refresh condition on the entry's own debuff, where the spell hits for damage and the
     debuff does none over time (Thunder Clap's slow): the tank sims keep the slow up as
@@ -557,7 +669,7 @@ def is_cast_only_gate(g):
 
 
 def apply_core_gates(lists):
-    """Rules 5 to 7. They run after tier_lists, which tells a general fallback (no gates)
+    """Rules 5 to 8. They run after tier_lists, which tells a general fallback (no gates)
     from a special branch, so a derived gate never changes which entry a tier keeps."""
     for e in {id(e): e for lines in lists.values() for e in lines}.values():
         radius = point_blank_radius(e["id"])
@@ -569,9 +681,27 @@ def apply_core_gates(lists):
             e["gates"] = list(e["gates"]) + [execute]
         if any(is_cast_only_gate(g) for g in e["gates"]):
             e["gates"] = [dict(g, castOnly=True) if is_cast_only_gate(g) else g for g in e["gates"]]
+        if is_pure_dot(e["id"]) and not names_own_debuff(e["gates"], e["id"]):
+            e["gates"] = list(e["gates"]) + [{"t": "debuff", "id": e["id"], "neg": True, "refresh": True}]
+
+def is_one_stack_gate(e, g):
+    return (g.get("t") == "stack" and g.get("tgt") and g.get("id") == e["id"]
+            and g.get("op") == "<" and g.get("n") == 1)
+
+
+def one_stack_on_packs(lists):
+    """Rule 9. The pack list gets its own copy: the entry may be shared with the other tiers."""
+    pack = lists.get("aoe") or []
+    for i, e in enumerate(pack):
+        if any(is_one_stack_gate(e, g) for g in e["gates"]):
+            pack[i] = dict(e, gates=[dict(g, once=True) if is_one_stack_gate(e, g) else g for g in e["gates"]])
+
 
 def add_extras(cls, tree, entries, chains, unresolved):
-    """Place the class's EXTRA abilities into one tree's entries (in place)."""
+    """Place the class's EXTRA abilities into one tree's entries (in place). Returns the ids a
+    drop row took out: unlisted, a class ability still reached the queue as an unranked filler,
+    so the runtime keeps these out wherever the tree's list does not name them."""
+    dropped = set()
     def r1_of(name):
         chain = chains.get(name)
         if not chain:
@@ -610,6 +740,7 @@ def add_extras(cls, tree, entries, chains, unresolved):
         mine = next((e for e in entries if e["id"] == sid), None)
         if x.get("drop"):
             entries[:] = [e for e in entries if e["id"] != sid]
+            dropped.add(sid)
             continue
         if mine and x.get("move"):
             if x.get("tiers"):
@@ -638,8 +769,11 @@ def add_extras(cls, tree, entries, chains, unresolved):
                 gates.append({"t": "stealth"})
         e = {"id": sid, "delegated": False, "tiers": list(x.get("tiers") or [t for t, _ in TIERS]),
              "gates": gates}
+        if x.get("w"):
+            e["w"] = True
         place(x, [e], "end")
     entries[0:0] = fronts
+    return dropped
 
 
 def keeps_own_buff(e):
@@ -815,7 +949,7 @@ class Conv:
         if g == UNK:
             return UNK
         t = g["t"]
-        if t in ("buff", "cd", "known", "stealth", "totem", "debuff"):
+        if t in ("buff", "cd", "known", "stealth", "group", "totem", "debuff"):
             if t == "debuff" and g.get("op"):
                 return dict(g, op=NOT_OP[g["op"]])
             if t == "debuff":
@@ -1122,8 +1256,35 @@ def lua(v):
     return "{" + ",".join(f"{k}={lua(x)}" for k, x in v.items()) + "}"
 
 
+EARTH_SHOCK_LATE_SECONDS = 2
+
+
 def generalize_entries(cls, tree, entries, chains):
     """Adapt specialized execution into stable defaults before selecting each context."""
+    if cls == "warrior" and tree == "fury":
+        # On one target Sunder follows Fury's attacks, just ahead of the Heroic Strike that spends
+        # what is left (2026-11-18 simulation: 1 to 2% faster kills). The pack lists keep their order.
+        sunder, heroic = rank1(chains["sunder_armor"]), rank1(chains["heroic_strike"])
+        for e in [e for e in entries if e["id"] == sunder and "st" in e["tiers"]]:
+            e["tiers"] = [t for t in e["tiers"] if t != "st"]
+            at = next(i for i, x in enumerate(entries) if x["id"] == heroic and "st" in x["tiers"])
+            entries.insert(at, dict(e, tiers=["st"]))
+    if cls == "warlock":
+        # A target carries one Bane from a warlock, so a cast replaces the other. Bane of Doom
+        # leads wherever it is allowed and Bane of Agony waits while it runs, in every tier.
+        doom, agony = rank1(chains["bane_of_doom"]), rank1(chains["bane_of_agony"])
+        yields = {"t": "debuff", "id": doom, "neg": True}
+        for e in entries:
+            if e["id"] == agony and yields not in e["gates"]:
+                e["gates"] = [yields] + list(e["gates"])
+        # A sim may keep a separate copy per target count, so each copy is placed on its own.
+        for copy in [e for e in entries if e["id"] == doom]:
+            at = next(i for i, e in enumerate(entries) if e is copy)
+            first = next((i for i, e in enumerate(entries)
+                          if e["id"] == agony and set(e["tiers"]) & set(copy["tiers"])), None)
+            if first is not None and first < at:
+                del entries[at]
+                entries.insert(first, copy)
     if cls == "shaman" and tree in ("elemental", "enhancement"):
         # Current guide adaptations and deliberate limits: forever-guides/druid-shaman.md.
         if tree == "enhancement":
@@ -1158,10 +1319,13 @@ def generalize_entries(cls, tree, entries, chains):
                     gates = [{"t": "debuff", "id": sid, "neg": True, "refresh": True}]
                 elif name == "earth_shock":
                     # The shocks share one cooldown (SpellCooldowns category, 6s in 1.60.1.70938),
-                    # so a filler Earth Shock locks Flame Shock out for that long. It fills only
-                    # while Flame Shock has more than the cooldown left: the refresh is never late.
+                    # so a filler Earth Shock locks Flame Shock out for that long. Asking for more
+                    # than the whole cooldown left never held before the talent that shortens it:
+                    # Flame Shock has exactly that much left when the cooldown ends. A refresh up
+                    # to EARTH_SHOCK_LATE_SECONDS late costs less than an idle shock cooldown
+                    # (2026-11-20 simulation: kills 9 to 13% faster at 14 and 30, no change at 60).
                     gates = [{"t": "debuff", "id": rank1(chains["flame_shock"]), "op": ">",
-                              "n": spell_meta(sid)[1]}]
+                              "n": spell_meta(sid)[1] - EARTH_SHOCK_LATE_SECONDS}]
                 elif name == "lightning_bolt" and tree == "enhancement":
                     gates = [{"t": "stack", "id": 408505, "op": ">=", "n": 5, "required": True}]
                 elif name == "chain_lightning" and context == "st":
@@ -1410,6 +1574,20 @@ def not_dps(sid, damage):
     return None
 
 
+def dot_fields(effects, duration):
+    """Full damage over time of these aura effects (every tick of the duration): base, per-level
+    gain, coefficient, seconds; and the tick period in seconds when every effect shares one."""
+    periods = [int(o["EffectAuraPeriod"]) for o in effects]
+    ticks = [duration // period for period in periods]
+    fields = [
+        sum(float(o["EffectBasePointsF"]) * n for o, n in zip(effects, ticks)),
+        sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(effects, ticks)),
+        sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(effects, ticks)),
+        duration / 1000,   # seconds the damage over time runs
+    ]
+    return fields, (periods[0] / 1000 if len(set(periods)) == 1 else None)
+
+
 def direct_damage_estimates(spell_ids):
     """Simple single-target, non-scaling rank damage; omit formulas we cannot model."""
     effects, levels, schools, durations = {}, {}, {}, {}
@@ -1435,9 +1613,10 @@ def direct_damage_estimates(spell_ids):
         if not damage:
             # A damage over time with a cast time and no hit (Corruption) is priced by its
             # total alone, so it can be weighed as the cast that opens a pull. An instant one
-            # gains nothing before a pull and stays unpriced.
+            # (Shadow Word: Pain) gains nothing before a pull: its row carries a 12th field, 1,
+            # and is priced for measured damage only, never to choose an opener or a filler.
             level, school, duration = levels.get(sid), schools.get(sid, 0), durations.get(sid, 0)
-            if casts.get(sid, 0) <= 0 or not level or school not in (2, 4, 8, 16, 32, 64) or duration <= 0:
+            if not level or school not in (2, 4, 8, 16, 32, 64) or duration <= 0:
                 continue
             if not all(
                     o["Effect"] == str(APPLY_AURA) and o["EffectAura"] == "3" and o["EffectTriggerSpell"] == "0"
@@ -1447,14 +1626,12 @@ def direct_damage_estimates(spell_ids):
                         "ScalingClass", "Coefficient", "ResourceCoefficient", "EffectPointsPerResource",
                         "BonusCoefficientFromAP")) for o in rows):
                 continue
-            ticks = [duration // int(o["EffectAuraPeriod"]) for o in rows]
-            result[sid] = [
-                0, 0, int(level["SpellLevel"]), int(level["MaxLevel"]), 0, school.bit_length(), 1,
-                sum(float(o["EffectBasePointsF"]) * n for o, n in zip(rows, ticks)),
-                sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(rows, ticks)),
-                sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(rows, ticks)),
-                duration / 1000,
-            ]
+            fields, period = dot_fields(rows, duration)
+            result[sid] = [0, 0, int(level["SpellLevel"]), int(level["MaxLevel"]), 0, school.bit_length(), 1,
+                           *fields, 1 if casts.get(sid, 0) <= 0 else 0]
+            # Ticks land every period: the measurement prices a cut-short run by whole ticks.
+            if period:
+                result[sid].append(period)
             continue
         if len(damage) != 1:
             continue
@@ -1494,20 +1671,25 @@ def direct_damage_estimates(spell_ids):
             # Full damage over time: every tick of the aura's duration. Unknown when the
             # duration or a period is missing, then the spell's total stays unknown.
             duration = durations.get(sid, 0)
-            periods = [int(o["EffectAuraPeriod"]) for o in others]
-            if duration > 0 and all(period > 0 for period in periods):
-                ticks = [duration // period for period in periods]
-                result[sid] += [
-                    sum(float(o["EffectBasePointsF"]) * n for o, n in zip(others, ticks)),
-                    sum(float(o["EffectRealPointsPerLevel"]) * n for o, n in zip(others, ticks)),
-                    sum(float(o["EffectBonusCoefficient"]) * n for o, n in zip(others, ticks)),
-                    duration / 1000,   # seconds the damage over time runs
-                ]
+            if duration > 0 and all(int(o["EffectAuraPeriod"]) > 0 for o in others):
+                fields, period = dot_fields(others, duration)
+                result[sid] += fields
+                if period:
+                    result[sid] += [0, period]   # not measure-only; tick interval
     return result
+
+
+def keeps_combat_form(sid):
+    """Does sid shapeshift into a combat form (not a travel form)? Marked form=true in the data: the
+    runtime does not follow a tree that leads with a form the character has not learned."""
+    return any(eff == APPLY_AURA and aura == SHAPESHIFT and form not in TRAVEL_FORMS
+               for eff, aura, _, _, form in effects_of(sid))
 
 
 def entry_lua(e, names):
     parts = [f"id={e['id']}", "gates=" + lua(e["gates"])]
+    if keeps_combat_form(e["id"]):
+        parts.append("form=true")
     if e["delegated"]:
         parts.append("delegated=true")
     if e.get("w"):
@@ -1534,7 +1716,7 @@ def condition_coverage(gates, path=""):
             status, reason = "partial", "three-valued group; inspect child coverage and live verdicts"
         elif kind in ("power", "execute", "health") and gate.get("op") not in ("<", "<=", ">", ">="):
             status, reason = "partial", "runtime supports threshold operators only"
-        elif kind in ("known", "stealth", "targets", "totem", "near", "swing", "hit",
+        elif kind in ("known", "stealth", "group", "targets", "totem", "near", "swing", "hit",
                       "resource", "power", "execute", "health", "cd", "prev", "starved", "cast"):
             status, reason = "fully supported", "runtime evaluator exists; live unknowns remain possible"
         else:
@@ -1544,6 +1726,9 @@ def condition_coverage(gates, path=""):
 
 
 def main():
+    left_out = {}   # class -> tree -> ids an EXTRA drop took out
+    form_masks = {}  # rank-1 class ability -> forms it can be cast in (bit form-1)
+    shapeshift_masks = {r["SpellID"]: int(r["ShapeshiftMask_0"] or 0) for r in cfa.rows("SpellShapeshift")}
     names = {r["ID"]: r["Name_lang"] for r in cfa.rows("SpellName")}
     secs = {r["ID"]: int(r["Duration"] or 0) / 1000 for r in cfa.rows("SpellDuration")}
     charge_recovery = {r["ID"]: int(r["ChargeRecoveryTime"] or 0) / 1000
@@ -1624,7 +1809,9 @@ def main():
                 if not any(e["id"] == sid for e in entries):
                     entries.append({"id": sid, "delegated": False, "tiers": [t for t, _ in TIERS],
                                     "gates": [{"t": "buff", "id": sid, "dur": DURATION.get(sid), "neg": True}]})
-            add_extras(cls, tree, entries, chains, unresolved)
+            dropped_ids = add_extras(cls, tree, entries, chains, unresolved)
+            if dropped_ids:
+                left_out.setdefault(cls, {})[tree] = sorted(dropped_ids)
             regate(cls, tree, entries, chains)
             generalize_entries(cls, tree, entries, chains)
             if tree in TANK_TREES.get(cls, ()):
@@ -1637,6 +1824,7 @@ def main():
             entries.sort(key=lambda e: 0 if keeps_own_buff(e) else 1)   # stable: sim order otherwise
             lists = tier_lists(entries)
             apply_core_gates(lists)
+            one_stack_on_packs(lists)
             pool |= {e["id"] for e in entries}
             body.append(f"    {tree} = {{  -- {src}")
             for t, _ in TIERS:
@@ -1668,6 +1856,12 @@ def main():
                         report.append(f"    {names.get(str(e['id']), '?')} ({e['id']}): " + " | ".join(lost))
         body.append("  },")
         abilities[cls] = sorted(pool)
+        # Forms each class ability can be cast in (SpellShapeshift.ShapeshiftMask_0: bit form-1);
+        # only abilities with a mask. In a form the mask leaves out, casting would leave the form.
+        for sid in pool:
+            mask = shapeshift_masks.get(str(sid))
+            if mask:
+                form_masks[sid] = mask
 
     if "--coverage" in sys.argv:
         if unresolved:
@@ -1721,6 +1915,15 @@ def main():
         "  -- damage over time's full-duration base, per-level gain and SP coefficient when known.",
         *[f"  [{sid}] = {{{','.join(f'{v:g}' for v in values)}}},"
           for sid, values in sorted(direct_damage_estimates(learned_ids).items())],
+        "}, {",
+        "  -- Left out: class abilities a tree's list deliberately drops; the queue keeps them out",
+        "  -- wherever that tree's list does not name them, rather than offering an unranked filler.",
+        *[f'  ["{c.upper()}_F"] = {lua(dict(sorted(trees_out.items())))},'
+          for c, trees_out in sorted(left_out.items())],
+        "}, {",
+        "  -- Forms a class ability can be cast in (bit form-1, ShapeshiftMask): in a form it leaves",
+        "  -- out, an unlisted ability is not offered (casting it would leave the form).",
+        *[f"  [{sid}] = {mask},  -- {names.get(str(sid), '?')}" for sid, mask in sorted(form_masks.items())],
         "})",
         "",
     ])

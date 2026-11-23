@@ -13,16 +13,22 @@ import check_forever_apl as cfa
 damage_estimates = direct_damage_estimates({
     585, 591, 589, 15407, 5019, 75, 133, 3044, 1752, 78, 19434, 2764, 3018, 14914,
 })
-assert set(damage_estimates) == {585, 591, 3044, 133, 14914}, \
-    "Periodic, channel, weapon/AP-scaled and repeat/manual weapon attacks stay outside direct cast estimates"
+assert set(damage_estimates) == {585, 591, 3044, 133, 14914, 589}, \
+    "Channel, weapon/AP-scaled and repeat/manual weapon attacks stay outside direct cast estimates"
+assert damage_estimates[589][11] == 1 and damage_estimates[589][12] == 3, \
+    "an instant damage over time (Shadow Word: Pain) is priced for measured damage only, ticking every 3s"
+assert damage_estimates[14914][11] == 0 and damage_estimates[14914][12] == 2, \
+    "a spell with a hit is not flagged measure-only; its damage over time ticks every 2s"
 assert len(damage_estimates[585]) == 6, "Plain direct hits carry no partial flag"
 assert damage_estimates[133][6] == 1 and damage_estimates[14914][6] == 1, \
     "A hit followed by its own damage over time is priced but flagged partial"
 for actual, expected in zip(damage_estimates[14914][7:], (20, 0, 0.25)):
     assert abs(actual - expected) < 0.000001, "Holy Fire: five 4-damage ticks with a 0.05 share each"
 immolate = direct_damage_estimates({348, 172, 589, 980})
-assert set(immolate) == {348, 172}, \
-    "Immolate is priced despite its script effect; a hitless damage over time only when it has a cast time"
+assert set(immolate) == {348, 172, 589}, \
+    "Immolate is priced despite its script effect; a hitless damage over time too"
+assert immolate[172][11] == 0 and immolate[589][11] == 1, \
+    "a hitless damage over time with a cast time (Corruption) is an ordinary price; an instant one is measure-only"
 for actual, expected in zip(immolate[172], (0, 0, 4, 9, 0, 6, 1, 40, 0, 0.8, 12)):
     assert abs(actual - expected) < 0.000001, "Corruption rank 1: no hit, four 10-damage ticks over 12 seconds"
 flame_shock = direct_damage_estimates({8050})
@@ -283,12 +289,35 @@ for cls, tree, gone in (("WARRIOR_F", "protection", {2565, 71, 1160}),          
         ids = ids_of(classes[cls][tree][context]) if classes[cls][tree][context] else []
         assert not gone & set(ids), (cls, tree, context, "threat and mitigation leave tank lists")
 prot = ids_of(classes.WARRIOR_F.protection.st)
-assert 7386 in prot, "Protection keeps Sunder Armor as an early aggro builder"
+assert 7386 in prot, "Protection keeps Sunder Armor on a single target"
 prot_sunder = entry_of(classes.WARRIOR_F.protection.st, 7386)
 assert any(g["t"] == "stack" and g["id"] == 7386 and g["tgt"] and g["op"] == "<" and g["n"] == 1
            for g in gate_list(prot_sunder)), "Protection applies Sunder once per target"
 assert prot.index(7386) < prot.index(78), "Protection uses Sunder before its excess-rage spender"
-assert 6343 not in prot, "Protection's single-target Thunder Clap is the tank's slow, not damage"
+assert prot.index(23922) < prot.index(7386) and prot.index(6572) < prot.index(7386), \
+    "Sunder waits behind Shield Slam and Revenge"
+def _rage_gate(entry):
+    found = []
+    def walk(gates):
+        for g in gates:
+            if g["t"] in ("any", "all"):
+                walk(list(g["g"].values()))
+            elif g["t"] == "power" and g["res"] == "rage" and g["op"] == ">=":
+                found.append(g)
+    walk(gate_list(entry))
+    return found
+assert [g["n"] for g in _rage_gate(entry_of(classes.WARRIOR_F.protection.st, 78))] == [30], \
+    "Protection's Heroic Strike spends from 30 rage"
+prot_pack = ids_of(classes.WARRIOR_F.protection.aoe)
+assert 7386 not in prot_pack, "Sunder on one enemy of a pack costs more than it returns"
+assert prot_pack.index(6343) < prot_pack.index(6572), "Thunder Clap leads against a pack"
+assert prot_pack.index(845) < prot_pack.index(78), "Cleave spends spare rage against a pack"
+assert [g["n"] for g in _rage_gate(entry_of(classes.WARRIOR_F.protection.aoe, 845))] == [30], \
+    "Protection's Cleave spends from 30 rage"
+for _context in ("st", "cleave"):
+    _ids = ids_of(classes.WARRIOR_F.protection[_context])
+    assert _ids.index(6572) < _ids.index(6343) < _ids.index(7386), \
+        (_context, "Protection keeps the sim's Thunder Clap after Revenge (it deals damage)")
 assert 6343 in ids_of(classes.WARRIOR_F.protection.aoe), "Thunder Clap stays a pack attack"
 clap = entry_of(classes.WARRIOR_F.protection.aoe, 6343)
 assert any(g["t"] == "targets" and g["op"] == ">=" and g["n"] == 3 for g in gate_list(clap)),     "a pack attack leads from three targets"
@@ -301,17 +330,23 @@ spenders = {g["id"] for g in gate_list(heroic) if g["t"] == "any"
             for sub in [dict(x) for x in g["g"].values()] if sub["t"] == "all"
             for g in [dict(y) for y in sub["g"].values()]}
 assert heroic["w"] and spenders == {6572, 23922}, "Protection: Heroic Strike first until Revenge or Shield Slam"
-# Protection's Hamstring only finishes a dying target: "knows Revenge or Shield Slam" held from
-# level 14 on and let it take the rage Heroic Strike was saving (2026-11-18 simulation).
-ham = entry_of(classes.WARRIOR_F.protection.st, 1715)
-ham_gates = [dict(g) for g in gate_list(ham)]
-assert ham["w"] and len(ham_gates) == 1 and ham_gates[0]["t"] == "execute" and ham_gates[0]["required"] \
-    and ham_gates[0]["pct"] == 20, ("Protection: Hamstring is a finisher only", ham_gates)
-for tree in ("arms", "fury"):
-    members = [dict(g) for gate in gate_list(entry_of(classes.WARRIOR_F[tree].st, 1715))
-               if gate["t"] == "any" for g in gate["g"].values()]
-    assert any(g["t"] == "known" for g in members) and any(g["t"] == "execute" for g in members), \
-        (tree, "Arms and Fury keep the spare-rage Hamstring rule")
+# Hamstring repays its rage only as Arms' spare-rage press: Fury and Protection leave it out, and
+# no tree keeps the dying-target finisher (2026-11-20 simulation).
+for _tree in ("fury", "protection"):
+    for _context in ("st", "cleave", "aoe"):
+        assert 1715 not in ids_of(classes.WARRIOR_F[_tree][_context]), (_tree, _context, "no Hamstring")
+members = [dict(g) for gate in gate_list(entry_of(classes.WARRIOR_F.arms.st, 1715))
+           if gate["t"] == "any" for g in gate["g"].values()]
+assert members and all(g["t"] == "known" for g in members), "Arms keeps only the spare-rage Hamstring rule"
+fury_st = ids_of(classes.WARRIOR_F.fury.st)
+assert fury_st.index(23881) < fury_st.index(7386) < fury_st.index(78), "Fury's Sunder follows its attacks on one target"
+for _tree in ("arms", "fury"):
+    _sunder = [g for g in gate_list(entry_of(classes.WARRIOR_F[_tree].aoe, 7386)) if g["t"] == "stack"]
+    assert _sunder and all(g["once"] for g in _sunder), (_tree, "one Sunder per target on a pack")
+    assert not any(g["once"] for g in gate_list(entry_of(classes.WARRIOR_F[_tree].st, 7386))), \
+        (_tree, "a single target may still take the full stack")
+fury_pack = ids_of(classes.WARRIOR_F.fury.aoe)
+assert fury_pack.index(7386) < fury_pack.index(1680), "Fury's pack list keeps its Sunder placement"
 # Arcane before Arcane Blast (a level 20 talent): Fireball fills, ahead of the wand.
 arcane_ids = ids_of(classes.MAGE_F.arcane.st)
 assert arcane_ids.index(400574) < arcane_ids.index(133) < arcane_ids.index(5019), \
@@ -329,6 +364,10 @@ for context in ("st", "cleave", "aoe"):
 arms = ids_of(classes.WARRIOR_F.arms.st)
 assert arms.index(7384) < arms.index(12294) < arms.index(5308) < arms.index(1240193), \
     "Arms: Overpower > Mortal Strike > Execute > Slam"
+for _context in ("st", "cleave", "aoe"):
+    assert any(g["t"] == "cast" and g["id"] == 1240193 and g["op"] == "<" and g["n"] == 1.5
+               for g in gate_list(entry_of(classes.WARRIOR_F.arms[_context], 1240193))), \
+        (_context, "Arms keeps the sim's Slam cast-time condition (Improved Slam)")
 assert arms.index(772) == arms.index(78) - 1, "Arms single target: Rend (while missing) just ahead of Heroic Strike"
 prot = ids_of(classes.WARRIOR_F.protection.st)
 assert prot.index(772) < prot.index(78), "Protection: Charge, Rend, then Heroic Strike (forever-guides)"
@@ -429,17 +468,15 @@ for tree in ("arms", "fury"):
     assert members[0]["t"] == "power" and members[1]["t"] == "all", (tree, members)
     inner = [members[1]["g"][i] for i in range(1, len(members[1]["g"]) + 1)]
     assert {g["id"] for g in inner if g["t"] == "known" and g["neg"]} == SPENDERS, (tree, inner)
-    assert ids_of(classes.WARRIOR_F[tree].st).index(78) < ids_of(classes.WARRIOR_F[tree].st).index(1715), \
-        (tree, "Heroic Strike ranks above Hamstring")
-# ...and Hamstring waits until one of those spenders is learned (no spare rage before).
-for tree in ("arms", "fury"):
+# ...and Arms' Hamstring waits until one of those spenders is learned (no spare rage before).
+for tree in ("arms",):
     for ham in (e for e in classes.WARRIOR_F[tree].st.values() if e["id"] == 1715):
         need = [g for g in gate_list(ham) if g["t"] == "any"
                 and any(g["g"][i]["t"] == "known" for i in range(1, len(g["g"]) + 1))]
         members = [need[0]["g"][i] for i in range(1, len(need[0]["g"]) + 1)] if need else []
         assert {g["id"] for g in members if g["t"] == "known"} == SPENDERS, (tree, gate_list(ham))
-        assert any(g["t"] == "execute" and g["pct"] == 20 and g["required"] for g in members), \
-            (tree, "a dying target may take Hamstring as a finisher, confirmed only")
+_arms = ids_of(classes.WARRIOR_F.arms.st)
+assert _arms.index(78) < _arms.index(1715), "Arms: Heroic Strike ranks above Hamstring"
 frost = classes.MAGE_F.frost
 assert 120 in ids_of(frost.cleave), "Cone of Cold retains reviewed two-target coverage"
 assert any(e["id"] == 120 and any(g["t"] == "near" and g["n"] == 10 for g in e["gates"].values())
@@ -456,6 +493,55 @@ for tree, min_targets in ((classes.HUNTER_F.beast_mastery, 4),
 assert 10 in ids_of(frost.aoe)
 blizzard = next(e for e in frost.aoe.values() if e["id"] == 10)
 assert any(g["t"] == "targets" and g["n"] == 4 for g in blizzard["gates"].values())
+# The adjustment table's per-tree options, on synthetic entries: `at` retunes a threshold, `was`
+# stops the build when the source no longer says what the row was written against, `drop`
+# removes matching conditions (a group by a member), and none of them flags the entry.
+import gen_forever_rotations as _gfr  # noqa: E402
+_chains = {"probe": [(900001, 1)]}
+_saved = _gfr.REGATE.get("testclass")
+_gfr.REGATE["testclass"] = {"probe": dict(at={"a": {"combo_points": 2}}, was={"a": {"combo_points": 5}},
+                                         drop={"b": [{"t": "power", "res": "energy", "op": ">="},
+                                                     {"t": "all", "has": {"t": "known", "id": 7}}]})}
+_points = {"t": "resource", "res": "combo_points", "op": ">=", "n": 5}
+_floor = {"t": "power", "res": "energy", "op": ">=", "n": 60}
+_branch = {"t": "all", "g": [{"t": "known", "id": 7}, {"t": "targets", "op": "<", "n": 3}]}
+_other = {"t": "all", "g": [{"t": "known", "id": 8}]}
+_entry = {"id": 900001, "gates": [dict(_points), dict(_floor), _branch, _other]}
+_gfr.regate("testclass", "a", [_entry], _chains)
+assert _entry["gates"][0]["n"] == 2 and len(_entry["gates"]) == 4 and "w" not in _entry, _entry
+_entry = {"id": 900001, "gates": [dict(_points), dict(_floor), _branch, _other]}
+_gfr.regate("testclass", "b", [_entry], _chains)
+assert _entry["gates"] == [_points, _other] and "w" not in _entry, _entry
+try:
+    _gfr.regate("testclass", "a", [{"id": 900001, "gates": [dict(_points, n=3)]}], _chains)
+    raise AssertionError("a source that moved must stop the build")
+except SystemExit as moved:
+    assert "revisit the row" in str(moved), moved
+if _saved is None:
+    del _gfr.REGATE["testclass"]
+# Subtlety: Vanish is for groups only (alone it drops the fight), and carries no energy threshold.
+_vanish = [dict(g) for g in gate_list(entry_of(classes.ROGUE_F.subtlety.st, 1856))]
+assert {"t": "group"} in _vanish, "Vanish only in a group"
+assert not any(g["t"] == "power" for g in _vanish), "Vanish saves no energy"
+# Subtlety: no energy threshold on Hemorrhage or Eviscerate. Sinister Strike below them spends
+# first, so a threshold above its cost is never reached and the entry is never offered.
+for sid, why in ((16511, "Hemorrhage"), (2098, "Eviscerate")):
+    gates = flat_gates(gate_list(entry_of(classes.ROGUE_F.subtlety.st, sid)))
+    assert not any(g["t"] == "power" and g["res"] == "energy" for g in gates), (why, "saves no energy")
+# Combat: Eviscerate from two combo points, as the source has it after our pin.
+assert {"t": "resource", "res": "combo_points", "op": ">=", "n": 2} in \
+    [dict(g) for g in gate_list(entry_of(classes.ROGUE_F.combat.st, 2098))], "Combat Eviscerate from 2 points"
+# Arcane: recovering mana and spending Missile Barrage do not depend on a talent.
+for sid, why in ((12051, "Evocation"), (5143, "Arcane Missiles")):
+    gates = flat_gates(gate_list(entry_of(classes.MAGE_F.arcane.st, sid)))
+    assert gates and not any(g["t"] == "known" for g in gates), (why, "needs no talent")
+# Restoration shaman: Flame Shock is kept up ahead of Lightning Bolt.
+resto = ids_of(classes.SHAMAN_F.restoration.st)
+assert resto.index(8050) < resto.index(403), "Flame Shock before Lightning Bolt"
+# Bear: Enrage starts the rage, only at low rage and above half health (it lowers armor).
+enrage = entry_of(classes.DRUID_F.feral_bear.st, 5229)
+assert enrage["w"] and {"t": "health", "op": ">", "pct": 50} in [dict(g) for g in gate_list(enrage)], "Enrage is gated on health"
+assert any(g["t"] == "power" and g["res"] == "rage" and g["op"] == "<" for g in gate_list(enrage)), "Enrage only at low rage"
 enh = classes.SHAMAN_F.enhancement.st
 assert ids_of(enh).index(403) < ids_of(enh).index(408341), \
     "Single-target instant Bolt precedes Nova"
@@ -471,10 +557,11 @@ for context in ("st", "cleave", "aoe"):
     ids = ids_of(classes.SHAMAN_F.enhancement[context])
     assert ids.index(8050) < ids.index(17364) < ids.index(403) < ids.index(8042), \
         (context, "Earth Shock fills after Flame Shock, Stormstrike and Lightning Bolt")
-    # The shocks share a 6s cooldown: Earth Shock fills only while Flame Shock has more left.
+    # The shocks share a 6s cooldown. Earth Shock fills while Flame Shock has more than 4s
+    # left: asking for the whole cooldown never held before the talent that shortens it.
     shock = gate_list(entry_of(classes.SHAMAN_F.enhancement[context], 8042))
     assert len(shock) == 1 and (shock[0]["t"], shock[0]["id"], shock[0]["op"], shock[0]["n"]) == \
-        ("debuff", 8050, ">", 6), (context, "Earth Shock waits on Flame Shock's time left", shock)
+        ("debuff", 8050, ">", 4), (context, "Earth Shock waits on Flame Shock's time left", shock)
 assert ids_of(classes.SHAMAN_F.enhancement.aoe).index(408341) < \
     ids_of(classes.SHAMAN_F.enhancement.aoe).index(17364), "AoE Nova precedes Stormstrike"
 assert any(e["id"] == 403 and e["gates"][1]["t"] == "stack" and e["gates"][1]["n"] == 5
@@ -577,3 +664,29 @@ assert _missiles and all(any(g["t"] == "buff" and g["id"] == 400589 for g in gat
     "Arcane Missiles waits on the client's Missile Barrage aura"
 _claw = entry_of(classes.DRUID_F.feral.st, 1082)
 assert not gate_list(_claw) and not _claw["delegated"], "Claw is the cat list's unconditional attack and may lead"
+
+# A target carries one Bane from a warlock: Doom leads and Agony waits while it runs, in every tier.
+for _tree in ("affliction", "demonology", "destruction"):
+    for _context in ("st", "cleave", "aoe"):
+        _entries = classes.WARLOCK_F[_tree][_context]
+        if _entries is None:
+            continue
+        _order = [e["id"] for e in _entries.values()]
+        assert _order.index(603) < _order.index(980), (_tree, _context, "Bane of Doom before Bane of Agony")
+        assert any(g["t"] == "debuff" and g["id"] == 603 and g["neg"] for g in gate_list(entry_of(_entries, 980))), \
+            (_tree, _context, "Bane of Agony must not replace a running Bane of Doom")
+# A damage over time with no hit of its own always carries its keep-it-up condition.
+for _entries, _sid in ((classes.WARLOCK_F.affliction.st, 603), (classes.HUNTER_F.survival.st, 1978),
+                       (classes.PRIEST_F.shadow.st, 2944)):
+    assert any(g["t"] == "debuff" and g["id"] == _sid and g["refresh"] for g in gate_list(entry_of(_entries, _sid))), \
+        (_sid, "a pure damage over time needs its own refresh condition")
+
+# Bear Maul spends at its cost until Lacerate or Primal Bite is learned, then banks 25 rage.
+for _context in ("st", "aoe"):
+    _maul = entry_of(classes.DRUID_F.feral_bear[_context], 6807)
+    _alt = [g for g in gate_list(_maul) if g["t"] == "any"]
+    assert _maul["w"] and len(_alt) == 1, (_context, "Maul: one rage-or-unlearned group")
+    _members = [dict(_alt[0]["g"][i]) for i in range(1, len(_alt[0]["g"]) + 1)]
+    assert _members[0]["t"] == "power" and _members[0]["n"] == 25, (_context, _members)
+    _unknown = {dict(x)["id"] for x in dict(_members[1])["g"].values()}
+    assert _unknown == {1328617, 407995}, (_context, "until Lacerate or Primal Bite is known", _unknown)

@@ -15,8 +15,11 @@ local tostring   = tostring
 local wipe       = wipe
 local ipairs     = ipairs
 local geterrorhandler = geterrorhandler
-local IsSpellKnown  = IsSpellKnown
-local IsPlayerSpell = IsPlayerSpell
+local IsPlayerSpell = C_SpellBook.IsSpellKnown
+local function IsSpellInBook(spellID, isPet)
+    local bank = isPet and Enum.SpellBookSpellBank.Pet or Enum.SpellBookSpellBank.Player
+    return C_SpellBook.IsSpellInSpellBook(spellID, bank, false)
+end
 local C_Spell_IsSpellPassive            = C_Spell and C_Spell.IsSpellPassive
 local C_Spell_GetSpellInfo              = C_Spell and C_Spell.GetSpellInfo
 local C_Spell_GetSpellCooldown          = C_Spell and C_Spell.GetSpellCooldown
@@ -506,6 +509,14 @@ function BlizzardAPI.GetGCDLength()
     return lastGCDLength
 end
 
+--- Seconds of global cooldown left at now (default GetTime()), 0 when none runs or it is
+--- unreadable (GetGCDInfo answers 0, 0 for a secret read).
+function BlizzardAPI.GetGCDRemaining(now)
+    local start, duration = BlizzardAPI.GetGCDInfo()
+    if type(start) ~= "number" or type(duration) ~= "number" or duration <= 0 then return 0 end
+    return math.max(0, start + duration - (now or GetTime()))
+end
+
 function BlizzardAPI.GetGCDInfo()
     local reference = BlizzardAPI.GetGCDReferenceSpell()
     if C_Spell_GetSpellCooldown and reference then
@@ -831,6 +842,33 @@ function BlizzardAPI.HasRequiredAttackWeapon(spellID)
     return false
 end
 
+--- Is an item of this item class and one of these subclasses (one bit per subclass, as the
+--- client's own spell requirements give them) in a weapon slot? true or false; nil when a worn
+--- item cannot be read. Plain reads in and out of combat.
+function BlizzardAPI.HasEquippedItemClass(classID, subclassMask)
+    if not (GetInventoryItemID and C_Item and C_Item.GetItemInfoInstant)
+       or type(classID) ~= "number" or type(subclassMask) ~= "number" then return nil end
+    local unknown = false
+    for slot = 16, 18 do   -- main hand, off hand, ranged (no ranged slot on Retail: empty)
+        local ok, itemID = pcall(GetInventoryItemID, "player", slot)
+        if not ok or IsSecretValue(itemID) then
+            unknown = true
+        elseif itemID then
+            local okInfo, _, _, _, _, _, itemClass, subclass = pcall(C_Item.GetItemInfoInstant, itemID)
+            if okInfo and not IsSecretValue(itemClass) and not IsSecretValue(subclass)
+               and type(itemClass) == "number" and type(subclass) == "number" then
+                if itemClass == classID and bit.band(subclassMask, bit.lshift(1, subclass)) ~= 0 then
+                    return true
+                end
+            else
+                unknown = true
+            end
+        end
+    end
+    if unknown then return nil end
+    return false
+end
+
 local spellAvailabilityCache = {}
 
 function BlizzardAPI.ClearAvailabilityCache()
@@ -863,8 +901,8 @@ function BlizzardAPI.IsSpellAvailable(spellID)
 
     -- Authoritative checks first: IsSpellKnown/IsPlayerSpell are definitive
     -- for active spells and correctly exclude unselected choice-node talents.
-    if IsSpellKnown then
-        if IsSpellKnown(spellID) or IsSpellKnown(spellID, true) then
+    if IsSpellInBook then
+        if IsSpellInBook(spellID) or IsSpellInBook(spellID, true) then
             spellAvailabilityCache[spellID] = true
             return true
         end

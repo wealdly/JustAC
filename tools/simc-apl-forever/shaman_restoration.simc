@@ -3,8 +3,11 @@
 # overview: spare time goes to Fire Nova on packs or Lightning Bolt
 # (Documentation/forever-guides/druid-shaman.md, Shaman - Restoration); Icy Veins' Forever
 # Restoration Shaman levelling guide (read 2026-11-17) adds Chain Lightning against several.
+# Flame Shock is kept up ahead of Lightning Bolt (2026-11-20 simulation: kills 18 to 25% faster
+# at 14 and 30, no change at 60).
 # Supported conditions: target.health.pct<N, [!]dot.X.ticking, active_enemies>=N.
 
 actions=fire_nova,if=active_enemies>=3
 actions+=/chain_lightning,if=active_enemies>=2
+actions+=/flame_shock,if=!dot.flame_shock.ticking
 actions+=/lightning_bolt

@@ -216,6 +216,52 @@ def main():
     pcheck('not DE.IsSelfLockedOut(407788) and Held() == "642,498,1022"')
     # Weakened Soul is a priest entry only.
     pcheck("SpellDB.GetSelfLockout(17) == nil")
+    # A debuff that weakens the enemy (Hex of Weakness here) is held from your own cast for its
+    # duration, whoever the target, and dropped on a new target: it says nothing about that one.
+    check("SpellDB.GetEnemyMitigationDuration(9035) == 120 and SpellDB.GetEnemyMitigationDuration(19285) == 120")
+    check("SpellDB.GetEnemyMitigationDuration(1160) == 45 and SpellDB.GetEnemyMitigationDuration(99) == 30")
+    check("SpellDB.GetEnemyMitigationDuration(2061) == nil")
+    lua.execute("LibStub('JustAC-BlizzardAPI').GetPeriodicRefreshLead = nil")
+    lua.execute("profile.defensives.classSpells.PRIEST_F.defensiveSpells = {9035, 2061}")
+    check('Queue() == "9035,2061"')
+    lua.execute('DE.NoteSpellcastSent("Enemy Mob", "x1", 19284)')    # cast on an enemy, any rank
+    check('DE.NoteSpellcastSucceeded("x1") == true')
+    check('DE.IsSelfLockedOut(9035) and Held() == "9035" and Queue():sub(1, 4) == "2061"')
+    lua.execute("now = now + 100")
+    check('DE.IsSelfLockedOut(9035)')
+    lua.execute("now = now + 21")
+    check('not DE.IsSelfLockedOut(9035) and Queue() == "9035,2061"')
+    lua.execute('DE.NoteSpellcastSent("Enemy Mob", "x2", 9035)')
+    check('DE.NoteSpellcastSucceeded("x2") == true and DE.IsSelfLockedOut(9035)')
+    lua.execute("DE.OnTargetChanged()")
+    check('not DE.IsSelfLockedOut(9035) and Queue() == "9035,2061"')
+    # A heal over time held on yourself is not dropped by a new target.
+    lua.execute("profile.defensives.classSpells.PRIEST_F.defensiveSpells = {139, 2061}")
+    lua.execute('DE.NoteSpellcastSent("Me", "x3", 139)')
+    check('DE.NoteSpellcastSucceeded("x3") == true')
+    lua.execute("DE.OnTargetChanged()")
+    check('DE.IsSelfLockedOut(139)')
+
+    # Saved lists: one identical to any earlier default (the emergency potion aside) becomes the
+    # current default once per version; an edited list stays.
+    lua.execute("""
+        SpellDB.EMERGENCY_POTION = SpellDB.EMERGENCY_POTION or -9000000
+        local current = SpellDB.ResolveDefaults(SpellDB.CLASS_DEFENSIVE_DEFAULTS, "PRIEST_F", "PRIEST")
+        currentText = table.concat(current, ",")
+        function Saved(list)
+            profile.defensives.classSpells.PRIEST_F = {defensiveSpells = list, groupHelpSpells = {}}
+            DE.InitializeDefensiveSpells(addon)
+            local out = {}
+            for _, id in ipairs(profile.defensives.classSpells.PRIEST_F.defensiveSpells) do
+                if id ~= SpellDB.EMERGENCY_POTION then out[#out + 1] = id end
+            end
+            return table.concat(out, ",")
+        end
+    """)
+    check('Saved({17, 13908, 139, 2061, 20594, 1299026}) == currentText')               # the first default
+    check('Saved({17, 13908, 2651, 139, 2061, 20594, 1299026, -9000000}) == currentText')   # the second, with a potion
+    check('Saved({17, 13908, 139, 20594, 1299026}) == "17,13908,139,20594,1299026"')     # edited: kept
+    check('currentText:find("9035") and currentText:find("2050")')                         # Hex, Lesser Heal
     print(f"self lockout: {count} checks passed")
 
 

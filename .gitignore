@@ -52,3 +52,5 @@ Libs/LibStub/LibStub/
 
 # Local analyzer baselines (tools/analyze_probe.py --accept); per-machine captures.
 /.probe-baselines/
+# Capture sessions kept for review (tools/archive_probe.py); per-machine.
+/.probe-archive/

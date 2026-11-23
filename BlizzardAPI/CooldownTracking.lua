@@ -298,6 +298,8 @@ local function RemovedSince(removedAt, since, grace)
 end
 local formCache   -- resolved on first use: FormCache loads after this file
 local rotationImport   -- resolved on first use: rank chains (WoW Forever)
+local NoteDamageCast   -- Measured damage (below): one of the player's casts, for the meter
+local FOREVER_CLIENT = SpellDB and SpellDB.IsForever and SpellDB.IsForever() or false
 local maintenanceTracker   -- resolved on first use: Cooldown Manager aura state (loads later)
 
 -- The last cast, and the last one on the global cooldown, by base id (SimC's `prev.x` and
@@ -357,6 +359,7 @@ function BlizzardAPI.NoteOwnCast(spellID)
     if not (BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(spellID)) then
         lastGcdCast = lastCast
     end
+    if FOREVER_CLIENT and NoteDamageCast then NoteDamageCast(spellID) end
 end
 
 --- Was spellID the last cast (gcdOnly: the last one on the global cooldown)? false before
@@ -468,11 +471,55 @@ function BlizzardAPI.RunningAutoSwing(spellID)
 end
 
 local damageBaseline, damageBaselineAt
+
 local DAMAGE_BASELINE_REFRESH = 1
 
 local function PlainDamageNumber(value)
     return not IsSecretValue(value) and type(value) == "number"
         and value == value and value > -math.huge and value < math.huge
+end
+
+--- One auto attack from the character sheet: the average hit and interval of the ranged shot
+--- (5019, 75) or of the main hand plus the off hand when one is equipped (6603). nil when
+--- unreadable; an off hand that cannot be read leaves the whole answer unknown.
+local function SheetSwing(spellID)
+    local ok, speed, low, high
+    if spellID == 5019 or spellID == 75 then
+        if not UnitRangedDamage or not UnitAttackSpeed then return nil end
+        ok, speed, low, high = pcall(UnitRangedDamage, "player")
+        if not ok then geterrorhandler()(speed); return nil end
+        local mainSpeed, _
+        ok, mainSpeed, _, speed = pcall(UnitAttackSpeed, "player")
+        if not ok then geterrorhandler()(mainSpeed); return nil end
+        if not PlainDamageNumber(speed) or speed <= 0
+           or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
+        return (low + high) / 2, speed
+    elseif spellID == 6603 then
+        if not UnitAttackSpeed or not UnitDamage then return nil end
+        local offSpeed, offLow, offHigh
+        ok, speed, offSpeed = pcall(UnitAttackSpeed, "player")
+        if not ok then geterrorhandler()(speed); return nil end
+        ok, low, high, offLow, offHigh = pcall(UnitDamage, "player")
+        if not ok then geterrorhandler()(low); return nil end
+        if not PlainDamageNumber(speed) or speed <= 0
+           or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
+        if IsSecretValue(offSpeed) then return nil end
+        if offSpeed == nil then return (low + high) / 2, speed end
+        if not PlainDamageNumber(offSpeed) or offSpeed <= 0
+           or not PlainDamageNumber(offLow) or not PlainDamageNumber(offHigh)
+           or offLow < 0 or offHigh < offLow then return nil end
+        return (low + high) / 2, speed, (offLow + offHigh) / 2, offSpeed
+    end
+    return nil
+end
+
+--- Damage per second of SheetSwing's answer, or nil.
+local function SwingDPS(hit, speed, offHit, offSpeed)
+    if not hit then return nil end
+    local dps = hit / speed
+    if offHit then dps = dps + offHit / offSpeed end
+    if PlainDamageNumber(dps) and dps > 0 then return dps end
+    return nil
 end
 
 local function ReadDamageNumber(fn, ...)
@@ -485,9 +532,11 @@ local function ReadDamageNumber(fn, ...)
     if PlainDamageNumber(value) then return value end
 end
 
--- Estimate row: base, per-level gain, spell level, max level, SP coefficient, school;
--- then partial=1 when a damage over time follows the hit, and that damage over
--- time's full-duration base, per-level gain and SP coefficient when the data has them.
+-- Estimate row: [1] base, [2] per-level gain, [3] spell level, [4] max level, [5] SP coefficient,
+-- [6] school; then [7] 1 when a damage over time follows (or, with base 0, is) the hit, and that
+-- damage over time's [8] full-duration base, [9] per-level gain, [10] SP coefficient and
+-- [11] seconds when the data has them; [12] 1 for a measure-only row (an instant damage over time
+-- with no hit: priced for measured damage, never by the public reads) else 0, [13] tick period.
 local function ScaledDamage(e, baseline, base, perLevel, coefficient)
     if baseline and not damageBaseline then return nil end
     local level
@@ -520,10 +569,26 @@ local function DamageEstimate(spellID)
     return RI and RI.GetDirectDamageEstimate and RI.GetDirectDamageEstimate(spellID)
 end
 
---- Baseline direct hit of one cast, not a simulator: excludes talents, crit and mitigation.
---- wholeSpell adds the full damage over time that follows the hit (nil when that total is
---- unknown); otherwise the hit alone. baseline=true uses captured pre-combat stats.
-function BlizzardAPI.GetDirectSpellHit(spellID, baseline, wholeSpell)
+--- value scaled by what spellID's attack measured against its paper damage in earlier fights
+--- (talents, crits, misses, resists: BlizzardAPI.GetMeasuredDamageRatio); unmeasured, as given.
+--- Every damage read below answers with it, so every comparison sees the same correction.
+local function Measured(spellID, value)
+    if type(value) ~= "number" then return value end
+    local ratio = BlizzardAPI.GetMeasuredDamageRatio and BlizzardAPI.GetMeasuredDamageRatio(spellID)
+    if ratio then return value * ratio end
+    return value
+end
+
+--- Is spellID's estimate priced for measured damage only (an instant damage over time with no
+--- hit: its row's 12th field)? Such a spell never chooses an opener or a filler on its price.
+function BlizzardAPI.IsMeasureOnlyEstimate(spellID)
+    local e = DamageEstimate(spellID)
+    return e ~= nil and e[12] == 1
+end
+
+--- Paper direct hit of one cast from the data model: excludes talents, crit and mitigation.
+--- The measurement prices its casts with this, never with the measured read.
+local function PaperSpellHit(spellID, baseline, wholeSpell)
     local e = DamageEstimate(spellID)
     if not e then return nil end
     -- A damage over time with no hit of its own (Corruption) has only a whole-spell figure.
@@ -537,6 +602,15 @@ function BlizzardAPI.GetDirectSpellHit(spellID, baseline, wholeSpell)
     local dot = ScaledDamage(e, baseline, e[8], e[9], e[10])
     if not dot then return nil end
     return hit + dot
+end
+
+--- Expected direct hit of one cast: the paper hit (PaperSpellHit), scaled by what the spell
+--- measured. wholeSpell adds the full damage over time that follows the hit (nil when that
+--- total is unknown); otherwise the hit alone. baseline=true uses captured pre-combat stats.
+function BlizzardAPI.GetDirectSpellHit(spellID, baseline, wholeSpell)
+    local e = DamageEstimate(spellID)
+    if e and e[12] == 1 then return nil end   -- measure-only (an instant damage over time)
+    return Measured(spellID, PaperSpellHit(spellID, baseline, wholeSpell))
 end
 
 --- Baseline direct spell DPS, not a simulator: excludes talents, crit and target mitigation.
@@ -599,49 +673,16 @@ function BlizzardAPI.GetDirectSpellDPS(spellID, castSeconds, baseline)
         damage = damage + dot * math.min(1, castSeconds / seconds)
     end
     local dps = damage / castSeconds
-    if PlainDamageNumber(dps) and dps > 0 then return dps end
+    if PlainDamageNumber(dps) and dps > 0 then return Measured(spellID, dps) end
     return nil
 end
 
---- Equipped-weapon DPS; baseline=true returns the captured pre-combat estimate.
+--- Expected equipped-weapon DPS: the sheet's, scaled by what the attack measured;
+--- baseline=true starts from the captured pre-combat sheet.
 function BlizzardAPI.GetAutoAttackDPS(spellID, baseline)
     if not BlizzardAPI.IsForever() then return nil end
-    if baseline then return damageBaseline and damageBaseline.weapons[spellID] end
-    local ok, speed, low, high
-    if spellID == 5019 or spellID == 75 then
-        if not UnitRangedDamage or not UnitAttackSpeed then return nil end
-        ok, speed, low, high = pcall(UnitRangedDamage, "player")
-        if not ok then geterrorhandler()(speed); return nil end
-        local mainSpeed, _
-        ok, mainSpeed, _, speed = pcall(UnitAttackSpeed, "player")
-        if not ok then geterrorhandler()(mainSpeed); return nil end
-    elseif spellID == 6603 then
-        if not UnitAttackSpeed or not UnitDamage then return nil end
-        local offSpeed, offLow, offHigh
-        ok, speed, offSpeed = pcall(UnitAttackSpeed, "player")
-        if not ok then geterrorhandler()(speed); return nil end
-        ok, low, high, offLow, offHigh = pcall(UnitDamage, "player")
-        if not ok then geterrorhandler()(low); return nil end
-        if not PlainDamageNumber(speed) or speed <= 0
-           or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
-        local dps = (low + high) / (2 * speed)
-        if IsSecretValue(offSpeed) then return nil end
-        if offSpeed ~= nil then
-            if not PlainDamageNumber(offSpeed) or offSpeed <= 0
-               or not PlainDamageNumber(offLow) or not PlainDamageNumber(offHigh)
-               or offLow < 0 or offHigh < offLow then return nil end
-            dps = dps + (offLow + offHigh) / (2 * offSpeed)
-        end
-        if PlainDamageNumber(dps) and dps > 0 then return dps end
-        return nil
-    else
-        return nil
-    end
-    if not PlainDamageNumber(speed) or speed <= 0
-       or not PlainDamageNumber(low) or not PlainDamageNumber(high) or low < 0 or high < low then return nil end
-    local dps = (low + high) / (2 * speed)
-    if PlainDamageNumber(dps) and dps > 0 then return dps end
-    return nil
+    if baseline then return Measured(spellID, damageBaseline and damageBaseline.weapons[spellID]) end
+    return Measured(spellID, SwingDPS(SheetSwing(spellID)))
 end
 
 --- Base mana regeneration per second captured with the pre-combat damage baseline, or nil.
@@ -658,22 +699,478 @@ function BlizzardAPI.RefreshDamageBaseline()
     if not BlizzardAPI.IsForever() or InCombatLockdown() then return end
     local now = GetTime()
     if damageBaselineAt and now - damageBaselineAt < DAMAGE_BASELINE_REFRESH then return end
-    local ranged = BlizzardAPI.GetAutoAttackDPS(5019)
+    local rangedHit, rangedSpeed = SheetSwing(5019)
+    local mainHit, mainSpeed, offHit, offSpeed = SheetSwing(6603)
+    local ranged = SwingDPS(rangedHit, rangedSpeed)
+    local melee = SwingDPS(mainHit, mainSpeed, offHit, offSpeed)
     local snapshot = {
         level = ReadDamageNumber(UnitLevel, "player"),
         bonuses = {},
         weapons = {
             [5019] = ranged,
             [75] = ranged,
-            [6603] = BlizzardAPI.GetAutoAttackDPS(6603),
+            [6603] = melee,
         },
         -- Base regeneration read nil in combat in a 2026-11-16 capture; Spirit rarely changes
         -- mid-fight, so the comparison charges mana at the pre-combat rate like its damage.
         manaRegen = BlizzardAPI.GetBaseManaRegen and BlizzardAPI.GetBaseManaRegen(),
+        -- Average damage of one swing by PLAYER_SWING type (0 main hand, 1 off hand, 2 ranged):
+        -- the price of each auto attack the measurement counts.
+        swingHit = {},
     }
+    if melee then snapshot.swingHit[0], snapshot.swingHit[1] = mainHit, offHit end
+    if ranged then snapshot.swingHit[2] = rangedHit end
     for school = 1, 7 do snapshot.bonuses[school] = ReadDamageNumber(GetSpellBonusDamage, school) end
     damageBaseline, damageBaselineAt = snapshot, now
 end
+
+--------------------------------------------------------------------------------
+-- Measured damage (WoW Forever). The weapon comparison prices a weapon from the character
+-- sheet and a spell from the data model: both leave out talents, crits, misses and resists, and
+-- gear changes while levelling. After a fight the built-in damage meter's per-spell totals for
+-- the player are plain (secret in combat: never read there), so the damage it measured over the
+-- casts, ranged shots and melee swings counted, against their paper damage at the time, gives a
+-- ratio per attack. The ratio carries over, not a number: a new weapon moves the paper figure at
+-- once and the ratio keeps the talents, crit and hit it measured. No measurement: nil, paper
+-- stands.
+--------------------------------------------------------------------------------
+-- Every key is the meter's own id: it reports a wand's damage as Auto Shot (75), never Shoot
+-- (5019) (2026-11-18 warlock captures), and white melee as 6603 (2026-11-20 warrior capture).
+local METER_ALIAS = { [5019] = 75 }
+local RANGED_KEY, MELEE_KEY = 75, 6603
+local SWING_KEYS = { [0] = MELEE_KEY, [1] = MELEE_KEY, [2] = RANGED_KEY }
+local WEAPON_SLOT = { [RANGED_KEY] = INVSLOT_RANGED or 18, [MELEE_KEY] = INVSLOT_MAINHAND or 16 }
+-- Weapon subclass -> skill line, as the character sheet maps them (PaperDollFrameStats, by
+-- Enum.ItemWeaponSubclass name); a druid in a shapeshift form uses the feral skill.
+local WEAPON_SKILL_BY_NAME = {
+    Sword1H = 43, Axe1H = 44, Bows = 45, Guns = 46, Mace1H = 54, Sword2H = 55, Staff = 136,
+    Mace2H = 160, Axe2H = 172, Dagger = 173, Thrown = 176, Crossbow = 226, Wand = 228,
+    Polearm = 229, Unarmed = 162,
+}
+local FERAL_WEAPON_SKILL = 3014
+local weaponSkillBySubclass
+local MEASURE_KEEP = 0.7            -- weight of earlier fights each time a fight is added
+local MEASURE_MIN_CASTS, MEASURE_MIN_SWINGS = 3, 8
+local MEASURE_RATIO_MIN, MEASURE_RATIO_MAX = 0.25, 4   -- outside: the identities did not match
+local MEASURE_SKILL_STEP = 5        -- weapon skill this much higher: earlier misses no longer apply
+-- Normal levelling targets only: misses and resists climb steeply three or more levels above,
+-- and a grey mob dies to overkill. The gap is the target's level minus the player's.
+local MEASURE_GAP_MIN, MEASURE_GAP_MAX = -4, 2
+local talentSignature               -- points spent per tree when the measurements were taken
+local MEASURE_SESSIONS_KEPT = 8
+local fightSession                  -- the meter session notified during this fight
+-- Solo fights only: with a partner, kills come sooner and a shot in flight or the overkill of a
+-- last hit lands nothing on the meter, so a grouped fight measures who else hit the mob, not
+-- the attack (wand 0.85 and 0.92 in the two grouped fights of the 2026-11-20 priest capture,
+-- 1.06 solo, skill 2 to 3 under its cap). A fight counts only when every press read not grouped.
+local skipped = { grouped = 0, level = 0 }   -- fights left unmeasured, by reason (capture report)
+local sessionTallies, sessionOrder = {}, {}
+local measured = {}                 -- key -> { damage, paper, count, skill, gap }
+
+--- Casts and swings per key: count, paper price, keys with an unpriced press, the meter damage
+--- already credited, and the target level gap when the first press was counted. A fight's tally
+--- also carries its damage over time: dotKeys (keys cast), dotTarget (the GUID every cast went on,
+--- false once that is not one enemy) and dotSampled (the enemy count was read in combat).
+local function NewTally()
+    return { count = {}, paper = {}, bad = {}, credited = {}, dotKeys = {} }
+end
+local fightTally = NewTally()       -- since the last fight ended
+-- Damage over time this fight. A cast is priced when its run ends: its hit plus the damage over
+-- time for the part of its duration it could tick, until it expires, is recast (a refresh drops
+-- the ticks left) or the fight ends. That stands for the target's death only in a fight with
+-- one enemy, so a fight is measured for damage over time only when every such cast went on one
+-- target and the engaged count read 1 at every sample (an inference from confirmed inputs).
+local openDots = {}                 -- key -> { at, hit, dot, seconds, period } the running cast
+
+local function MeasureKey(id)
+    id = METER_ALIAS[id] or id
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    local RI = rotationImport
+    return RI and RI.RankBase and RI.RankBase(id) or id
+end
+
+--- n presses of key (default 1; -1 takes one back) at price each. An unpriced press leaves the
+--- fight's total for that key unsplittable.
+local function Tally(key, price, n)
+    n = n or 1
+    local t = fightTally
+    t.count[key] = (t.count[key] or 0) + n
+    if price then
+        t.paper[key] = (t.paper[key] or 0) + price * n
+    else
+        t.bad[key] = true
+    end
+    if t.solo ~= false then
+        t.solo = BlizzardAPI.IsGrouped ~= nil and BlizzardAPI.IsGrouped() == false
+    end
+    if not t.gapRead then
+        t.gapRead = true
+        local target, player = ReadDamageNumber(UnitLevel, "target"), ReadDamageNumber(UnitLevel, "player")
+        if target and player and target > 0 then t.gap = target - player end
+    end
+end
+
+--- Pre-combat sheet price of one swing of PLAYER_SWING type swingType, or nil.
+local function SwingPrice(swingType)
+    return damageBaseline and damageBaseline.swingHit[swingType]
+end
+
+--- The skill line of the weapon in the attack's slot (the feral skill in a druid form, Unarmed
+--- with an empty melee slot), or nil.
+local function WeaponSkillLine(key)
+    if key == MELEE_KEY then
+        if formCache == nil then formCache = LibStub("JustAC-FormCache", true) or false end
+        local form = formCache and formCache.GetActiveForm and formCache.GetActiveForm()
+        if type(form) == "number" and form ~= 0 and UnitClass then
+            local ok, _, class = pcall(UnitClass, "player")
+            if ok and class == "DRUID" then return FERAL_WEAPON_SKILL end
+        end
+    end
+    local ok, itemID = pcall(GetInventoryItemID, "player", WEAPON_SLOT[key])
+    if not ok or IsSecretValue(itemID) then return nil end
+    if itemID == nil then
+        if key == MELEE_KEY then return WEAPON_SKILL_BY_NAME.Unarmed end
+        return nil
+    end
+    local _, classID, subclass
+    ok, _, _, _, _, _, classID, subclass = pcall(C_Item.GetItemInfoInstant, itemID)
+    if not ok or classID ~= ((Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2) then return nil end
+    if not weaponSkillBySubclass then
+        weaponSkillBySubclass = {}
+        local names = Enum and Enum.ItemWeaponSubclass
+        for name, line in pairs(WEAPON_SKILL_BY_NAME) do
+            if names and type(names[name]) == "number" then weaponSkillBySubclass[names[name]] = line end
+        end
+    end
+    return weaponSkillBySubclass[subclass]
+end
+
+--- Skill (rank plus modifier) and its cap for the weapon in the attack's slot, or nil. Out of
+--- combat only.
+local function WeaponSkill(key)
+    if InCombatLockdown() or not (C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID and GetInventoryItemID
+                                   and C_Item and C_Item.GetItemInfoInstant) then return nil end
+    local line = WeaponSkillLine(key)
+    if not line then return nil end
+    local ok, info = pcall(C_SkillInfo.GetSkillLineInfoByID, line)
+    if not ok or IsSecretValue(info) or type(info) ~= "table" then return nil end
+    local rank, modifier, maxRank = info.rank, info.modifier, info.maxRank
+    if not PlainDamageNumber(rank) or not PlainDamageNumber(maxRank) then return nil end
+    if not PlainDamageNumber(modifier) then modifier = 0 end
+    return rank + modifier, maxRank
+end
+
+--- One engaged-enemy sample for this fight's damage over time (in combat only). Once it is
+--- not one enemy, further samples change nothing.
+local function SampleEnemies()
+    local t = fightTally
+    if t.dotTarget == false or not next(openDots) or not InCombatLockdown() then return end
+    t.dotSampled = true
+    if (BlizzardAPI.GetEngagedEnemyCount and BlizzardAPI.GetEngagedEnemyCount()) ~= 1 then t.dotTarget = false end
+end
+
+--- Is a pet out (a plain true; unknown counts as out)?
+local function PetOut()
+    local ok, exists = pcall(UnitExists, "pet")
+    return not ok or IsSecretValue(exists) or exists ~= false and exists ~= nil
+end
+
+--- One auto attack (PLAYER_SWING, Forever only: 0 main hand, 1 off hand, 2 ranged). The meter
+--- files a pet's damage under its owner (a warlock's imp Firebolt, 2026-11-18 captures); whether
+--- a pet's white swings land in the owner's melee row is not known, so a fight with a pet out is
+--- not measured for melee.
+local function NoteSwing(swingType)
+    local key = SWING_KEYS[swingType]
+    if key then
+        Tally(key, SwingPrice(swingType))
+        if key == MELEE_KEY and not fightTally.bad[MELEE_KEY] and PetOut() then fightTally.bad[MELEE_KEY] = true end
+    end
+    SampleEnemies()
+end
+
+--- The run of key's damage over time ends at now: it is counted, priced for the part of its
+--- duration it could tick.
+local function CloseDot(key, now)
+    local d = openDots[key]
+    if not d then return end
+    openDots[key] = nil
+    local elapsed = math.max(0, now - d.at)
+    local ran
+    if d.period then
+        -- Ticks land every period after the cast: a run cut short has ticked whole periods.
+        local ticks = math.min(math.floor(elapsed / d.period + 1e-6), math.floor(d.seconds / d.period + 1e-6))
+        ran = ticks * d.period / d.seconds
+    else
+        ran = math.min(1, elapsed / d.seconds)
+    end
+    Tally(key, d.hit + d.dot * ran)
+end
+
+--- A cast with damage over time: the previous run of the same spell ends (a refresh), this one
+--- starts. Unpriceable (no pre-combat stats, no duration): the fight's total for it cannot be
+--- split.
+local function OpenDot(spellID, e)
+    local key, now = MeasureKey(spellID), GetTime()
+    CloseDot(key, now)
+    local hit = 0
+    if e[1] ~= 0 then hit = ScaledDamage(e, true, e[1], e[2], e[5]) end
+    local dot = e[8] and ScaledDamage(e, true, e[8], e[9], e[10])
+    local seconds = e[11]
+    if not (hit and dot and PlainDamageNumber(seconds) and seconds > 0) then
+        Tally(key, nil)
+        return
+    end
+    local period = e[13]
+    if not (PlainDamageNumber(period) and period > 0) then period = nil end
+    openDots[key] = { at = now, hit = hit, dot = dot, seconds = seconds, period = period }
+    local t = fightTally
+    t.dotKeys[key] = true
+    local ok, guid = pcall(UnitGUID, "target")
+    if not ok or IsSecretValue(guid) or type(guid) ~= "string" then
+        t.dotTarget = false
+    elseif t.dotTarget == nil then
+        t.dotTarget = guid
+    elseif t.dotTarget ~= guid then
+        t.dotTarget = false
+    end
+    SampleEnemies()
+end
+
+--- The fight ended: every running damage over time ends now. Unless the fight had one enemy
+--- throughout, its damage over time is left unmeasured.
+local function CloseDots()
+    local now, t = GetTime(), fightTally
+    for key in pairs(openDots) do CloseDot(key, now) end
+    if t.dotTarget == false or not t.dotSampled then
+        for key in pairs(t.dotKeys) do t.bad[key] = true end
+    end
+end
+
+--- One of the player's casts succeeded (from NoteOwnCast, Forever only). A next-swing attack
+--- (Heroic Strike, Cleave, Maul, Raptor Strike) took a main-hand swing whose damage is its own,
+--- not a white hit's: that swing leaves the white count (its PLAYER_SWING fires at the same
+--- moment, 2026-11-20 warrior capture). A direct hit with no damage over time is counted.
+NoteDamageCast = function(spellID)
+    if type(spellID) ~= "number" or METER_ALIAS[spellID] or spellID == RANGED_KEY then return end
+    if SpellDB and SpellDB.NEXT_SWING_SPELLS and SpellDB.NEXT_SWING_SPELLS[spellID] then
+        Tally(MELEE_KEY, SwingPrice(0), -1)
+        return
+    end
+    local e = DamageEstimate(spellID)
+    if not e then return end
+    if e[7] then
+        -- A channel's run ends when the channel stops, which no refresh or fight end marks.
+        if not (SpellDB and SpellDB.IsChanneled and SpellDB.IsChanneled(spellID)) then OpenDot(spellID, e) end
+        return
+    end
+    if e[1] == 0 then return end
+    Tally(MeasureKey(spellID), PaperSpellHit(spellID, true))
+    SampleEnemies()
+end
+
+local function Credit(key, damage, paper, count, skill, gap)
+    local m = measured[key]
+    if not m or (skill and m.skill and skill - m.skill >= MEASURE_SKILL_STEP) then
+        m = { damage = 0, paper = 0, count = 0 }
+        measured[key] = m
+    end
+    m.damage = m.damage * MEASURE_KEEP + damage
+    m.paper = m.paper * MEASURE_KEEP + paper
+    m.count = m.count * MEASURE_KEEP + count
+    m.skill, m.gap = skill, gap
+end
+
+--- The meter's damage per key of the session (keys the tally counted), or nil while it cannot
+--- be read: in combat, no source, or any field secret.
+local function SessionDamage(sessionID, guid, tally)
+    local ok, source = pcall(C_DamageMeter.GetCombatSessionSourceFromID, sessionID,
+        Enum.DamageMeterType.DamageDone, guid)
+    if not ok or IsSecretValue(source) or type(source) ~= "table" then return nil end
+    local list = source.combatSpells
+    if IsSecretValue(list) or type(list) ~= "table" then return nil end
+    local damage = {}
+    for i = 1, #list do
+        local spell = list[i]
+        if type(spell) ~= "table" or IsSecretValue(spell) then return nil end
+        local id, amount = spell.spellID, spell.totalAmount
+        if not (PlainDamageNumber(id) and PlainDamageNumber(amount)) then return nil end
+        local key = MeasureKey(id)
+        if tally.count[key] then damage[key] = (damage[key] or 0) + amount end
+    end
+    return damage
+end
+
+--- Read the meter for finished fights still waiting (only sessionID's when given). Out of
+--- combat only. Credited presses are zeroed, so a session read again (one session can span
+--- pulls) credits only what it gained since; a spell the meter does not list yet waits, since
+--- an absent row is not proof that every cast missed.
+local function ReadMeterSessions(onlySession)
+    if InCombatLockdown() or not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromID
+                                  and Enum and Enum.DamageMeterType) then return end
+    local guid = UnitGUID and UnitGUID("player")
+    if IsSecretValue(guid) or type(guid) ~= "string" then return end
+    local skills
+    for _, sessionID in ipairs(sessionOrder) do
+        local tally = (onlySession == nil or sessionID == onlySession) and sessionTallies[sessionID]
+        local damage = tally and SessionDamage(sessionID, guid, tally)
+        if damage then
+            for key, count in pairs(tally.count) do
+                local total, paper = damage[key], tally.paper[key]
+                local gained = total and total - (tally.credited[key] or 0)
+                if gained and gained >= 0 and count > 0 and paper and paper > 0 and not tally.bad[key] then
+                    if not skills then
+                        skills = { [RANGED_KEY] = WeaponSkill(RANGED_KEY), [MELEE_KEY] = WeaponSkill(MELEE_KEY) }
+                    end
+                    Credit(key, gained, paper, count, skills[key], tally.gap)
+                    tally.credited[key], tally.count[key], tally.paper[key] = total, 0, 0
+                end
+            end
+        end
+    end
+end
+
+--- A fight ended: its tally joins its meter session's. A fight the meter named no session
+--- for cannot be matched and is dropped.
+local function CloseFight()
+    local fight, sessionID = fightTally, fightSession
+    fightTally, fightSession = NewTally(), nil
+    if not sessionID or not next(fight.count) then return end
+    local reason
+    if not fight.solo then
+        reason = "grouped"
+    elseif not fight.gap or fight.gap < MEASURE_GAP_MIN or fight.gap > MEASURE_GAP_MAX then
+        reason = "level"
+    end
+    if reason then
+        skipped[reason] = skipped[reason] + 1
+        return
+    end
+    local tally = sessionTallies[sessionID]
+    if not tally then
+        tally = NewTally()
+        sessionTallies[sessionID] = tally
+        sessionOrder[#sessionOrder + 1] = sessionID
+        if #sessionOrder > MEASURE_SESSIONS_KEPT then
+            sessionTallies[table.remove(sessionOrder, 1)] = nil
+        end
+    end
+    for key, count in pairs(fight.count) do
+        tally.count[key] = (tally.count[key] or 0) + count
+        tally.paper[key] = (tally.paper[key] or 0) + (fight.paper[key] or 0)
+        if fight.bad[key] then tally.bad[key] = true end
+    end
+    if tally.gap == nil then tally.gap = fight.gap end
+end
+
+--- Points spent per tree as one string, or nil when unreadable.
+local function TalentSignature()
+    if rotationImport == nil then rotationImport = LibStub("JustAC-RotationImport", true) or false end
+    local RI = rotationImport
+    if not (RI and RI.SpentByTree) then return nil end
+    local ok, _, spent = pcall(RI.SpentByTree)
+    if not ok or type(spent) ~= "table" then return nil end
+    local parts = {}
+    for group, n in pairs(spent) do
+        if PlainDamageNumber(group) and PlainDamageNumber(n) then parts[#parts + 1] = group .. ":" .. n end
+    end
+    table.sort(parts)
+    return table.concat(parts, ",")
+end
+
+--- Measurements survive /reload and logout, per character (JustACDB char): learning takes
+--- several fights, and the player reloads often (to save a capture). Restored once, with the
+--- talents they were taken under; the saved table is then the live one, so it is current
+--- whenever the game saves. Returns the character's saved data, or nil before the addon loads.
+local function RestoreMeasured()
+    local addon = BlizzardAPI.GetAddon and BlizzardAPI.GetAddon()
+    local char = addon and addon.db and addon.db.char
+    if not char or char.measuredDamage == measured then return char end
+    local saved = char.measuredDamage
+    if type(saved) == "table" then
+        for key, m in pairs(saved) do
+            if type(key) == "number" and type(m) == "table" and PlainDamageNumber(m.damage)
+               and PlainDamageNumber(m.paper) and PlainDamageNumber(m.count) and m.paper > 0 then
+                measured[key] = m
+            end
+        end
+        if type(char.measuredTalents) == "string" then talentSignature = char.measuredTalents end
+    end
+    char.measuredDamage = measured
+    return char
+end
+
+--- Talents spent differently from when the measurements were taken: they no longer apply.
+local function NoteTalents()
+    local char = RestoreMeasured()
+    local signature = TalentSignature()
+    if signature == nil or signature == talentSignature then return end
+    if talentSignature ~= nil then wipe(measured) end
+    talentSignature = signature
+    if char then char.measuredTalents = signature end
+end
+BlizzardAPI._NoteTalents = NoteTalents
+
+local function ForgetSessions()
+    wipe(sessionTallies)
+    wipe(sessionOrder)
+    fightSession = nil
+end
+
+local function RatioForKey(key)
+    local m = measured[key]
+    if not m or m.paper <= 0 then return nil end
+    local need = MEASURE_MIN_CASTS
+    if key == RANGED_KEY or key == MELEE_KEY then need = MEASURE_MIN_SWINGS end
+    if m.count < need then return nil end
+    -- Damped toward paper: as if `need` more presses had landed at exactly their paper price,
+    -- so a few lucky crits or misses move it gradually and real data takes over as it comes.
+    local prior = need * m.paper / m.count
+    local ratio = (m.damage + prior) / (m.paper + prior)
+    if ratio < MEASURE_RATIO_MIN or ratio > MEASURE_RATIO_MAX then return nil end
+    return ratio, m.count
+end
+
+--- Measured damage over paper damage for spellID's attack (ranged: 5019 or 75; melee: 6603),
+--- and the weighted count behind it; nil until enough has been measured or when implausible.
+function BlizzardAPI.GetMeasuredDamageRatio(spellID)
+    if not spellID or next(measured) == nil or not BlizzardAPI.IsForever() then return nil end
+    return RatioForKey(MeasureKey(spellID))
+end
+
+--- Every measurement, for the capture: key=ratio count used skill gap, then weapon skills and
+--- waiting sessions.
+function BlizzardAPI.GetMeasuredDamageReport()
+    local keys = {}
+    for key in pairs(measured) do keys[#keys + 1] = key end
+    table.sort(keys)
+    local parts = {}
+    for _, key in ipairs(keys) do
+        local m = measured[key]
+        local ratio = m.paper > 0 and m.damage / m.paper or nil
+        parts[#parts + 1] = string.format("%d=%s:count=%.1f:used=%s:skill=%s:gap=%s", key,
+            ratio and string.format("%.3f", ratio) or "nil", m.count, tostring(RatioForKey(key) ~= nil),
+            tostring(m.skill), tostring(m.gap))
+    end
+    for _, key in ipairs({ RANGED_KEY, MELEE_KEY }) do
+        local skill, maxSkill = WeaponSkill(key)
+        parts[#parts + 1] = (key == RANGED_KEY and "rangedSkill=" or "meleeSkill=")
+            .. tostring(skill) .. "/" .. tostring(maxSkill)
+    end
+    parts[#parts + 1] = "sessions=" .. #sessionOrder
+    parts[#parts + 1] = "groupedSkipped=" .. skipped.grouped
+    parts[#parts + 1] = "levelSkipped=" .. skipped.level
+    return table.concat(parts, " ")
+end
+
+--- Tests: forget every measurement and tally.
+function BlizzardAPI._ResetMeasuredDamage()
+    wipe(measured)
+    ForgetSessions()
+    fightTally = NewTally()
+    skipped.grouped, skipped.level, talentSignature = 0, 0, nil
+    wipe(openDots)
+end
+
 
 -- PLAYER_SWING_RANGE_UPDATE (Forever): (swingType, inRange, checksRange), plain in combat and
 -- fired on every target change and range crossing (measured build 70245: a target acquired
@@ -756,6 +1253,7 @@ do
                    and type(swingType) == "number" and type(duration) == "number" and duration > 0 then
                     swingLast[swingType], swingDur[swingType] = GetTime(), duration
                     if swingType == SWING_RANGED then rangedShotAt = swingLast[swingType] end
+                    NoteSwing(swingType)
                     if swingType == SWING_MH or swingType == SWING_OH then
                         meleeActivityTargetEpoch = nil
                         meleeActivityAt = nil
@@ -798,6 +1296,49 @@ do
                     pcall(C_SwingTimer.EnableRangeCheck, SWING_RANGED, true)
                 end
                 RefreshSwingBase()
+            end
+        end)
+    end
+end
+
+-- Measured damage: fight ends and meter sessions (see "Measured damage" above). Forever only;
+-- casts arrive through NoteOwnCast.
+if FOREVER_CLIENT then
+    local f = CreateFrame("Frame")
+    -- pcall: the damage meter's events exist only where the meter does.
+    if pcall(f.RegisterEvent, f, "DAMAGE_METER_COMBAT_SESSION_UPDATED") then
+        pcall(f.RegisterEvent, f, "DAMAGE_METER_RESET")
+        f:RegisterEvent("PLAYER_REGEN_ENABLED")
+        for _, talentEvent in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_TALENT_UPDATE", "TRAIT_CONFIG_UPDATED",
+                                       "CHARACTER_POINTS_CHANGED" }) do
+            pcall(f.RegisterEvent, f, talentEvent)
+        end
+        f:SetScript("OnEvent", function(_, event, kind, sessionID)
+            if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
+                -- Payload (type, sessionID). The session a fight's damage goes to is the one
+                -- notified while it runs; after it, an update is the moment to read that session.
+                -- Each update also comes as session 0, the current-fight placeholder, in the same
+                -- moment and after the real id (2026-11-20 priest capture): 0 is never a session.
+                local damageDone = Enum and Enum.DamageMeterType and Enum.DamageMeterType.DamageDone
+                if IsSecretValue(kind) or IsSecretValue(sessionID) or type(sessionID) ~= "number"
+                   or sessionID <= 0 or (damageDone ~= nil and kind ~= damageDone) then return end
+                if InCombatLockdown() then
+                    fightSession = sessionID
+                elseif sessionTallies[sessionID] then
+                    ReadMeterSessions(sessionID)
+                end
+            elseif event == "DAMAGE_METER_RESET" then
+                ForgetSessions()
+            elseif event ~= "PLAYER_REGEN_ENABLED" then
+                NoteTalents()
+            else
+                CloseDots()
+                CloseFight()
+                if C_Timer and C_Timer.After then
+                    C_Timer.After(1, function() ReadMeterSessions() end)
+                else
+                    ReadMeterSessions()
+                end
             end
         end)
     end

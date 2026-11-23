@@ -495,7 +495,7 @@ def test_critical_preparation_context():
 
 
 def test_precombat_handoff_order():
-    from lupa import LuaRuntime
+    from wow_stubs import LuaRuntime
 
     source = (ROOT / "JustAC.lua").read_text(encoding="utf-8")
     start = source.index("    local queueSurfaceShown = not mainHidden or not npHidden")
@@ -606,6 +606,7 @@ def test_preparation_queue_exclusivity():
             SpellQueue.IsCasterSuppressedPick=function() return false end
             SpellQueue.IsSpellBlacklisted=function() return false end
             SpellQueue._ApplySafeLead=function() end
+            SpellQueue._StageLeadHold=function() end
             SpellQueue.NoteQueueBlank=function() end
             AUTO_ATTACK_SPELL=6603
             function NotePick() end

@@ -20,7 +20,7 @@ local UnitClass = UnitClass
 local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
-local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
+local IsPlayerSpell = C_SpellBook.IsSpellKnown
 local pcall = pcall
 local issecretvalue = issecretvalue
 local geterrorhandler = geterrorhandler
@@ -454,8 +454,7 @@ function PrecombatEngine.GetRecoveryHeals()
     end
     local recuperate = SpellDB and SpellDB.RECUPERATE
     if recuperate and (KnownClassBuff(recuperate)
-       or (IsSpellKnown and IsSpellKnown(recuperate))
-       or (IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(recuperate))) then
+       or C_SpellBook.IsSpellInSpellBook(recuperate, Enum.SpellBookSpellBank.Player, true)) then
         out[#out + 1] = recuperate
     end
     return out
@@ -901,7 +900,7 @@ local function StealthReminderSpell()
     -- OverridesKnown: Subterfuge replaces Stealth (1784 -> 115191), and a replaced base
     -- spell can read as unknown to IsPlayerSpell. Casting the base id still casts the override.
     local known = IsPlayerSpell(entry.spell)
-        or (IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(entry.spell))
+        or C_SpellBook.IsSpellInSpellBook(entry.spell, Enum.SpellBookSpellBank.Player, true)
     return known and entry.spell or nil
 end
 

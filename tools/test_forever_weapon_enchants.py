@@ -3,7 +3,7 @@
 # Weapon imbues through the real shared API, precombat checklist and redundancy filter.
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -239,6 +239,16 @@ def main():
         spellRange=true
         assert(TryGap(2098) == 11299 and lastRangeSpell == 11299,
             "gap closer checks the resolved ability it will display")
+        -- A closer the game says cannot be cast now (Charge in combat) is not offered; one
+        -- short only of its cost, or with no answer, still is.
+        local usableBefore = BlizzardAPI.IsSpellUsable
+        BlizzardAPI.IsSpellUsable=function() return false, false end
+        assert(TryGap(2098) == nil, "unusable for a reason other than its cost: not offered")
+        BlizzardAPI.IsSpellUsable=function() return false, true end
+        assert(TryGap(2098) == 11299, "short of its cost only: still offered")
+        BlizzardAPI.IsSpellUsable=function() return nil, nil end
+        assert(TryGap(2098) == 11299, "no answer: still offered")
+        BlizzardAPI.IsSpellUsable=usableBefore
         LibStub("JustAC-ActionBarScanner").GetDirectSlotForSpell=function() return 1 end
         C_ActionBar.IsActionInRange=function() return true end
     """)
@@ -317,6 +327,7 @@ def main():
         RANGE_REFERENCES={[3044]=35}
         C_Spell_IsSpellInRange=C_Spell.IsSpellInRange
         function IsSpellKnown() return true end
+        function IsSpellInBook(id, isPet) return IsSpellKnown(id, isPet) end
         function GetBlizzardAPI() return BlizzardAPI end
         LibStub("JustAC-RotationImport").RankChain=function() end
         BlizzardAPI.GetCachedSpellInfo=function(id)

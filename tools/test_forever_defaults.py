@@ -10,7 +10,7 @@
 import sys
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -70,6 +70,12 @@ def main():
     check(sdb.GetSpecKey()[0] == "WARRIOR_F", "spec key on Forever is CLASS_F")
     gap = sdb.ResolveDefaults(sdb.CLASS_GAPCLOSER_DEFAULTS)
     check(gap is not None and list(gap.values()) == [100, 20252], "warrior gap closers = Charge, Intercept")
+    check(list(sdb.CLASS_GAPCLOSER_DEFAULTS.DRUID_F.values()) == [1238122, 1850],
+          "druid gap closers = Feral Charge (Bear Form), Dash (Cat Form)")
+    check(list(sdb.CLASS_GAPCLOSER_DEFAULTS.ROGUE_F.values()) == [2983], "rogue gap closer = Sprint")
+    check(sdb.CLASS_GAPCLOSER_DEFAULTS.PALADIN_F is None and sdb.CLASS_GAPCLOSER_DEFAULTS.SHAMAN_F is None
+          and sdb.CLASS_GAPCLOSER_DEFAULTS.HUNTER_F is None,
+          "no gap closer data for paladins, shamans or hunters")
     check(list(sdb.ResolveDefaults(sdb.CLASS_DEFENSIVE_DEFAULTS).values())[0] == 12975, "defensives start with Last Stand")
     check(sdb.CLASS_TOPOFF_HEALS.PRIEST[1] == 139, "class-keyed table replaced for readers that index by class")
     check(sdb.CLASS_MAINTAINED_BUFFS.ROGUE is None, "retail rogue poison groups dropped on Forever")
@@ -145,6 +151,23 @@ def main():
         check(sdb.IsTargetDot(sid) is True and sdb.IsDelayedPayoff(sid) is False,
               f"Forever: {name} remains an ordinary damage-over-time priority, not a slow-payoff hold")
     check(r.IsDelayedPayoff(603) is False, "retail: no Forever delayed-payoff data")
+    # Arms repays one Sunder Armor at once only with a main weapon spender learned (Slam at 20).
+    arms = sdb.FOREVER_EARLY_ARMOR_TREES.WARRIOR_F.arms
+    check(arms is not None and 1240193 in list(arms.values()), "Arms names its main spenders, Slam among them")
+    fe.execute("known = {}; IsPlayerSpell = function(id) return known[id] == true end")
+    check(sdb.IsEarlyArmorTree("WARRIOR_F", "arms") is False, "Arms with no main spender: Sunder waits")
+    fe.execute("known[1240193] = true")
+    check(sdb.IsEarlyArmorTree("WARRIOR_F", "arms") is True, "Arms with Slam: Sunder at once")
+    check(sdb.IsEarlyArmorTree("WARRIOR_F", "fury") is False, "Fury is not an early-armor tree")
+    fe.execute("IsPlayerSpell = function() error('denied') end")
+    check(sdb.IsEarlyArmorTree("WARRIOR_F", "arms") is False, "an unanswerable read holds Sunder")
+    # Gear a tree's own attacks need: Shield Slam's shield (item class 4, subclass bit 6).
+    gear = sdb.FOREVER_TREE_GEAR
+    need = gear is not None and gear.WARRIOR_F is not None and gear.WARRIOR_F.protection
+    check(bool(need) and need[1][1] == 4 and need[1][2] == 64, "Forever: the Protection warrior list needs a shield")
+    check(gear is not None and gear.WARRIOR_F.arms is None and gear.ROGUE_F is None,
+          "Forever: gear every tree of a class shares rules no tree out")
+    check(r.FOREVER_TREE_GEAR is None, "retail: no Forever tree gear data")
     for sid, held, why in ((7386, True, "Sunder Armor remains classified as a target armor payoff"),
                            (11597, True, "every Sunder Armor rank"), (770, True, "Faerie Fire"),
                            (704, True, "Curse of Recklessness"), (8647, True, "Expose Armor"),

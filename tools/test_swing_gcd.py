@@ -25,10 +25,13 @@ def main():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
         BlizzardAPI, SpellQueue = {}, {}
-        gcdStart, gcdDur, swing = 0, 0, nil
+        gcdStart, gcdDur, swing, now = 0, 0, nil, 100
+        function GetTime() return now end
         function BlizzardAPI.GetGCDInfo() return gcdStart, gcdDur end
         function BlizzardAPI.GetSwingRemaining(kind) assert(kind == 0); return swing end
-    """ + query[start:end] + queue[q_start:q_end])
+    """ + query[start:end]
+        + query[query.index("function BlizzardAPI.GetGCDRemaining("):query.index("function BlizzardAPI.GetGCDInfo(")]
+        + queue[q_start:q_end])
     lua.execute("""
         assert(BlizzardAPI.GetGCDLength() == nil, "no GCD seen yet")
         swing = 3
@@ -47,6 +50,19 @@ def main():
         assert(BlizzardAPI.GetGCDLength() == 1.5, "an implausible reading is ignored")
         swing = nil
         assert(SpellQueue._SwingFarOff() == false, "not swinging: no change")
+        -- Decided for the end of the running GCD: steady while it runs, so the answer changes
+        -- when a swing lands, not as the clock ticks.
+        gcdStart, gcdDur, now = 100, 1.5, 100.5          -- 1.0 s of GCD left
+        swing = 2.4                                      -- 1.4 s away when the player can act
+        assert(SpellQueue._SwingFarOff() == false, "inside one GCD of the next press")
+        now, swing = 100.9, 2.0                          -- both counted down 0.4 s
+        assert(SpellQueue._SwingFarOff() == false, "the same answer while the GCD runs")
+        now, swing = 101.2, 2.6                          -- the swing landed; the next is far
+        assert(SpellQueue._SwingFarOff() == true, "a landed swing changes it, once")
+        now, swing = 101.3, 2.5
+        assert(SpellQueue._SwingFarOff() == true, "and it holds")
+        now, swing = 101.4, 0.3                          -- the swing lands before the GCD ends
+        assert(SpellQueue._SwingFarOff() == false, "a swing due before the next press is not far")
     """)
     print("Swing and GCD: remembered GCD length, swing compared with it, unknowns change nothing")
 

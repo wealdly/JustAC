@@ -13,7 +13,9 @@ local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
 local IsStealthed = IsStealthed
-local IsSpellKnown = IsSpellKnown
+local function IsSpellInBook(spellID)
+    return C_SpellBook.IsSpellInSpellBook(spellID, Enum.SpellBookSpellBank.Player, false)
+end
 local ipairs = ipairs
 
 -- Module references (resolved at load time)
@@ -67,11 +69,10 @@ local GAP_CLOSER_NEAR_FALLBACK_YARDS = 15
 --- not blacklisted → ready → in range.  Returns resolvedID, baseID on success,
 --- or nil if the spell doesn't pass all gates.
 --- The gap-closer list is curated (user-configured or SpellDB defaults), so
---- the only availability gate is "does the player know this spell" - filtering
---- out default entries the player hasn't talented into.  No usability check
---- (fail-closed rejects valid spells in combat due to secret values; fail-open
---- adds no value for a curated list).  Cooldown check remains to avoid
---- suggesting spells that are on CD.
+--- the availability gate is "does the player know this spell" - filtering out
+--- default entries the player hasn't talented into - plus the game's own "cannot be cast
+--- now" for a reason other than its cost, which fails open. Cooldown check remains to
+--- avoid suggesting spells that are on CD.
 --- @param spellID      number       Base spell ID from the gap-closer list
 --- @param addedSpellIDs table|nil   Set of already-queued spell IDs to skip
 local function TryGapCloserCandidate(spellID, addedSpellIDs)
@@ -87,7 +88,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
     -- IsSpellKnown (form-independent), NOT IsSpellAvailable (castability) - the latter wrongly
     -- rejects a known gap-closer that isn't instantly castable (e.g. a Druid's form-gated
     -- Wild Charge). Cooldown is handled separately below; range by the checkRange gate.
-    if IsSpellKnown and not (IsSpellKnown(spellID) or IsSpellKnown(resolvedID)) then return nil end
+    if IsSpellInBook and not (IsSpellInBook(spellID) or IsSpellInBook(resolvedID)) then return nil end
 
     -- Passive backstop. This gate deliberately uses IsSpellKnown rather than
     -- IsSpellAvailable (see above) - but that also skips IsSpellAvailable's built-in
@@ -108,6 +109,14 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
 
     -- Cooldown check: don't suggest spells on CD
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
+
+    -- The game says it cannot be cast now, for a reason other than its cost: Charge in combat
+    -- on Forever (it took slot 1 there, unpressable), Intercept outside Berserker Stance. Only
+    -- a confirmed "no" rejects; an unreadable answer, or a cost short now, keeps the closer.
+    if BlizzardAPI.IsSpellUsable then
+        local usable, notEnough = BlizzardAPI.IsSpellUsable(resolvedID, true)
+        if usable == false and not notEnough then return nil end
+    end
 
     -- Range check: reject only if the ability is confirmed OUT of reach (e.g. target beyond
     -- Wild Charge's max range). AbilityInRange rather than the bare spell read: that one tests

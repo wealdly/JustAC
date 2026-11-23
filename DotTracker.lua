@@ -752,6 +752,13 @@ function DotTracker.GetCastWindow(spellID)
     return e.castAt, e.expiry - e.castAt
 end
 
+--- Has my cast of this DoT landed on the current target at some point in this fight, running or
+--- not? A miss takes its record back, and an immune target does not count.
+function DotTracker.HasRunOnTarget(spellID)
+    local e = EntryFor(spellID)
+    return e ~= nil and e.castAt ~= nil and not e.immune
+end
+
 --- The engine's own timer for this DoT on the current target: a DurationObject from a
 --- confirmed aura instance, passed through untouched (drawn by the engine, never read). nil when
 --- no instance answers (none bound, a stale id, or access refused while auras are secret).

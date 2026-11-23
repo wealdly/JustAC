@@ -25,6 +25,64 @@ version, dependencies and load order; do not duplicate changing inventories here
   commits. Preserve required upstream source/license credits.
 - No em dashes in project files.
 
+## Rotation and queue principles
+
+Apply these to every list, queue stage and proposal. Full text, margins and the ordered change
+check: [core principles](Documentation/FOREVER_DPS_PRINCIPLES.md#core-principles).
+
+**Goal:** high, reliable damage that an ordinary player can follow without effort, for each class
+and build as it is actually played. Good enough in most fights beats perfect in a few.
+
+- **Simplicity leads every decision**, in design and in the player's choices. Start from the
+  simplest option. Complexity compounds: judge each step against the build's simplest play, not
+  the last accepted version. Extra buttons, setup presses, stance or form swaps, new rules,
+  stages and settings must together clear the
+  [simplicity margins](Documentation/FOREVER_DPS_PRINCIPLES.md#simplicity-margins); removing
+  complexity needs none. Of two designs that do the same job, take the one with fewer parts.
+- **Hard limits**, never traded for damage or simplicity:
+  1. **Damage only**, in every talent tree, tank and healer trees included. Utility stays with
+     the player even when a guide or sim lists it: slows, roots, mitigation or threat debuffs,
+     healing, crowd control. Debuffs that raise the damage a target takes count as damage. A
+     damaging spell never waits on its own non-damaging side effect. The one exception is a
+     ranged opener on a melee target. Tank and healer help belongs in the defensive queue
+     ([utility scope](Documentation/FOREVER_ENGINE_DESIGN.md#damage-only-queue)).
+  2. **Confirmed signals and sound inference.** Unknown stays unknown unless soundly inferred:
+     confirmed inputs linked by a game rule or in-game measurement, unknown when any input is,
+     expiring when stale, cheap when wrong, labelled as an inference
+     ([inference rule](Documentation/FOREVER_DPS_PRINCIPLES.md#3-what-a-condition-may-use)).
+     Never infer from an unrelated signal. Estimate a secret value only when a decision needs it.
+  3. **Damage now, in this context.** A spell that cannot deal damage in the confirmed context
+     (a cast while moving, out of range, locked out, an immune target, a target that dies first)
+     is never the press for now.
+  4. **The player owns strategy and settings.** Kiting, positioning, crowd-control timing and
+     encounter tactics are theirs; no entry, gate or probe advises them. Custom lists, explicit
+     settings and overrides are never changed to make a rule work.
+- **Weighed together**, with simplicity breaking ties: reliable before peak (never clearly worse
+  on any reference target); easy to follow (the first slot is the press for now, the order is
+  stable, the same situation gives the same answer, never ask to switch targets); one general,
+  data-derived rule over class, spell or build exceptions; state the evidence grade and wait for
+  approval before a behavior change.
+- **Stable, followable output.** A queue that changes faster than the player can press is a
+  burden. Aim for one change of the first slot per press (global cooldown or cast): decide for
+  the moment the player can next act, count a sent press as done until the game catches up,
+  hold the plan through a cast or channel, change only on events that matter, and let the shown
+  order win ties. Flip rate is measured, not assumed
+  ([stable output](Documentation/FOREVER_DPS_PRINCIPLES.md#stable-followable-output)).
+- **Net damage.** Value a press by what it adds over what it displaces. Instant specials add
+  to the auto attack and are never weighed against it; next-swing attacks replace a white swing
+  and its rage, and casts can stop a wand or delay an auto shot; a queued next-swing attack is
+  never displaced by another
+  ([net damage](Documentation/FOREVER_DPS_PRINCIPLES.md#net-damage-adding-to-or-displacing-the-auto-attack)).
+- **Direct the order, respond to the situation.** Choose the next press decisively among what
+  works where the player is. Asking them to stand still, swap stance or close distance is a
+  complication; asking them to switch targets never happens. Respond to changes that last, not
+  to every twitch; when directing and responding collide, respond.
+- **Fit the class and build.** The baseline is the build's own simplest play (Affliction spreads
+  damage over time; a solo Frost mage fights around crowd control). Hard limits still hold: the
+  queue responds to the player's tab or kite rather than directing it. A build-specific rule is
+  keyed on data, never a class exception in shared code. Play the limits cannot serve is left to
+  the player and noted in the class guide.
+
 ## Cross-client correctness
 
 - Preserve both clients' queue ordering, resources, UI, options, profiles, generated
@@ -33,20 +91,6 @@ version, dependencies and load order; do not duplicate changing inventories here
 - Prefer existing shared helpers and capability checks. Use `SpellDB.IsForever()`
   or `BlizzardAPI.IsForever()` only for verified client differences; no scattered
   build checks or spell/class exceptions in generic logic.
-- Unknown remains unknown. Do not infer hidden resources, aura identity or
-  mechanic state from an unrelated signal. General priorities need not simulate
-  optimal play, but must use confirmed signals for every supported context.
-- The goal is good-enough damage in most situations, not perfect output in every
-  scenario. Leave situational strategy to the player (kiting, slows, positioning,
-  crowd-control timing, encounter-specific play); do not add list entries, gates or
-  probes to advise it. Prefer a simple general rule over a special case.
-- The offensive queue recommends damage only, in every talent tree, tank and healer
-  trees included. Utility stays with the player even when a guide or sim lists it:
-  slows, roots, mitigation or threat debuffs, healing, crowd control. Debuffs that raise
-  the damage a target takes count as damage. A damaging spell never waits on its own
-  non-damaging side effect. The one exception is a ranged opener on a melee target.
-  Tank and healer help belongs in the defensive queue. See
-  [utility scope](Documentation/FOREVER_ENGINE_DESIGN.md#damage-only-queue).
 - Never guess WoW API behavior. Check the matching client's generated API docs,
   caller implementation and saved in-game evidence. Source annotations describe
   contracts, not proof of live taint/secrecy behavior.
@@ -68,7 +112,8 @@ version, dependencies and load order; do not duplicate changing inventories here
   secrecy proxy. Call denial is separate from result secrecy: inspect `Requires*`
   as well as `Secret*`. A remembered plain aura never authorizes a denied call.
 - Before buff/aura work read the relevant identity/container reference; before
-  new thresholds read the threshold scope rule. No hidden-number reconstruction.
+  new thresholds read the threshold scope rule. Estimate a hidden number only when a decision
+  needs it, under that rule.
   See the task-specific links in the [documentation index](Documentation/README.md).
 
 ## Validation and diagnosis
@@ -106,7 +151,7 @@ without a concrete new API, composition or contradictory measurement.
 | Lua checks | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#lua-static-analysis) |
 | Runtime test sync | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#runtime-test-sync) |
 | Data refresh | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#two-client-update-check-and-refresh) |
-| Refining a Forever list (start here) | [FOREVER_DPS_PRINCIPLES.md](Documentation/FOREVER_DPS_PRINCIPLES.md) |
+| Rotation principles; refining a Forever list (start here) | [FOREVER_DPS_PRINCIPLES.md](Documentation/FOREVER_DPS_PRINCIPLES.md) |
 | Forever priority lists and interrupt tables | [DEV_TOOLING.md](Documentation/DEV_TOOLING.md#changing-a-forever-priority-list) |
 | Captures and release | Relevant section in [DEV_TOOLING.md](Documentation/DEV_TOOLING.md) |
 | Player behavior, configuration, source credits | [README.md](README.md) |

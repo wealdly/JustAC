@@ -18,12 +18,14 @@ What it needs (none of it is vendored here)
   - A checkout of the WoW Forever simulator (MIT, https://github.com/gunba/wow-forever-sim)
     with its protocol code generated, and its command-line tool built:
         protoc "--proto_path=proto" "--go_out=sim/core" proto/*.proto
-        go build -tags=with_db -o <dir>/wowsimcli.exe ./cmd/wowsimcli
+        go build -tags=with_db -o wowsimcli.exe ./cmd/wowsimcli
+    Built into the checkout's own folder (its .gitignore expects it there), the bench finds it
+    without --cli. Keep it out of temporary folders: a cleanup there removes the only copy.
   - Python 3.9+, standard library only.
 
 Run
-    python tools/forever_sim_bench.py --sim <simulator checkout> --cli <wowsimcli.exe>
-    python tools/forever_sim_bench.py --sim ... --cli ... --class warrior --tree arms \
+    python tools/forever_sim_bench.py --sim <simulator checkout>
+    python tools/forever_sim_bench.py --sim ... --class warrior --tree arms \
         --levels 20,40 --gear behind,average,lucky --batches 10 --iterations 1000 --out <result.md> --keep <dir for requests/results>
     python tools/forever_sim_bench.py --sim ... --convert-only      (print the conversion)
 
@@ -32,6 +34,11 @@ Arms compared
   sim       the simulator's own preset for the tree (ui/<class>/apls/<file>)
   source    the vendored MythicSim preset the generated list was adapted from
             (tools/forever-apl-src/presets/...), when the simulator can parse it
+  justac+cooldowns   the list plus the class's major cooldowns it does not name, pressed when
+            the queue cues them (--no-cooldown-arm leaves it out)
+  source-new         optional (--new-source DIR): the tree's source preset from a newer upstream folder
+  list-<tree>        optional (--other-lists): this tree's character following another tree's list
+  draft              optional (--draft FILE): the same tree read from a proposed copy of the lists
   justac-without-<ids>   optional (--without): the generated list minus some entries
 All arms run without pre-pull actions: a levelling pull has no countdown.
 
@@ -39,7 +46,17 @@ Assumptions (each is a modelling choice, not a measured fact; see ASSUMPTIONS be
 printed report)
   - Character: the simulator's base stats and trained ranks for the level. Talents are the
     simulator's own preset build for the tree, cut down to the points the level has, in row
-    order, taking the tree's last talent as soon as its row opens.
+    order, taking the tree's last talent as soon as its row opens (--talents names a build).
+  - Stance and weapons follow how the tree is played (Protection: Defensive Stance, one-hand
+    weapon and shield); --stance and --loadout override them. The report lists every entry
+    the setup's stance or equipment can never use, from the client's own spell data.
+  - Packs: --mobs N fights N identical targets for --pull-seconds and reports damage per
+    second over that pull instead of a kill time. Damage taken is reported per fight.
+  - Runtime rules: the queue's rules outside the lists are applied per scenario (RuntimeRules);
+    --no-runtime-rules runs the lists alone.
+  - Fight length: --calibrate <SavedVariables> reads the kills JustAC recorded in game
+    (`/jac inspect mobprofile`), simulates each one and scales target health so simulated kill
+    times match the measured ones (--health-scale sets the factor by hand).
   - Gear: a named setup chosen with --gear (bare, behind, average, lucky, or file:<path>
     for an explicit character). Generated setups pick real client items by required level,
     quality and slot, taking the MEDIAN candidate by a simple stat score, never the best.
@@ -51,8 +68,38 @@ printed report)
   - The simulator's combat tables are Classic's and its Forever rules are partly
     provisional. Use the output to compare two orderings under the same assumptions, never
     as absolute damage numbers.
+
+Classes (every class and tree in Data/Forever/Rotations.lua has an entry in CLASSES)
+  - Each tree runs on the simulator spec that plays it, with its own weapons, armour and
+    engagement. A tree the simulator has no spec for (restoration druid and shaman, holy
+    paladin, discipline and holy priest) runs its damage list on the class's damage spec
+    with the healer build; its "sim" arm is that damage spec's preset.
+  - Level brackets: the simulator defines every rogue attack, the feral druid's Shred, Maul
+    and Swipe and the hunter's melee attacks only at levels 25, 40, 50 and 60. Those trees
+    are refused at any other level (BRACKET_LEVELS).
+  - Hunter: no pet by default (the simulator's pet has level 60 stats at every owner level;
+    --pet names a family), shooting from 30 yards and never hit; vendor ammunition by level.
+  - Spec options the lists do not cast are the same for every arm and printed in the report:
+    no mage or priest armour spell, no rogue poisons, the enhancement weapon imbue by level.
+  - A simulator run that never finishes (a preset that loops on a free instant action at a
+    level it was not written for) is stopped after --run-timeout seconds, reported failed, and
+    that arm is skipped for the rest of the level.
+  - Ranks: the simulator's classes register spell ranks in different ways. Most give every rank
+    its own id with a required level (rank_by_chain: the rank is chosen per level, from the
+    simulator's own tables or the client's SpellLevels); the warrior keeps one id per spell at
+    every level and must not be rewritten. The level 60 book ranks (BOOK_RANKS) are left out of
+    the simulator and are never chosen.
+  - Talents: a "known" gate that names a talent is answered from the build being run at that
+    level, since the simulator's spell book does not hold talents.
+  - Every report lists what the simulator defines only at levels 25, 40, 50 and 60 for the
+    class when a run is at another level, and per-tree caveats where a result cannot be judged.
+  - The simulator uses half the machine's processor threads at the lowest priority (--threads,
+    --normal-priority). Run one bench at a time.
 """
 import argparse
+import csv
+import functools
+import glob
 import json
 import math
 import os
@@ -104,16 +151,19 @@ CLASSES = {
         "trees": {
             "arms": {"sim_preset": "ui/warrior/apls/forever_arms.apl.json",
                      "source_preset": "warrior/dps/arms.apl.json",
-                     "talents": "20305213132515201-3505-2", "main_tree": 0},
+                     "talents": "20305213132515201-3505-2", "main_tree": 0,
+                     "stance": "Battle", "loadout": "2h"},
+            # Fury's list carries its own stance swaps; it starts in Battle Stance.
             "fury": {"sim_preset": "ui/warrior/apls/forever_fury_2h.apl.json",
                      "source_preset": "warrior/dps/dps_reck.apl.json",
-                     "talents": "20305203032-45050020152010501", "main_tree": 1},
-            # The damage order of a Protection-talented warrior. Run in Battle Stance like the
-            # others: the generated list never changes stance, and an export does not say
-            # which stance the player keeps.
+                     "talents": "20305203032-45050020152010501", "main_tree": 1,
+                     "stance": "Battle", "loadout": "2h"},
+            # Protection is played in Defensive Stance with a shield: Revenge, Shield Slam and
+            # Shield Block need them (2026-11-18: Battle Stance with a two-hander hid Revenge).
             "protection": {"sim_preset": "ui/tank_warrior/apls/forever_protection.apl.json",
                            "source_preset": "warrior/protection/protection.apl.json",
-                           "talents": "35-0501-251333120230021351", "main_tree": 2},
+                           "talents": "35-0501-251333120230021351", "main_tree": 2,
+                           "stance": "Defensive", "loadout": "shield"},
         },
         "actions": {
             78: {"id": 11567, "tag": 1},     # Heroic Strike: the queue action, not the swing
@@ -122,6 +172,7 @@ CLASSES = {
             6572: {"id": 11601},             # Revenge (rank 6 is a raid book rank)
             23922: {"id": 23925},            # Shield Slam (the simulator names its top rank)
             6673: {"id": 11551},             # Battle Shout (rank 7 is a raid book rank)
+            6343: {"id": 11581},             # Thunder Clap (the simulator names its top rank)
         },
         "unmodelled": {
             402927: "Victory Rush is not implemented in the simulator",
@@ -154,7 +205,11 @@ CLASSES = {
                            "talents": "2550002003520015--0550305003", "main_tree": 0},
             "demonology": {"sim_preset": "ui/warlock/apls/forever_pact.apl.json",
                            "source_preset": "warlock/dps/demonic_pact.apl.json",
-                           "talents": "011-0005003231220301351-0550005003", "main_tree": 1},
+                           "talents": "011-0005003231220301351-0550005003", "main_tree": 1,
+                           "caveats": ["This build plays around its demon, and the default here is no demon (the "
+                                       "simulator's demons only act at owner levels 25, 40, 50 and 60). Without one "
+                                       "the pet's brand never lands, so Searing Pain is cast over and over: run it "
+                                       "with --pet at one of those levels."]},
             "destruction": {"sim_preset": "ui/warlock/apls/forever_shadow_and_flame.apl.json",
                             "source_preset": "warlock/dps/destruction_conflag.apl.json",
                             "talents": "25500000035--055030510310035", "main_tree": 2},
@@ -169,6 +224,292 @@ CLASSES = {
         },
     },
 }
+
+# Shared pieces of the class table below (simulator stat indexes: 0 strength, 1 agility,
+# 2 stamina, 3 intellect, 4 spirit, 5 spell power, 6-11 school power, 17 attack power,
+# 27 ranged attack power). Weights only order candidates so the MEDIAN one can be taken.
+CASTER_WEIGHTS = {3: 1.0, 2: 0.6, 4: 0.4, 5: 1.0, 6: 0.5, 7: 0.5, 8: 0.5, 9: 0.5, 10: 0.5, 11: 0.5}
+MELEE_WEIGHTS = {0: 1.0, 1: 0.6, 2: 0.2, 17: 0.5}
+AGILITY_WEIGHTS = {1: 1.0, 0: 0.5, 2: 0.2, 17: 0.5, 27: 0.5}
+EAGLE = {"name": "of the Eagle", "stats": (2, 3)}
+BEAR = {"name": "of the Bear", "stats": (0, 2)}
+MONKEY = {"name": "of the Monkey", "stats": (1, 2)}
+STAFF = {"inv": (17,), "subclasses": (10,)}
+RACIALS = {
+    1259813: "Eureka! (racial) is not implemented in the simulator",
+    1259821: "Eureka! (racial) is not implemented in the simulator",
+    20572: "Blood Fury is a racial of a race this character is not",
+}
+# The simulator defines some classes' core attacks only at these levels (a map indexed by the
+# character's level: every rogue builder and finisher, the feral druid's Shred, Maul and Swipe,
+# the hunter's melee attacks). At any other level they do not exist and a run would be auto
+# attacks alone, so such a tree is refused outside them.
+BRACKET_LEVELS = (25, 40, 50, 60)
+WAND_SHOOT = ("Shoot is not a cast here: with a wand equipped the local wand attack fires by itself whenever "
+              "the character is neither casting nor in a global cooldown")
+
+
+def hunter_spec(level):
+    """Vendor ammunition for the level, from the simulator's own list (client ItemSparse: Razor
+    Arrow requires 25, Jagged Arrow 40; the client's level 1 and 10 arrows are not in the
+    simulator's list, so below 25 there is none)."""
+    ammo = "JaggedArrow" if level >= 40 else "RazorArrow" if level >= 25 else "AmmoNone"
+    return {"ammo": ammo}
+
+
+def enhancement_spec(level):
+    """The weapon imbue a levelling shaman has (Rockbiter from 1 and Windfury from 30 per the
+    simulator's rank tables; Flametongue from 10 ASSUMED as in Classic). JustAC keeps it up
+    outside the damage list. The simulator ranks imbues only at levels 25, 40, 50 and 60."""
+    imbue = "WindfuryImbue" if level >= 30 else "FlametongueImbue" if level >= 10 else "RockbiterImbue"
+    return {"mainHandImbue": imbue}
+
+
+CLASSES.update({
+    "druid": {
+        "proto_class": "ClassDruid",
+        "spec": ("balanceDruid", {"options": {}}),
+        "race": "RaceNightElf",
+        "engagement": "caster",
+        "class_id": 11,
+        "ui": ["balance_druid", "feral_druid", "feral_tank_druid"],
+        "rank_by_chain": True,
+        "weapon": {"inv": (17,), "subclasses": (5, 10)},   # two-hand mace or staff
+        "armor": lambda level: (1, 2),
+        "stat_weights": CASTER_WEIGHTS,
+        "suffix": EAGLE,
+        # SpellShapeshift form bits. The simulator's feral specs take their form themselves.
+        "forms": {"Cat": 1, "Bear": 5, "Dire Bear": 8, "Moonkin": 31},
+        "form_spells": {768: "Cat", 5487: "Bear", 9634: "Dire Bear", 24858: "Moonkin"},
+        "form_word": "Form",
+        "trees": {
+            "balance": {"sim_preset": "ui/balance_druid/apls/launch.apl.json",
+                        "source_preset": "druid/balance/launch.apl.json",
+                        "talents": "533222011550135--505003", "main_tree": 0},
+            "feral": {"sim_preset": "ui/feral_druid/apls/feral.apl.json", "levels": BRACKET_LEVELS,
+                      "source_preset": "druid/feralcat/default.apl.json",
+                      "talents": "05002-55000032021032212051-055", "main_tree": 1, "form": "Cat",
+                      "caveats": ["The simulator's Claw is the level 60 rank at every level (a flat 115 bonus "
+                                  "damage, sim/druid/claw.go), so Claw is overstated below level 58. From the "
+                                  "front, where Shred cannot be used, the list leans on Claw: its lead over the "
+                                  "presets here is not evidence."],
+                      "spec": ("feralDruid", {"options": {}}), "engagement": "melee",
+                      "stat_weights": AGILITY_WEIGHTS, "suffix": {"name": "of the Tiger", "stats": (0, 1)}},
+            "feral_bear": {"sim_preset": "ui/feral_tank_druid/apls/forever_bear.apl.json", "levels": BRACKET_LEVELS,
+                           "source_preset": "druid/feralbear/default.apl.json",
+                           "talents": "01-50022332120132012551-055", "main_tree": 1, "form": "Bear",
+                           "spec": ("feralTankDruid", {"options": {}}), "engagement": "melee",
+                           "stat_weights": MELEE_WEIGHTS, "suffix": BEAR},
+            # The simulator has no restoration spec: the tree's damage list runs on the balance
+            # spec with the restoration build, against the balance preset.
+            "restoration": {"sim_preset": "ui/balance_druid/apls/launch.apl.json",
+                            "talents": "05302--5053035153113051", "main_tree": 2},
+        },
+        "actions": {
+            6807: {"id": 9881, "tag": 1},   # Maul: the queue action, not the swing
+        },
+        "unmodelled": dict(RACIALS),
+    },
+    "hunter": {
+        "proto_class": "ClassHunter",
+        # No pet by default: the simulator's hunter pet has one fixed set of stats (a level 60
+        # pet) at every owner level. --pet names a family for a level 60 run.
+        "spec": ("hunter", {"options": {"petType": "PetNone", "petUptime": 1}}),
+        "spec_for_level": hunter_spec,
+        "pets": {"option": "petType", "none": "PetNone",
+                 "names": ["Cat", "WindSerpent", "Wolf", "Bat", "Bear", "Owl", "Boar", "CarrionBird", "Crab",
+                           "Crocolisk", "Gorilla", "Hyena", "Raptor", "Scorpid", "Spider", "Tallstrider", "Turtle"],
+                 "note": "the simulator's pet has level 60 stats at every owner level"},
+        "race": "RaceNightElf",
+        "engagement": "ranged",
+        "class_id": 3,
+        "rank_by_chain": True,
+        # The simulator tags a Hunter's Mark aura with its caster (player index + 1,
+        # sim/core/debuffs.go): without the tag the mark reads as never on the target.
+        "aura_tags": {1130: 1},
+        "ui": ["hunter"],
+        # A two-hand axe, polearm, sword or staff as the melee weapon, and a bow, gun or crossbow.
+        "weapon": {"inv": (17,), "subclasses": (1, 6, 8, 10)},
+        "ranged": {"subclasses": (2, 3, 18), "note": "bow, gun or crossbow"},
+        "armor": lambda level: (2, 3) if level >= 40 else (2,),
+        "stat_weights": AGILITY_WEIGHTS,
+        "suffix": MONKEY,
+        "trees": {
+            "beast_mastery": {"sim_preset": "ui/hunter/apls/beast_mastery.apl.json",
+                              "source_preset": "hunter/dps/bm.apl.json",
+                              "talents": "5320001505101251-00532500005", "main_tree": 0},
+            "marksmanship": {"sim_preset": "ui/hunter/apls/p1.apl.json",
+                             "source_preset": "hunter/dps/mm.apl.json",
+                             "talents": "502-0053552001523051-50002", "main_tree": 1},
+            # The survival list comes from the melee preset: it fights in melee range.
+            "survival": {"sim_preset": "ui/hunter/apls/survival.apl.json", "levels": BRACKET_LEVELS,
+                         "source_preset": "hunter/dps/sv_melee.apl.json",
+                         "talents": "502-005205-500230230050122151", "main_tree": 2, "engagement": "melee",
+                         "caveats": ["The list comes from the melee preset and runs in melee range, where no shot "
+                                     "can be fired; the simulator's own preset steps out and shoots, so the 'sim' "
+                                     "arm is a different way to play, not a like-for-like list. Compare with "
+                                     "'source'."]},
+        },
+        "actions": {
+            2973: {"id": 14266, "tag": 3},   # Raptor Strike: the queue action, not the swing
+        },
+        "unmodelled": dict(RACIALS),
+    },
+    "mage": {
+        "proto_class": "ClassMage",
+        "spec": ("mage", {"options": {"armor": "NoArmor"}}),
+        "race": "RaceHuman",
+        "engagement": "caster",
+        "class_id": 8,
+        "rank_by_chain": True,
+        # Fire Vulnerability (the Improved Scorch debuff): the simulator keeps its stacks in an
+        # aura on the mage, id 12873 (sim/mage/talents.go), not on the target.
+        "aura_alias": {22959: 12873},
+        "self_auras": (12873,),
+        "ui": ["mage"],
+        "weapon": STAFF,
+        "wand": True,
+        "armor": lambda level: (1,),
+        "stat_weights": CASTER_WEIGHTS,
+        "suffix": EAGLE,
+        "trees": {
+            "arcane": {"sim_preset": "ui/mage/apls/forever_arcane.apl.json",
+                       "source_preset": "mage/dps/arcane.apl.json",
+                       "talents": "0502205003100311531-03-05350003", "main_tree": 0},
+            "fire": {"sim_preset": "ui/mage/apls/forever_fire.apl.json",
+                     "source_preset": "mage/dps/fire.apl.json",
+                     "talents": "-03552020130135131-05350003", "main_tree": 1},
+            "frost": {"sim_preset": "ui/mage/apls/forever_frost.apl.json",
+                      "source_preset": "mage/dps/frost.apl.json",
+                      "talents": "0500205-03-253520330100301251", "main_tree": 2},
+        },
+        "actions": {},
+        "unmodelled": dict(list(RACIALS.items()) + [(5019, WAND_SHOOT)]),
+    },
+    "paladin": {
+        "proto_class": "ClassPaladin",
+        "spec": ("retributionPaladin", {"options": {}}),
+        "race": "RaceHuman",
+        "engagement": "melee",
+        "class_id": 2,
+        "rank_by_chain": True,
+        "ui": ["retribution_paladin", "protection_paladin"],
+        # Seal of Fury's ranks and levels (sim/paladin/sof.go, a struct table the rank reader skips).
+        "rank_tables": [([1311649, 1311656, 20163, 20419, 20421, 20422, 20423], [10, 18, 25, 34, 42, 50, 58])],
+        "weapon": {"inv": (17,), "subclasses": (1, 5, 6, 8)},
+        "armor": lambda level: (2, 3, 4) if level >= 40 else (2, 3),
+        "stat_weights": dict(list(MELEE_WEIGHTS.items()) + [(3, 0.3)]),
+        "suffix": BEAR,
+        "trees": {
+            # The simulator has no holy spec: the tree's damage list runs on the retribution spec
+            # with the holy build, against the spell-damage (shockadin) preset.
+            "holy": {"sim_preset": "ui/retribution_paladin/apls/shockadin.apl.json",
+                     "talents": "05323213225121051-55021", "main_tree": 0, "loadout": "shield"},
+            "protection": {"sim_preset": "ui/protection_paladin/apls/forever_protection.apl.json",
+                           "source_preset": "paladin/protection/p5.apl.json",
+                           "talents": "-5520513321301551-15102", "main_tree": 1, "loadout": "shield",
+                           "spec": ("protectionPaladin", {"options": {}})},
+            "retribution": {"sim_preset": "ui/retribution_paladin/apls/basic_ret.apl.json",
+                            "source_preset": "paladin/retribution/default.apl.json",
+                            "talents": "55003003-2-05225331001330311", "main_tree": 2, "loadout": "2h"},
+        },
+        "actions": {},
+        "unmodelled": dict(RACIALS),
+    },
+    "priest": {
+        "proto_class": "ClassPriest",
+        "spec": ("smitePriest", {"options": {"armor": "NoArmor"}}),
+        "race": "RaceHuman",
+        "engagement": "caster",
+        "class_id": 5,
+        "rank_by_chain": True,
+        "ui": ["smite_priest", "shadow_priest"],
+        "weapon": STAFF,
+        "wand": True,
+        "armor": lambda level: (1,),
+        "stat_weights": CASTER_WEIGHTS,
+        "suffix": EAGLE,
+        "trees": {
+            # Discipline and holy lists are the smite list: they run on the smite spec with the
+            # simulator's healer builds, the talents a healer brings to solo play.
+            "discipline": {"sim_preset": "ui/smite_priest/apls/launch.apl.json",
+                           "source_preset": "priest/dps/smite.apl.json",
+                           "talents": "005205031332011531-03505003", "main_tree": 0},
+            "holy": {"sim_preset": "ui/smite_priest/apls/launch.apl.json",
+                     "source_preset": "priest/dps/smite.apl.json",
+                     "talents": "00520302133-2350510323000053", "main_tree": 1},
+            "shadow": {"sim_preset": "ui/shadow_priest/apls/p1.apl.json",
+                       "source_preset": "priest/dps/shadow.apl.json",
+                       "talents": "02530003101--55052201201302251", "main_tree": 2,
+                       "spec": ("shadowPriest", {"options": {"armor": "NoArmor"}})},
+        },
+        "actions": {},
+        "unmodelled": dict(list(RACIALS.items()) + [(5019, WAND_SHOOT)]),
+    },
+    "rogue": {
+        "proto_class": "ClassRogue",
+        # No poisons: the same for every arm.
+        "spec": ("rogue", {"options": {}}),
+        "race": "RaceHuman",
+        "engagement": "melee",
+        "class_id": 4,
+        "levels": BRACKET_LEVELS,
+        "rank_by_chain": True,
+        "ui": ["rogue"],
+        "weapon": {"inv": (13, 21), "subclasses": (4, 7, 13, 15)},
+        "armor": lambda level: (2,),
+        "stat_weights": AGILITY_WEIGHTS,
+        "suffix": MONKEY,
+        "forms": {"Stealth": 30},
+        "form_spells": {1784: "Stealth"},
+        "form_word": "",
+        "trees": {
+            "assassination": {"sim_preset": "ui/rogue/apls/forever_mutilate.apl.json",
+                              "source_preset": "rogue/dps/forever_mutilate.apl.json",
+                              "talents": "02532010531201051-225303000005", "main_tree": 0, "loadout": "daggers"},
+            "combat": {"sim_preset": "ui/rogue/apls/combat_sinister_strike.apl.json",
+                       "source_preset": "rogue/dps/combat_sinister_strike.apl.json",
+                       "talents": "1053231-22530300001515231-012", "main_tree": 1, "loadout": "dw"},
+            "subtlety": {"sim_preset": "ui/rogue/apls/forever_hemorrhage.apl.json",
+                         "source_preset": "rogue/dps/forever_hemorrhage.apl.json",
+                         "talents": "005303103005--3320203310013211501", "main_tree": 2, "loadout": "daggers"},
+        },
+        "actions": {},
+        "unmodelled": dict(RACIALS),
+    },
+    "shaman": {
+        "proto_class": "ClassShaman",
+        "spec": ("elementalShaman", {"options": {}}),
+        "race": "RaceTauren",
+        "engagement": "caster",
+        "class_id": 7,
+        "rank_by_chain": True,
+        "ui": ["elemental_shaman", "enhancement_shaman"],
+        "weapon": STAFF,
+        "armor": lambda level: (1, 2, 3) if level >= 40 else (1, 2),
+        "stat_weights": CASTER_WEIGHTS,
+        "suffix": EAGLE,
+        "trees": {
+            "elemental": {"sim_preset": "ui/elemental_shaman/apls/default.apl.json",
+                          "source_preset": "shaman/elemental/forever.apl.json",
+                          "talents": "5503331000011351-055000001-05301", "main_tree": 0},
+            "enhancement": {"sim_preset": "ui/enhancement_shaman/apls/default.apl.json",
+                            "source_preset": "shaman/enhancement/forever.apl.json",
+                            "talents": "053503102-055030011005102251-01", "main_tree": 1, "loadout": "2h",
+                            "spec": ("enhancementShaman", {"options": {}}), "spec_for_level": enhancement_spec,
+                            "engagement": "melee", "armor": lambda level: (2, 3) if level >= 40 else (2,),
+                            "stat_weights": MELEE_WEIGHTS, "suffix": BEAR},
+            # The simulator has no restoration spec: the tree's damage list runs on the elemental
+            # spec with the restoration build, against the elemental preset.
+            "restoration": {"sim_preset": "ui/elemental_shaman/apls/default.apl.json",
+                            "talents": "-003-5532503315513151", "main_tree": 2},
+        },
+        "actions": {},
+        "unmodelled": dict(RACIALS),
+    },
+})
+# What a tree may set in place of its class's value.
+TREE_OVERRIDES = ("spec", "spec_for_level", "engagement", "weapon", "armor", "stat_weights", "suffix", "wand", "ranged")
 
 # How a class meets a solo target. The simulator has no movement or kiting model for
 # targets, so a profile is only: how far the character stands, and whether the target's
@@ -185,7 +526,210 @@ ENGAGEMENTS = {
     "caster_free": {"in_front": True, "target_attacks_player": False, "distance": 20,
                     "note": "casts from 20 yards and is never hit (a pet holds the target, or it is feared): "
                             "no pushback, the optimistic end"},
+    "ranged": {"in_front": True, "target_attacks_player": False, "distance": 30,
+               "note": "shoots from 30 yards and is never hit (a pet holds the target, or it is kited): the "
+                       "optimistic end; --engagement melee is the pessimistic one"},
 }
+
+# Weapon setups a tree can be played with (client item classes): the main hand, and a shield.
+LOADOUTS = {
+    "warrior": {
+        "2h": {"weapon": {"inv": (17,), "subclasses": (1, 5, 6, 8)}, "shield": False,
+               "note": "two-hand axe, mace, polearm or sword"},
+        "shield": {"weapon": {"inv": (13, 21), "subclasses": (0, 4, 7)}, "shield": True,
+                   "note": "one-hand axe, mace or sword and a shield"},
+        # Two one-hand weapons once Dual Wield is learned; before that, the main hand alone.
+        "dw": {"weapon": {"inv": (13, 21), "subclasses": (0, 4, 7, 13, 15)}, "shield": False, "dual": True,
+               "note": "two one-hand weapons (axe, mace, sword, fist or dagger)"},
+    },
+    "paladin": {
+        "2h": {"weapon": {"inv": (17,), "subclasses": (1, 5, 6, 8)}, "shield": False,
+               "note": "two-hand axe, mace, polearm or sword"},
+        "shield": {"weapon": {"inv": (13, 21), "subclasses": (0, 4, 7)}, "shield": True,
+                   "note": "one-hand axe, mace or sword and a shield"},
+    },
+    # Rogues learn Dual Wield at level 10 (ASSUMED, as in Classic; --dual-wield-level changes it).
+    "rogue": {
+        "dw": {"weapon": {"inv": (13, 21), "subclasses": (4, 7, 13, 15)}, "shield": False, "dual": True,
+               "dual_level": 10, "note": "two one-hand weapons (mace, sword, fist or dagger)"},
+        "daggers": {"weapon": {"inv": (13, 21), "subclasses": (15,), "fixed": True}, "shield": False, "dual": True,
+                    "dual_level": 10, "note": "two daggers"},
+    },
+    # The client's SkillLineAbility lists two-hand axes and maces as shaman trainer skills (class
+    # masks 71 and 1091), no talent needed. It also lists Dual Wield for the shaman (another
+    # acquire method), but the simulator's enhancement spec swings one weapon only.
+    "shaman": {
+        "2h": {"weapon": {"inv": (17,), "subclasses": (1, 5, 10)}, "shield": False,
+               "note": "two-hand axe, mace or staff"},
+        "shield": {"weapon": {"inv": (13, 21), "subclasses": (0, 4)}, "shield": True,
+                   "note": "one-hand axe or mace and a shield"},
+    },
+}
+# The client data does not say when Dual Wield (spell 674) is learned: it is a trainer skill
+# (SkillLineAbility, acquire method 2) with no level of its own. ASSUMED: level 20, as in
+# Classic; --dual-wield-level changes it.
+ASSUMED_DUAL_WIELD_LEVEL = 20
+DUAL_WIELD = {"level": ASSUMED_DUAL_WIELD_LEVEL}
+
+
+def dual_wield_level():
+    return DUAL_WIELD["level"]
+# SpellShapeshift form bits for the warrior stances, and the list entries that take one.
+STANCE_FORMS = {"Battle": 17, "Defensive": 18, "Berserker": 19}
+STANCE_SPELLS = {2457: "Battle", 71: "Defensive", 2458: "Berserker"}
+CLIENT_CSV = os.path.join(ROOT, "Documentation", "wow_spell_csv_forever")
+ITEM_CLASS_WEAPON, ITEM_CLASS_ARMOR, SUBCLASS_SHIELD, SUBCLASS_WAND = 2, 4, 6, 19
+# A fight against several targets: their count and the fixed length of the pull (seconds).
+PULL = {"mobs": 1, "seconds": 20.0}
+# The bench fights alone. --grouped answers the lists' "in a group" condition as true, for what
+# an entry kept for group play (Vanish) is worth there; nothing else about the fight changes.
+GROUPED = {"on": False}
+# Every target's health is multiplied by a fight-length factor: one for every scenario, or one
+# per level gap (target level minus player level) when calibration measured gaps.
+HEALTH = {"scale": 1.0, "by_gap": {}}
+
+
+def health_factor(gap):
+    """The health factor for a level gap. Between two measured gaps it is interpolated (on a log
+    scale, since kill time multiplies); outside them the nearest measured gap holds."""
+    known = HEALTH["by_gap"]
+    if not known:
+        return HEALTH["scale"]
+    if gap in known:
+        return known[gap]
+    gaps = sorted(known)
+    if gap < gaps[0]:
+        return known[gaps[0]]
+    if gap > gaps[-1]:
+        return known[gaps[-1]]
+    lo = max(g for g in gaps if g < gap)
+    hi = min(g for g in gaps if g > gap)
+    t = (gap - lo) / float(hi - lo)
+    return math.exp(math.log(known[lo]) * (1 - t) + math.log(known[hi]) * t)
+SOLO_KINDS = {"normal": False, "rare": False, "elite": True, "rareelite": True}
+
+
+def calibration_factor(ratios, quantile):
+    """The measured/simulated kill-time ratio at a quantile (nearest rank). Above the median it leans
+    toward fights that run a little long in the simulator, the safer side to be wrong on."""
+    ordered = sorted(ratios)
+    rank = max(1, min(len(ordered), int(math.ceil(quantile * len(ordered)))))
+    return ordered[rank - 1]
+
+
+def recorded_kills(path):
+    """Solo kills JustAC recorded in game (JustACGlobal.mobProfile): one dict per kill with the
+    creature's name, level range and kind, the player's level and the seconds it took."""
+    text = open(path, encoding="utf-8", errors="replace").read()
+    at = text.find('["mobProfile"] = {')
+    if at < 0:
+        return []
+    reader = LuaReader(text)
+    reader.pos = text.index("{", at)
+    profile = reader.value()
+    npcs = profile.get("npcs") if isinstance(profile, dict) else None
+    out = []
+    for npc in (npcs.values() if isinstance(npcs, dict) else []):
+        kind = npc.get("class")
+        if not isinstance(npc, dict) or kind not in SOLO_KINDS or not npc.get("lvMin"):
+            continue
+        for kill in npc.get("kills") or []:
+            if isinstance(kill, dict) and kill.get("group") is False and kill.get("d") and kill.get("plvl"):
+                out.append({"name": npc.get("name", "?"), "levels": list(range(int(npc["lvMin"]), int(npc.get("lvMax") or npc["lvMin"]) + 1)),
+                            "elite": SOLO_KINDS[kind], "plvl": int(kill["plvl"]), "seconds": float(kill["d"])})
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def client_rows(table):
+    files = sorted(glob.glob(os.path.join(CLIENT_CSV, table + ".*.csv")))
+    if not files:
+        return []
+    with open(files[-1], encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+# Client weapon skill line -> item weapon subclass.
+SKILL_SUBCLASS = {44: 0, 172: 1, 45: 2, 46: 3, 54: 4, 160: 5, 229: 6, 43: 7, 55: 8, 136: 10, 473: 13, 173: 15,
+                  176: 16, 226: 18, 228: 19}
+RANGED_SUBCLASSES = (2, 3, 16, 18, 19)
+_TRAINABLE = None
+
+
+def trainable_weapons(class_id):
+    """Weapon subclass -> skill name for every weapon skill the class can learn (the client's
+    SkillLineAbility class masks). The data does not say which of them a character starts
+    with, so a pick names its skill and the reader checks it is trained."""
+    global _TRAINABLE
+    if _TRAINABLE is None:
+        _TRAINABLE = {}
+        lines = {}
+        for r in client_rows("SkillLine"):
+            lines[int(r["ID"])] = r.get("DisplayName_lang") or r.get("\ufeffDisplayName_lang") or "skill %s" % r["ID"]
+        for r in client_rows("SkillLineAbility"):
+            sub = SKILL_SUBCLASS.get(int(r["SkillLine"]))
+            if sub is None:
+                continue
+            mask = int(r["ClassMask"] or 0)
+            for cid in range(1, 12):
+                if not mask or mask >> (cid - 1) & 1:
+                    _TRAINABLE.setdefault(cid, {})[sub] = lines.get(int(r["SkillLine"]), "skill")
+    return _TRAINABLE.get(class_id, {})
+
+
+def open_weapons(cfg):
+    """Let a setup use every weapon type the class can learn. The setup keeps its shape (two-hand,
+    one-hand, ranged: the inventory types) and a setup marked fixed keeps its types (daggers)."""
+    skills = trainable_weapons(cfg["class_id"])
+    if not skills:
+        return
+    if not cfg["weapon"].get("fixed"):
+        cfg["weapon"] = dict(cfg["weapon"], subclasses=tuple(sorted(s for s in skills if s not in RANGED_SUBCLASSES)))
+    if cfg.get("ranged"):
+        learned = tuple(s for s in cfg["ranged"]["subclasses"] if s in skills)
+        cfg["ranged"] = dict(cfg["ranged"], subclasses=learned or cfg["ranged"]["subclasses"])
+
+
+def usability_problems(entries, names, stance, weapon_subclasses, shield, wand, forms=None, form_spells=None,
+                       word="Stance"):
+    """(entry label, why) for each list entry this setup can never use, from the client's spell
+    data: a stance or form the setup never takes (its own, or one the list swaps to), and
+    equipment it does not wear. Stance is not checked for a class without stances (stance None).
+    forms / form_spells: the class's SpellShapeshift bits and the entries that take a form
+    (default: the warrior stances)."""
+    forms = STANCE_FORMS if forms is None else forms
+    form_spells = STANCE_SPELLS if form_spells is None else form_spells
+    word = (" " + word) if word else ""
+    masks = dict((int(r["SpellID"]), int(r["ShapeshiftMask_0"] or 0)) for r in client_rows("SpellShapeshift")
+                 if r["SpellID"].isdigit())
+    needs = {}
+    for r in client_rows("SpellEquippedItems"):
+        if r["SpellID"].isdigit():
+            needs.setdefault(int(r["SpellID"]), []).append((int(r["EquippedItemClass"] or 0),
+                                                            int(r["EquippedItemSubclass"] or 0)))
+    reachable = set([stance]) if stance else set()
+    reachable |= set(form_spells[e["id"]] for e in entries if e["id"] in form_spells)
+    worn = set(weapon_subclasses) | (set([SUBCLASS_WAND]) if wand else set())
+    out, seen = [], set()
+    for e in entries:
+        sid = e["id"]
+        if sid in seen:
+            continue
+        seen.add(sid)
+        label = "%s (%d)" % (names.get(sid, "?"), sid)
+        mask = masks.get(sid, 0)
+        allowed = [n for n, bit in sorted(forms.items()) if mask >> (bit - 1) & 1]
+        if stance and allowed and not set(allowed) & reachable:
+            out.append((label, "needs %s%s; this setup stays in %s%s" % (" or ".join(allowed), word, stance, word)))
+        elif stance and allowed and stance not in allowed:
+            out.append((label, "usable only after the list swaps to %s%s" % (" or ".join(allowed), word)))
+        for item_class, subclasses in needs.get(sid, []):
+            if item_class == ITEM_CLASS_ARMOR and subclasses >> SUBCLASS_SHIELD & 1 and not shield:
+                out.append((label, "needs a shield; this setup wears none"))
+            elif item_class == ITEM_CLASS_WEAPON and subclasses and not any(subclasses >> s & 1 for s in worn):
+                out.append((label, "needs a weapon type this setup does not wield"))
+    return out
+
 
 ASSUMPTIONS = {
     # Not measured. Classic dungeon elites are commonly described as about three times the
@@ -265,8 +809,8 @@ class LuaReader:
         return obj if obj else arr
 
 
-def load_rotations():
-    text = open(ROTATIONS, encoding="utf-8").read()
+def load_rotations(path=None):
+    text = open(path or ROTATIONS, encoding="utf-8").read()
     start = text.index("RotationImport.RegisterForever(") + len("RotationImport.RegisterForever(")
     reader = LuaReader(text)
     reader.pos = start
@@ -281,6 +825,148 @@ def dot_floor_pct():
     """The runtime's rule: no new damage over time on a non-boss target below this health."""
     m = re.search(r"local DOT_MIN_TARGET_PCT = (\d+)", open(SPELL_QUEUE, encoding="utf-8").read())
     return int(m.group(1)) if m else None
+
+
+DEFAULTS_LUA = os.path.join(ROOT, "Data", "Forever", "Defaults.lua")
+
+
+def _lua_table(text, name):
+    """[id] = value pairs of one generated `local NAME = { ... }` table, values as raw text."""
+    m = re.search(r"local %s = \{(.*?)\n\}" % name, text, re.S)
+    return dict((int(k), v.strip()) for k, v in re.findall(r"\[(\d+)\]\s*=\s*([^,]+),", m.group(1))) if m else {}
+
+
+def _tree_spenders(text, name):
+    """class -> tree -> spender ids of one generated `SpellDB.NAME = { CLS_F = { tree = {ids} } }`."""
+    m = re.search(r"SpellDB\.%s = \{(.*)\}" % name, text)
+    out = {}
+    for cls, body in re.findall(r"(\w+)_F = \{((?:\s*\w+ = \{[^}]*\},?)*)\s*\}", m.group(1) if m else ""):
+        out[cls.lower()] = dict((tree, [int(x) for x in re.findall(r"\d+", ids)])
+                                for tree, ids in re.findall(r"(\w+) = \{([^}]*)\}", body))
+    return out
+
+
+def _tree_sets(text, name):
+    m = re.search(r"SpellDB\.%s = \{(.*)\}" % name, text)
+    out = {}
+    for cls, body in re.findall(r"(\w+)_F = \{([^}]*)\}", m.group(1) if m else ""):
+        out[cls.lower()] = set(re.findall(r"(\w+) = true", body))
+    return out
+
+
+def _class_lists(text, name):
+    """class -> ids of one generated `local NAME = { CLASS = {ids}, ... }` table."""
+    m = re.search(r"local %s = \{(.*?)\n\}" % name, text, re.S)
+    return dict((cls.lower(), [int(x) for x in re.findall(r"\d+", body)])
+                for cls, body in re.findall(r"(\w+) = \{([^}]*)\}", m.group(1) if m else ""))
+
+
+def runtime_data():
+    """What the runtime rules read: generated Forever data and SpellQueue.lua's constants."""
+    text = open(DEFAULTS_LUA, encoding="utf-8").read()
+    queue = open(SPELL_QUEUE, encoding="utf-8").read()
+
+    def constant(name, default):
+        m = re.search(r"local %s = (\d+)" % name, queue)
+        return int(m.group(1)) if m else default
+    return {
+        "delayed": set(_lua_table(text, "DELAYED_PAYOFF")),
+        "frontal": dict((k, float(v)) for k, v in _lua_table(text, "FRONTAL_DOTS").items() if v != "true"),
+        "dots": dict((k, float(v)) for k, v in _lua_table(text, "DOTS").items()),
+        "stacks": dict((k, int(v)) for k, v in _lua_table(text, "STACKING_AURAS").items()),
+        "threat": dict((k, v.strip('"')) for k, v in _lua_table(text, "THREAT_ROLES").items()),
+        "burst": _class_lists(text, "BURST"),
+        "tank_trees": _tree_sets(text, "FOREVER_TANK_TREES"),
+        "early_armor_trees": _tree_spenders(text, "FOREVER_EARLY_ARMOR_TREES"),
+        "dot_floor": constant("DOT_MIN_TARGET_PCT", 35),
+        "fast_floor": constant("FAST_DOT_MIN_TARGET_PCT", 70),
+        "long_fight": constant("LONG_FIGHT_SECONDS", 20),
+        "higher_level": constant("HIGHER_LEVEL_FIGHT", 3),
+    }
+
+
+class RuntimeRules:
+    """The queue's rules that live outside the lists (SpellQueue.lua), for one scenario: a solo
+    fight against one target of a known level and kind. Each is the runtime's rule, read
+    through what the simulator can express; the approximations are said where they are made."""
+
+    def __init__(self, data, cls, tree, level_delta, elite, pack, cooldown_gap=None, level=None):
+        self.d, self.cls, self.tree = data, cls, tree
+        # SpellDB.IsEarlyArmorTree: the tree repays an armor reduction at once only when one of
+        # its main spenders is learned at this level (None: the full build, every one learned).
+        spenders = data["early_armor_trees"].get(cls, {}).get(tree)
+        self.early_armor = bool(spenders) and (level is None or any(
+            (client_spell_levels().get(s) or 999) <= level for s in spenders))
+        self.pack = pack
+        # IsWorthwhileFight(b, true) without its age clause: a boss, an elite, a higher level.
+        self.lasting = elite or level_delta >= 1
+        # IsWorthwhileFight(b) for a multi-minute self-buff: several enemies, a boss, an elite or
+        # a regular target HIGHER_LEVEL_FIGHT levels above (--cooldown-gap tries another gap).
+        # Time already spent on the target does not count.
+        if cooldown_gap is None:
+            cooldown_gap = data["higher_level"]
+        self.worthwhile = elite or pack or level_delta >= cooldown_gap
+        # fastSoloFight: one regular enemy at or below the player's level, alone.
+        self.fast = not elite and level_delta <= 0 and not pack
+
+    def stack(self, e, g):
+        """IsStackPayoffContext: one stack becomes the full stack where stacks pay."""
+        if (g.get("t") == "stack" and g.get("tgt") and g.get("id") == e["id"] and g.get("op") == "<"
+                and g.get("n") == 1 and not g.get("once") and e["id"] in self.d["delayed"]
+                and self.d["stacks"].get(e["id"], 0) > 1 and self.lasting):
+            return dict(g, n=self.d["stacks"][e["id"]]), "stacked to %d on this target (runtime: elite or higher level)" % self.d["stacks"][e["id"]]
+        return g, None
+
+    def hold(self, e):
+        """HoldAutomaticBurst for a slow payoff: (condition or None, note)."""
+        sid = e["id"]
+        if sid in self.d.get("burst", {}).get(self.cls, ()):
+            # The class's major cooldowns stand in for the runtime's own test (a pure self-buff
+            # with a base cooldown of two minutes or more), which needs the live client.
+            if self.worthwhile:
+                return None, "major cooldown allowed: an elite, several enemies or a much higher level"
+            return Converter.const("false"), "major cooldown held: needs an elite, several enemies or a much higher level"
+        if sid not in self.d["delayed"]:
+            return None, None
+        if self.d["threat"].get(sid) == "boost" and (self.tree in self.d["tank_trees"].get(self.cls, set())
+                                                     or self.early_armor):
+            return None, "slow payoff, not held in this tree"
+        if sid in self.d["dots"]:
+            if self.lasting:
+                return None, "delayed damage allowed: an elite or higher-level target"
+            return Converter.const("false"), "delayed damage held: needs a boss, an elite or a higher-level target"
+        if self.lasting:
+            return None, "slow payoff allowed: an elite or higher-level target"
+        seconds = self.d["long_fight"]
+        return ({"cmp": {"op": OPS[">="], "lhs": {"currentTime": {}}, "rhs": {"const": {"val": "%gs" % seconds}}}},
+                "slow payoff held until the fight has lasted %d s" % seconds)
+
+    def dot(self, conv, g, value):
+        """The dying-target and fast-fight rules for a new damage over time: (condition, note)."""
+        if self.pack:
+            return value, "dying-target rules not modelled in a fixed pull (targets do not die)"
+        share = self.d["frontal"].get(g.get("id"))
+        floor, fast = self.d["dot_floor"], self.d["fast_floor"]
+        parts, said = [value], []
+        if share is None:
+            parts.append(conv.health_fraction(">=", floor))
+            said.append("not below %d%% health" % floor)
+        elif share < 0.5:
+            instant = {"cmp": {"op": OPS["<="], "lhs": {"spellCastTime": {"spellId": conv.spell_ref(g["id"], "dot rule")}},
+                               "rhs": {"const": {"val": "0s"}}}}
+            parts.append({"or": {"vals": [conv.health_fraction(">=", floor), instant]}})
+            said.append("below %d%% only when instant (a real hit up front)" % floor)
+        if self.fast and not (share is not None and share >= 0.5):
+            # The runtime renews a DoT that already ran on the target; the simulator cannot count
+            # applications, so the higher floor holds until the DoT's own duration (or the fight
+            # age that ends a fast fight) has passed: about when a first application would end.
+            until = min(self.d["long_fight"], self.d["dots"].get(g.get("id"), self.d["long_fight"]))
+            late = {"cmp": {"op": OPS[">="], "lhs": {"currentTime": {}}, "rhs": {"const": {"val": "%gs" % until}}}}
+            parts.append({"or": {"vals": [conv.health_fraction(">=", fast), late]}})
+            said.append("fast fight: not below %d%% for the first %g s (approximates first application only)" % (fast, until))
+        if len(parts) == 1:
+            return value, "mostly its hit: no health rule"
+        return {"and": {"vals": parts}}, "; ".join(said)
 
 
 # ---------------------------------------------------------------------------------------
@@ -299,11 +985,13 @@ def walk(node, fn):
 def harvest_sim_ids(sim, cls):
     """Action ids the simulator's own presets for the class use: id -> {"tag", "dot"}."""
     found = {}
-    folder = os.path.join(sim, "ui", cls, "apls")
-    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
-        if not name.endswith(".apl.json"):
-            continue
-        data = json.load(open(os.path.join(folder, name), encoding="utf-8"))
+    files = []
+    for page in CLASSES.get(cls, {}).get("ui", [cls]):
+        folder = os.path.join(sim, "ui", page, "apls")
+        files += [os.path.join(folder, name) for name in sorted(os.listdir(folder)) if name.endswith(".apl.json")] \
+            if os.path.isdir(folder) else []
+    for path in files:
+        data = json.load(open(path, encoding="utf-8"))
 
         def visit(node):
             for key, val in node.items():
@@ -312,6 +1000,8 @@ def harvest_sim_ids(sim, cls):
                 ref = val.get("spellId") or val.get("auraId")
                 if isinstance(ref, dict) and "spellId" in ref:
                     rec = found.setdefault(ref["spellId"], {"tag": 0, "dot": False})
+                    if key in ("castSpell", "channelSpell"):
+                        rec["cast"] = True
                     if key in ("castSpell", "channelSpell") and ref.get("tag"):
                         rec["tag"] = ref["tag"]
                     if key in ("dotIsActive", "dotRemainingTime", "multidot"):
@@ -332,25 +1022,107 @@ def source_literals(sim, cls):
     return out
 
 
-def rank_tables(sim, cls):
+def rank_tables(sim, cls, client_levels=False):
     """Rank families the simulator registers one spell per rank for: [(ids, required levels)].
 
     Some classes (warlock) give every rank its own action id and register only the ranks the
     level has, so a list that names the top rank casts nothing on a low character. The
     families are read from the class's Go source, where each is a pair of literal arrays
-    indexed by rank (spellId := [...]int32{0, ...}[rank] and level := [...]int{0, ...}[rank])."""
+    indexed by rank (spellId := [...]int32{0, ...}[rank] and level := [...]int{0, ...}[rank]).
+
+    client_levels: also take an id array with no level array beside it, with the client's own
+    required level per rank. Only for a class whose simulator code registers every rank under
+    its own id; the warrior code keeps one id per spell at every level and must not get this."""
     out = []
-    folder = os.path.join(sim, "sim", cls)
-    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
-        if not name.endswith(".go") or name.endswith("_test.go"):
+    client = {}
+    for r in client_rows("SpellLevels"):
+        if r["SpellID"].isdigit() and r.get("DifficultyID", "0") == "0":
+            client[int(r["SpellID"])] = int(r["BaseLevel"] or 0)
+    files = []
+    for base, _, names in os.walk(os.path.join(sim, "sim", cls)):
+        if os.path.basename(base).startswith("_"):
             continue
-        body = open(os.path.join(folder, name), encoding="utf-8", errors="replace").read()
-        found = [(m.start(), m.group(1).lower() == "level", [int(n) for n in re.findall(r"\d+", m.group(2))])
-                 for m in re.finditer(r"(?i)\b(\w*spellid|level)\s*:?=\s*\[[^\]]*\]int(?:32)?\{([^}]*)\}", body)]
-        for (_, is_level, ids), (_, next_is_level, levels) in zip(found, found[1:]):
-            if not is_level and next_is_level and len(ids) == len(levels) and len(ids) > 1:
-                out.append((ids[1:], levels[1:]))
+        files += [os.path.join(base, n) for n in sorted(names) if n.endswith(".go") and not n.endswith("_test.go")]
+    config = os.path.join(sim, "sim", "core", "config.go")
+    include_aq = bool(re.search(r"IncludeAQ\s*=\s*true", open(config, encoding="utf-8").read())) if os.path.exists(config) else True
+    # A class that registers every rank under its own id names its level arrays freely
+    # (WrathLevel); elsewhere only a bare `level` beside the ids is a rank table: the warrior
+    # code has RevengeSpellId and RevengeLevel but casts one id at every level.
+    pattern = (r"(?i)\b(\w*spellid|%s)\s*:?=\s*\[[^\]]*\]int(?:32)?\{([^}]*)\}"
+               % (r"\w*level" if client_levels else "level"))
+    for path in sorted(files):
+        body = open(path, encoding="utf-8", errors="replace").read()
+        # maxRank := core.TernaryInt(core.IncludeAQ, 12, 11): without the level 60 book ranks the
+        # simulator registers only the lower count, so a family of the higher count is cut to it.
+        book = re.search(r"TernaryInt\(core\.IncludeAQ,\s*(\d+),\s*(\d+)\)", body)
+        cut = (int(book.group(1)), int(book.group(2))) if book and not include_aq else None
+        found = [(m.group(1).lower().endswith("level"), [int(n) for n in re.findall(r"\d+", m.group(2))])
+                 for m in re.finditer(pattern, body)]
+        for k, (is_level, ids) in enumerate(found):
+            if is_level or len(ids) < 2:
+                continue
+            nxt = found[k + 1] if k + 1 < len(found) else None
+            if nxt and nxt[0] and len(nxt[1]) == len(ids):
+                levels = nxt[1]
+            elif not client_levels:
+                continue
+            else:
+                # No level array beside it: the client's own required level for each rank.
+                levels = [client.get(i, 0) for i in ids]
+                if any(lv <= 0 for i, lv in zip(ids, levels) if i):
+                    continue
+            if ids[0] == 0:
+                ids, levels = ids[1:], levels[1:]
+            if cut and len(ids) == cut[0]:
+                ids, levels = ids[:cut[1]], levels[:cut[1]]
+            if len(ids) > 1:
+                out.append((ids, levels))
+        # A spell defined per level bracket: spellID := map[int32]int32{25: a, 40: b, ...}[x.Level].
+        for m in re.finditer(r"(?i)\bspellid\s*:?=\s*map\[int32\]int32\{([^}]*)\}\[\w+(?:\.\w+)*\.Level\]", body):
+            inner = re.sub(r"core\.TernaryInt(?:32)?\(core\.IncludeAQ,\s*(\d+),\s*(\d+)\)",
+                           lambda t: t.group(1) if include_aq else t.group(2), m.group(1))
+            pairs = sorted((int(a), int(b)) for a, b in re.findall(r"(\d+)\s*:\s*(\d+)", inner))
+            if len(pairs) > 1:
+                out.append(([b for _, b in pairs], [a for a, _ in pairs]))
     return out
+
+
+def bracket_only(sim, cls):
+    """Names of the class's simulator source files that define something by a map indexed with the
+    character's level (x := map[...]...{25: .., 40: .., 50: .., 60: ..}[c.Level]): at any other
+    level the value is zero, so whatever the file models is missing or at rank 0."""
+    out = []
+    for base, _, names in os.walk(os.path.join(sim, "sim", cls)):
+        if os.path.basename(base).startswith("_"):
+            continue
+        for n in sorted(names):
+            if n.endswith(".go") and not n.endswith("_test.go"):
+                text = open(os.path.join(base, n), encoding="utf-8", errors="replace").read()
+                if re.search(r"\}\[\w+(?:\.\w+)*\.Level\]", text):
+                    out.append(n[:-3])
+    return sorted(set(out))
+
+
+def struct_spell_ids(sim, cls):
+    """Ids the class's source names as a spell in a field (spellID: n): ranks kept in a table of
+    structs, which rank_tables cannot read."""
+    out = set()
+    for base, _, names in os.walk(os.path.join(sim, "sim", cls)):
+        for n in names:
+            if n.endswith(".go") and not n.endswith("_test.go"):
+                text = open(os.path.join(base, n), encoding="utf-8", errors="replace").read()
+                out.update(int(x) for x in re.findall(r"(?i)\bspellid:\s*(\d+)", text))
+    return out
+
+
+def client_spell_levels():
+    return dict((int(r["SpellID"]), int(r["BaseLevel"] or 0)) for r in client_rows("SpellLevels")
+                if r["SpellID"].isdigit() and r.get("DifficultyID", "0") == "0")
+
+
+# The level 60 ranks taught by Ahn'Qiraj books. The simulator leaves them out (IncludeAQ is false
+# in sim/core/config.go), so a family never picks one: the rank below is the highest it has.
+BOOK_RANKS = (25286, 25361)
 
 
 def ranks_for_level(rotation, tables, level):
@@ -358,7 +1130,7 @@ def ranks_for_level(rotation, tables, level):
     level has (rank 1 when it has none: the spell is then not registered and never cast)."""
     best = {}
     for ids, levels in tables:
-        have = [i for i, need in zip(ids, levels) if need <= level]
+        have = [i for i, need in zip(ids, levels) if need <= level and not BOOK_RANKS[0] <= i <= BOOK_RANKS[1]]
         for i in ids:
             best[i] = have[-1] if have else ids[0]
     if not best:
@@ -378,8 +1150,46 @@ class IdMap:
         self.chains = chains
         self.harvest = harvest_sim_ids(sim, cls)
         self.literals = source_literals(sim, cls)
-        self.tables = rank_tables(sim, cls)
+        self.tables = (rank_tables(sim, cls, bool(self.cfg.get("rank_by_chain") or self.cfg.get("rank_by_client")))
+                       + [tuple(t) for t in self.cfg.get("rank_tables", [])])
+        # Ranks the simulator keeps in struct tables: a list chain with two or more of its ids
+        # named there is a rank family too, with the client's own level for each rank.
+        covered = set(i for ids, _ in self.tables for i in ids)
+        named, levels = struct_spell_ids(sim, cls), None
+        if self.cfg.get("rank_by_chain"):
+            # A class whose simulator code registers every rank under its own id, each with its
+            # required level, in whatever form it is written: any chain with two or more ids in
+            # the class's source is a rank family.
+            named = self.literals
+        for chain in chains.values():
+            ids = [i for i in chain if i in named]
+            if len(ids) > 1 and not set(chain) & covered:
+                levels = levels or client_spell_levels()
+                self.tables.append((ids, [max(levels.get(i, 1), 1) for i in ids]))
+                covered.update(ids)
         self.notes = {}   # justac id -> how it was matched
+        # Spell names, for a spell the simulator knows under another id (it keeps some ids of
+        # later game versions where the Forever client has its own): the simulator's database
+        # first, the client's SpellName table for ids the database lacks.
+        self.sim_names = {}
+        for s in json.load(open(os.path.join(sim, "assets", "database", "db.json"), encoding="utf-8")).get("spellIcons", []):
+            self.sim_names[s["id"]] = s["name"]
+        self._client_names = None
+
+    def name_of(self, sid):
+        if sid in self.sim_names:
+            return self.sim_names[sid]
+        if self._client_names is None:
+            self._client_names = dict((int(r["ID"]), r["Name_lang"]) for r in client_rows("SpellName") if r["ID"].isdigit())
+        return self._client_names.get(sid)
+
+    def same_name(self, jid):
+        """Simulator ids that carry the spell's name: those its presets use, else those in its source."""
+        name = self.name_of(jid)
+        if not name:
+            return []
+        same = [i for i, n in self.sim_names.items() if n == name and i != jid]
+        return [i for i in same if i in self.harvest] or [i for i in same if i in self.literals]
 
     def action(self, jid):
         """Simulator action for a JustAC rank-1 id: dict(id, tag, dot) or None."""
@@ -401,20 +1211,36 @@ class IdMap:
             self.notes[jid] = "simulator preset id %d (same rank chain)" % hits[0]
             return dict(self.harvest[hits[0]], id=hits[0])
         if not hits:
+            # A spell the simulator's presets cast under another id beats a bare number in its
+            # source: the source also names ids that are auras or other versions, not the cast.
+            preset = [i for i in self.same_name(jid) if self.harvest.get(i, {}).get("cast")]
+            if len(preset) == 1:
+                self.notes[jid] = "simulator preset id %d: the same spell name (%s), another id" % (preset[0], self.name_of(jid))
+                return dict(self.harvest[preset[0]], id=preset[0])
             hits = [c for c in chain if c in self.literals]
             if len(hits) == 1:
                 self.notes[jid] = "simulator source literal %d (same rank chain)" % hits[0]
                 return {"id": hits[0], "tag": 0, "dot": False}
-        self.notes[jid] = "no unique match in the rank chain (%s)" % (hits or "none")
+        named = self.same_name(jid)
+        if len(named) == 1:
+            self.notes[jid] = "simulator id %d: the same spell name (%s), another id" % (named[0], self.name_of(jid))
+            return dict(self.harvest.get(named[0], {"tag": 0, "dot": False}), id=named[0])
+        self.notes[jid] = "no unique match in the rank chain (%s)%s" % (
+            hits or "none", "; by name: %s" % named if named else "")
         return None
 
     def aura(self, jid):
         """Aura id for a buff / debuff gate. Falls back to the id itself, and says so."""
+        if jid in self.cfg.get("aura_alias", {}):
+            return self.cfg["aura_alias"][jid], False, None
         rec = self.action(jid) if (jid in self.chains or jid in self.cfg["actions"]) else None
         if rec:
             return rec["id"], rec.get("dot", False), None
         if jid in self.literals or jid in self.harvest:
             return jid, False, None
+        named = self.same_name(jid)
+        if len(named) == 1:
+            return named[0], self.harvest.get(named[0], {}).get("dot", False), None
         return jid, False, "aura %d is not referenced anywhere in the simulator: reads as never active" % jid
 
 
@@ -422,13 +1248,17 @@ class IdMap:
 # Gate -> simulator condition
 # ---------------------------------------------------------------------------------------
 EXACT, APPROX, LOST = "exact", "approximated", "not expressible"
+# The game's totem slots -> the simulator's totem types.
+TOTEM_SLOTS = {1: "Fire", 2: "Earth", 3: "Water", 4: "Air"}
 
 
 class Converter:
-    def __init__(self, idmap, names, engagement, dot_floor):
+    def __init__(self, idmap, names, engagement, dot_floor, rules=None, talents=None):
         self.ids, self.names = idmap, names
+        self.talents = talents   # talent name -> points in the build being run, or None
         self.engagement, self.engagement_name = ENGAGEMENTS[engagement], engagement
         self.dot_floor = dot_floor
+        self.rules = rules   # RuntimeRules for one scenario, or None for the list alone
         self.report = []   # (line label, status, text)
         self.line = ""
 
@@ -484,14 +1314,23 @@ class Converter:
                 else:
                     rhs = {"const": {"val": "%gs" % g.get("n", 0)}}
                 self.note(EXACT, "time left on %d %s %s" % (aid, g["op"], g.get("ncast") and "its cast time" or g.get("n")))
+                if aid in self.ids.cfg.get("self_auras", ()):
+                    return {"cmp": {"op": OPS[g["op"]], "lhs": {"auraRemainingTime": {"auraId": {"spellId": aid}}}, "rhs": rhs}}
                 return {"cmp": {"op": OPS[g["op"]], "lhs": {"dotRemainingTime": {"spellId": {"spellId": aid}}}, "rhs": rhs}}
             if is_dot:
                 active = {"dotIsActive": {"spellId": {"spellId": aid}}}
             else:
-                active = {"auraIsActive": {"auraId": {"spellId": aid}, "sourceUnit": {"type": "CurrentTarget"}}}
+                ref = {"spellId": aid}
+                if g["id"] in self.ids.cfg.get("aura_tags", {}):
+                    ref["tag"] = self.ids.cfg["aura_tags"][g["id"]]
+                active = {"auraIsActive": {"auraId": ref, "sourceUnit": {"type": "CurrentTarget"}}}
             want_absent = bool(g.get("neg")) or t == "dot"
             value = self.neg(active, want_absent)
-            if t == "dot" or g.get("refresh"):
+            if (t == "dot" or g.get("refresh")) and self.rules:
+                value, said = self.rules.dot(self, g, value)
+                self.note(APPROX if "approximates" in said or "not modelled" in said else EXACT,
+                          "apply %d when it is not on the target (runtime: %s)" % (aid, said))
+            elif t == "dot" or g.get("refresh"):
                 if self.dot_floor:
                     self.note(EXACT, "apply %d when it is not on the target, and (runtime rule, non-boss target) only at or above %d%% health"
                               % (aid, self.dot_floor))
@@ -506,7 +1345,7 @@ class Converter:
             if warn:
                 self.note(APPROX, "stack gate: " + warn)
             val = {"auraNumStacks": {"auraId": {"spellId": aid}}}
-            if g.get("tgt"):
+            if g.get("tgt") and aid not in self.ids.cfg.get("self_auras", ()):
                 val["auraNumStacks"]["sourceUnit"] = {"type": "CurrentTarget"}
             self.note(EXACT, "stacks of %d %s %s on the %s" % (aid, g["op"], g["n"], "target" if g.get("tgt") else "player"))
             return self.cmp(val, g["op"], g["n"])
@@ -535,6 +1374,16 @@ class Converter:
         if t == "cd":
             self.note(EXACT, "spell %d %s" % (g["id"], "on cooldown or not learned" if g.get("neg") else "ready"))
             return self.neg({"spellIsReady": {"spellId": self.spell_ref(g["id"], "cooldown gate")}}, g.get("neg"))
+        if t == "known" and self.talents is not None and self.ids.name_of(g["id"]) in self.talents:
+            # A talent (or the aura it grants, which carries its name): the build decides.
+            name = self.ids.name_of(g["id"])
+            have = self.talents[name] > 0
+            self.note(EXACT, "talent %s %s in this build" % (name, "taken" if have else "not taken"))
+            return self.neg(self.const("true" if have else "false"), g.get("neg"))
+        if t == "group":
+            self.note(APPROX, "in a group: %s (the bench fights alone; --grouped answers yes)"
+                      % ("yes" if GROUPED["on"] else "no"))
+            return self.neg(self.const("true" if GROUPED["on"] else "false"), g.get("neg"))
         if t == "known":
             self.note(EXACT, "spell %d %s" % (g["id"], "not known" if g.get("neg") else "known"))
             return self.neg({"spellIsKnown": {"spellId": self.spell_ref(g["id"], "known gate")}}, g.get("neg"))
@@ -559,6 +1408,11 @@ class Converter:
             hit = self.engagement["target_attacks_player"]
             self.note(APPROX, "being hit: constant %s for the %s engagement" % (str(hit).lower(), self.engagement_name))
             return self.const("true" if hit else "false")
+        if t == "totem" and g.get("slot") in TOTEM_SLOTS:
+            kind = TOTEM_SLOTS[g["slot"]]
+            self.note(EXACT, "%s totem %s" % (kind, "not down" if g.get("neg") else "down"))
+            return {"cmp": {"op": OPS["<=" if g.get("neg") else ">"], "lhs": {"totemRemainingTime": {"totemType": kind}},
+                            "rhs": {"const": {"val": "0s"}}}}
         if t == "unconfirmed":
             self.note(EXACT, "unconfirmed gate: false, as at runtime")
             return self.const("false")
@@ -588,9 +1442,20 @@ class Converter:
             if e.get("delegated"):
                 self.note(APPROX, "delegated entry: its source condition was given up at generation, so it is cast whenever "
                                   "ready at this position")
-            gates = e.get("gates") or []
+            gates = list(e.get("gates") or [])
+            hold = None
+            if self.rules:
+                for k, g in enumerate(gates):
+                    gates[k], said = self.rules.stack(e, g)
+                    if said:
+                        self.note(EXACT, "runtime: " + said)
+                hold, said = self.rules.hold(e)
+                if said:
+                    self.note(EXACT, "runtime: " + said)
             action = {"castSpell": {"spellId": ref}}
             conds = [self.gate(g) for g in gates]
+            if hold is not None:
+                conds.append(hold)
             if len(conds) == 1:
                 action["condition"] = conds[0]
             elif conds:
@@ -605,6 +1470,17 @@ class Converter:
 def talent_layout(sim, cls):
     data = json.load(open(os.path.join(sim, "ui", "core", "talents", "trees", cls + ".json"), encoding="utf-8"))
     return [[(t["location"]["rowIdx"], t["maxPoints"]) for t in tree["talents"]] for tree in data]
+
+
+def talent_points(sim, cls, build):
+    """Talent name -> points for a talent string (every talent of the class is a key)."""
+    data = json.load(open(os.path.join(sim, "ui", "core", "talents", "trees", cls + ".json"), encoding="utf-8"))
+    trees = (build.split("-") + ["", ""])[:3]
+    out = {}
+    for tree, digits in zip(data, trees):
+        for idx, talent in enumerate(tree["talents"]):
+            out[talent["name"]] = int(digits[idx]) if idx < len(digits) else 0
+    return out
 
 
 def talents_for_level(sim, cls, tree_cfg, level):
@@ -676,6 +1552,9 @@ GEAR_SETUPS = {
                "(the weapon and the chest) and uncommon jewellery where the client has any",
     "lucky": "rare in every slot that has one within 5 levels, the average pick elsewhere",
 }
+
+
+RETIRED_ITEM = re.compile(r"^(Deprecated|DEPRECATED|Monster - |TEST|Test |OLD |\[PH\])|\((old|OLD|test|TEST|DEPRECATED)\)")
 
 
 class ItemPool:
@@ -802,6 +1681,8 @@ class ItemPool:
             meta = self.info(iid)
             if not meta or meta[3] != quality or not (max(lo, 1) <= meta[2] <= hi):
                 continue
+            if RETIRED_ITEM.search(meta[0] or ""):
+                continue   # a name the client marks as retired or internal: nobody wears it
             if meta[1] != -1 and not (meta[1] & self.class_bit):
                 continue
             if not (0 <= rec.get("il", 0) - meta[2] <= 8):
@@ -817,7 +1698,7 @@ class ItemPool:
         return sorted(out)
 
     def weapon_dps(self, rec):
-        w = rec.get("w") or [0, 0, 1]
+        w = rec.get("w") or rec.get("r") or [0, 0, 1]
         return (w[0] + w[1]) / 2.0 / max(w[2], 0.1)
 
     def median(self, cands):
@@ -883,6 +1764,10 @@ class ItemPool:
 
         def put(slot, iid, note=""):
             bonus = None
+            rec = self.stats.get(str(iid)) or {}
+            skill = trainable_weapons(self.cfg["class_id"]).get(rec.get("s")) if rec.get("c") == ITEM_CLASS_WEAPON else None
+            if skill:
+                note += " [needs the %s skill]" % skill
             if self.assumed_bonus() and self.suffix_base(iid):
                 bonus = [self.assumed_bonus()]
                 gained = self.suffix_stats(iid, bonus)
@@ -958,6 +1843,46 @@ class ItemPool:
                 put(16, pick, "%s, %g-%g damage every %gs" % (note, it["weaponDamageMin"], it["weaponDamageMax"], it["weaponSpeed"]))
             else:
                 lines.append("ranged: " + note)
+        if self.cfg.get("ranged") and setup in GEAR_SETUPS:
+            rcfg = self.cfg["ranged"]
+            wanted = lambda r: (r["c"] == 2 and r["inv"] in (15, 26) and r["s"] in rcfg["subclasses"]
+                                and (r.get("r") or r.get("w")))
+            lo, hi = {"bare": (1, level), "behind": (level - 10, level - 5)}.get(setup, (level - 5, level))
+            ranked = lambda cands: sorted((self.weapon_dps(self.stats[str(i)]), i) for _, i in self.prefer_sourced(cands))
+            cands = ranked(self.candidates(level, 2, lo, hi, wanted))
+            pick = (cands[-1][1] if setup == "bare" else self.median(cands)) if cands else None
+            if not pick:
+                cands = ranked(self.candidates(level, 2, 1, level, wanted))
+                pick = cands[-1][1] if cands else None
+            if pick:
+                w = self.stats[str(pick)].get("r") or self.stats[str(pick)].get("w")
+                put(16, pick, " [%s, %g-%g damage every %gs]" % (rcfg["note"], w[0], w[1], w[2]))
+            else:
+                lines.append("ranged: no %s passes the rule" % rcfg["note"])
+        if self.cfg.get("dual") and setup in GEAR_SETUPS:
+            learned = dual_wield_level()
+            if learned and level < learned:
+                lines.append("off hand: empty, Dual Wield is not learned before level %d (ASSUMED)" % learned)
+            else:
+                wcfg_dual = self.cfg["weapon"]
+                wanted = lambda r: (r["c"] == 2 and r["inv"] in (13, 22) and r["s"] in wcfg_dual["subclasses"]
+                                    and r.get("w"))
+                lo, hi = (level - 10, level - 5) if setup == "behind" else (level - 7, level)
+                pick = (self.median(self.prefer_sourced(self.candidates(level, 2, lo, hi, wanted)))
+                        or self.median(self.prefer_sourced(self.candidates(level, 2, 1, level, wanted))))
+                if pick:
+                    put(15, pick)
+                else:
+                    lines.append("off hand: no one-hand weapon passes the rule")
+        if self.cfg.get("shield") and setup in GEAR_SETUPS:
+            wanted = lambda r: r["c"] == 4 and r["s"] == SUBCLASS_SHIELD and r["inv"] == 14
+            lo, hi = (level - 10, level - 5) if setup == "behind" else (level - 7, level)
+            pick = (self.median(self.prefer_sourced(self.candidates(level, 2, lo, hi, wanted)))
+                    or self.median(self.prefer_sourced(self.candidates(level, 2, 1, level, wanted))))
+            if pick:
+                put(15, pick)
+            else:
+                lines.append("off hand: no shield passes the rule")
         empty = [SLOT_NAMES[i] for i in armour_slots + [1, 10, 11] if not specs[i]]
         if empty and setup != "bare":
             lines.append("empty (no item passes the rule): " + ", ".join(empty))
@@ -1000,6 +1925,20 @@ def expected_creatures(sim):
     return rows, (build.group(1) if build else "?")
 
 
+GAP_NAMES = {-1: "one below", 0: "even", 1: "one above"}
+
+
+def gap_scenarios(level, gaps):
+    """One regular target per level gap (target level minus player level), for --gaps."""
+    out = []
+    for gap in gaps:
+        if level + gap < 1:
+            continue
+        name = GAP_NAMES.get(gap, "%d %s" % (abs(gap), "below" if gap < 0 else "above"))
+        out.append({"name": "L%d vs %d (%s)" % (level, level + gap, name), "target_level": level + gap, "elite": False})
+    return out
+
+
 def scenarios_for(level, health_mults=None):
     """The target set for a level. With health_mults, an even-level target at each multiple of
     its expected health instead: the same fight made shorter or longer, to find where an
@@ -1022,12 +1961,14 @@ def build_request(cls, level, talents, gear, scenario, creatures, rotation, iter
     if scenario["elite"]:
         health *= ASSUMPTIONS["elite_health_mult"]
         dps *= ASSUMPTIONS["elite_damage_mult"]
-    health *= scenario.get("hp_mult", 1)
+    health *= scenario.get("hp_mult", 1) * health_factor(scenario["target_level"] - level)
     stats = [0.0] * 44
     # Stat indexes are read from proto/common.proto by stat_index(); filled in by the caller.
     stats[scenario["_armor_idx"]] = armor
     stats[scenario["_health_idx"]] = health
     spec_field, spec_value = cfg["spec"]
+    if cfg.get("spec_for_level"):
+        spec_value = {"options": dict(spec_value.get("options", {}), **cfg["spec_for_level"](level))}
     player = {
         "name": "bench", "race": gear[2].get("race") or cfg["race"], "class": cfg["proto_class"], "level": level,
         "knownSpells": gear[2].get("spells") or [],
@@ -1047,8 +1988,11 @@ def build_request(cls, level, talents, gear, scenario, creatures, rotation, iter
                    "damageSpread": ASSUMPTIONS["target_damage_spread"] if hits else 0,
                    "swingSpeed": ASSUMPTIONS["target_swing_speed"], "tankIndex": 0})
     raid["tanks"] = [{"type": "Player", "index": 0}]
-    return {"raid": raid,
-            "encounter": {"useHealth": True, "duration": 180, "targets": [target]},
+    encounter = {"useHealth": True, "duration": 180, "targets": [target]}
+    if PULL["mobs"] > 1:
+        encounter = {"useHealth": False, "duration": PULL["seconds"], "durationVariation": 0,
+                     "targets": [dict(target, name="%s %d" % (target["name"], i)) for i in range(PULL["mobs"])]}
+    return {"raid": raid, "encounter": encounter,
             "simOptions": {"iterations": iterations, "randomSeed": seed, "ruleset": "RulesetForever"}}
 
 
@@ -1109,13 +2053,37 @@ def strip_prepull(rotation):
     return rotation
 
 
+# One simulator run is stopped after this long: a list that casts a free, instant, cooldown-less
+# action forever never advances the simulator's clock.
+RUN_TIMEOUT = {"seconds": 180}
+TIMED_OUT = set()   # (arm, level) that never finished: not run again at that level
+# Processor threads one simulator run may use (GOMAXPROCS). Half the machine by default:
+# the simulator otherwise takes every core. It also runs at the lowest scheduling priority, so
+# a game or anything else in use gets the processor first (--normal-priority turns that off).
+SIM_THREADS = {"n": max(1, (os.cpu_count() or 2) // 2), "low_priority": True}
+
+
+def low_priority_args():
+    """subprocess arguments that start a child at the lowest scheduling priority."""
+    if not SIM_THREADS["low_priority"]:
+        return {}
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "IDLE_PRIORITY_CLASS", 0x40)}
+    return {"preexec_fn": lambda: os.nice(19)}
+
+
 def run_cli(cli, request, keep, label):
     folder = keep or tempfile.mkdtemp(prefix="jac_simbench_")
     os.makedirs(folder, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9]+", "_", label)
     infile, outfile = os.path.join(folder, safe + ".request.json"), os.path.join(folder, safe + ".result.json")
     json.dump(request, open(infile, "w", encoding="utf-8"), indent=1)
-    proc = subprocess.run([cli, "sim", "--infile", infile, "--outfile", outfile], capture_output=True, text=True)
+    try:
+        proc = subprocess.run([cli, "sim", "--infile", infile, "--outfile", outfile], capture_output=True, text=True,
+                              timeout=RUN_TIMEOUT["seconds"],
+                              env=dict(os.environ, GOMAXPROCS=str(SIM_THREADS["n"])), **low_priority_args())
+    except subprocess.TimeoutExpired:
+        return None, "the simulator did not finish within %d s (a rotation that never advances time)" % RUN_TIMEOUT["seconds"]
     if proc.returncode != 0 or not os.path.exists(outfile):
         return None, (proc.stderr or proc.stdout).strip()[-400:]
     result = json.load(open(outfile, encoding="utf-8"))
@@ -1146,15 +2114,24 @@ def summarize(result, swing_speed):
         casts[key] = (tot / n, dmg / n)
     mana = -sum(r.get("gain", 0.0) for r in player.get("resources", [])
                 if r.get("type") == "ResourceTypeMana" and r.get("gain", 0.0) < 0) / n
-    swings = 0
+    # Damage taken comes from the targets' own actions: the player's damage-taken rate is divided
+    # by the nominal duration and is unusable for a fight sized by health.
+    swings, taken = 0, 0.0
     for target in result["encounterMetrics"]["targets"]:
         for action in target.get("actions", []):
+            taken += sum(t.get("damage", 0.0) for t in action.get("targets", []))
             if action.get("id", {}).get("otherId") == "OtherActionAttack":
                 swings += sum(t.get("casts", 0) for t in action.get("targets", []))
+    out = {"n": n, "damage": damage / n, "taken": taken / n, "casts": casts, "mana": mana}
+    if PULL["mobs"] > 1:
+        out.update(kill=float("nan"), dps=damage / n / PULL["seconds"])
+        return out
     if not swings:
-        return {"n": n, "damage": damage / n, "kill": float("nan"), "dps": float("nan"), "casts": casts, "mana": mana}
+        out.update(kill=float("nan"), dps=float("nan"))
+        return out
     kill = swing_speed * (swings / n - 0.5)
-    return {"n": n, "damage": damage / n, "kill": kill, "dps": damage / n / kill, "casts": casts, "mana": mana}
+    out.update(kill=kill, dps=damage / n / kill)
+    return out
 
 
 # Two-sided 95% Student t quantiles by degrees of freedom (batch means).
@@ -1183,11 +2160,13 @@ def merge_casts(batches):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--sim", required=True, help="WoW Forever simulator checkout")
-    ap.add_argument("--cli", help="built wowsimcli executable")
+    ap.add_argument("--cli", help="built wowsimcli executable (default: wowsimcli.exe or wowsimcli in the simulator "
+                                  "checkout, where its own .gitignore expects the build)")
     ap.add_argument("--class", dest="cls", default="warrior", choices=sorted(CLASSES))
     ap.add_argument("--tree", default="arms")
     ap.add_argument("--context", default="st", choices=("st", "cleave", "aoe"))
-    ap.add_argument("--levels", default="20,40")
+    ap.add_argument("--levels", help="comma-separated character levels (default 20,40; 25,40,60 for a tree the "
+                                     "simulator only has at levels %s)" % ", ".join(str(x) for x in BRACKET_LEVELS))
     ap.add_argument("--gear", default="average",
                     help="comma-separated gear setups: %s, or file:<character json>. Every result row names its setup"
                          % ", ".join(GEAR_SETUPS))
@@ -1206,31 +2185,137 @@ def main():
                                            "target: replaces the usual target set with one scenario per multiple")
     ap.add_argument("--engagement", choices=sorted(ENGAGEMENTS), help="how the character meets the target "
                     "(default: the class's own)")
-    ap.add_argument("--pet", help="warlock demon: none, imp, voidwalker, succubus or felhunter (default none; the "
-                                  "simulator's demons only act at owner levels 25, 40, 50 and 60)")
+    ap.add_argument("--pet", help="warlock demon (none, imp, voidwalker, succubus, felhunter; the simulator's demons "
+                                  "only act at owner levels 25, 40, 50 and 60) or hunter pet family (cat, wolf, boar, "
+                                  "...; the simulator's pet has level 60 stats at every level). Default none")
     ap.add_argument("--wand", help="wand item id from the simulator's database, or 'none' (default: the crafted "
                                    "uncommon wand the level can equip)")
+    ap.add_argument("--stance", choices=sorted(STANCE_FORMS), help="warrior stance at the pull (default: the tree's own)")
+    ap.add_argument("--loadout", help="weapon setup: 2h, shield or dw (dual wield) for a warrior (default: the tree's own)")
+    ap.add_argument("--draft", help="a copy of Data/Forever/Rotations.lua holding a proposed list: adds the arm "
+                                    "`draft`, the same tree and context read from that file")
+    ap.add_argument("--new-source", help="a newer upstream presets folder: adds the arm `source-new`, the tree's "
+                                         "source preset as it is there")
+    ap.add_argument("--other-lists", help="comma-separated trees: adds an arm per tree, this tree's character "
+                                          "following that tree's list (`list-<tree>`), for hybrid and early builds")
+    ap.add_argument("--grouped", action="store_true",
+                    help="answer the lists' 'in a group' condition as true (the bench still fights alone)")
+    ap.add_argument("--listed-weapons", action="store_true",
+                    help="keep to the weapon types the setup lists instead of every type the class can learn")
+    ap.add_argument("--talents", help="talent string to use at every level instead of the derived build")
+    ap.add_argument("--dual-wield-level", type=int, default=ASSUMED_DUAL_WIELD_LEVEL,
+                    help="level a dual-wield setup gains its off-hand weapon (ASSUMED %d; not in the client data)"
+                         % ASSUMED_DUAL_WIELD_LEVEL)
+    ap.add_argument("--mobs", type=int, default=1, help="identical targets in the fight; above 1 the fight is a fixed "
+                                                       "pull (--pull-seconds) and damage per second over it is reported")
+    ap.add_argument("--pull-seconds", type=float, default=20.0, help="length of a multi-target pull")
+    ap.add_argument("--no-runtime-rules", action="store_true",
+                    help="run the lists alone, without the queue's rules outside them (stacking, slow-payoff hold, "
+                         "dying-target and fast-fight DoT rules)")
+    ap.add_argument("--gaps", help="comma-separated level gaps (target level minus player level, e.g. --gaps=-3,-2,-1,0,1,2): "
+                                   "replaces the usual target set with one regular target per gap")
+    ap.add_argument("--health-scale", type=float, help="multiply every target's health by this factor")
+    ap.add_argument("--calibrate", help="a JustAC SavedVariables file: scale target health so simulated kill times "
+                                        "match the solo kills it recorded (the class, tree and gear here must be the "
+                                        "ones that made those kills)")
+    ap.add_argument("--calibrate-batches", type=int, default=3, help="batches per recorded kill when calibrating")
+    ap.add_argument("--calibrate-quantile", type=float, default=0.75,
+                    help="which measured/simulated ratio sets the health factor (default 0.75: lean toward fights "
+                         "that run a little long, so real fights come in at or under the simulated ones)")
+    ap.add_argument("--cooldown-gap", type=int,
+                    help="try another level gap than the runtime's: a target this many levels above the player "
+                         "releases the major cooldowns")
+    ap.add_argument("--no-cooldown-arm", action="store_true",
+                    help="leave out the justac+cooldowns arm (the list plus the class's major cooldowns it does not "
+                         "name, pressed when cued)")
+    ap.add_argument("--run-timeout", type=int, default=RUN_TIMEOUT["seconds"],
+                    help="seconds before one simulator run is stopped and reported as failed")
+    ap.add_argument("--threads", type=int, default=SIM_THREADS["n"],
+                    help="processor threads the simulator may use (default: half the machine's)")
+    ap.add_argument("--normal-priority", action="store_true",
+                    help="run the simulator at normal priority instead of the lowest")
     ap.add_argument("--convert-only", action="store_true")
     ap.add_argument("--keep", help="folder for the request and result JSON of every run")
     ap.add_argument("--out", help="write the report (Markdown) here as well as to stdout")
     args = ap.parse_args()
 
     cls, cfg = args.cls, CLASSES[args.cls]
+    if args.tree not in cfg["trees"]:
+        raise SystemExit("--tree %r: %s has %s" % (args.tree, cls, ", ".join(sorted(cfg["trees"]))))
+    tree_cfg = cfg["trees"][args.tree]
+    for key in TREE_OVERRIDES:
+        if key in tree_cfg:
+            cfg[key] = tree_cfg[key]
     if args.engagement:
         cfg["engagement"] = args.engagement
     if args.pet:
-        if "summon" not in cfg["spec"][1].get("options", {}):
-            raise SystemExit("--pet applies to a class with a demon")
-        demon = {"none": "NoSummon", "imp": "Imp", "voidwalker": "Voidwalker", "succubus": "Succubus",
-                 "felhunter": "Felhunter"}.get(args.pet.lower())
-        if not demon:
-            raise SystemExit("--pet %r: use none, imp, voidwalker, succubus or felhunter" % args.pet)
-        cfg["spec"][1]["options"]["summon"] = demon
-    tree_cfg = cfg["trees"][args.tree]
+        options = cfg["spec"][1].setdefault("options", {})
+        if "summon" in options:
+            demon = {"none": "NoSummon", "imp": "Imp", "voidwalker": "Voidwalker", "succubus": "Succubus",
+                     "felhunter": "Felhunter"}.get(args.pet.lower())
+            if not demon:
+                raise SystemExit("--pet %r: use none, imp, voidwalker, succubus or felhunter" % args.pet)
+            options["summon"] = demon
+        elif cfg.get("pets"):
+            families = dict((n.lower(), n) for n in cfg["pets"]["names"])
+            families["none"] = cfg["pets"]["none"]
+            if args.pet.lower() not in families:
+                raise SystemExit("--pet %r: use none or one of %s" % (args.pet, ", ".join(sorted(families))))
+            options[cfg["pets"]["option"]] = families[args.pet.lower()]
+        else:
+            raise SystemExit("--pet applies to a class with a pet")
+    stance = args.stance or tree_cfg.get("stance")
+    if stance:
+        cfg["spec"] = (cfg["spec"][0], {"options": dict(cfg["spec"][1].get("options", {}), stance="WarriorStance" + stance)})
+    form = stance or tree_cfg.get("form")
+    allowed_levels = tree_cfg.get("levels") or cfg.get("levels")
+    if not args.levels:
+        args.levels = "25,40,60" if allowed_levels else "20,40"
+    refused = [x for x in args.levels.split(",") if allowed_levels and int(x) not in allowed_levels]
+    if refused and not args.convert_only:
+        raise SystemExit("--levels %s: the simulator has %s %s's core attacks only at levels %s"
+                         % (",".join(refused), cls, args.tree, ", ".join(str(x) for x in allowed_levels)))
+    loadout_name = args.loadout or tree_cfg.get("loadout")
+    loadout = None
+    if loadout_name:
+        loadout = LOADOUTS.get(cls, {}).get(loadout_name)
+        if not loadout:
+            raise SystemExit("--loadout %r: use one of %s" % (loadout_name, ", ".join(sorted(LOADOUTS.get(cls, {})))))
+        cfg["weapon"], cfg["shield"] = loadout["weapon"], loadout["shield"]
+        cfg["dual"] = loadout.get("dual", False)
+    if not args.listed_weapons:
+        open_weapons(cfg)
+    PULL["mobs"], PULL["seconds"] = max(1, args.mobs), args.pull_seconds
+    GROUPED["on"] = args.grouped
+    RUN_TIMEOUT["seconds"] = args.run_timeout
+    SIM_THREADS["n"] = max(1, args.threads)
+    SIM_THREADS["low_priority"] = not args.normal_priority
+    DUAL_WIELD["level"] = args.dual_wield_level
+    if args.dual_wield_level == ASSUMED_DUAL_WIELD_LEVEL and loadout and loadout.get("dual_level"):
+        DUAL_WIELD["level"] = loadout["dual_level"]
     classes, chains, names = load_rotations()
-    entries = classes[cls.upper() + "_F"][args.tree][args.context]
+    lists = classes[cls.upper() + "_F"]
+    entries = lists[args.tree][args.context]
+    # The same character (this tree's build, gear and setup) following another tree's list: what
+    # a player gets when the addon picks a tree their points do not really describe.
+    other_arms = []
+    for other in (args.other_lists.split(",") if args.other_lists else []):
+        if other not in lists:
+            raise SystemExit("--other-lists %r: no such tree for %s" % (other, cls))
+        other_arms.append(("list-" + other, lists[other][args.context], None))
     floor = None if args.no_dot_floor else dot_floor_pct()
-    conv = Converter(IdMap(args.sim, cls, chains), names, cfg["engagement"], floor)
+    data = None if args.no_runtime_rules or args.no_dot_floor else runtime_data()
+
+    def rules_for(level_delta, elite, level=None):
+        if data is None:
+            return None
+        return RuntimeRules(data, cls, args.tree, level_delta, elite, PULL["mobs"] > 1, args.cooldown_gap, level)
+
+    ids = IdMap(args.sim, cls, chains)
+    # The printed conversion is for an ordinary even-level target and the tree's full build; each
+    # scenario is converted with its own level, kind and the talents the level has when it runs.
+    conv = Converter(ids, names, cfg["engagement"], floor, rules_for(0, False),
+                     talent_points(args.sim, cls, args.talents or tree_cfg["talents"]))
     justac = conv.convert(entries)
 
     lines = []
@@ -1250,6 +2335,21 @@ def main():
     say("")
     say("Totals: %d exact, %d approximated, %d not expressible." % (counts[EXACT], counts[APPROX], counts[LOST]))
     say("")
+    say("## Can each entry be used in this setup?")
+    say("")
+    worn = tuple(cfg["weapon"]["subclasses"]) + tuple(cfg.get("ranged", {}).get("subclasses", ()))
+    problems = usability_problems(entries, names, form, worn, cfg.get("shield", False), cfg.get("wand", False),
+                                  cfg.get("forms"), cfg.get("form_spells"), cfg.get("form_word", "Stance"))
+    if problems:
+        say("In game the queue hides an entry the client reports unusable, and the simulator skips it too, so these "
+            "are not list faults by themselves. They are what this setup rules out: when a core attack is here, the "
+            "setup is not how the tree is played and the results do not describe it.")
+        say("")
+        for label, why in problems:
+            say("- %s: %s" % (label, why))
+    else:
+        say("Every entry can be used in this setup's stance and equipment.")
+    say("")
     if args.convert_only:
         say("```json")
         say(json.dumps(justac, indent=1))
@@ -1257,28 +2357,51 @@ def main():
         print("\n".join(lines))
         return
     if not args.cli:
-        raise SystemExit("--cli is required to run (or use --convert-only)")
+        built = [os.path.join(args.sim, name) for name in ("wowsimcli.exe", "wowsimcli")]
+        args.cli = next((path for path in built if os.path.isfile(path)), None)
+    if not args.cli:
+        raise SystemExit("no wowsimcli in %s: build it there (see the top of this file), pass --cli, "
+                         "or use --convert-only" % args.sim)
 
-    arms = [("justac", justac)]
+    # (name, list entries converted per scenario, or a fixed simulator rotation)
+    arms = [("justac", entries, None)]
     for group in (args.without or "").split(";"):
         if not group.strip():
             continue
         drop = set(int(x) for x in group.split(","))
-        quiet = Converter(conv.ids, names, cfg["engagement"], floor)
         arms.append(("justac-without-" + "-".join(str(d) for d in sorted(drop)),
-                     quiet.convert([e for e in entries if e["id"] not in drop])))
+                     [e for e in entries if e["id"] not in drop], None))
     for group in (args.mana_floor or "").split(";"):
         if not group.strip():
             continue
         floors = dict((int(k), float(v)) for k, v in (pair.split("=") for pair in group.split(",")))
-        quiet = Converter(conv.ids, names, cfg["engagement"], floor)
         gated = [dict(e, gates=list(e.get("gates") or []) + [{"t": "power", "res": "mana", "op": ">=", "n": floors[e["id"]],
                                                              "ispct": True}]) if e["id"] in floors else e for e in entries]
-        arms.append(("justac-" + "-".join("%d-above-%g" % kv for kv in sorted(floors.items())), quiet.convert(gated)))
-    arms.append(("sim", strip_prepull(json.load(open(os.path.join(args.sim, tree_cfg["sim_preset"]), encoding="utf-8")))))
-    src = os.path.join(PRESETS, tree_cfg["source_preset"])
-    if os.path.exists(src):
-        arms.append(("source", strip_prepull(json.load(open(src, encoding="utf-8")))))
+        arms.append(("justac-" + "-".join("%d-above-%g" % kv for kv in sorted(floors.items())), gated, None))
+    if args.draft:
+        # A proposed list, in the generated file's own format, run beside the current one.
+        draft_classes, _, draft_names = load_rotations(args.draft)
+        for sid, name in draft_names.items():
+            names.setdefault(sid, name)
+        arms.append(("draft", draft_classes[cls.upper() + "_F"][args.tree][args.context], None))
+    arms += other_arms
+    # The queue cues the class's major cooldowns (a glow) without putting them in the first
+    # slot. This arm is a player who presses each one the list does not name when it is cued.
+    listed = set(e["id"] for e in entries)
+    cued = []
+    if not args.no_cooldown_arm:
+        cued = [i for i in ((data or runtime_data()).get("burst", {}).get(cls, [])) if i not in listed]
+    if cued:
+        arms.append(("justac+cooldowns", [{"id": i, "gates": []} for i in cued] + list(entries), None))
+    arms.append(("sim", None, strip_prepull(json.load(open(os.path.join(args.sim, tree_cfg["sim_preset"]), encoding="utf-8")))))
+    src = os.path.join(PRESETS, tree_cfg.get("source_preset") or "none")
+    if os.path.isfile(src):
+        arms.append(("source", None, strip_prepull(json.load(open(src, encoding="utf-8")))))
+    if args.new_source:
+        # A newer upstream presets folder, not yet vendored: the same preset as it is there.
+        newer = os.path.join(args.new_source, tree_cfg.get("source_preset") or "none")
+        if os.path.isfile(newer):
+            arms.append(("source-new", None, strip_prepull(json.load(open(newer, encoding="utf-8")))))
 
     creatures, build = expected_creatures(args.sim)
     armor_idx, health_idx = stat_index(args.sim, "StatArmor"), stat_index(args.sim, "StatHealth")
@@ -1290,13 +2413,56 @@ def main():
     say("- Kill time is measured from the target's own swing count (see summarize in the tool); damage per second is damage "
         "per fight divided by it. A negative last column means the arm kills faster than the simulator's preset.")
     say("- Arms: justac = `Data/Forever/Rotations.lua` %s/%s/%s; sim = `%s`; source = `tools/forever-apl-src/presets/%s`. "
-        "Pre-pull actions removed from every arm." % (cls, args.tree, args.context, tree_cfg["sim_preset"], tree_cfg["source_preset"]))
+        "Pre-pull actions removed from every arm." % (cls, args.tree, args.context, tree_cfg["sim_preset"],
+                                                      tree_cfg.get("source_preset") or "(none: a hand-pinned list)"))
+    say("- Spec: `%s`, options %s%s." % (cfg["spec"][0], json.dumps(cfg["spec"][1].get("options", {}), separators=(",", ":")),
+                                       "; per level: " + (cfg["spec_for_level"].__doc__ or "").split("\n")[0]
+                                       if cfg.get("spec_for_level") else ""))
+    for caveat in tree_cfg.get("caveats", []):
+        say("- CAVEAT: " + caveat)
+    off_bracket = [x for x in args.levels.split(",") if int(x) not in BRACKET_LEVELS]
+    by_level = bracket_only(args.sim, cls)
+    if off_bracket and by_level:
+        say("- CAVEAT: at level %s the simulator has nothing, or rank 0, for what these source files model (they "
+            "are defined only at levels %s): %s. The same for every arm."
+            % (", ".join(off_bracket), ", ".join(str(x) for x in BRACKET_LEVELS), ", ".join(by_level)))
+    if cfg.get("pets"):
+        say("- Pet: %s (%s)." % (cfg["spec"][1]["options"].get(cfg["pets"]["option"]), cfg["pets"]["note"]))
     if conv.ids.tables:
         say("- Ranks: the simulator gives each rank of %d spell families its own action id and registers only the ranks "
             "the level has, so every arm is rewritten per level to the highest rank the level has. A spell the level does "
             "not have is never cast." % len(conv.ids.tables))
-    say("- Engagement: %s (%s). Race %s, no consumables or buffs, starting resource 0."
+    say("- Engagement: %s (%s). Race %s, no consumables or buffs; rage starts at 0, energy starts full (the simulator's own start)."
         % (cfg["engagement"], ENGAGEMENTS[cfg["engagement"]]["note"], cfg["race"]))
+    if form or loadout:
+        say("- Stance or form %s; weapons: %s." % (form or "none", loadout["note"] if loadout else "the class default"))
+    skills = trainable_weapons(cfg["class_id"])
+    if skills and not args.listed_weapons:
+        say("- Weapon types: any the class can learn that fit the setup (%s). The client data does not say which "
+            "skills a character starts with, so every weapon below names the skill it needs: it may have to be "
+            "learned from a weapon master first. `--listed-weapons` keeps to the setup's own types."
+            % ", ".join(sorted(set(skills.values()))))
+    if data is None:
+        say("- Runtime rules: off; the lists run alone.")
+    else:
+        say("- Runtime rules (SpellQueue.lua) applied per scenario: stacking to the full stack on an elite or higher-level "
+            "target, the slow-payoff hold, the major-cooldown hold (the class's burst cooldowns wait for an elite, "
+            "several enemies or a target three or more levels above, however long the fight lasts; slow payoffs wait "
+            "%d s) and the dying-target and fast-fight rules for new damage "
+            "over time. Not modelled: the weapon filler comparison, the pushback response, On the Move, the rest of the "
+            "spellbook pool (learned abilities no list names) and every group rule (the bench fights alone)."
+            % data["long_fight"])
+    say("- Every fight starts with every cooldown ready, in every arm. The presets press theirs at once on any target; "
+        "a levelling player has a multi-minute cooldown for one fight in several, so on ordinary targets the presets' "
+        "lead from cooldowns is not one a player keeps.")
+    if cued:
+        say("- Arm justac+cooldowns: the list plus the class's major cooldowns it does not name (%s), cast when ready "
+            "under the same hold. The queue cues these with a glow and never puts them in the first slot, so this arm is "
+            "a player who presses the cue; `justac` is one who follows the first slot only."
+            % ", ".join("%s %d" % (names.get(i) or ids.name_of(i) or "spell", i) for i in cued))
+    if PULL["mobs"] > 1:
+        say("- Pack: %d identical targets for a fixed %g s pull; the kill time column is empty and the comparison column "
+            "compares damage per second (positive is more damage)." % (PULL["mobs"], PULL["seconds"]))
     say("- Targets: client ExpectedStat build %s (health, armour, melee damage per second); elite = health x%g, damage x%g (assumed)."
         % (build, ASSUMPTIONS["elite_health_mult"], ASSUMPTIONS["elite_damage_mult"]))
     say("")
@@ -1314,6 +2480,85 @@ def main():
         "'%s' (which suffixes an item can really roll is not in the data) and marked; "
         "item use and proc effects exist only for items in the simulator's own database, trinkets are not picked." % (pool.client_file, cfg.get("suffix", {}).get("name", "none")))
     say("")
+    if args.health_scale:
+        HEALTH["scale"] = args.health_scale
+    if args.calibrate:
+        kills = recorded_kills(args.calibrate)
+        say("## Fight length calibration")
+        say("")
+        if not kills:
+            say("No solo kills recorded in `%s`; health is not scaled." % args.calibrate)
+        else:
+            setup = setups[0]
+            say("Each recorded solo kill simulated with this class, tree and gear setup (`%s`), %d batches of %d. "
+                "The records do not say which class or gear made a kill: a kill made by another character does not "
+                "calibrate this one." % (setup, args.calibrate_batches, args.iterations))
+            say("")
+            say("| Creature | Level | Kind | Player level | Measured s | Simulated s | Measured / simulated |")
+            say("|---|---|---|---|---|---|---|")
+            ratios, by_gap = [], {}
+            saved_scale, saved_gaps = HEALTH["scale"], HEALTH["by_gap"]
+            HEALTH["scale"], HEALTH["by_gap"] = 1.0, {}
+            for kill in kills:
+                level = kill["plvl"]
+                talents = args.talents or talents_for_level(args.sim, cls, tree_cfg, level)
+                if setup.startswith("file:"):
+                    specs, custom, _, data = pool.from_file(setup[5:])
+                    gear = (specs, custom, character_overrides(args.sim, cls, data, lambda _line: None))
+                else:
+                    specs, custom, _ = pool.build(setup, level)
+                    gear = (specs, custom, {})
+                simulated = []
+                for target_level in kill["levels"]:
+                    sc = {"name": "calibration", "target_level": target_level, "elite": kill["elite"],
+                          "_armor_idx": armor_idx, "_health_idx": health_idx}
+                    rotation = Converter(ids, names, cfg["engagement"], floor,
+                                         rules_for(target_level - level, kill["elite"], level),
+                                         talent_points(args.sim, cls, talents)).convert(entries)
+                    for batch in range(args.calibrate_batches):
+                        request = build_request(cls, level, talents, gear, sc, creatures,
+                                                ranks_for_level(rotation, conv.ids.tables, level), args.iterations,
+                                                args.seed + batch * 1000003)
+                        result, err = run_cli(args.cli, request, args.keep, "calibration_%s_%d_b%d"
+                                              % (kill["name"], target_level, batch))
+                        if result is not None:
+                            simulated.append(summarize(result, ASSUMPTIONS["target_swing_speed"])["kill"])
+                if not simulated:
+                    continue
+                sim_kill = sum(simulated) / len(simulated)
+                ratios.append(kill["seconds"] / sim_kill)
+                gap = int(math.floor(sum(kill["levels"]) / float(len(kill["levels"])) - level + 0.5))
+                by_gap.setdefault(gap, []).append(ratios[-1])
+                say("| %s | %s | %s | %d | %.1f | %.1f | %.2f |" % (
+                    kill["name"], "-".join(str(x) for x in (kill["levels"][0], kill["levels"][-1])) if len(kill["levels"]) > 1
+                    else kill["levels"][0], "elite" if kill["elite"] else "normal", level, kill["seconds"], sim_kill,
+                    ratios[-1]))
+            HEALTH["scale"], HEALTH["by_gap"] = saved_scale, saved_gaps
+            if ratios and not args.health_scale:
+                HEALTH["scale"] = calibration_factor(ratios, args.calibrate_quantile)
+                HEALTH["by_gap"] = dict((gap, calibration_factor(values, args.calibrate_quantile))
+                                        for gap, values in by_gap.items())
+            say("")
+            say("Kill time follows health closely, so target health is scaled per level gap by the ratio at the %d%% "
+                "point of that gap's kills. Leaning long on purpose: real fights should come in at or under the "
+                "simulated ones%s." % (round(100 * args.calibrate_quantile),
+                                       "; few kills, treat these as rough corrections" if len(ratios) < 5 else ""))
+            if HEALTH["by_gap"]:
+                say("")
+                say("| Level gap | Kills | Health factor | Source |")
+                say("|---|---|---|---|")
+                measured = sorted(HEALTH["by_gap"])
+                for gap in range(min(measured + [-3]), max(measured + [3]) + 1):
+                    source = "measured" if gap in HEALTH["by_gap"] else (
+                        "interpolated" if measured[0] < gap < measured[-1] else "nearest measured gap")
+                    say("| %+d | %d | x%.2f | %s |" % (gap, len(by_gap.get(gap, [])), health_factor(gap), source))
+        say("")
+    if HEALTH["by_gap"]:
+        say("- Target health scaled per level gap (table above).")
+        say("")
+    elif HEALTH["scale"] != 1.0:
+        say("- Target health scaled by x%.2f for every scenario." % HEALTH["scale"])
+        say("")
     jobs = []
     for setup in setups:
         file_level = None
@@ -1323,7 +2568,7 @@ def main():
             jobs.append((level, setup))
     jobs.sort(key=lambda job: job[0])
     for level, setup in jobs:
-        talents = talents_for_level(args.sim, cls, tree_cfg, level)
+        talents = args.talents or talents_for_level(args.sim, cls, tree_cfg, level)
         label = "file:" + os.path.basename(setup[5:]) if setup.startswith("file:") else setup
         say("## Level %d, gear: %s" % (level, label))
         say("")
@@ -1342,17 +2587,26 @@ def main():
         for line in gear_lines:
             say("  - %s" % line)
         say("")
-        say("| Gear | Scenario | Target health | Arm | Kill time s (95% CI) | DPS (95% CI) | Kill time vs sim preset, % (95% CI) |")
-        say("|---|---|---|---|---|---|---|")
+        say("| Gear | Scenario | Target health | Arm | Kill time s (95% CI) | DPS (95% CI) | Damage taken per fight | "
+            "vs sim preset, % (95% CI) |")
+        say("|---|---|---|---|---|---|---|---|")
         cast_tables = []
         speed = ASSUMPTIONS["target_swing_speed"]
         health_mults = [float(x) for x in args.health_mults.split(",")] if args.health_mults else None
-        for sc in scenarios_for(level, health_mults):
+        gaps = [int(x) for x in args.gaps.split(",")] if args.gaps else None
+        for sc in (gap_scenarios(level, gaps) if gaps else scenarios_for(level, health_mults)):
             sc["_armor_idx"], sc["_health_idx"] = armor_idx, health_idx
             health = (creatures[sc["target_level"]][0] * (ASSUMPTIONS["elite_health_mult"] if sc["elite"] else 1)
-                      * sc.get("hp_mult", 1))
+                      * sc.get("hp_mult", 1) * health_factor(sc["target_level"] - level))
             got = {}
-            for name, rotation in arms:
+            for name, arm_entries, fixed in arms:
+                if (name, level) in TIMED_OUT:
+                    continue   # this arm never finished at this level: said once, not retried
+                rotation = fixed
+                if arm_entries is not None:
+                    rotation = Converter(ids, names, cfg["engagement"], floor,
+                                         rules_for(sc["target_level"] - level, sc["elite"], level),
+                                         talent_points(args.sim, cls, talents)).convert(arm_entries)
                 runs = []
                 for batch in range(args.batches):
                     seed = args.seed + batch * 1000003   # the same seeds for every arm
@@ -1361,6 +2615,9 @@ def main():
                     result, err = run_cli(args.cli, request, args.keep,
                                           "%s_%s_%s_b%d" % (os.path.basename(setup), sc["name"], name, batch))
                     if result is None:
+                        if "did not finish" in err:
+                            TIMED_OUT.add((name, level))
+                            err += "; arm skipped for the rest of level %d" % level
                         say("| %s | %s | %d | %s | failed: %s | | |"
                             % (label, sc["name"], health, name, err.replace("|", "/").replace("\n", " ")))
                         runs = []
@@ -1368,17 +2625,20 @@ def main():
                     runs.append(summarize(result, speed))
                 if runs:
                     got[name] = runs
-            for name, _ in arms:
+            for name, _, _ in arms:
                 if name not in got:
                     continue
-                kill = mean_ci([r["kill"] for r in got[name]])
+                pack = PULL["mobs"] > 1
+                kill = "-" if pack else "%.1f [%.1f, %.1f]" % mean_ci([r["kill"] for r in got[name]])
                 dps = mean_ci([r["dps"] for r in got[name]])
+                taken = sum(r["taken"] for r in got[name]) / len(got[name])
                 rel = ""
                 if name != "sim" and "sim" in got:
-                    pairs = [100 * (a["kill"] - b["kill"]) / b["kill"] for a, b in zip(got[name], got["sim"])]
+                    measure = "dps" if pack else "kill"
+                    pairs = [100 * (a[measure] - b[measure]) / b[measure] for a, b in zip(got[name], got["sim"])]
                     rel = "%+.1f [%+.1f, %+.1f]" % mean_ci(pairs)
-                say("| %s | %s | %d | %s | %.1f [%.1f, %.1f] | %.1f [%.1f, %.1f] | %s |"
-                    % ((label, sc["name"], health, name) + kill + dps + (rel,)))
+                say("| %s | %s | %d | %s | %s | %.1f [%.1f, %.1f] | %.0f | %s |"
+                    % ((label, sc["name"], health, name, kill) + dps + (taken, rel)))
             cast_tables.append((sc["name"], dict((k, {"casts": merge_casts(v), "mana": sum(r["mana"] for r in v) / len(v)})
                                                  for k, v in got.items())))
         say("")

@@ -9,7 +9,7 @@
 import sys
 from pathlib import Path
 
-from lupa import LuaRuntime  # type: ignore[import-not-found]
+from wow_stubs import LuaRuntime
 
 SRC = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "RotationImport.lua"
 
@@ -19,8 +19,18 @@ LibStub = setmetatable({ NewLibrary = function(_, name) libs[name] = libs[name] 
     { __call = function(_, name) return libs[name] end })
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 libs["JustAC-SpellDB"] = { GetSpecKey = function() return specKey, "WARRIOR" end, CLASS_GAPCLOSER_DEFAULTS = {},
-    IsForever = function() return true end }
-libs["JustAC-BlizzardAPI"] = { ResolveSpellID = function(id) return id end }
+    IsForever = function() return true end,
+    FOREVER_TREE_GEAR = { WARRIOR_F = { protection = { {4, 64} } } } }
+shield = nil        -- true / false / nil (unreadable)
+profile = {}
+libs["JustAC-BlizzardAPI"] = { ResolveSpellID = function(id) return id end,
+    GetProfile = function() return profile end,
+    HasEquippedItemClass = function(classID, mask)
+        assert(classID == 4 and mask == 64)
+        return shield
+    end }
+fighting = false
+function UnitAffectingCombat() return fighting end
 known = {}
 function IsPlayerSpell(id) return known[id] == true end
 form = 0
@@ -47,6 +57,7 @@ RI.RegisterForever({
     default = "arms",
     arms = { st = { {id=78,gates={}}, {id=772,gates={},delegated=true} } },
     fury = { st = { {id=23881,gates={}} } },
+    protection = { st = { {id=23922,gates={}} } },
   },
   DRUID_F = {
     default = "feral",
@@ -103,6 +114,84 @@ def main():
     check(RI.GetForeverTree() == "fury", "most points spent wins")
     check(RI.GetEntry(23881, "st") is not None and RI.GetEntry(78, "st") is None,
           "only the installed tree's entries resolve")
+    # A tree whose own attacks need gear the player is not wearing is skipped: points say what
+    # the player is building, gear says how they fight. Unreadable gear rules nothing out.
+    g.groups = lua.eval("{ {groupID=1, displayName='Arms'}, {groupID=2, displayName='Fury'}, "
+                        "{groupID=3, displayName='Protection'} }")
+    for shield, spent, want, why in (
+            ("true", "{[3]=5}", "protection", "shield worn: the shield tree"),
+            ("nil", "{[3]=5}", "protection", "unreadable gear rules nothing out"),
+            ("false", "{[3]=5}", "arms", "no shield, only shield-tree points: the class default"),
+            ("false", "{[2]=2, [3]=5}", "fury", "no shield: most points among the trees gear allows"),
+            ("false", "{[1]=6, [3]=5}", "arms", "another tree leads anyway"),
+            ("true", "{[2]=2, [3]=5}", "protection", "shield worn: most points wins")):
+        g.shield = lua.eval(shield)
+        g.spent = lua.eval(spent)
+        RI.OnGearChanged()
+        RI.InvalidateLookup()
+        check(RI.GetForeverTree() == want, "%s (got %s)" % (why, RI.GetForeverTree()))
+    # Gear changes re-pick, but never during a fight: the gear read then is the one from before
+    # it, whichever path re-picks the tree meanwhile, and the change applies when the fight ends.
+    g.shield = lua.eval("true")
+    g.spent = lua.eval("{[3]=5}")
+    RI.OnGearChanged()
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "protection" and RI.OnGearChanged() is False, "same gear: no re-pick")
+    g.shield = lua.eval("false")
+    g.fighting = True
+    check(RI.OnGearChanged() is False and RI.GetForeverTree() == "protection", "a swap in combat keeps the list")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "protection", "and so does a talent or spell change during that fight")
+    g.fighting = False
+    check(RI.OnGearChanged() is True and RI.GetForeverTree() == "arms", "the swap applies when the fight ends")
+    check(RI.OnGearChanged() is False, "nothing left to apply: no re-pick")
+    g.shield = lua.eval("true")
+    check(RI.OnGearChanged() is True and RI.GetForeverTree() == "protection", "out of combat it applies at once")
+    # The player's own choice (the Play Style option) comes before points and gear; a value the
+    # data does not have is ignored. Automatic is still reported for the option's label.
+    g.shield = lua.eval("false")
+    g.spent = lua.eval("{[1]=6, [3]=5}")
+    RI.OnGearChanged()
+    for style, want, why in (("{WARRIOR_F='fury'}", "fury", "a chosen tree beats points"),
+                             ("{WARRIOR_F='protection'}", "protection", "a chosen tree beats gear"),
+                             ("{WARRIOR_F='default'}", "arms", "'default' is not a tree"),
+                             ("{WARRIOR_F='holy'}", "arms", "a tree the class lacks is ignored"),
+                             ("{DRUID_F='feral'}", "arms", "another class's choice does not apply"),
+                             ("nil", "arms", "no choice: automatic")):
+        g.profile = lua.eval("{playStyle=%s}" % style)
+        RI.InvalidateLookup()
+        check(RI.GetForeverTree() == want, "%s (got %s)" % (why, RI.GetForeverTree()))
+    g.profile = lua.eval("{playStyle={WARRIOR_F='fury'}}")
+    RI.InvalidateLookup()
+    s = RI.PlayStyleChoices()
+    check([c.key for c in s.choices.values()] == ["arms", "fury", "protection"] and s.choices[1].name == "Arms",
+          "choices are the game's trees, in its order, with its names")
+    check(s.automatic == "Arms" and s.specKey == "WARRIOR_F" and s.chosen == "fury",
+          "automatic is named beside the choice in effect")
+    check(s.following == "Fury" and s.reason == "chosen" and s.ruledOut is None, "following: your choice")
+    # Why the automatic pick is what it is: the most points, the gear, or no points yet.
+    g.profile = lua.eval("{}")
+    for shield, spent, following, reason, ruled_out in (
+            ("true", "{[3]=5}", "Protection", "points", None),
+            ("false", "{[3]=5}", "Arms", "gear", "Protection"),
+            ("false", "{[2]=2, [3]=5}", "Fury", "gear", "Protection"),
+            ("false", "{}", "Arms", "default", None)):
+        g.shield, g.spent = lua.eval(shield), lua.eval(spent)
+        RI.OnGearChanged()
+        RI.InvalidateLookup()
+        s = RI.PlayStyleChoices()
+        check((s.following, s.reason, s.ruledOut) == (following, reason, ruled_out),
+              "%s / %s: got %s" % (shield, spent, (s.following, s.reason, s.ruledOut)))
+        check(RI.GetForeverTree() == following.lower(), "the read-out names the installed tree")
+    g.profile = lua.eval("{playStyle={WARRIOR_F='fury'}}")
+    g.shield, g.spent = lua.eval("false"), lua.eval("{[1]=6, [3]=5}")
+    RI.OnGearChanged()
+    RI.InvalidateLookup()
+    check(RI.HasPlayStyles() is True, "the class has trees to choose between")
+    check(RI.OnGearChanged() is False, "a chosen tree does not follow gear")
+    g.profile = lua.eval("{}")
+    g.shield = lua.eval("nil")
+    g.spent = lua.eval("{}")
     # A tree name the data lacks falls back to its first word, then the default.
     g.specKey = "DRUID_F"
     g.groups = lua.eval("{ {groupID=3, displayName='Feral Combat'} }")
@@ -112,6 +201,15 @@ def main():
     g.form = 5
     RI.InvalidateLookup()
     check(RI.GetForeverTree() == "feral_bear", "feral in bear form -> feral_bear")
+    g.profile = lua.eval("{playStyle={DRUID_F='feral'}}")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral_bear", "a chosen Feral still follows Bear Form")
+    s = RI.PlayStyleChoices()
+    check(s.automatic == "Feral Combat" and s.chosen == "feral" and s.following == "Feral Combat" and s.bearForm is True,
+          "the bear list is named as the Feral tree, in Bear Form")
+    g.profile = lua.eval("{}")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral_bear", "automatic again: still the bear list in Bear Form")
     # Form changes re-pick only when the cat / bear choice flips.
     check(RI.OnFormChanged() is False, "still in bear form -> no re-pick")
     g.form = 1
@@ -122,6 +220,93 @@ def main():
           "entering Dire Bear form -> feral_bear")
     g.form = 5
     check(RI.OnFormChanged() is False, "Bear and Dire Bear share the installed list")
+    # A tree that leads with a form the character has not learned (Cat Form at 20) is skipped by
+    # the automatic pick: a levelling Feral druid in caster form follows the class default, its
+    # bear list in Bear Form, and Feral once Cat Form is learned.
+    lua.execute("""
+        LibStub("JustAC-RotationImport").RegisterForever({ DRUID_L = {
+            default = "balance",
+            balance = { st = { {id=8921,gates={}}, {id=5176,gates={}} } },
+            feral = { st = { {id=768,gates={{t="buff",id=768,neg=true}},form=true}, {id=1082,gates={}} } },
+            feral_bear = { st = { {id=6807,gates={}} } },
+        } }, {}, {}, {})
+    """)
+    g.specKey = "DRUID_L"
+    g.groups = lua.eval("{ {groupID=1, displayName='Balance'}, {groupID=3, displayName='Feral Combat'} }")
+    g.spent = lua.eval("{[3]=6}")
+    g.form = 0
+    g.profile = lua.eval("{}")
+    lua.execute("known[768] = nil")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "balance", "Feral points, Cat Form not learned, caster form -> the caster list")
+    s = RI.PlayStyleChoices()
+    check(s.reason == "form" and s.ruledOut == "Feral Combat", ("the read-out names the unlearned form", s.reason, s.ruledOut))
+    g.form = 5
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral_bear", "Bear Form needs no Cat Form: the bear list")
+    g.form = 0
+    lua.execute("known[768] = true")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral", "Cat Form learned -> the Feral list")
+    g.profile = lua.eval("{playStyle={DRUID_L='feral'}}")
+    lua.execute("known[768] = nil")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral", "a chosen Feral is the player's: kept")
+    g.profile = lua.eval("{}")
+    lua.execute("known[768] = nil")
+    # No points yet and the class default (Feral) needs Cat Form: the first playable tree.
+    lua.execute("""
+        LibStub("JustAC-RotationImport").RegisterForever({ DRUID_N = {
+            default = "feral",
+            balance = { st = { {id=8921,gates={}}, {id=5176,gates={}} } },
+            feral = { st = { {id=768,gates={{t="buff",id=768,neg=true}},form=true}, {id=1082,gates={}} } },
+            feral_bear = { st = { {id=6807,gates={}} } },
+        } }, {}, {}, {})
+    """)
+    g.specKey = "DRUID_N"
+    g.spent = lua.eval("{}")
+    g.form = 0
+    lua.execute("known[768] = nil")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "balance", "no points, the Feral default unplayable -> the first playable tree")
+    s = RI.PlayStyleChoices()
+    check(s.reason == "form", ("the read-out says why the default is not followed", s.reason))
+    lua.execute("known[768] = true")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral", "Cat Form learned: the class default again")
+    lua.execute("known[768] = nil")
+    # Form masks: in a form a spell's mask leaves out, an unlisted spell is left out (Moonfire in
+    # Bear Form leaves the form); listed spells, other forms and caster form are untouched.
+    lua.execute("""
+        bit = bit or { band = function(a, b) return math.floor(a) & math.floor(b) end }
+        LibStub("JustAC-RotationImport").RegisterForever({ DRUID_M = {
+            default = "balance",
+            balance = { st = { {id=8921,gates={}}, {id=5176,gates={}} } },
+            feral_bear = { st = { {id=6807,gates={}} } },
+        } }, {}, {}, {}, {}, {}, { [8921] = 1073741824, [6807] = 144 })
+    """)
+    g.specKey = "DRUID_M"
+    g.groups = lua.eval("{ {groupID=1, displayName='Balance'} }")
+    g.spent = lua.eval("{[1]=5}")
+    g.form = 5
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral_bear", "Bear Form takes the bear list whatever the tree (Balance points)")
+    check(RI.IsLeftOut(8921, "st") is True, "unlisted Moonfire in Bear Form: left out (it leaves the form)")
+    check(RI.IsLeftOut(6807, "st") is False, "listed Maul in Bear Form: offered")
+    g.form = 0
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "balance", "caster form: the Balance list again")
+    check(RI.IsLeftOut(8921, "st") is False, "caster form: Moonfire is not left out")
+    g.form = 31
+    RI.InvalidateLookup()
+    check(RI.IsLeftOut(8921, "st") is False, "Moonkin Form casts Moonfire")
+    # Back to the Feral druid in Bear Form for the cases below.
+    g.specKey = "DRUID_F"
+    g.groups = lua.eval("{ {groupID=3, displayName='Feral Combat'} }")
+    g.spent = lua.eval("{[3]=4}")
+    g.form = 5
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "feral_bear", "restored: Feral druid in Bear Form")
     g.form = None
     check(RI.OnFormChanged() is True and RI.GetForeverTree() == "feral",
           "no shapeshift form -> feral")
@@ -145,9 +330,25 @@ def main():
     check(RI.IsWideOnly(772) is False and RI.IsWideOnly(78) is False,
           "generated Arms data: Rend and Heroic Strike are single-target entries")
     check(RI.IsWideOnly(999999) is False, "an unlisted spell is not wide-only")
+    # Left out: a class ability the tree's list deliberately drops is kept out, not a filler.
+    check(RI.IsLeftOut(1715, "st") is False, "generated Arms data: Arms keeps its Hamstring")
+    hamstring_ranks = list(RI.RankChain(1715).values())
+    g.groups = lua.eval("{ {groupID=1, displayName='Fury'} }")
+    RI.InvalidateLookup()
+    check(RI.GetForeverTree() == "fury", "Fury installed")
+    check(all(RI.IsLeftOut(r, ctx) is True for r in hamstring_ranks for ctx in ("st", "cleave", "aoe")),
+          "generated Fury data: every Hamstring rank is left out in every context")
+    check(RI.IsLeftOut(23881, "st") is False and RI.IsLeftOut(999999, "st") is False,
+          "a listed or unknown spell is not left out")
+    # Closed list: named means listed by the installed tree in some context, any rank.
+    check(RI.IsNamed(23881) is True, "generated Fury data: Bloodthirst is named")
+    check(RI.IsNamed(20230) is False, "generated Fury data: Retaliation is named nowhere")
+    check(RI.IsNamed(12294) is False, "generated Fury data: Arms' Mortal Strike is not Fury's")
     g.specKey = "MONK_1"
     RI.InvalidateLookup()
     check(RI.IsWideOnly(6343) is False, "no data -> not wide-only")
+    check(RI.IsLeftOut(1715, "st") is False, "no data -> not left out")
+    check(RI.IsNamed(20230) is True, "no data (retail) -> every spell counts as named")
 
     for why in bad:
         print("  FAIL", why)

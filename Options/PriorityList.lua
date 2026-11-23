@@ -435,6 +435,8 @@ GatePhrase = function(g)
             or L["Priority Cond Cd Ready"], nameOf(g.id))
     elseif g.t == "stealth" then
         piece = g.neg and L["Priority Cond Unstealthed"] or L["Priority Cond Stealthed"]
+    elseif g.t == "group" then
+        piece = g.neg and L["Priority Cond Solo"] or L["Priority Cond Grouped"]
     elseif (g.t == "resource" or g.t == "power") and g.op and g.n then
         piece = ResourcePhrase(g)
     elseif (g.t == "execute" or g.t == "health") and g.pct then

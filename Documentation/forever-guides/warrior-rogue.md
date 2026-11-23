@@ -72,9 +72,9 @@ Paraphrased priority; the beta-era notes below are historical.
 3. Rend early, but only on a target that will live through most of the bleed. Never refresh it on a dying mob. With Bloodthrill talented, Rend also matters as the proc enabler (see below).
 4. Overpower whenever it is lit: after the target dodges, or on a Bloodthrill proc (6 s window). Battle Stance only.
 5. Mortal Strike on cooldown once you have it (tree capstone, not reachable at 30).
-6. Slam: see the disagreement below. Arms has Slam from 30 [Icy]. In Forever it has an **18 s cooldown**, so it is a periodic button, not a filler you spam.
+6. Slam: see the disagreement below. Arms has Slam from 30 [Icy]. In Forever it has an **18 s cooldown**, so it is a periodic button, not a filler you spam. The queue keeps the simulator's condition and offers Slam only once Improved Slam shortens the cast; offering it whenever the cast can finish cost 3% at 30 and 10% at 40 (2026-11-20 simulation).
 7. Spearing Strike: on cooldown against Giants, Dragonkin or mounted targets. Otherwise only as a rage dump near cap, or to finish a runner. [Icy, wowtbc, kami]
-8. Sunder Armor: one or two early on while leveling. Stop once the target is under 50% HP [Icy]. wowtbc keeps 5 stacks (endgame framing).
+8. Sunder Armor: one or two early on while leveling. Stop once the target is under 50% HP [Icy]. wowtbc keeps 5 stacks (endgame framing). The queue applies Arms' first Sunder at once on ordinary targets (2026-11-18 simulation).
 9. Victory Rush whenever the Victorious buff is up.
 10. Heroic Strike only with excess rage. Every guide warns that while leveling it is rage-inefficient, because a yellow swing generates no rage.
 
@@ -113,6 +113,8 @@ Disagreements:
 - No source covers Arms execute-phase specifics (Execute rage thresholds, MS during execute).
 - No numbers on how much Bloodthrill uptime you can expect.
 
+- **Default queue (2026-11-20):** the first Sunder Armor goes out at once on ordinary targets only once a main weapon spender is learned (Slam at 20; Mortal Strike, Whirlwind or Bloodthirst also count). Before that its rage and global cooldown buy nothing back, and it waits like other slow payoffs for an elite, a higher-level enemy or a fight of 20 seconds. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300): at level 14 kills are 3 to 19% faster on targets up to three levels below, now matching the list without Sunder; at 20 and 30 nothing changes, Sunder still 7 to 11% faster there. A level 14 capture showed most targets one to five levels below, dying 5 to 13 seconds after the first press, each taking a Sunder. Keyed on the learned spender (`FOREVER_EARLY_ARMOR_TREES` names them), not on level. Not checked in game.
+
 ---
 
 ## Warrior - Fury
@@ -143,7 +145,7 @@ Leveling, level 1-30 (Icy and Mobalytics broadly agree):
 4. Victory Rush when lit.
 5. Rend early on mobs that will live through it.
 6. Overpower after a dodge.
-7. Sunder Armor once or twice. Skip it under 50% HP.
+7. Sunder Armor once or twice. Skip it under 50% HP. On one target the queue places it after Fury's attacks (2026-11-18 simulation). The queue leaves Hamstring out of Fury and Protection: as a rage dump it cost Fury 2 to 6% from 24, and as a finisher on a dying target it changed nothing (2026-11-20 simulation). Arms keeps it for spare rage once a main spender is learned.
 8. Execute: Icy says skip it while leveling. Mobalytics says use it only for a fast kill.
 9. Heroic Strike or Cleave only with excess rage.
 10. Death Wish (talent, level 30) as often as possible, ideally with rage pooled so you can chain Cleaves on multi-mob pulls [Icy].
@@ -199,9 +201,9 @@ From 16 (Shield Block) onward, consensus across Icy, KallTorak, Oli and wowtbc:
 2. Charge. With Vanguard you can Charge from Defensive Stance and keep the rage you banked (still only out of combat).
 3. **Shield Block on cooldown.** Press it right before hits land [Oli]. Two blocks with Shield Specialization refund its rage and give two Revenge procs [Icy]. KallTorak opens Charge > Shield Block for a guaranteed early Revenge, then one Sunder.
 4. **Revenge whenever it is lit.** Icy calls it the hardest hitter at 5 rage.
-5. Thunder Clap and Demoralizing Shout up. Icy and Oli say on hard mobs or multi-mob pulls only; wowtbc and KallTorak say keep both up.
+5. Thunder Clap and Demoralizing Shout up. Icy and Oli say on hard mobs or multi-mob pulls only; wowtbc and KallTorak say keep both up. The queue treats Thunder Clap as damage: after Shield Slam and Revenge on one or two targets (leaving it out cost 6 to 15% at every level, 2026-11-20 simulation) and first against a pack.
 6. Rend on targets that will live.
-7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks. The queue recommends one early application per target to help Protection threat and increase damage; further stacking remains player-managed.
+7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks. The queue places one application after Shield Slam, Revenge and Rend, stacks it to five on elites, higher-level enemies, groups and dungeons, and leaves it out against packs of three or more (2026-11-18 simulation, shield in Defensive Stance).
 8. Victory Rush when lit (Oli: skip it above 90% HP).
 9. Shield Slam (when talented, deep tree) as burst threat [wowtbc, wow.gg].
 10. Heroic Strike (or Cleave) only with excess rage. Oli: only below 50% HP, and Sunder first because of Improved Sunder.
@@ -331,6 +333,8 @@ Disagreements:
 - No AoE plan.
 - No source confirms whether Deadly Poison is required for Mutilate's bonus at endgame.
 
+- **Default queue (2026-11-20, no change):** Eviscerate from 3 combo points stays, although it spends before a 5 point Rupture is reached. Raising Eviscerate to 4 or 5 points was 2 to 7% slower at 25, 40 and 60. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game).
+
 ---
 
 ## Rogue - Combat
@@ -392,6 +396,8 @@ Disagreement on Slice and Dice while leveling: Icy and wowtbc say keep it up. Ol
 - No CP-spend rule that balances Restless Blades against Slice and Dice uptime with numbers.
 - No Blade Flurry/Adrenaline Rush timing guidance for raids.
 
+- **Default queue (2026-11-20):** Eviscerate from 2 combo points, not 5. The source list made this change after our pin (engine commit 69fcaca9c1, app #1021) and it is taken by hand; the rest of that refresh was measured and left out (Protection warrior 10 to 19% slower at 40 and 60, Affliction mixed, Fury unchanged). Kills are 2 to 4% faster at 25 and 40, 14 to 17% at 60, 7% on a level 60 elite. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game). Rupture's 5 point entry is no longer reached on this list.
+
 ---
 
 ## Rogue - Subtlety
@@ -452,6 +458,10 @@ Disagreement, the core one: is the builder Backstab (wowtbc; it fishes Cutthroat
 **Gaps**
 - No endgame rotation (mobalytics' level 60 PvE gameplay tab is empty). Nobody ranks Backstab against Hemorrhage, or gives a Rupture refresh window or Cutthroat proc handling with numbers.
 - No raid Vanish/Preparation usage plan.
+
+- **Default queue (2026-11-20):** Hemorrhage and Eviscerate carry no energy threshold. The source list saves energy for them (60 and 80), but Sinister Strike, the fallback below them, spends first, so neither was ever offered. Without the thresholds kills are 7% faster at 40 and 15% at 60, 10 to 18% on elites, unchanged at 25. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game). The list is still 30 to 50% behind the presets at 40 and 60: open.
+
+- **Default queue (2026-11-20):** Vanish is offered only in a group, and no longer waits for 60 energy. The threshold was out of reach for the same reason as Hemorrhage's. Without it the simulator re-opens from stealth much more often (kills 31% faster at 40 and 16% at 60, 6 to 8% on elites, with `--grouped`). Fought alone, Vanish drops the fight and the enemy resets, so that gain is not one a solo player gets, and Vanish is also the rogue's escape: the list condition `{t="group"}` holds only on a confirmed party or raid read. Solo the simulator now reads 6 to 8% slower than before, because it counted the few Vanishes the old threshold let through as damage; that loss is the simulator's, not the player's. Not checked in game, and the claim that Vanish resets a solo fight on this client is from Classic behaviour, not a measurement here.
 
 ---
 

@@ -1023,7 +1023,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         for _, id in ipairs({ 465, 32223, 183435 }) do
             local a = ProbeCell(function() return get and get(id) end)
             addon:Print(string.format("  %s known=%s auraByCastId=%s", SpellName(id),
-                tostring(IsPlayerSpell(id)), a))
+                tostring(C_SpellBook.IsSpellKnown(id)), a))
         end
         -- Discovery dump: every readable helpful aura on the player, so a differing
         -- aura id (cast id != aura id) shows up by name.
@@ -1042,8 +1042,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         addon:Print("|cffff6666SpellDB.RECUPERATE not defined (old data?).|r")
     else
         local sid = SpellDB.RECUPERATE
-        local known = IsPlayerSpell(sid)
-        local knownAlt = (IsSpellKnown and IsSpellKnown(sid)) or false
+        local known = C_SpellBook.IsSpellKnown(sid)
+        local knownAlt = C_SpellBook.IsSpellInSpellBook(sid, Enum.SpellBookSpellBank.Player, false)
         local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
         local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
         local hotUp = ProbeCell(function() return get and get(SpellDB.RECUPERATE_AURA) end)
@@ -1336,16 +1336,7 @@ end
 -- pasted out of chat. Intermittent faults - a tracker stuck "down" for minutes, a bind that
 -- never retries - are invisible in a snapshot and obvious in a sequence.
 -- SavedVariables flush on /reload or logout ONLY: play, then /reload, then read the file.
-local MAINTLOG_MAX = 400          -- bounded transitions, not elapsed seconds
-local maintLogTicker = nil
 local lastMaintPayload = nil   -- change-only guard for MaintLogSample
-
-local function MaintLogStore()
-    if not _G.JustACGlobal then _G.JustACGlobal = {} end
-    local g = _G.JustACGlobal
-    g.maintLog = g.maintLog or {}
-    return g.maintLog
-end
 
 --- One compact sample. Only plain values - never persist a secret, and never let a probe
 --- throw: a recorder that breaks combat is worse than no recorder.
@@ -1398,48 +1389,35 @@ local function MaintLogSample()
     -- of the interesting window in 40s. Transitions are what a latency question needs.
     if payload == lastMaintPayload then return end
     lastMaintPayload = payload
-    local log = MaintLogStore()
-    log[#log + 1] = string.format("%.2f %s", GetTime(), payload)
-    -- Ring: drop the oldest half in one pass rather than table.remove per sample (O(n) each).
-    if #log > MAINTLOG_MAX then
-        local keep, half = {}, math.floor(MAINTLOG_MAX / 2)
-        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
-        _G.JustACGlobal.maintLog = keep
-    end
+    -- Into the one capture log, with the rest of the session.
+    ProbeLogEmit(string.format("MAINT %.2f %s", GetTime(), payload))
 end
 
 --- /jac inspect maintlog [on|off|clear] - sample maintenance state 10/s, save transitions.
 function DebugCommands.MaintenanceLog(addon, arg)
     arg = arg and arg:lower() or nil
-    if arg == "clear" then
-        if _G.JustACGlobal then _G.JustACGlobal.maintLog = nil end
-        addon:Print("maintlog: |cffffff00cleared|r")
-        return
-    end
-    if arg == "off" or (not arg and maintLogTicker) then
-        if maintLogTicker then maintLogTicker:Cancel() end
-        maintLogTicker = nil
-        local n = (_G.JustACGlobal and _G.JustACGlobal.maintLog and #_G.JustACGlobal.maintLog) or 0
-        addon:Print(string.format("maintlog: |cffff6600OFF|r - %d samples held.", n))
-        addon:Print("|cff888888/reload to flush them to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua|r")
+    if arg == "off" or (not arg and DebugCommands._maintLog) then
+        if DebugCommands._maintLog then DebugCommands._maintLog:Cancel() end
+        DebugCommands._maintLog = nil
+        addon:Print("maintlog: |cffff6600OFF|r - MAINT rows are in the capture log. |cff888888/reload to save.|r")
         return
     end
     if not C_Timer or not C_Timer.NewTicker then
         addon:Print("|cffff6600C_Timer unavailable|r")
         return
     end
-    if maintLogTicker then
+    if DebugCommands._maintLog then
         addon:Print("maintlog: already ON")
         return
     end
     -- 10/s: the reported lag is sub-second, which 1/s sampling cannot resolve at all.
     -- Cheap because the sample is change-only (see MaintLogSample).
     lastMaintPayload = nil
-    maintLogTicker = C_Timer.NewTicker(0.1, function()
+    DebugCommands._maintLog = C_Timer.NewTicker(0.1, function()
         local ok, err = pcall(MaintLogSample)
         if not ok then
-            maintLogTicker:Cancel()
-            maintLogTicker = nil
+            DebugCommands._maintLog:Cancel()
+            DebugCommands._maintLog = nil
             addon:Print("maintlog: stopped after sample error: " .. SafeSecret(err))
         end
     end)
@@ -1907,7 +1885,7 @@ function DebugCommands.GroupBuffProbe(addon)
         local famStr = table.concat(family, "/")
         local active
         for _, spellID in ipairs(grp.group) do
-            if IsPlayerSpell(spellID) and get then
+            if C_SpellBook.IsSpellKnown(spellID) and get then
                 local a = get(spellID)
                 if not a and grp.auraIDs then
                     for _, auraID in ipairs(grp.auraIDs) do

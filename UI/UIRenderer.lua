@@ -1294,66 +1294,9 @@ local function IsOffGCDSpell(spellID)
     return BlizzardAPI and BlizzardAPI.IsOffGCDSpell and BlizzardAPI.IsOffGCDSpell(spellID) or false
 end
 
--- Move-cast marker classification. A spell is castable while moving when it is
--- INSTANT right now: base instants always, hardcasts only while a proc has made
--- them instant (Hot Streak, Lava Surge, ...). Channels are excluded (movement
--- breaks them) even though they also report cast time 0.
---
--- The static class is cached per spell; the proc state is read live per render.
--- castTime is static spell metadata (not a live/secret value), but the compare is
--- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
-local issecretvalue = issecretvalue
-local C_SpellActivationOverlay_IsSpellOverlayed =
-    C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local moveCastClassCache = {}
--- Auto-repeat shots report cast time 0 but only fire while standing still. The API answers for
--- known spells; the IDs back it up (Auto Shot, wand Shoot, Throw, bow/gun Shoot).
-local IsAutoRepeatSpell = C_Spell and C_Spell.IsAutoRepeatSpell
-local AUTO_REPEAT_IDS = { [75] = true, [5019] = true, [2764] = true, [3018] = true }
-local function MoveCastClass(spellID, spellInfo)
-    if not spellID then return nil end
-    local cached = moveCastClassCache[spellID]
-    if cached ~= nil then return cached end
-    local SDB = LibStub("JustAC-SpellDB", true)
-    if SDB and SDB.IsChanneled and SDB.IsChanneled(spellID) then
-        moveCastClassCache[spellID] = "channel"
-        return "channel"
-    end
-    local autoOk, autoRepeat = false, false
-    if IsAutoRepeatSpell then autoOk, autoRepeat = pcall(IsAutoRepeatSpell, spellID) end
-    if issecretvalue and issecretvalue(autoRepeat) then autoOk = false end
-    if AUTO_REPEAT_IDS[spellID] or (autoOk and autoRepeat == true) then
-        moveCastClassCache[spellID] = "autorepeat"
-        return "autorepeat"
-    end
-    local ct = spellInfo and spellInfo.castTime
-    if ct == nil then return nil end               -- no info yet; retry next render
-    if issecretvalue and issecretvalue(ct) then return "hardcast" end  -- unreadable; proc-gate it
-    local class = (ct == 0) and "instant" or "hardcast"
-    moveCastClassCache[spellID] = class
-    return class
-end
-
--- A hardcast is castable while moving only while a proc has made it instant. Reuse
--- Blizzard's spell-activation overlay (the same "proc ready" cue that glows the
--- icon) as the live signal. Fail-safe: any error / secret -> not proc'd (no mark),
--- never a wrong "cast while moving" claim.
-local function IsSpellProcActive(spellID)
-    if not (spellID and C_SpellActivationOverlay_IsSpellOverlayed) then return false end
-    local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
-    if not ok then return false end
-    if issecretvalue and issecretvalue(overlayed) then return false end
-    return overlayed == true
-end
-
---- True if the spell can be cast while moving right now (for the queue marker).
+--- True if the spell can be cast while moving right now (shared rule: SpellDB).
 local function IsMoveCastableNow(spellID, spellInfo)
-    local class = MoveCastClass(spellID, spellInfo)
-    if class == "instant" then return true end
-    if class == "hardcast" then return IsSpellProcActive(spellID) end
-    -- "channel" / "autorepeat" / nil. Auto-repeat shots (Auto Shot, wands) start on the move but
-    -- fire only standing still - no marker; their swing bar turns green when it is time to stop.
-    return false
+    return SpellDB ~= nil and SpellDB.IsMoveCastableNow(spellID, spellInfo) == true
 end
 
 --- Move-cast marker setting: the explicit profile toggle, or the per-spec auto default

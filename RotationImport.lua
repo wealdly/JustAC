@@ -15,6 +15,7 @@
 
 local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 2)
 if not RotationImport then return end
+local IsPlayerSpell = C_SpellBook.IsSpellKnown
 
 -- specKey (e.g. "DRUID_2") -> { st = {line,...}, aoe = {...}, burst = {id,...} }
 -- line = { id = <spellID>, gates = { {t="buff",id=..,dur=secs|nil,neg=bool}, {t="cd"}, {t="dot",id=..},
@@ -79,9 +80,11 @@ local installed = {}      -- specKey -> tree key installed since the last invali
 local classAbilities = {} -- "WARRIOR_F" -> { [rank-1 id] = true } for every class ability
 local pushbackDamage = {}
 local directDamageEstimates = {}
+local leftOut = {}        -- "WARRIOR_F" -> tree -> { [rank-1 id] = true } the list drops
+local formMasks = {}      -- rank-1 id -> forms it can be cast in (bit form-1, ShapeshiftMask)
 local BEAR_FORMS = { [5] = true, [8] = true }   -- Bear, Dire Bear (GetShapeshiftFormID)
 
-function RotationImport.RegisterForever(classes, chains, abilities, damageCooldowns, damageEstimates)
+function RotationImport.RegisterForever(classes, chains, abilities, damageCooldowns, damageEstimates, left, masks)
     if type(classes) ~= "table" then return end
     -- WoW Forever only. Without this, retail registered every Forever rank chain too, and the
     -- 131 rank-1 ids retail shares (Rend, Moonfire, Polymorph...) resolved through Forever's
@@ -100,6 +103,16 @@ function RotationImport.RegisterForever(classes, chains, abilities, damageCooldo
     end
     for id, seconds in pairs(damageCooldowns or {}) do pushbackDamage[id] = seconds end
     for id, estimate in pairs(damageEstimates or {}) do directDamageEstimates[id] = estimate end
+    for key, trees in pairs(left or {}) do
+        local byTree = {}
+        for tree, ids in pairs(trees) do
+            local set = {}
+            for i = 1, #ids do set[ids[i]] = true end
+            byTree[tree] = set
+        end
+        leftOut[key] = byTree
+    end
+    for id, mask in pairs(masks or {}) do formMasks[id] = mask end
     RotationImport.InvalidateLookup()
 end
 
@@ -169,30 +182,148 @@ local function InBearForm()
     return GetShapeshiftFormID and BEAR_FORMS[GetShapeshiftFormID() or 0] or false
 end
 
---- The tree to run: most points spent wins; none spent (or unreadable) is the class default.
---- Every tree's list is a damage list in that talent style (tools/gen_forever_rotations.py).
-local function PickTree(trees)
-    local best, bestSpent = nil, 0
-    local displays, spent = RotationImport.SpentByTree()
-    for _, d in ipairs(displays or {}) do
-        local n = spent[d.groupID]
-        if type(n) == "number" and not (issecretvalue and issecretvalue(n)) and n > bestSpent then
-            local slug = TreeSlug(d.displayName)
-            local first = slug and slug:match("^[^_]+")   -- "feral_combat" -> "feral"
-            local key = (slug and trees[slug] and slug) or (first and trees[first] and first)
-            if key then best, bestSpent = key, n end
+--- Does the player's gear allow this tree's own attacks (generated FOREVER_TREE_GEAR: Shield
+--- Slam's shield)? false only on a confirmed miss; an unreadable item or no data allows.
+local gearRuledOut   -- { spec = specKey, [tree] = true }: trees the worn gear rules out; nil = not read
+
+local function TreeGear(specKey)
+    local SpellDB = cachedSpellDB or LibStub("JustAC-SpellDB", true)
+    return SpellDB and SpellDB.FOREVER_TREE_GEAR and specKey and SpellDB.FOREVER_TREE_GEAR[specKey] or nil
+end
+
+local function GearAllows(specKey, key)
+    if not gearRuledOut or gearRuledOut.spec ~= specKey then
+        -- Read once and kept until gear changes out of combat (OnGearChanged): a shield swapped
+        -- mid-fight must not swap the list, whichever path re-picks the tree meanwhile.
+        gearRuledOut = { spec = specKey }
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        for tree, needs in pairs(TreeGear(specKey) or {}) do
+            for i = 1, #needs do
+                if BAPI and BAPI.HasEquippedItemClass
+                   and BAPI.HasEquippedItemClass(needs[i][1], needs[i][2]) == false then
+                    gearRuledOut[tree] = true
+                end
+            end
         end
     end
-    best = best or trees.default
-    if best == "feral" and trees.feral_bear and InBearForm() then best = "feral_bear" end
-    return best
+    return gearRuledOut[key] ~= true
+end
+
+--- A tree whose list leads with keeping a form up (Feral: Cat Form) cannot be played before that
+--- form is learned: Cat Form comes at 20, while every levelling Feral build spends its points from
+--- 10, and the list's cat attacks left caster form with nothing listed to cast. The generator
+--- marks an entry that keeps a combat form (form=true). False only when the form is confirmed
+--- unlearned; anything unknown allows the tree.
+local function FormLearned(tree)
+    local list = type(tree) == "table" and tree.st
+    local first = type(list) == "table" and list[1]
+    if type(first) ~= "table" or first.form ~= true or not IsPlayerSpell then return true end
+    local ok, known = pcall(IsPlayerSpell, first.id)
+    return not ok or known ~= false
+end
+
+--- Can the automatic pick follow this tree now: its gear is worn and its form is learned, or the
+--- player is in Bear Form and the tree has a bear list (which needs no Cat Form)?
+local function Playable(trees, specKey, key)
+    if not GearAllows(specKey, key) then return false, "gear" end
+    if key == "feral" and trees.feral_bear and InBearForm() then return true end
+    if not FormLearned(trees[key]) then return false, "form" end
+    return true
+end
+
+--- With the class default unplayable too (a druid under 10: no points, and the Feral default
+--- needs Cat Form), the first playable tree by name; a form's own sub-list (feral_bear) is not
+--- a tree of its own. nil when none can be played.
+local function FirstPlayable(trees, specKey)
+    local keys = {}
+    for key, list in pairs(trees) do
+        if type(list) == "table" and key ~= "feral_bear" then keys[#keys + 1] = key end
+    end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        if Playable(trees, specKey, key) then return key end
+    end
+    return nil
+end
+
+--- The tree's key for one of the game's talent groups, or nil when the data has no such tree.
+local function TreeKey(trees, displayName)
+    local slug = TreeSlug(displayName)
+    local first = slug and slug:match("^[^_]+")   -- "feral_combat" -> "feral"
+    if slug and trees[slug] then return slug end
+    if first and trees[first] then return first end
+    return nil
+end
+
+--- The player's own choice of tree for this class (the Play Style option), or nil for
+--- automatic. A stored value the data no longer has is ignored.
+local function ChosenTree(trees, specKey)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local profile = BAPI and BAPI.GetProfile and BAPI.GetProfile()
+    local styles = profile and profile.playStyle
+    local chosen = type(styles) == "table" and specKey and styles[specKey] or nil
+    if type(chosen) == "string" and type(trees[chosen]) == "table" then   -- trees.default is a name, not a tree
+        return chosen
+    end
+    return nil
+end
+
+--- The tree to run. The player's own choice comes first (`automatic` skips it, for the option's
+--- label). Otherwise: points say which style the player is building; gear says which they are
+--- fighting in. Most points wins among the trees the worn gear allows; with none of those, the
+--- class default if the gear allows it; else most points; none spent (or unreadable) is the
+--- class default. Early points in a shield tree while fighting with a two-hander stay on a
+--- damage list; a shield puts the same character on the shield list.
+--- Every tree's list is a damage list in that talent style (tools/gen_forever_rotations.py).
+--- @return the tree's key; why ("chosen", "points", "gear" or "default"); and, for "gear",
+--- the tree with the most points that the worn gear rules out.
+local function PickTree(trees, specKey, automatic, displays, spent)
+    local best, bestSpent = nil, 0
+    local most, mostSpent = nil, 0
+    local reason = "chosen"
+    if not automatic then best = ChosenTree(trees, specKey) end
+    if not best then
+        if not displays then displays, spent = RotationImport.SpentByTree() end
+        local mostWhy
+        for _, d in ipairs(displays or {}) do
+            local n = spent and spent[d.groupID]
+            if type(n) == "number" and not (issecretvalue and issecretvalue(n)) and n > 0 then
+                local key = TreeKey(trees, d.displayName)
+                if key then
+                    local playable, why = Playable(trees, specKey, key)
+                    if n > mostSpent then most, mostSpent, mostWhy = key, n, why end
+                    if n > bestSpent and playable then best, bestSpent = key, n end
+                end
+            end
+        end
+        if not best and trees.default and Playable(trees, specKey, trees.default) then best = trees.default end
+        local fellBack
+        if not best then
+            best = FirstPlayable(trees, specKey)
+            fellBack = best ~= nil
+        end
+        best = best or most or trees.default
+        if not most then
+            reason = fellBack and "form" or "default"
+        elseif best ~= most then
+            reason = mostWhy or "gear"
+        else
+            reason = "points"
+        end
+    end
+    local ruledOut
+    if reason == "gear" or reason == "form" then ruledOut = most or trees.default end
+    -- In Bear Form the bear list is the only one castable, whatever the tree: a caster list there
+    -- offered spells that leave the form.
+    if trees.feral_bear and InBearForm() then best = "feral_bear" end
+    return best, reason, ruledOut
 end
 
 --- THE rotation reader: the registered table for specKey, installing the Forever tree first.
 local function Rot(specKey)
     local trees = specKey and foreverTrees[specKey]
     if trees and not installed[specKey] then
-        local key = PickTree(trees)
+        local key = PickTree(trees, specKey)
         rotations[specKey] = type(trees[key]) == "table" and trees[key] or nil
         installed[specKey] = key or "none"   -- truthy: no re-pick per read until invalidated
     end
@@ -225,6 +356,62 @@ function RotationImport.GetForeverTree()
     local specKey = CurrentSpecKey()
     Rot(specKey)
     return specKey and installed[specKey] or nil
+end
+
+--- Does this class have talent trees to choose between (Forever)? Cheap: no talent read.
+function RotationImport.HasPlayStyles()
+    local specKey = CurrentSpecKey()
+    return specKey ~= nil and foreverTrees[specKey] ~= nil
+end
+
+--- Everything the Play Style section shows, or nil off Forever:
+---   choices    the trees a player may choose, in the game's own order with the game's own
+---              names: { {key=, name=}, ... }
+---   specKey    the class key the choice is stored under
+---   chosen     the tree chosen, or nil for automatic
+---   automatic  the name of the tree automatic would follow now
+---   following  the name of the tree followed now; reason why ("chosen", "points", "gear",
+---              "default"); ruledOut the name of the tree the gear ruled out, for "gear";
+---              bearForm true when it is the Feral tree's Bear Form list
+--- The bear list is the Feral tree in Bear Form: one choice, one name.
+function RotationImport.PlayStyleChoices()
+    local specKey = CurrentSpecKey()
+    local trees = specKey and foreverTrees[specKey]
+    if not trees then return nil end
+    local displays, spent = RotationImport.SpentByTree()
+    displays = displays or {}
+    local choices, names = {}, {}
+    for _, d in ipairs(displays) do
+        local key = TreeKey(trees, d.displayName)
+        if key and not names[key] then
+            names[key] = d.displayName
+            choices[#choices + 1] = { key = key, name = d.displayName }
+        end
+    end
+    local function nameOf(key)
+        if not key then return nil end
+        return names[key] or names[(key:gsub("_bear$", ""))]
+    end
+    local automatic = PickTree(trees, specKey, true, displays, spent)
+    local following, reason, ruledOut = PickTree(trees, specKey, false, displays, spent)
+    return { choices = choices, specKey = specKey, chosen = ChosenTree(trees, specKey),
+             automatic = nameOf(automatic), following = nameOf(following), reason = reason,
+             ruledOut = nameOf(ruledOut), bearForm = following == "feral_bear" }
+end
+
+--- Worn gear changed. Re-read it and re-pick the tree, but never during a fight: a shield
+--- swapped in combat would swap the whole list under the player, so the gear read then is the
+--- one from before the fight, and the change applies when it ends (JustAC calls this again
+--- from PLAYER_REGEN_ENABLED). @return true when the installed list changed.
+function RotationImport.OnGearChanged()
+    local specKey = CurrentSpecKey()
+    local trees = specKey and foreverTrees[specKey]
+    if not trees or not TreeGear(specKey) then return false end
+    if UnitAffectingCombat and UnitAffectingCombat("player") then return false end
+    gearRuledOut = nil
+    if not installed[specKey] or PickTree(trees, specKey) == installed[specKey] then return false end
+    RotationImport.InvalidateLookup()
+    return true
 end
 
 --- A shapeshift happened. Only the Feral tree's cat / bear choice depends on form, so only
@@ -669,4 +856,49 @@ function RotationImport.IsWideOnly(spellID)
         if m and (m[spellID] or m[b]) then return true end
     end
     return false
+end
+
+--- Does the installed Forever tree name spellID (any rank) in any of its lists, for any number
+--- of targets? true where there is no Forever list to ask (retail, no playable tree): only a
+--- Forever list is closed to what it names. Plain static data.
+function RotationImport.IsNamed(spellID)
+    if not spellID then return true end
+    local specKey = CurrentSpecKey()
+    if not (specKey and foreverTrees[specKey]) then return true end
+    local byCtx = lookupCache[specKey] or BuildLookup(specKey)
+    if not byCtx then return true end
+    local b = baseID(spellID)
+    for _, m in pairs(byCtx) do
+        if m[spellID] or m[b] then return true end
+    end
+    return false
+end
+
+--- Does the installed Forever tree deliberately keep spellID out at this context: a class
+--- ability its list drops (generated data) and does not name here (a copy may bring it back to
+--- some contexts)? Unlisted, it would still reach the queue as an unranked filler. Plain static
+--- data; a nil test for classes without any.
+--- Could spellID be cast in the form the player is in, by its form mask? false only when the
+--- player is shapeshifted into a form the spell's mask confirmably leaves out (Moonfire in Bear
+--- Form: casting it leaves the form and costs a global cooldown to shift back).
+local function CastableInForm(base)
+    local mask = formMasks[base]
+    if not mask or not GetShapeshiftFormID or not bit then return true end
+    local ok, form = pcall(GetShapeshiftFormID)
+    if not ok or type(form) ~= "number" or form < 1 or form > 31 then return true end
+    return bit.band(mask, 2 ^ (form - 1)) ~= 0
+end
+
+function RotationImport.IsLeftOut(spellID, context)
+    if not spellID then return false end
+    local base = RotationImport.RankBase(spellID)
+    -- Unlisted and not castable in the current form: an unranked filler that breaks the form.
+    if not CastableInForm(base) then return RotationImport.GetEntry(spellID, context) == nil end
+    local specKey = CurrentSpecKey()
+    local trees = specKey and leftOut[specKey]
+    if not trees then return false end
+    Rot(specKey)
+    local set = trees[installed[specKey]]
+    if not (set and (set[spellID] or set[base])) then return false end
+    return RotationImport.GetEntry(spellID, context) == nil
 end

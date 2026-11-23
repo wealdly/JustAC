@@ -282,6 +282,13 @@ and flags list conditions on an aura id that never appears and generated aura ta
 a cast whose aura has another id (Bloodrage's rage aura is 29131). The queue's own-aura clock
 reads by the cast's window, so those keys are safe there; a new reader keyed by aura id is not.
 
+To check the queue's Forever damage estimates against real fights, run a diagnostic session,
+`/reload`, then `python tools/meter_compare.py [path to JustAC.lua] [--min-casts N]`. It is
+read-only: each spell's post-combat meter damage per cast beside the generated estimate, plus
+fight length, damage share and measured auto-attack DPS. Listed damage assumes no spell power,
+talents, crits or misses and every tick landing. Compare several classes and levels before
+changing how the queue prices a spell.
+
 There are two distinct ways to land there and they need different tests; the trap is
 that a **passive talent node** looks identical to the castable button it grants. The
 rule is `castable = reachable AND NOT SPELL_ATTR0_PASSIVE (0x40)`. Both are explained
@@ -372,6 +379,10 @@ Curated-by-hand (no generator, no CSV): `SpellCategories.lua`,
 
 ### Changing a Forever priority list
 
+The lists are closed: the automatic queue offers nothing a tree does not name. After a list
+change or a data refresh, `python tools/test_closed_lists.py` names any damaging class ability
+that no tree of its class lists; add it to a list or record it in that test's `KNOWN_UNNAMED`.
+
 Use this for guide-driven order changes, new list entries, safety gates and the Forever
 interrupt/CC tables. Read [the launch guide summary](forever-guides/README.md) for the tree
 first.
@@ -392,7 +403,7 @@ first.
    | Layer | Use it for |
    |---|---|
    | `EXTRA` | add, move (`move`, `all` for duplicate copies), place (`at`: front, end, `before:`/`after:` a spell, `last` for its final copy), tier-limit (`tiers`), gate (`dot`, `stealth` or a raw gate dict) or `drop` an entry |
-   | `REGATE` | safety gates on an existing entry: `starved`, `health`, `near`, `execute` (`or_known` adds a talent alternative) |
+   | `REGATE` | an existing entry's conditions: safety gates (`starved`, `health`, `near`, `execute`; `or_known` adds a talent alternative), a per-tree threshold (`at`, with `was` when the value is taken ahead of a source refresh), per-tree removals (`drop`) and per-tree additions (`add`). Prefer a row here to a new `if cls == ...` block |
    | `CORE RULES` | data-derived rules for every tree; prefer a rule here to repeated class exceptions |
    | `generalize_entries` | hand-ordered Shaman Elemental/Enhancement lists and Paladin seals; these replace `EXTRA` changes for those entries |
 
@@ -417,14 +428,81 @@ can still name it.
 
 ### Comparing a Forever list offline at levelling levels
 
-`python tools/forever_sim_bench.py --sim <simulator checkout> --cli <wowsimcli>` converts a
+`python tools/forever_sim_bench.py --sim <simulator checkout>` (the simulator's command-line
+tool is built into that checkout as `wowsimcli.exe`; `--cli` names another) converts a
 generated list to the WoW Forever simulator's priority-list format, reports every gate as
 exact, approximated or not expressible, and compares kill time against the simulator's own
 preset and the vendored source preset on health-sized fights. It writes nothing in the
 addon. The header of the file lists the build steps for the simulator, the gear setups
-(`--gear behind|average|lucky|bare|file:<path>`), the assumptions and the limits. Only the
-warrior table is filled in. Results rank two orderings under the same assumptions; they
-are not absolute damage numbers.
+(`--gear behind|average|lucky|bare|file:<path>`), the assumptions and the limits. Every class
+and tree with a generated list has an entry (`--class`, `--tree`). Results rank two orderings
+under the same assumptions; they are not absolute damage numbers.
+
+Per-class limits the report states and the header lists: the simulator defines rogue attacks,
+feral Shred, Maul and Swipe and hunter melee attacks only at levels 25, 40, 50 and 60, so those
+trees are refused at other levels; a healer tree (restoration, holy, discipline) runs its damage
+list on the class's damage spec with the healer build; a hunter shoots from 30 yards with no
+pet by default (`--pet <family>` adds the simulator's pet, which has level 60 stats at every
+level; `--engagement melee` is the pessimistic end); a run that never finishes is stopped after
+`--run-timeout` seconds, reported as failed and skipped for the rest of that level. A "known"
+gate on a talent follows the build the level has; spell ranks are chosen per level and never
+include the level 60 book ranks the simulator leaves out; each report lists what the simulator
+defines only at its level brackets when a run is at another level. The simulator uses half the machine's
+processor threads (`--threads N`) at the lowest scheduling priority, so a game in use keeps the
+processor (`--normal-priority` turns that off); run one bench at a time.
+
+Each tree runs in the stance and weapons it is played with (Protection: Defensive Stance,
+one-hand weapon and shield); `--stance`, `--loadout 2h|shield|dw` and `--talents` override the
+setup (`dw` wears two one-hand weapons from level 20, an assumption since the client data has
+no level for Dual Wield; `--dual-wield-level` changes it). Every report has a "Can each entry be used in this setup?" section, built from the
+client's `SpellShapeshift` and `SpellEquippedItems` tables, naming each entry the setup's
+stance or equipment can never use. In game the queue hides an unusable entry live and the
+simulator skips it too, so the section checks the setup, not the list: a core attack named
+there (Revenge in Battle Stance) means the run does not describe how the tree is played. `--mobs N --pull-seconds S` fights N targets for a fixed pull and compares damage
+per second; damage taken per fight is reported for every run. `--gaps=-3,-2,-1,0,1,2` replaces the
+target set with one regular target per level gap. The queue's rules outside the
+lists are applied per scenario: the full Sunder-style stack on an elite or higher-level
+target, the slow-payoff hold, the major-cooldown hold and the dying-target and fast-fight rules
+for new damage over time (`--no-runtime-rules` runs the lists alone). The class's major
+cooldowns that a list does not name are cued by the queue, never shown in the first slot, so
+they run as a second arm, `justac+cooldowns` (a player who presses the cue; `--no-cooldown-arm`
+leaves it out). The rest of the spellbook pool is not modelled.
+`--new-source DIR` runs a tree's source preset from a newer upstream `presets` folder (not yet
+vendored) as the arm `source-new`, to see what a refresh would bring before doing it.
+`--other-lists TREES` runs the tree's own character on other trees' lists (`list-<tree>`): what
+a hybrid or early build gets when the tree with the most points is not how it plays.
+`--draft FILE` runs a proposed list beside the current one: FILE is a copy of
+`Data/Forever/Rotations.lua` with the change made by hand, kept outside the project data.
+A setup may use every weapon type the class can learn (the client's weapon skill data) that
+fits its shape, and each picked weapon names the skill it needs, since the data does not say
+which skills a character starts with; `--listed-weapons` keeps to the setup's own types.
+`--cooldown-gap N` tries another level gap than the runtime's three for releasing the major
+cooldowns. The bench fights alone, so a list condition "in a group" (`{t="group"}`: Vanish)
+reads false; `--grouped` answers it true, for what an entry kept for group play is worth there.
+Nothing else about the fight changes, so this is that entry's value only, not a group fight.
+
+Fight length is calibrated from the game: `--calibrate <path to JustAC.lua>` reads the solo
+kills JustAC recorded (`/jac inspect mobprofile arm`, then play and `/reload`), simulates each
+with the bench's class, tree and gear, and scales each target's health by the measured over
+simulated kill time ratio at the 75% point of the kills at its level gap (interpolated between
+measured gaps, the nearest measured gap outside them) (`--calibrate-quantile`; `--health-scale` sets the
+factor by hand). It leans long on purpose: a fight that ends sooner than planned is the
+pleasant surprise, one that runs longer is not. The records do not say
+which character made a kill, so calibrate with the setup that matches the player.
+`python tools/test_forever_sim_bench.py` covers these checks without the simulator.
+
+How the bench covers the [core principles](FOREVER_DPS_PRINCIPLES.md#core-principles):
+
+| Principle | Covered | Not covered |
+|---|---|---|
+| Damage only | Lists run as generated | |
+| Confirmed signals and inference | Every gate reported exact, approximated or not expressible; the stacking, slow-payoff hold and DoT health rules applied per scenario | The weapon filler and pushback stages, On the Move, the multi-minute self-buff hold, group rules; the fast-fight rule cannot tell a renewal from a first application |
+| Damage now, in this context | Range by engagement; usability by stance and equipment | Movement and kiting (no movement model) |
+| Player owns strategy | Talents and gear from `--gear file:` or `--talents` | |
+| Reliable before peak | Targets below, even, above, elite and health multiples; gear points; levels; health calibrated from recorded kills | Elite factors are assumed; calibration rests on the kills recorded so far |
+| Easy to follow, stable output | | The simulator presses instantly and never thrashes; flip rate needs the in-game capture |
+| Simplicity margins | Ablation arms (`--without`) | Margins are applied by hand from the report |
+| Class and build fit | Stance, weapons (two-hand, shield or dual wield) and talents per tree | Only warrior and warlock; Victory Rush, Reckless Swings and racials are not in the simulator; its Shield Block is not castable from a list |
 
 `/jac inspect character` (out of combat) shows the current character as JSON in a copy box:
 class, race, level, highest known ranks, talents as trait node, entry and rank, and
@@ -630,6 +708,81 @@ candidate for adoption review, not proof. Optional extras:
 - Question patterns of the form `name=value` match that whole field (`count=0`
   never matches `count=05`); other patterns are plain substrings. List values are
   separated by `,` in the log (`|` collides with WoW colour codes, which the log strips).
+
+### One probe, added to and taken from
+
+There is one capture: `/jac inspect start`, the standard session. A targeted check is not a
+new probe or a new command. It is a read or an evidence row added to the Research companion
+(`Debug/Research/`), which the standard session then records with everything else; when the
+question is answered the addition comes out again, unless `/jac inspect validate` does not
+yet cover the technique it relies on. A question in `Questions.lua` names which rows and
+checks answer it, for scoring; it is not needed to record them. `start <question>` only
+narrows a capture to that question's rows. `start full` adds the audit snapshots at the
+baseline and combat edges and, on Forever, the event recorder. `/jac inspect audit` and
+`/jac inspect forever arm|off|toggle` are that same session under older names, kept for macros
+and earlier test plans; they start no recorder of their own.
+
+### Keeping captures
+
+The capture log is one rolling log, and it favours detail: up to 120,000 rows with the Research
+companion (30,000 without), and when the limit is reached only the oldest tenth goes. Rows of
+one evidence kind are capped per combat phase at 2,000 (6,000 for first-slot changes) as a
+runaway guard. The standard session also runs the change-only loggers into the same log:
+maintenance transitions (`MAINT` rows), the between-pulls heal reminder (`TOPOFF`), enrage
+detections (`ENR`) and, where the game supplies a pick, that pick with the facts beside it
+(`PICK`). It also arms the mob and pet profiles, which keep their own tables for the offline
+simulator. Their commands still switch one by hand. In full mode the audit snapshots bring the
+loss-of-control and own-cast captures with them. What stays a command of its own needs an
+argument or draws on screen: `windowsig <spell>`, `chargediag [spell]`, `castdiag` (waits for a
+caster), `healprobe`, `healthgate`, `enrage`, `identity`.
+
+`python tools\archive_probe.py` copies every session out of the rolling log into
+`.probe-archive/<client>/<session id>.lua`, one file per session, for review later. Each file
+opens with the context needed to read it cold: client, mode and question, the JustAC version,
+the game build, the character, when its source was written, and the build stamp. The stamp is
+written at every `deploy_runtime.py --apply` into the Research companion (deploy time, commit
+and whether the checkout had uncommitted changes) and each session logs it as a
+`DIAGNOSTICS BUILD` row. An archived file has the shape of the saved file, so
+`python tools\analyze_probe.py <file>` reads it as it reads the live one; `--list` shows what is
+kept. Archiving again skips sessions already kept unless the live copy has grown. The archive
+is per machine and not committed. Tests: `python tools\test_archive_probe.py`.
+
+### Queue stability capture
+
+The `stability` question measures the
+[stable output principle](FOREVER_DPS_PRINCIPLES.md#stable-followable-output): how often
+the main queue's first slot changes, against the player's own presses.
+
+1. `/jac inspect start` (or `start stability` to record only this), then fight several normal mobs and one pack with your
+   usual buttons, including some moving in combat and a cast-time spell if you have one.
+2. `/jac inspect stop`, `/reload`.
+3. `python tools\analyze_probe.py --question stability --details`
+
+It records an `EVIDENCE flip` row for every slot-1 change, observed about every 0.03 seconds
+in the standard session and in this focused one (up to 600 rows per combat phase): from, to, the gap since
+the previous change, `back=true` when it returned to the value before the previous change
+within 1.5 seconds, cast state, global cooldown left, moving, seconds since the last own cast
+send and the queue stages active at the time (`stage`, `ctx`). It also carries the list
+tier and enemy count, the context values that changed within 0.15 seconds before it
+(`changed`: the tier, enemy count, melee range, dying target, execute, On the Move, fast or
+short fight, low-value target) and from those its `cause`: `context` when one did, `press`
+when it follows your own cast send within 0.4 seconds, otherwise `queue` (a cost met or lost,
+a cooldown ending, a proc). `pair` is the change itself, for ranking, and `enemyStep` is how far
+the enemy count moved in one step when it did (`-1` is an enemy dying; `-4` at once is more
+likely nameplates leaving the screen). Each own cast send adds an
+`event=press` row with whether the player pressed the shown first slot (`match`). The checks
+report flips per press (the `ratio` check kind), the gap distribution, the straight-back share
+and tallies by cast state, stage, movement, cause, changed context value and tier, with the
+causes and pairs of the straight-back flips and the pairs the queue flipped on its own. The aim is about one change per press.
+
+**First-slot hold (trial).** `SpellQueue._StageLeadHold` keeps the shown first slot until a
+challenger has led for a set time, released at once by the player's own cast, a new target, a
+proc on the challenger or the shown entry leaving the queue. It is off unless
+`profile.leadHoldSeconds` is a positive number, so the same character can be captured with and
+without it; a held build shows as `leadHeld` in the flip rows' `ctx`. Switch it for a trial with
+`/run LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat").db.profile.leadHoldSeconds = 0.2`
+(`= nil` turns it off). It becomes a default, or is removed, on the capture's evidence.
+Tests: `python tools\test_lead_hold.py`.
 
 Every session writes its definitions, key list, mode and start/stop rows into the
 log, and `DIAG` headers carry game time and the target epoch, so a capture is scored

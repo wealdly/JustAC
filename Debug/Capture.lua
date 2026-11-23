@@ -5,11 +5,16 @@ local DebugCommands = LibStub("JustAC-DebugCommands", true)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
--- Bounded, shared capture storage. Color codes are removed without wrapping rows.
--- SavedVariables flush on /reload or logout, not while the recorder is running.
+-- The one capture log. Detail first: the limits are generous, and when one is reached only the
+-- oldest tenth goes, so a long session keeps nearly all of itself. Every row is a constant of
+-- the saved file's single Lua chunk, which holds 262,143 of them for the whole file (stock
+-- Lua 5.1; not measured on the client), so the limit stays well below that. Color codes are
+-- removed without wrapping rows. SavedVariables flush on /reload or logout, not while the
+-- recorder is running.
 --------------------------------------------------------------------------------
-local PROBE_LOG_MAX = 8000
-local RESEARCH_LOG_MAX = 32000
+local PROBE_LOG_MAX = 30000
+local RESEARCH_LOG_MAX = 120000
+local PROBE_LOG_KEEP = 0.9
 
 local function ProbeLogStore()
     if not _G.JustACGlobal then _G.JustACGlobal = {} end
@@ -20,17 +25,22 @@ end
 
 local function ProbeLogEmit(msg)
     local log = ProbeLogStore()
-    log[#log + 1] = tostring(msg or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    msg = tostring(msg or "")
+    -- Most rows carry no color code: only those that do pay for stripping it.
+    if msg:find("|", 1, true) then msg = msg:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
+    local count = #log + 1
+    log[count] = msg
     local limit = PROBE_LOG_MAX
     if DebugCommands.CombatSignalReads then limit = RESEARCH_LOG_MAX end
-    if #log > limit then
-        local keep, half = {}, math.floor(limit / 2)
-        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
-        local dropped = #log - #keep
+    if count > limit then
+        -- In place: the newest rows move to the front and the tail is cleared. No second table.
+        local kept = math.floor(limit * PROBE_LOG_KEEP)
+        local dropped = count - kept
+        for i = 1, kept do log[i] = log[i + dropped] end
+        for i = count, kept + 1, -1 do log[i] = nil end
         _G.JustACGlobal.probeLogDropped = (_G.JustACGlobal.probeLogDropped or 0) + dropped
         local session = DebugCommands._diagnosticSession
         if session then session.dropped = (session.dropped or 0) + dropped end
-        _G.JustACGlobal.probeLog = keep
     end
 end
 
@@ -38,6 +48,12 @@ end
 --- falls through to the real addon (db, methods).
 local function LogProxy(addon)
     return setmetatable({ Print = function(_, msg) ProbeLogEmit(msg) end }, { __index = addon })
+end
+
+--- Proxy addon whose Print goes nowhere: for a recorder the session runs, whose own rows go to
+--- the log directly and whose chat lines (how to switch it off by hand) say nothing true.
+local function QuietProxy(addon)
+    return setmetatable({ Print = function() end }, { __index = addon })
 end
 
 --------------------------------------------------------------------------------
@@ -157,6 +173,7 @@ function DebugCommands.ErrorCapture(addon, arg)
 end
 
 DebugCommands._Capture = {
+    QuietProxy = QuietProxy,
     ProbeLogStore = ProbeLogStore,
     ProbeLogEmit = ProbeLogEmit,
     LogProxy = LogProxy,

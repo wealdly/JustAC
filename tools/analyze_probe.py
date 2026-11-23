@@ -40,7 +40,7 @@ REGISTRY_PATH = os.path.join(ROOT, "Debug", "Research", "Questions.lua")
 DEFAULT_WOW_ROOT = os.environ.get("JUSTAC_WOW_ROOT", r"C:\Blizzard\World of Warcraft")
 
 LIST_FIELDS = {"has", "lacks", "prevHas", "prevLacks", "on", "off", "forbid", "firstHas",
-               "resetMarks", "keys", "rows", "audit", "marks", "rowHas"}
+               "resetMarks", "keys", "rows", "audit", "marks", "rowHas", "per", "perLacks"}
 DEFAULT_REPEATS = 2
 MARK_FIGHT_LOOKAHEAD = 15.0   # seconds: a mark typed before the pull belongs to that fight
 CELL_STATUS = re.compile(r"^(plain|nil|secret|err):")
@@ -625,6 +625,16 @@ def _check_stats(spec, events, marks):
     return result
 
 
+def _check_ratio(spec, events, marks):
+    """Rows matching row/has per row matching row/per (flips per press): a rate a
+    count of either alone cannot show. None when the denominator never matched."""
+    numerator = sum(1 for _ in _matching_rows(spec, events))
+    denominator = sum(1 for _ in _matching_rows(dict(spec, has=spec.get("per"), lacks=spec.get("perLacks")), events))
+    ratio = None if denominator == 0 else round(numerator / denominator, 3)
+    return {"name": spec.get("name"), "kind": "ratio", "numerator": numerator,
+            "denominator": denominator, "ratio": ratio}
+
+
 def _unknown_check(spec, events, marks):
     return {"name": spec.get("name"), "kind": spec.get("kind"), "error": "unknown check kind"}
 
@@ -649,6 +659,7 @@ CHECKS = {
     "followedBy": _check_followed_by,
     "tally": _check_tally,
     "stats": _check_stats,
+    "ratio": _check_ratio,
 }
 
 
@@ -1014,6 +1025,9 @@ def _format_check(check):
     if kind == "tally":
         counts = ", ".join(f"{k}={v}" for k, v in sorted(check["counts"].items())) or "none"
         return f"{check['name']}: {counts}"
+    if kind == "ratio":
+        ratio = "n/a" if check["ratio"] is None else check["ratio"]
+        return f"{check['name']}: {ratio} ({check['numerator']} per {check['denominator']})"
     if kind == "stats":
         if not check["n"]:
             return f"{check['name']}: no values"

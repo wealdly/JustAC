@@ -592,8 +592,6 @@ end
 -- its conditions held, and the facts here say what was true at that moment.
 -- Ships no rule data - the join happens offline. Same recorder shape as maintlog: plain
 -- values only, change-only, ring-bounded, flushed by /reload.
-local PICKLOG_MAX = 3000
-local pickLogTicker = nil
 local lastPickPayload = nil
 local POWER_BANDS  = { 25, 50, 75 }
 local HEALTH_BANDS = { 20, 35, 80 }
@@ -689,39 +687,26 @@ local function PickLogSample()
         ((SQ.IsSafeLead and lead and SQ.IsSafeLead(lead)) and "!" or "") .. waitWhy)
     if payload == lastPickPayload then return end
     lastPickPayload = payload
-    _G.JustACGlobal = _G.JustACGlobal or {}
-    local log = _G.JustACGlobal.pickLog or {}
-    _G.JustACGlobal.pickLog = log
-    log[#log + 1] = string.format("%.2f %s", GetTime(), payload)
-    if #log > PICKLOG_MAX then
-        local keep, half = {}, math.floor(PICKLOG_MAX / 2)
-        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
-        _G.JustACGlobal.pickLog = keep
-    end
+    -- Into the one capture log, with the rest of the session.
+    DebugCommands._Capture.ProbeLogEmit(string.format("PICK %.2f %s", GetTime(), payload))
 end
 
 --- /jac inspect picklog [on|off|clear] - record the game's pick + readable facts, 5/s.
 function DebugCommands.PickLog(addon, arg)
     arg = arg and arg:lower() or nil
-    if arg == "clear" then
-        if _G.JustACGlobal then _G.JustACGlobal.pickLog = nil end
-        addon:Print("picklog: |cffffff00cleared|r")
-        return
-    end
-    if arg == "off" or (not arg and pickLogTicker) then
-        if pickLogTicker then pickLogTicker:Cancel() end
-        pickLogTicker = nil
-        local n = (_G.JustACGlobal and _G.JustACGlobal.pickLog and #_G.JustACGlobal.pickLog) or 0
-        addon:Print(string.format("picklog: |cffff6600OFF|r - %d samples held. |cff888888/reload to flush them to SavedVariables.|r", n))
+    if arg == "off" or (not arg and DebugCommands._pickLog) then
+        if DebugCommands._pickLog then DebugCommands._pickLog:Cancel() end
+        DebugCommands._pickLog = nil
+        addon:Print("picklog: |cffff6600OFF|r - PICK rows are in the capture log. |cff888888/reload to save.|r")
         return
     end
     lastPickPayload = nil
-    if pickLogTicker then addon:Print("picklog: already ON"); return end
-    pickLogTicker = C_Timer.NewTicker(0.2, function()
+    if DebugCommands._pickLog then addon:Print("picklog: already ON"); return end
+    DebugCommands._pickLog = C_Timer.NewTicker(0.2, function()
         local ok, err = pcall(PickLogSample)
         if not ok then
-            pickLogTicker:Cancel()
-            pickLogTicker = nil
+            DebugCommands._pickLog:Cancel()
+            DebugCommands._pickLog = nil
             addon:Print("picklog: stopped after sample error: " .. SafeSecret(err))
         end
     end)
@@ -853,6 +838,9 @@ function DebugCommands.SimcGateProbe(addon, arg)
                 elseif g.t == "stealth" then
                     return string.format("%sstealthed [now %s]", g.neg and "!" or "",
                         tostring(IsStealthed and IsStealthed() or false))
+                elseif g.t == "group" then
+                    return string.format("%sgrouped [now %s]", g.neg and "!" or "",
+                        tostring(BAPI.IsGrouped and BAPI.IsGrouped()))
                 elseif g.t == "stack" and g.id and g.n then
                     -- Ask the runtime's own verdict, then show the raw ">= n" read
                     -- beside it: the two disagree exactly when the operator logic is

@@ -277,7 +277,7 @@ function CdmAdvisor.Status()
     local homes, tracked, RI = AuraHomes(), TrackedCats(), LibStub("JustAC-RotationImport", true)
     local can, hidden = {}, {}
     for id in pairs(CdmAdvisor.CriticalSpells()) do
-        if (RI and RI.HighestKnownRank(id)) or (IsPlayerSpell and IsPlayerSpell(id)) then
+        if (RI and RI.HighestKnownRank(id)) or (C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(id)) then
             local isTracked, candidate, playerHid = false, nil, false
             for cid, default in pairs(CdmAdvisor.CooldownIDsFor(id)) do
                 local eff, overridden = CdmAdvisor.EffectiveCategory(layout, cid, default)

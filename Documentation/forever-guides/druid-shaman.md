@@ -178,6 +178,17 @@ Dash, Cower. Shifting out of form clears Polymorph and movement impairment.
 - Combo points carry across targets; energy regen continuous; Omen of Clarity baseline (20).
 - Polearms usable; form damage scales with weapon DPS.
 - Form levels (Method/Icy): Bear 10 (quest), Cat 20 (quest), Travel 30 (trainer), Dire Bear 40.
+- **Levels 10 to 19 (2026-11-22).** Mobalytics leveling (yumytv, https://mobalytics.gg/wow-forever/classes/druid-leveling-guide,
+  Nov 14, read 2026-11-22): Feral points from 10 (Ferocity, Furor, Feral Swiftness); play as a caster
+  (Wrath from range, Moonfire, Wrath, finish in melee) or as a bear (Wrath and Moonfire from range,
+  Bear Form, Enrage, Maul against one or two, Swipe against three or more). The queue follows the
+  Balance list in caster form until Cat Form is learned and the bear list in Bear Form. Simulation
+  of the Balance list at 11 to 19: within 1 to 3% of the simulator's preset with the same casts;
+  the Restoration list was 1 to 4% faster on regular targets but 30 to 70% slower on elites.
+  Under 10 (no points) the queue follows Balance too. Bear Maul spends at its cost until Lacerate
+  (25) or Primal Bite (40) is learned, then banks 25 rage as the simulator's list does: before
+  them it is the bear's only single-target spender (the warrior Heroic Strike rule; the simulator
+  cannot model bear attacks below 25, so this rests on that precedent and the learn levels).
 
 **Gaps**: no tested Berserk sequencing; Ferocious Bite energy-dump threshold unspecified in
 Forever; Rip/Rake durations under Forever talents not stated; no source handles Shifting Power
@@ -242,6 +253,8 @@ Feral Charge. Leave form only to heal; Nature's Grasp/Roots to escape.
 Frenzied Regeneration rage cost/conversion not stated; Maul vs Primal Bite rage priority at
 endgame untested.
 
+- **Default queue (2026-11-20):** Enrage leads the bear list as Bloodrage leads the warrior lists: only at low rage and above half health, because it lowers armor while it runs. Kills are 16% faster at 25, 9% at 40 and 6% at 60, 4 to 5% on elites. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game).
+
 ---
 
 ## Druid - Restoration
@@ -305,6 +318,9 @@ read); exact downrank penalty curve unknown.
 These updates supersede the October Shaman rotation research below. Priorities are
 paraphrased; the generator's Shaman adaptation owns the resulting defaults.
 
+Frost Shock is left to the player (JustAC, 2026-11-22): it shares the shock cooldown with Earth
+Shock, which the lists use, costs more mana, and its slow is for kiting.
+
 | source | author | updated | scope |
 |---|---|---|---|
 | [Enhancement rotation](https://www.icy-veins.com/wow-forever/enhancement-shaman-melee-dps-pve-rotation-cooldowns-abilities) | Wordup | 2026-11-13 | Single target, AoE, totems, Maelstrom safety |
@@ -340,6 +356,8 @@ paraphrased; the generator's Shaman adaptation owns the resulting defaults.
 - The five-stack combat requirement needs affirmative evidence, including when a proc
   overlay is present. Ordinary unreadable stack preferences retain their old behavior;
   the existing pre-pull Lightning Bolt hardcast exception is preserved.
+
+- **Default queue (2026-11-20):** the Enhancement filler Earth Shock waits for Flame Shock to have more than 4 seconds left, not the whole 6 second shock cooldown. Flame Shock has exactly the cooldown left when the shocks come back, so the old condition never held before the talent that shortens the cooldown and Earth Shock was never offered while levelling. Kills are 9 to 13% faster at 14 and 30 and unchanged at 60. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game). The interrupt reservation above is unchanged.
 
 ## Shaman - Elemental
 
@@ -547,6 +565,8 @@ Grounding, Reincarnation (Improved Reincarnation also +4% max health), Ghost Wol
 
 **Gaps**: Earth Shield not mentioned by any source (likely absent); Chain Heal level and
 downrank penalty unknown; no tested raid priority.
+
+- **Default queue (2026-11-20):** the damage filler keeps Flame Shock up ahead of Lightning Bolt. Kills are 18 to 25% faster at 14 and 30 and unchanged at 60; an elite at 30 was 4% slower. Simulation of 2026-11-20 (client 1.60.1, `behind` gear, 4 batches of 300, not checked in game).
 
 ---
 

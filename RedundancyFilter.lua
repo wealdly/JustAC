@@ -1293,7 +1293,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         if ranged == nil then ranged = BlizzardAPI.IsTargetInSwingRange(2) end
         local melee = BlizzardAPI.AbilityInRange(AUTO_ATTACK_SPELL)
         if spellID == AUTO_ATTACK_SPELL then
-            if ranged == true and IsPlayerSpell(AUTO_SHOT_SPELL) then
+            if ranged == true and C_SpellBook.IsSpellKnown(AUTO_SHOT_SPELL) then
                 return true, "Auto Shot can fire: Attack would only walk in"
             end
         else

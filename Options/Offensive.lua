@@ -64,6 +64,21 @@ local function queueContentGroup(addon)
                 onSet = function() addon:ForceUpdate() end,
                 disabled = fullyDisabled,
             }),
+            promoteOnTheMove = {
+                type = "toggle",
+                name = L["On the Move"], desc = L["On the Move desc"],
+                order = 5.5, width = "normal",
+                -- Raw get/set: the default is per-spec (see SpellQueue.OnTheMoveEnabled).
+                get = function()
+                    local SQ = LibStub("JustAC-SpellQueue", true)
+                    return (SQ and SQ.OnTheMoveEnabled and SQ.OnTheMoveEnabled(addon.db.profile)) or false
+                end,
+                set = function(_, val)
+                    addon.db.profile.promoteOnTheMove = val
+                    addon:ForceUpdate()
+                end,
+                disabled = function() return fullyDisabled(addon) end,
+            },
             hideItemAbilities = {
                 type = "toggle",
                 name = L["Allow Item Abilities"],

@@ -416,9 +416,9 @@ probe classifier. Remove this temporary capture after the useful questions are
 settled; accepted findings belong in the permanent capability documentation.
 
 The useful pattern is **let the engine answer a feature's question**, not recover a
-hidden number. Follow the [threshold scope rule](SECRET_VALUE_THRESHOLD_GATES.md#the-scope-rule):
-no threshold sweeps, binary searches, timer inversion or arbitrary hidden-value
-reconstruction. Unknown stays unknown. A readable result must also be live,
+hidden number. Where a decision does need an estimate, follow the
+[threshold scope rule](SECRET_VALUE_THRESHOLD_GATES.md#the-scope-rule): bounded cost, an estimate
+with its uncertainty, and a fallback. Unknown stays unknown otherwise. A readable result must also be live,
 associated with the right subject, and semantically sufficient for the decision.
 
 ## Source audit: 2026-11-13
@@ -540,6 +540,14 @@ enemy is attacking the player. `GetEngagedEnemyCount` counts membership plus
 in-combat plates engaged with the pet or party (see below), not all enemies near
 the player or all members of a group pull.
 
+The count comes from visible nameplates, so it also falls when plates leave the screen
+(2026-11-20, maintainer's call). Enemies die and join one at a time: a rise, or a fall of one,
+is taken at once. A fall of two or more in a single quarter-second scan is suspect and the
+last count is kept, in combat, until the lower one has lasted four seconds. Several enemies
+really dying at once keeps the pack order that long. Plates leaving one at a time over several
+scans are not caught. The stability capture's `enemyStep` shows how often each case occurs;
+the rule is not yet checked in game.
+
 Candidate group evidence is confirmed threat membership for a party member
 against the same nameplate token, deduplicated by that token. It needs live
 verification before widening any count. `UnitAffectingCombat` alone cannot
@@ -628,6 +636,65 @@ Exorcism/Consecration. Pin a session ID and wait for updates; aggregates have no
 per-cast timeline and cannot distinguish an unused spell from every other
 reason it contributed no damage. Availability and post-combat readability
 still require separate client measurements.
+
+**Measured damage (2026-11-20).** Measured damage is read from the meter after combat only
+(`BlizzardAPI.GetMeasuredDamageRatio`, `BlizzardAPI/CooldownTracking.lua`). Every damage read
+(`GetDirectSpellHit`, `GetDirectSpellDPS`, `GetAutoAttackDPS`) answers with paper times the
+attack's ratio, so the weapon comparison, the pull order and the ranged filler swap agree; the
+measurement prices its own casts and swings on paper (`PaperSpellHit`, the sheet), so the ratio
+never feeds back into itself. The session a
+fight's damage went to is the `DAMAGE_METER_COMBAT_SESSION_UPDATED` (DamageDone) id notified
+while the fight ran; a fight with none is dropped. Every update also comes as session 0, the
+current-fight placeholder, right after the real id (2026-11-20 priest capture: 11 to 17 at each
+pull, then 0); 0 is ignored. The meter records with its display off (`damageMeterEnabled` false
+in that capture). Damage per attack comes from
+`GetCombatSessionSourceFromID(session, DamageDone, playerGUID).combatSpells`, every field
+checked plain before use. Counted: the player's direct-hit casts (no damage over time) from
+`UNIT_SPELLCAST_SUCCEEDED`, priced at the pre-combat estimate; ranged shots from
+`PLAYER_SWING` (ranged), priced at the pre-combat sheet DPS times ranged speed; and white melee
+swings from `PLAYER_SWING` (main and off hand), priced at each hand's sheet average
+(`UnitDamage`). The meter reports a wand's damage as spell 75, never 5019 (2026-11-18 warlock
+captures: 75 in every session that shot), and white melee as 6603 (2026-11-20 warrior
+capture). A next-swing attack's success (Heroic Strike, Cleave, Maul, Raptor Strike) takes one
+main-hand swing out of the white count: its `PLAYER_SWING` fires at the same moment (same
+capture, t=5933.032). A cast with damage over time is priced when its run ends: its hit plus
+the damage over time for the part of its duration it could tick, until it expires, is recast
+(a refresh drops the ticks left) or the fight ends (`PLAYER_REGEN_ENABLED`). The fight's end
+stands for the target's death only with one enemy, so damage over time is measured only when
+every such cast went on one target GUID and `GetEngagedEnemyCount` read 1 at every in-combat
+sample (wand shots, swings and casts while one runs); no sample counts as unknown. An instant
+damage over time with no hit (Shadow Word: Pain, Serpent Sting, Curse of Doom) has an estimate
+row flagged measure-only (12th field 1, `BlizzardAPI.IsMeasureOnlyEstimate`): it is measured
+but never chooses an opener (openers need a cast time) or the ranged filler swap. A channel
+(Starshards) is not measured this way, since its run ends when the channel stops. An inference
+from confirmed inputs: combat ending a little after the death prices a little more ticking time
+than there was. Only solo fights are measured: every press must read `IsGrouped()` false (unknown is not solo).
+With a partner a shot in flight or a last hit's overkill lands nothing on the meter, so a
+grouped fight measures who else hit the mob (wand 0.85 and 0.92 in the two grouped fights of
+the 2026-11-20 priest capture against 1.06 solo, its skill 2 to 3 under the cap); the capture
+reports `groupedSkipped`. The meter files a pet's damage under its owner (a warlock's imp
+Firebolt, 3110, in the 2026-11-18 captures); whether a pet's white swings share the owner's 6603
+row is not known, so melee is not measured while a pet is out. The `meter.postCombat` probe
+records each entry's `creatureName` to settle it. Only targets from four levels below to two
+above are measured (`levelSkipped` in the capture): misses and resists climb steeply three or
+more above, a grey mob dies to overkill, and an unreadable level (a skull) is skipped. A weapon
+swapped in combat clears the pre-fight prices, so every later press goes unpriced and the fight
+is not measured. Points spent differently (a signature of points per tree, read on talent and
+spell events) clear every measurement. A damage over time ticks every period after the cast
+(its row's 13th field, the 12th being the measure-only flag or 0), so a cut-short run is priced
+by its whole ticks. The ratio the queue uses is damped toward paper, as if the minimum count (3
+casts, 8 shots or swings) more had landed at paper, so a few crits or misses move it gradually.
+Measurements are saved per character (`JustACDB` char: `measuredDamage`, `measuredTalents`) and
+restored at `PLAYER_ENTERING_WORLD` unless the talent signature changed, since learning takes
+several fights and the player reloads often to save a capture. Measured over paper is kept per attack, older fights weighted 0.7 per new
+one; used from 3 casts or 8 shots or swings and only between 0.25 and 4. A session read again
+credits only its gain (one session can span pulls); a spell the meter does not list yet waits.
+Weapon skill (`C_SkillInfo.GetSkillLineInfoByID`, out of combat) is the skill line of the
+weapon in the attack's slot, mapped by `Enum.ItemWeaponSubclass` name as the character sheet
+does, the feral skill for a druid in a form; 5 points above the last measurement drops the
+earlier figure. The capture row `signal.meter.measured` lists each ratio with its count, skill
+and target level gap. Untested in game: the session timing above, and hit and crit by skill
+against higher-level targets (recorded, not yet used).
 
 ### Active spell state: existing probe, not proven seal identity
 
