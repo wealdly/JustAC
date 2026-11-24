@@ -1556,7 +1556,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         -- Always the burst, never the ants: being held is not an early warning. Stop the ants
         -- first in case the escape claimed a slot that was mid-warning - same escalation rule
         -- as the maintenance path below, and the states share one field.
-        ApplyMaintenanceGlow(icon, "burst", UIAnimations.GLOW_COLORS.MOVEMENT)
+        ApplyMaintenanceGlow(icon, "burst", UIAnimations.GLOW_COLORS.ESCAPE)
         return
     end
 
@@ -1931,7 +1931,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         profile and profile.showOffGcdDot and IsOffGCDSpell(displayID))
     local glowColor = MAINTENANCE_GLOW
     if ccSpellID then
-        glowColor = UIAnimations.GLOW_COLORS.MOVEMENT
+        glowColor = UIAnimations.GLOW_COLORS.ESCAPE
     elseif petSpellID or emergencyHealID then
         glowColor = UIAnimations.GLOW_COLORS.DEFENSIVE
     end
@@ -2268,7 +2268,6 @@ function UIRenderer.HideInterruptIcon(intIcon)
     if UIAnimations then
         UIAnimations.HideInterruptProcGlow(intIcon)
         UIAnimations.HideInterruptCastBar(intIcon)
-        intIcon.hasInterruptGlow = false
     end
     if intIcon.castAura then
         intIcon.castAura:Hide()
@@ -2337,7 +2336,6 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
 
             if not intIcon.hasInterruptGlow then
                 UIAnimations.ShowInterruptProcGlow(intIcon)
-                intIcon.hasInterruptGlow = true
             end
 
             -- Secret-aware target cast-progress bar with a kick-zone (engine-driven).

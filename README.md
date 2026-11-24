@@ -34,7 +34,8 @@ activity colors, rather than class or spell-school colors:
 | Native gold | Proc or emergency-ready cast |
 | Native blue-white | Primary Assisted Combat recommendation |
 | Green | Defensive/healing recommendation |
-| Azure blue | Movement/gap-closer or crowd-control escape |
+| Azure blue | Movement/gap-closer |
+| White | Crowd-control escape |
 | Soft blue | Tank mitigation upkeep |
 | Red | Interrupt/stop an enemy cast |
 | Cyan | Cleanse an enemy enrage |

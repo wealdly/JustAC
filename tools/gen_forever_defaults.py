@@ -70,7 +70,9 @@ ENEMY_MITIGATION = {"warrior": ["demoralizing_shout"], "druid": ["demoralizing_r
 ABILITY_ROLES = {
     # Every INTERRUPTS interrupt also gets "utility" (see the role loop): the automatic damage
     # queue leaves it for the interrupt slot; custom lists may still name it.
-    "warrior": {"shield_block": "mitigation", "retaliation": "mixed", "victory_rush": "mixed"},
+    # Shield Block is mixed: Protection's rage and Revenge come from its blocks, so its damage
+    # list names it (gen_forever_rotations.py, 2026-11-24 simulation).
+    "warrior": {"shield_block": "mixed", "retaliation": "mixed", "victory_rush": "mixed"},
     "paladin": {"templars_bulwark": "protection", "holy_shield": "mixed", "holy_shock": "mixed"},
     "priest": {"elunes_grace": "protection", "holy_nova": "mixed",
                "fade": "utility", "mind_vision": "utility", "levitate": "utility"},
@@ -251,6 +253,10 @@ THREAT_EFFECT, TOTAL_THREAT_AURA, FEIGN_DEATH_AURA = "63", "103", "66"
 # A damage aura whose first tick comes this late pays off only in a long fight (Bane of Doom:
 # one hit after 60s). The queue holds such spells outside worthwhile fights.
 DELAYED_PAYOFF_MS = 30000
+# Area damage that comes only over time: the cast places a ground effect (CREATE_AREATRIGGER,
+# 179) that pulses (APPLY_AURA of PERIODIC_DUMMY, 226, with a period) and has no hit of its own
+# and no channel (Consecration). Flamestrike hits at once; Blizzard is a channel.
+AREATRIGGER_EFFECT, PERIODIC_DUMMY_AURA = "179", "226"
 # An armor reduction on the enemy (APPLY_AURA of the armor modifier, 674, misc 1 = armor, at
 # or below zero) that deals no damage of its own (Sunder Armor, Faerie Fire, Curse of
 # Recklessness, Expose Armor) also pays off only over a long fight: on a mob that dies in a few
@@ -443,8 +449,6 @@ def main():
         return secs.get(m["DurationIndex"], 0) if m else 0
 
     # ENEMY_MITIGATION, every rank: how long the debuff runs after your cast.
-    # ENEMY_MITIGATION_RADIUS: for one that lands on every enemy around you (Demoralizing
-    # Shout), the radius in yards; a single-target debuff (Hex of Weakness) has none.
     radii = {r["ID"]: float(r["Radius"] or 0) for r in cfa.rows("SpellRadius")}
     area_radius = {}
     for r in cfa.rows("SpellEffect"):
@@ -453,7 +457,6 @@ def main():
             if radius > 0:
                 area_radius[r["SpellID"]] = max(radius, area_radius.get(r["SpellID"], 0))
     lines.append("local ENEMY_MITIGATION = {")
-    mitigation_radius = []
     for cls, mitigation in sorted(ENEMY_MITIGATION.items()):
         chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
         for name in mitigation:
@@ -461,12 +464,6 @@ def main():
                 seconds = duration(sid)
                 assert seconds > 0, (cls, name, sid, "no duration in the data")
                 lines.append(f"    [{sid}] = {seconds:g},  -- {names.get(str(sid), '?')}")
-                if str(sid) in area_radius:
-                    mitigation_radius.append(
-                        f"    [{sid}] = {area_radius[str(sid)]:g},  -- {names.get(str(sid), '?')}")
-    lines.append("}")
-    lines.append("local ENEMY_MITIGATION_RADIUS = {")
-    lines.extend(mitigation_radius)
     lines.append("}")
     lines.append("local MAINTAINED = {")
     for cls in dict.fromkeys((*MAINTAINED, *PREPARATION)):
@@ -650,6 +647,15 @@ def main():
     lines.append("}")
     # Spells that carry the caster to the target, every rank: while one is in flight the queue
     # orders melee abilities as they will rank on arrival.
+    lines.append("local AREA_DOTS = {")
+    for sid in sorted(class_ids - channeled):
+        fx = effects.get(str(sid), [])
+        if (any(e["Effect"] == AREATRIGGER_EFFECT for e in fx)
+                and any(e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == PERIODIC_DUMMY_AURA
+                        and num(e["EffectAuraPeriod"]) > 0 for e in fx)
+                and not any(e["Effect"] in DAMAGE_EFFECTS for e in fx)):
+            lines.append(f"    [{sid}] = true,  -- {names.get(str(sid), '?')}")
+    lines.append("}")
     lines.append("local LANDS_AT_TARGET = {")
     for sid in sorted(sid for sid in class_ids
                       if any(e["Effect"] == CHARGE_EFFECT for e in effects.get(str(sid), []))):
@@ -679,6 +685,26 @@ def main():
     # first that applies wins, in that order. Data for the Threat button; the queue reads none.
     def is_taunt(e):
         return e["Effect"] == TAUNT_EFFECT or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TAUNT_AURA)
+    threat_order = {}
+    # A summon the client does not link to what it casts (that is server data) but names it:
+    # "<name> Effect". When that spell adds threat to every enemy around it, the summon is a group
+    # taunt, with the effect's radius as its reach (Stoneclaw Totem: every enemy within 8 yards
+    # of the totem turns on it).
+    effects_by_name = {}
+    for sid_text, name in names.items():
+        if name.endswith(" Effect"):
+            effects_by_name.setdefault(name[:-len(" Effect")], []).append(sid_text)
+
+    def summon_threat_radius(sid):
+        if not any(e["Effect"] in SUMMON_EFFECTS for e in effects.get(str(sid), [])):
+            return None
+        reach = None
+        for effect_sid in effects_by_name.get(names.get(str(sid)), []):
+            for e in effects.get(effect_sid, []):
+                radius = max(radii.get(e["EffectRadiusIndex_0"], 0), radii.get(e["EffectRadiusIndex_1"], 0))
+                if e["Effect"] == THREAT_EFFECT and float(e.get("EffectBasePointsF") or 0) > 0 and radius > 0:
+                    reach = max(radius, reach or 0)
+        return reach
     lines.append("local THREAT_ROLES = {")
     for sid in sorted(class_ids):
         fx = effects.get(str(sid), [])
@@ -698,8 +724,30 @@ def main():
             role = "drop"
         elif has(lambda e, n: e["Effect"] == THREAT_EFFECT and n > 0):
             role = "boost"
+        elif summon_threat_radius(sid):
+            role = "groupTaunt"
+            area_radius[str(sid)] = summon_threat_radius(sid)
         if role:
             lines.append(f'    [{sid}] = "{role}",  -- {names.get(str(sid), '?')}')
+            # Order inside a role, higher first. A taunt that puts you at the top of the threat
+            # list (the attack-me effect: Taunt, Growl) before one that only forces attacks for a
+            # while (Mocking Blow). A threat ability by its bonus threat at this rank.
+            if role == "taunt":
+                threat_order[sid] = 2 if has(lambda e, _: e["Effect"] == TAUNT_EFFECT) else 1
+            elif role == "boost":
+                threat_order[sid] = max(float(e.get("EffectBasePointsF") or 0) for e in fx
+                                        if e["Effect"] == THREAT_EFFECT)
+    lines.append("}")
+    lines.append("local THREAT_ORDER = {")
+    for sid in sorted(threat_order):
+        lines.append(f"    [{sid}] = {threat_order[sid]:g},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    # AREA_RADIUS, every class spell that puts an aura on everything around it, in yards
+    # (Demoralizing Shout, Challenging Shout): one table for every reader.
+    lines.append("local AREA_RADIUS = {")
+    for sid in sorted(class_ids):
+        if str(sid) in area_radius:
+            lines.append(f"    [{sid}] = {area_radius[str(sid)]:g},  -- {names.get(str(sid), '?')}")
     lines.append("}")
     def gains_over_time(sid, depth=0):
         for e in effects.get(str(sid), []):
@@ -884,14 +932,16 @@ def main():
         "SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE",
         "SpellDB.FOREVER_DEFENSIVE_DEFAULTS_VERSION = %d" % DEFENSIVE_DEFAULTS_VERSION,
         "SpellDB.FOREVER_ENEMY_MITIGATION = ENEMY_MITIGATION",
-        "SpellDB.FOREVER_ENEMY_MITIGATION_RADIUS = ENEMY_MITIGATION_RADIUS",
+        "SpellDB.FOREVER_AREA_RADIUS = AREA_RADIUS",
         "SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES",
         "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
         "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",
         "SpellDB.FOREVER_DELAYED_PAYOFF = DELAYED_PAYOFF",
+        "SpellDB.FOREVER_AREA_DOTS = AREA_DOTS",
         "SpellDB.FOREVER_LANDS_AT_TARGET = LANDS_AT_TARGET",
         "SpellDB.FOREVER_ENERGIZE = ENERGIZE",
         "SpellDB.FOREVER_THREAT_ROLES = THREAT_ROLES",
+        "SpellDB.FOREVER_THREAT_ORDER = THREAT_ORDER",
         "SpellDB.FOREVER_TANK_TREES = {"
         + ", ".join("%s_F = { %s }" % (cls.upper(), ", ".join("%s = true" % tree for tree in trees))
                     for cls, trees in sorted(TANK_TREES.items())) + " }",

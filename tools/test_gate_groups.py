@@ -100,6 +100,7 @@ def check_automatic_burst():
             IsDelayedPayoff=function() return delayed end,
             IsTargetDot=function() return targetDot end,
             GainsOverTime=function() return overTime end,
+            IsAreaDot=function() return areaDot end,
             GetSpecKey=function() return 'ROGUE_F' end,
             GetThreatRole=function() return threatRole end,
             IsTankTree=function(_, tree) return tree == 'protection' end,
@@ -115,7 +116,9 @@ def check_automatic_burst():
             PeekBaseCooldownSeconds=function() return seconds end,
             GetDisplaySpellID=function(id) return id end,
             IsGrouped=function() return grouped end,
+            IsFightEnding=function(n, pct) return n == 1 and pct == 35 and below35 end,
         }
+        DOT_MIN_TARGET_PCT = 35
         levelDelta = nil; grouped = false
         secret={}
     """ + extract("IsWorthwhileFight", SRC.read_text(encoding="utf-8"))
@@ -211,12 +214,18 @@ def check_automatic_burst():
         ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=true;b.ctxDying=true", True),
         ("delayed=true;selfBuff=false;threatRole='boost';tree='arms';b.ctxDying=true", True),
         ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=true;b.ctxDying=nil", False),
+        # Area damage over time (Consecration) waits once the last enemy is below the damage
+        # over time line, an elite too; above it, with others around, or unknown, it is offered.
+        ("areaDot=true;selfBuff=false;below35=true;classification='elite'", True),
+        ("areaDot=true;selfBuff=false;below35=false", False),
+        ("areaDot=true;selfBuff=false;below35=true;b.ctxEnemies=2", False),
+        ("areaDot=false;selfBuff=false;below35=true", False),
     ]
     for setup, expected in cases:
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
             boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false;overTime=false
-            levelDelta=nil;threatRole=nil;tree=nil;targetDot=false;grouped=false
+            levelDelta=nil;threatRole=nil;tree=nil;targetDot=false;grouped=false;areaDot=false;below35=false
             LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
             pick=false;target=true;SpellQueue._rotationIsCustom=false;SpellQueue._lowValueTarget=nil
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
@@ -331,6 +340,34 @@ def check_forever_lockout_readiness():
     return bad
 
 
+def check_tank_lift():
+    """A threat entry (tank=) ranks just ahead of the list's filler with a strong tank signal only."""
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    text = SRC.read_text(encoding="utf-8")
+    lua.execute("""
+        SIMC_UNRANKED, CONTEXT_STRIDE = 1000, 10000
+        function ContextRank() return 1 end
+        rankState = {simcMode = true}
+    """ + extract("rankOf", text))
+    cases = [
+        ("rankState.tankLift = false", "rankOf(7386, {rank = 10, tank = 9}) > rankOf(772, {rank = 9})",
+         "no signal: the list's order"),
+        ("rankState.tankLift = true", "rankOf(7386, {rank = 10, tank = 9}) < rankOf(772, {rank = 9})",
+         "a strong tank signal: just ahead of the filler"),
+        ("rankState.tankLift = true", "rankOf(7386, {rank = 10, tank = 9}) > rankOf(23922, {rank = 6})",
+         "still behind an attack on a cooldown"),
+        ("rankState.tankLift = true", "rankOf(772, {rank = 9}) == 10000 + 9", "an entry without tank= keeps its rank"),
+    ]
+    bad = 0
+    for setup, expression, why in cases:
+        lua.execute(setup)
+        if lua.eval(expression) is not True:
+            bad += 1
+            print("  FAIL tank lift: %s  (%s)" % (expression, why))
+    print("Tank lift: %d cases, %d failure(s)" % (len(cases), bad))
+    return bad
+
+
 def check_coverage():
     emitted = set()
     for name in DATA:
@@ -350,6 +387,7 @@ def main():
     lua.execute(extract("CompareOp", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("ResourceGateHolds", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("IsStackPayoffContext", SRC.read_text(encoding="utf-8")))
+    lua.execute(extract("DotWontStart", SRC.read_text(encoding="utf-8")))
     lua.execute(extract("GateVerdict", SRC.read_text(encoding="utf-8")))
     lua.execute("castOnlyBuffSeen = {}")
     run = lua.eval("function(src) return assert(load(src))() end")
@@ -618,6 +656,23 @@ isBoss, hasPick = false, false""")
         bad += 1
         print("  FAIL fast dot: retail (game pick) must be unchanged")
     lua.execute("fastSoloFight, hasPick, SpellDB = false, false, nil")
+    # Waiting for time on a DoT the queue will not start is met (Ferocious Bite waits on Rip):
+    # on a dying target or in a short group fight; never on a healthy target, a boss, or
+    # in the strict (leading) reading, where the time left decides as before.
+    wait = [
+        ("{[35]=true}", "false", "false", "nil", True, "dying target, no Rip: Bite spends"),
+        ("{[35]=false}", "false", "false", "nil", False, "healthy target: Bite waits on Rip"),
+        ("{[35]=true}", "true", "false", "nil", False, "a boss: Rip still goes out, Bite waits"),
+        ("{[35]=false}", "false", "true", "nil", True, "short group fight: Rip never starts"),
+        ("{[35]=true}", "false", "false", "true", False, "strict reading: unchanged"),
+    ]
+    for below, boss, short, strict, want, why in wait:
+        lua.execute("timeBelow, targetBelow, isBoss, shortGroupFight = true, %s, %s, %s" % (below, boss, short))
+        got = run('return GateVerdict({t="debuff",id=1079,op=">",n=3}, {strict=%s})' % strict)
+        if got != want:
+            bad += 1
+            print("  FAIL dot wait: got %s, want %s  (%s)" % (got, want, why))
+    lua.execute("targetBelow, isBoss, shortGroupFight = {}, false, false")
     # A cast-only stack requirement (Maelstrom Weapon) applies once the buff has been seen this
     # session; a player who cannot gain it (no rune) keeps a normal full-length cast.
     lua.execute("""
@@ -720,6 +775,7 @@ BlizzardAPI.IsSpellUsable = function(id) local u = usableOf[id] or {true, false}
     bad += check_automatic_burst()
     bad += check_dying_long_casts()
     bad += check_forever_lockout_readiness()
+    bad += check_tank_lift()
     print("gate groups: %d case(s), %d failure(s)" % (len(cases) + 2 + len(swing) + len(buff) + len(dot) + len(starved) + len(cd), bad))
     return 1 if bad else 0
 

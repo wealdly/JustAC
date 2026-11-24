@@ -36,7 +36,9 @@ def target_level_helper_lua():
         local UnitLevel = UnitLevel
         local pcall = pcall
         local IsSecretValue = BlizzardAPI.IsSecretValue
-    """ + section(source, "function BlizzardAPI.GetTargetLevelDelta()", "\nend\n") + "\nend\n"
+        local ipairs = ipairs
+    """ + section(source, "-- The target's level gap", "\n--- Relative level of a regular") \
+        + section(source, "function BlizzardAPI.GetTargetLevelDelta()", "\nend\n") + "\nend\n"
 
 
 def load():

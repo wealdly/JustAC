@@ -789,6 +789,8 @@ end
 -- 2026-11-23). Hidden until one of these applies:
 --   * a damage dealer or healer about to pull aggro (state 1) or holding it (2-3): a threat
 --     drop (Fade, Feint, Cower, Feign Death);
+--   * a tank with three or more enemies loose on others and the target within reach: a group
+--     taunt (Challenging Shout);
 --   * a tank (SpellDB.IsPlayerTank) on the target's threat list but not tanking it: a taunt; still
 --     tanking with its lead slipping (UnitThreatLeadSituation 1-2, yellow or orange above the
 --     second on threat): a threat boost.
@@ -803,7 +805,8 @@ local function ThreatBases(role)
         threatBases = {}
         local roles = SpellDB and SpellDB.FOREVER_THREAT_ROLES
         local RI = LibStub("JustAC-RotationImport", true)
-        local seen = {}
+        -- Higher order first (SpellDB.GetThreatOrder, the best value any rank has), then id.
+        local seen, best = {}, {}
         for id, r in pairs(roles or {}) do
             local base = id
             if RI and RI.RankBase then base = RI.RankBase(id) or id end
@@ -812,8 +815,16 @@ local function ThreatBases(role)
                 threatBases[r] = threatBases[r] or {}
                 table.insert(threatBases[r], base)
             end
+            local order = SpellDB.GetThreatOrder(id) or 0
+            if order > (best[base] or 0) then best[base] = order end
         end
-        for _, list in pairs(threatBases) do table.sort(list) end
+        for _, list in pairs(threatBases) do
+            table.sort(list, function(a, b)
+                local oa, ob = best[a] or 0, best[b] or 0
+                if oa ~= ob then return oa > ob end
+                return a < b
+            end)
+        end
     end
     return threatBases[role]
 end
@@ -825,7 +836,67 @@ local function PlainRead(fn, ...)
     return value
 end
 
---- The threat role wanted on the target right now: "drop", "taunt", "boost", or nil.
+--- The first ready, usable spell of that threat role you know (highest rank), in the role's
+--- order: one in range if there is one, else the first that is out of range, so the button
+--- still shows (its hotkey red, like the interrupt) and you can close the distance.
+local function ThreatSpell(role)
+    local RI = LibStub("JustAC-RotationImport", true)
+    local bases = ThreatBases(role)
+    if not bases then return nil end
+    local outOfRange
+    for _, base in ipairs(bases) do
+        local id
+        if RI and RI.HighestKnownRank then
+            id = RI.HighestKnownRank(base)
+        elseif C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(base) then
+            id = base
+        end
+        if id and BlizzardAPI.IsSpellReady(id) == true then
+            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
+            if usable == true and notEnough ~= true then
+                if BlizzardAPI.AbilityInRange(id) ~= false then return id end
+                outOfRange = outOfRange or id
+            end
+        end
+    end
+    return outOfRange
+end
+
+-- A group taunt (Challenging Shout, a long cooldown) only for a pack: this many enemies you are on
+-- the threat list of, in combat, each attacking someone else. Three is the queue's own pack size
+-- (its area tier starts at three enemies).
+local GROUP_TAUNT_ENEMIES = 3
+
+--- Are enough nameplate enemies loose: you on their threat list, but not the one they attack
+--- (UnitDetailedThreatSituation's isTanking false)? Plain reads only; an unknown plate does not
+--- count. Stops at the pack size.
+local function HasLoosePack()
+    local plates = BlizzardAPI.NAMEPLATE_UNITS
+    local n = 0
+    for i = 1, #plates do
+        local unit = plates[i]
+        if PlainRead(UnitExists, unit) == true and PlainRead(UnitCanAttack, "player", unit) == true
+           and PlainRead(UnitDetailedThreatSituation, "player", unit) == false then
+            n = n + 1
+            if n >= GROUP_TAUNT_ENEMIES then return true end
+        end
+    end
+    return false
+end
+
+--- A group taunt for a pack, cheapest test first (this runs every update for a tank): you have
+--- one ready, your target is inside its reach (that spell's own radius: Challenging Shout 10
+--- yards, Stoneclaw Totem 8), then the nameplate count. The nameplates cannot
+--- say how far each loose enemy is, so the target in reach stands in for "the pack is on you";
+--- an inference, and unknown distance offers nothing.
+local function WantsGroupTaunt()
+    local spell = ThreatSpell("groupTaunt")
+    local reach = spell and SpellDB.GetAreaRadius(spell)
+    if not reach or SpellDB.IsTargetWithin(reach) ~= true then return false end
+    return HasLoosePack()
+end
+
+--- The threat role wanted on the target right now: "drop", "taunt", "groupTaunt", "boost", or nil.
 function DefensiveEngine.WantedThreatRole()
     if PlainRead(UnitExists, "target") ~= true or PlainRead(UnitCanAttack, "player", "target") ~= true then
         return nil
@@ -842,33 +913,12 @@ function DefensiveEngine.WantedThreatRole()
         if state >= 1 then return "drop" end
         return nil
     end
+    if WantsGroupTaunt() then return "groupTaunt" end
     local tanking = PlainRead(UnitDetailedThreatSituation, "player", "target")
     if tanking == false then return "taunt" end
     if tanking == true then
         local lead = PlainRead(UnitThreatLeadSituation, "player", "target")
         if lead == 1 or lead == 2 then return "boost" end
-    end
-    return nil
-end
-
---- The first ready, usable, in-range spell of that threat role you know (highest rank).
-local function ThreatSpell(role)
-    local RI = LibStub("JustAC-RotationImport", true)
-    local bases = ThreatBases(role)
-    if not bases then return nil end
-    for _, base in ipairs(bases) do
-        local id
-        if RI and RI.HighestKnownRank then
-            id = RI.HighestKnownRank(base)
-        elseif C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(base) then
-            id = base
-        end
-        if id and BlizzardAPI.IsSpellReady(id) == true then
-            local usable, notEnough = BlizzardAPI.IsSpellUsable(id, false)
-            if usable == true and notEnough ~= true and BlizzardAPI.AbilityInRange(id) ~= false then
-                return id
-            end
-        end
     end
     return nil
 end
@@ -931,7 +981,7 @@ local function EnemyHoldEntry(spellID)
     entry = enemyHoldByBase[base]
     if not entry then
         entry = { aura = base, enemy = true, selfOnly = true, dur = seconds,
-                  radius = SpellDB.GetEnemyMitigationRadius and SpellDB.GetEnemyMitigationRadius(spellID) }
+                  radius = SpellDB.GetAreaRadius(spellID) }
         enemyHoldByBase[base] = entry
     end
     enemyHoldOf[spellID] = entry

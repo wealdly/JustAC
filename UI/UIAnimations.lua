@@ -180,7 +180,10 @@ end
 -- common colour-vision deficiency, which is why green was rejected for this cue.
 local GLOW_COLORS = {
     DEFENSIVE   = { r = 0.60, g = 1.00, b = 0.60 }, -- green: protection/healing
-    MOVEMENT    = { r = 0.40, g = 0.75, b = 1.00 }, -- azure: movement/escape
+    MOVEMENT    = { r = 0.40, g = 0.75, b = 1.00 }, -- azure: movement (gap closers)
+    -- White: break free of crowd control. It shares the upkeep button with the blue upkeep and
+    -- green heal cues, so it takes the one hue left that neither of them nor the soothe cyan is.
+    ESCAPE      = { r = 1.00, g = 1.00, b = 1.00 }, -- white: crowd-control escape
     BURST       = { r = 1.00, g = 0.60, b = 0.25 }, -- orange: offensive cooldown window
     EXECUTE     = { r = 1.00, g = 0.45, b = 0.10 }, -- deeper orange: finishing damage
     MAINTENANCE = { r = 0.55, g = 0.78, b = 1.00 }, -- blue: mitigation upkeep
@@ -233,16 +236,22 @@ local function HidePreparationGlow(icon)
     icon.hasPreparationGlow = false
 end
 
+-- Each wrapper owns its icon flag (has*Glow), like the native proc glow, so StopAllGlows can
+-- trust it and no caller keeps a copy.
 local function ShowInterruptProcGlow(icon)
+    if not icon then return end
     local color = GLOW_COLORS.INTERRUPT
     ShowColoredProcGlow(icon, "InterruptProcGlowFrame", color.r, color.g, color.b)
+    icon.hasInterruptGlow = true
 end
 
 local function HideInterruptProcGlow(icon)
+    if not icon then return end
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
+    icon.hasInterruptGlow = false
 end
 
--- Threat cue (DefensiveEngine threat cues): pull or lose aggro, press this.
+-- The Threat button: about to pull aggro, or losing it as a tank; press this.
 local function ShowThreatProcGlow(icon)
     local color = GLOW_COLORS.THREAT
     ShowColoredProcGlow(icon, "ThreatProcGlowFrame", color.r, color.g, color.b)
@@ -970,6 +979,7 @@ local function StopAllGlows(icon)
     if icon.hasMaintenanceGlow then StopMaintenanceGlow(icon) end
     if icon.hasProcGlow      then HideProcGlow(icon)      end
     if icon.hasThreatGlow    then HideThreatProcGlow(icon) end
+    if icon.hasInterruptGlow then HideInterruptProcGlow(icon) end
     HidePreparationGlow(icon)
     icon.hasAssistedGlow  = false
     icon.hasDefensiveGlow = false

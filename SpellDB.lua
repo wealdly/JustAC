@@ -49,7 +49,8 @@ end
 local DEFENSIVE_SPELLS = {}
 local HEALING_SPELLS = {}
 local CROWD_CONTROL_SPELLS = {}
-local UTILITY_SPELLS = {}
+local NON_OFFENSIVE_SPELLS = {}   -- defensive, healing, crowd control and utility, for IsOffensiveSpell's one lookup
+local NON_OFFENSIVE_KEYS = { "defensive", "healing", "cc", "utility" }
 local FOREVER_REAR_ATTACKS = {}
 local FOREVER_TARGET_SETUP = {}
 local FOREVER_RANGED_FILLERS = {}
@@ -78,7 +79,9 @@ function SpellDB.RegisterCategories(t)
     if t.defensive then for id in pairs(t.defensive) do DEFENSIVE_SPELLS[id] = true end end
     if t.healing   then for id in pairs(t.healing)   do HEALING_SPELLS[id] = true end end
     if t.cc        then for id in pairs(t.cc)        do CROWD_CONTROL_SPELLS[id] = true end end
-    if t.utility   then for id in pairs(t.utility)   do UTILITY_SPELLS[id] = true end end
+    for _, key in ipairs(NON_OFFENSIVE_KEYS) do
+        if t[key] then for id in pairs(t[key]) do NON_OFFENSIVE_SPELLS[id] = true end end
+    end
     if t.foreverRear then
         for id, requirement in pairs(t.foreverRear) do FOREVER_REAR_ATTACKS[id] = requirement end
     end
@@ -346,6 +349,12 @@ function SpellDB.IsTankTree(specKey, tree)
     return trees ~= nil and tree ~= nil and trees[tree] == true
 end
 
+--- Order inside a threat role, higher first (generated, Forever, every rank): an attack-me taunt
+--- (2) before a forced-attack one (1); a threat ability by its bonus threat. nil when unranked.
+function SpellDB.GetThreatOrder(spellID)
+    return StaticLookup(SpellDB.FOREVER_THREAT_ORDER, spellID)
+end
+
 --- Is the player the tank? An assigned group role decides: Tank is, Damage or Healer is not,
 --- whatever the stance or talents (a Protection-heavy leveler playing damage beside the group's
 --- tank). With no role, or an unreadable one: a tank stance or form, else a tank talent tree,
@@ -361,6 +370,22 @@ function SpellDB.IsPlayerTank()
     local RI = LibStub("JustAC-RotationImport", true)
     local tree = RI and RI.GetForeverTree and RI.GetForeverTree()
     return SpellDB.IsTankTree(SpellDB.GetSpecKey(), tree) == true
+end
+
+--- A strong tank signal: grouped, and the assigned role is Tank, or no role is assigned and a
+--- tank aura is up (Defensive Stance, Bear Form, Righteous Fury). Solo, or a tank tree alone, is
+--- not one: threat buys nothing alone, and a talent tree says nothing of who is tanking. Every
+--- read is plain or it counts as no signal.
+function SpellDB.HasStrongTankSignal()
+    local api = LibStub("JustAC-BlizzardAPI", true)
+    if not (api and api.IsGrouped and api.IsGrouped() == true) then return false end
+    local okRole, role = pcall(UnitGroupRolesAssigned, "player")
+    if okRole and not IsSecret(role) then
+        if role == "TANK" then return true end
+        if role == "DAMAGER" or role == "HEALER" then return false end
+    end
+    local okAura, aura = pcall(UnitHasEffectivelyTankAura, "player")
+    return okAura and not IsSecret(aura) and aura == true
 end
 
 --- Does this talent tree's damage repay an armor reduction at once (generated, Forever)? Only
@@ -389,6 +414,13 @@ end
 function SpellDB.IsDelayedPayoff(spellID)
     return SpellDB.FOREVER_DELAYED_PAYOFF ~= nil
         and StaticLookup(SpellDB.FOREVER_DELAYED_PAYOFF, spellID) == true
+end
+
+--- Area damage that comes only over time, with no hit of its own (Forever data: Consecration).
+--- Like a damage over time spell on the target, it pays only while an enemy outlives it.
+function SpellDB.IsAreaDot(spellID)
+    return SpellDB.FOREVER_AREA_DOTS ~= nil
+        and StaticLookup(SpellDB.FOREVER_AREA_DOTS, spellID) == true
 end
 
 function SpellDB.IsMaintainedProtection(spellID)
@@ -1545,15 +1577,9 @@ end
 function SpellDB.IsOffensiveSpell(spellID)
     if not spellID then return true end  -- Fail-open: unknown = assume offensive
     
-    -- If it's in any of the non-offensive tables, it's not offensive.
+    -- In any non-offensive table (defensive, healing, crowd control, utility): not offensive.
     -- Base-resolve so a talent-override variant is excluded like its base.
-    if StaticLookup(DEFENSIVE_SPELLS, spellID) then return false end
-    if StaticLookup(HEALING_SPELLS, spellID) then return false end
-    if StaticLookup(CROWD_CONTROL_SPELLS, spellID) then return false end
-    if StaticLookup(UTILITY_SPELLS, spellID) then return false end
-    
-    -- Not in any exclusion list = offensive
-    return true
+    return not StaticLookup(NON_OFFENSIVE_SPELLS, spellID)
 end
 
 --------------------------------------------------------------------------------
@@ -2196,12 +2222,10 @@ function SpellDB.GetEnemyMitigationDuration(spellID)
     return StaticLookup(t, spellID)
 end
 
---- For such a debuff that lands on every enemy around you (Demoralizing Shout, Demoralizing
---- Roar), its radius in yards; nil for one cast on a single target (Hex of Weakness).
-function SpellDB.GetEnemyMitigationRadius(spellID)
-    local t = SpellDB.FOREVER_ENEMY_MITIGATION_RADIUS
-    if not (t and spellID) then return nil end
-    return StaticLookup(t, spellID)
+--- A spell that lands on everything around you (Demoralizing Shout, Challenging Shout): its
+--- radius in yards (generated, Forever, every rank); nil for a single-target spell.
+function SpellDB.GetAreaRadius(spellID)
+    return StaticLookup(SpellDB.FOREVER_AREA_RADIUS, spellID)
 end
 
 --- The current spec's self-lockout entry for a spell (any rank), or nil.

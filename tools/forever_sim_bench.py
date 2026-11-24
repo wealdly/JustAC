@@ -194,6 +194,9 @@ CLASSES = {
             23922: {"id": 23925},            # Shield Slam (the simulator names its top rank)
             6673: {"id": 11551},             # Battle Shout (rank 7 is a raid book rank)
             6343: {"id": 11581},             # Thunder Clap (the simulator names its top rank)
+            # Demoralizing Shout: one action at the top rank's id, its trained rank inside; its
+            # debuff keeps that id too (sim/warrior/demoralizing_shout.go).
+            1160: {"id": 11556},
         },
         "unmodelled": {
             402927: "Victory Rush is not implemented in the simulator",
@@ -432,7 +435,9 @@ CLASSES.update({
             "protection": {"sim_preset": "ui/protection_paladin/apls/forever_protection.apl.json",
                            "source_preset": "paladin/protection/p5.apl.json",
                            "talents": "-5520513321301551-15102", "main_tree": 1, "loadout": "shield",
-                           "spec": ("protectionPaladin", {"options": {}})},
+                           # Righteous Fury up, as every Protection guide keeps it (its threat; left
+                           # out, the bench's threat was the damage's alone).
+                           "spec": ("protectionPaladin", {"options": {"righteousFury": True}})},
             "retribution": {"sim_preset": "ui/retribution_paladin/apls/basic_ret.apl.json",
                             "source_preset": "paladin/retribution/default.apl.json",
                             "talents": "55003003-2-05225331001330311", "main_tree": 2, "loadout": "2h"},
@@ -616,6 +621,14 @@ PULL = {"mobs": 1, "seconds": 20.0}
 # The bench fights alone. --grouped answers the lists' "in a group" condition as true, for what
 # an entry kept for group play (Vanish) is worth there; nothing else about the fight changes.
 GROUPED = {"on": False}
+# --group: the fights a party member meets in a dungeon or raid (group_scenarios). The party's
+# damage is modelled as health: the target loses health at the party's rate, so its health
+# fraction over time is that of a target with the player's share of the health fought alone.
+# The tank holds the target, so it does not hit the player and melee stand behind it, unless the
+# tree is a tank tree ("tank").
+GROUP = {"on": False, "tank": False}
+# The client's level cap: a raid boss joins the --group fights there.
+TOP_LEVEL = 60
 # Every target's health is multiplied by a fight-length factor: one for every scenario, or one
 # per level gap (target level minus player level) when calibration measured gaps.
 HEALTH = {"scale": 1.0, "by_gap": {}}
@@ -772,6 +785,13 @@ ASSUMPTIONS = {
     # swing, copied from the simulator's own planner benchmark (sim/planner/bench.go).
     "target_swing_speed": 2.0,
     "target_damage_spread": 0.3333,
+    # --group (not measured): the player's share of a five-player party's damage (three damage
+    # dealers, a tank and a healer adding a little), and boss health as multiples of a regular
+    # creature of the boss's level, before that share. A raid boss is fought by a raid, so its
+    # multiple is already the player's share: about two to three minutes at level 60.
+    "party_share": 0.25,
+    "dungeon_boss_health_mult": 12.0,
+    "raid_boss_health_mult": 5.0,
 }
 
 OPS = {"<": "OpLt", "<=": "OpLe", ">": "OpGt", ">=": "OpGe", "=": "OpEq", "!=": "OpNe"}
@@ -903,6 +923,8 @@ def runtime_data():
         return int(m.group(1)) if m else default
     return {
         "delayed": set(_lua_table(text, "DELAYED_PAYOFF")),
+        "area_dots": set(_lua_table(text, "AREA_DOTS")),
+        "creature_types": dict((k, int(v)) for k, v in _lua_table(text, "CREATURE_TYPES").items()),
         "frontal": dict((k, float(v)) for k, v in _lua_table(text, "FRONTAL_DOTS").items() if v != "true"),
         "dots": dict((k, float(v)) for k, v in _lua_table(text, "DOTS").items()),
         "stacks": dict((k, int(v)) for k, v in _lua_table(text, "STACKING_AURAS").items()),
@@ -922,8 +944,9 @@ class RuntimeRules:
     fight against one target of a known level and kind. Each is the runtime's rule, read
     through what the simulator can express; the approximations are said where they are made."""
 
-    def __init__(self, data, cls, tree, level_delta, elite, pack, cooldown_gap=None, level=None):
+    def __init__(self, data, cls, tree, level_delta, elite, pack, cooldown_gap=None, level=None, boss=False):
         self.d, self.cls, self.tree = data, cls, tree
+        self.boss = boss
         # SpellDB.IsEarlyArmorTree: the tree repays an armor reduction at once only when one of
         # its main spenders is learned at this level (None: the full build, every one learned).
         spenders = data["early_armor_trees"].get(cls, {}).get(tree)
@@ -931,22 +954,25 @@ class RuntimeRules:
             (client_spell_levels().get(s) or 999) <= level for s in spenders))
         self.pack = pack
         # IsWorthwhileFight(b, true) without its age clause: a boss, an elite, a higher level.
-        self.lasting = elite or level_delta >= 1
+        self.lasting = boss or elite or level_delta >= 1
         # IsWorthwhileFight(b) for a multi-minute self-buff: several enemies, a boss, an elite or
         # a regular target HIGHER_LEVEL_FIGHT levels above (--cooldown-gap tries another gap).
         # Time already spent on the target does not count.
         if cooldown_gap is None:
             cooldown_gap = data["higher_level"]
-        self.worthwhile = elite or pack or level_delta >= cooldown_gap
+        self.worthwhile = boss or elite or pack or level_delta >= cooldown_gap
         # fastSoloFight: one regular enemy at or below the player's level, alone.
-        self.fast = not elite and level_delta <= 0 and not pack
+        self.fast = not elite and level_delta <= 0 and not pack and not GROUPED["on"]
+        # shortGroupFight: grouped, and the fight is not worthwhile (IsWorthwhileFight, whose age
+        # clause ends it after LONG_FIGHT_SECONDS).
+        self.short_group = GROUPED["on"] and not self.worthwhile
 
     def stack(self, e, g):
         """IsStackPayoffContext: one stack becomes the full stack where stacks pay."""
         if (g.get("t") == "stack" and g.get("tgt") and g.get("id") == e["id"] and g.get("op") == "<"
                 and g.get("n") == 1 and not g.get("once") and e["id"] in self.d["delayed"]
-                and self.d["stacks"].get(e["id"], 0) > 1 and self.lasting):
-            return dict(g, n=self.d["stacks"][e["id"]]), "stacked to %d on this target (runtime: elite or higher level)" % self.d["stacks"][e["id"]]
+                and self.d["stacks"].get(e["id"], 0) > 1 and (self.lasting or GROUPED["on"])):
+            return dict(g, n=self.d["stacks"][e["id"]]), "stacked to %d on this target (runtime: grouped, elite or higher level)" % self.d["stacks"][e["id"]]
         return g, None
 
     def hold(self, e):
@@ -958,6 +984,13 @@ class RuntimeRules:
             if self.worthwhile:
                 return None, "major cooldown allowed: an elite, several enemies or a much higher level"
             return Converter.const("false"), "major cooldown held: needs an elite, several enemies or a much higher level"
+        if sid in self.d["area_dots"]:
+            # Area damage over time waits on a dying last enemy: the damage over time line.
+            if self.pack:
+                return None, "area damage over time: dying-target hold not modelled in a fixed pull"
+            floor = self.d["dot_floor"]
+            return (Converter.health_fraction(">=", floor),
+                    "area damage over time held below %d%% health on the last enemy" % floor)
         if sid not in self.d["delayed"]:
             return None, None
         # SpellDB.IsPlayerTank grouped (the tank tree, no role in the simulator), or an early-armor
@@ -982,7 +1015,14 @@ class RuntimeRules:
         share = self.d["frontal"].get(g.get("id"))
         floor, fast = self.d["dot_floor"], self.d["fast_floor"]
         parts, said = [value], []
-        if share is None:
+        if self.short_group and g.get("id") not in self.d["frontal"]:
+            seconds = self.d["long_fight"]
+            parts.append({"cmp": {"op": OPS[">="], "lhs": {"currentTime": {}},
+                                  "rhs": {"const": {"val": "%gs" % seconds}}}})
+            said.append("short group fight: not for the first %d s" % seconds)
+        if self.boss:
+            said.append("a boss: no dying-target floor")
+        elif share is None:
             parts.append(conv.health_fraction(">=", floor))
             said.append("not below %d%% health" % floor)
         elif share < 0.5:
@@ -1174,10 +1214,43 @@ def client_spell_levels():
 BOOK_RANKS = (25286, 25361)
 
 
-# Ids the simulator uses at every level though they sit in a rank family: an aura a class entry
-# names as the one the simulator always applies (the rogue's Stealth aura is 1787 whatever rank of
-# Stealth was cast).
+# Aura ids the simulator uses at every level though they sit in a rank family: an aura a class
+# entry names as the one the simulator always applies (the rogue's Stealth aura is 1787 whatever
+# rank of Stealth was cast), and the shared debuffs its core registers under one id for every rank
+# (Faerie Fire 9907, Sunder Armor 11597). An aura check keeps that id at every level; a cast of the
+# same id still takes the level's rank. Before 2026-11-24 the check was moved to the level's rank,
+# which the simulator never applies, so it read "never up" and the debuff was recast every global
+# cooldown (a level 24 cat cast Faerie Fire 15 times in a 26 s fight).
 FIXED_IDS = set()
+
+
+def core_fixed_auras(sim):
+    """Aura ids the simulator's shared core registers literally (sim/core, not its tests)."""
+    found = set()
+    core = os.path.join(sim, "sim", "core")
+    for name in os.listdir(core):
+        if name.endswith(".go") and not name.endswith("_test.go"):
+            text = open(os.path.join(core, name), encoding="utf-8").read()
+            found.update(int(i) for i in re.findall(r"ActionID:\s*ActionID\{SpellID:\s*(\d+)\}", text))
+    return found
+
+
+def labelled_auras(sim, cls):
+    """Aura label (lower case) -> ids the simulator registers under it, in the class's code and the
+    shared core. The simulator keeps some auras under the id of a later game version (Heating Up
+    as 44445); the label carries the client's name."""
+    out = {}
+    folders = [os.path.join(sim, "sim", "core"), os.path.join(sim, "sim", cls)]
+    pattern = re.compile(r'Label:\s*"([^"]+)",\s*ActionID:\s*(?:core\.)?ActionID\{SpellID:\s*(\d+)\}')
+    for folder in folders:
+        if not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            if name.endswith(".go") and not name.endswith("_test.go"):
+                text = open(os.path.join(folder, name), encoding="utf-8").read()
+                for label, sid in pattern.findall(text):
+                    out.setdefault(label.lower(), set()).add(int(sid))
+    return out
 
 
 def ranks_for_level(rotation, tables, level):
@@ -1192,10 +1265,17 @@ def ranks_for_level(rotation, tables, level):
         return rotation
     rotation = json.loads(json.dumps(rotation))
 
-    def visit(node):
-        if isinstance(node.get("spellId"), int) and node["spellId"] in best and node["spellId"] not in FIXED_IDS:
-            node["spellId"] = best[node["spellId"]]
-    walk(rotation, visit)
+    def visit(node, key=None):
+        if isinstance(node, dict):
+            sid = node.get("spellId")
+            if isinstance(sid, int) and sid in best and not (key == "auraId" and sid in FIXED_IDS):
+                node["spellId"] = best[sid]
+            for k, v in node.items():
+                visit(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                visit(v, key)
+    visit(rotation)
     return rotation
 
 
@@ -1223,6 +1303,9 @@ class IdMap:
                 self.tables.append((ids, [max(levels.get(i, 1), 1) for i in ids]))
                 covered.update(ids)
         self.notes = {}   # justac id -> how it was matched
+        self.fixed_auras = core_fixed_auras(sim)
+        self.labels = labelled_auras(sim, cls)
+        self.labelled = set(i for ids in self.labels.values() for i in ids)
         # Spell names, for a spell the simulator knows under another id (it keeps some ids of
         # later game versions where the Forever client has its own): the simulator's database
         # first, the client's SpellName table for ids the database lacks.
@@ -1290,7 +1373,19 @@ class IdMap:
             return self.cfg["aura_alias"][jid], False, None
         rec = self.action(jid) if (jid in self.chains or jid in self.cfg["actions"]) else None
         if rec:
+            family = next((ids for ids, _ in self.tables if rec["id"] in ids), ())
+            # A DoT keeps its own per-rank timer (Insect Swarm's 24977 is only its miss rider).
+            fixed = [i for i in family if i in self.fixed_auras]
+            if len(fixed) == 1 and not rec.get("dot"):
+                FIXED_IDS.add(fixed[0])
+                return fixed[0], False, None
             return rec["id"], rec.get("dot", False), None
+        if jid not in self.labelled:
+            # Registered under the client's name with another id (a literal of jid in a comment
+            # is not a registration).
+            labelled = self.labels.get((self.name_of(jid) or "").lower(), set())
+            if len(labelled) == 1:
+                return next(iter(labelled)), False, None
         if jid in self.literals or jid in self.harvest:
             return jid, False, None
         named = self.same_name(jid)
@@ -1343,7 +1438,8 @@ class Converter:
             ref["tag"] = rec["tag"]
         return ref
 
-    def health_fraction(self, op, pct):
+    @staticmethod
+    def health_fraction(op, pct):
         # Fight sized by health, one target: remaining fraction of the fight IS the health fraction.
         return {"cmp": {"op": OPS[op], "lhs": {"remainingTimePercent": {}}, "rhs": {"const": {"val": "%g" % (pct / 100.0)}}}}
 
@@ -1376,7 +1472,14 @@ class Converter:
                 self.note(EXACT, "time left on %d %s %s" % (aid, g["op"], g.get("ncast") and "its cast time" or g.get("n")))
                 if aid in self.ids.cfg.get("self_auras", ()):
                     return {"cmp": {"op": OPS[g["op"]], "lhs": {"auraRemainingTime": {"auraId": {"spellId": aid}}}, "rhs": rhs}}
-                return {"cmp": {"op": OPS[g["op"]], "lhs": {"dotRemainingTime": {"spellId": {"spellId": aid}}}, "rhs": rhs}}
+                left = {"cmp": {"op": OPS[g["op"]], "lhs": {"dotRemainingTime": {"spellId": {"spellId": aid}}}, "rhs": rhs}}
+                if g["op"] in (">", ">=") and self.rules:
+                    # GateVerdict: waiting for time on a DoT the runtime will not start is met.
+                    starts, said = self.rules.dot(self, g, {"const": {"val": "true"}})
+                    if starts != {"const": {"val": "true"}}:
+                        self.note(EXACT, "runtime: the wait is met where the DoT would not start (%s)" % said)
+                        return {"or": {"vals": [left, {"not": {"val": starts}}]}}
+                return left
             if is_dot:
                 active = {"dotIsActive": {"spellId": {"spellId": aid}}}
             else:
@@ -1498,6 +1601,15 @@ class Converter:
     def convert(self, entries):
         """List entries -> simulator priorityList. Every entry and gate is reported."""
         out = []
+        # Next-swing attacks (a tagged queue action: Heroic Strike, Cleave, Maul). The queue never
+        # displaces one already queued by another (SpellQueue: a queued next-swing attack is never
+        # displaced); the simulator replaces it, so each waits while another is queued (its queue
+        # aura: the action's id with the same tag).
+        queued = []
+        for e in entries:
+            rec = self.ids.action(e["id"])
+            if rec is not None and rec.get("tag"):
+                queued.append((e["id"], {"spellId": rec["id"], "tag": rec["tag"]}))
         for i, e in enumerate(entries, 1):
             jid = e["id"]
             self.line = "%2d %s (%d)" % (i, self.names.get(jid, "?"), jid)
@@ -1532,6 +1644,11 @@ class Converter:
                 continue
             if hold is not None:
                 conds.append(hold)
+            others = [ref_ for jid_, ref_ in queued if jid_ != jid] if rec.get("tag") else []
+            for other in others:
+                conds.append({"not": {"val": {"auraIsActive": {"auraId": dict(other)}}}})
+            if others:
+                self.note(EXACT, "runtime: waits while another next-swing attack is queued")
             if len(conds) == 1:
                 action["condition"] = conds[0]
             elif conds:
@@ -2068,14 +2185,46 @@ def scenarios_for(level, health_mults=None):
     ]
 
 
+def group_scenarios(level, top_level):
+    """--group: the fights of a dungeon or raid party member at this level. Health is the player's
+    share (ASSUMPTIONS party_share), so kill time is the party's. A grouped regular target is the
+    short group fight; a dungeon pull is elite; a dungeon boss is two levels above; at the top
+    level a raid boss is three above."""
+    share = ASSUMPTIONS["party_share"]
+    out = [
+        {"name": "L%d grouped regular" % level, "target_level": level, "elite": False, "hp_mult": share},
+        {"name": "L%d dungeon elite" % level, "target_level": level + 1, "elite": True, "hp_mult": share},
+        {"name": "L%d dungeon boss" % level, "target_level": level + 2, "elite": True, "boss": True,
+         "hp_mult": share * ASSUMPTIONS["dungeon_boss_health_mult"] / ASSUMPTIONS["elite_health_mult"]},
+    ]
+    if level >= top_level:
+        out.append({"name": "L%d raid boss" % level, "target_level": level + 3, "elite": True, "boss": True,
+                    "hp_mult": ASSUMPTIONS["raid_boss_health_mult"] / ASSUMPTIONS["elite_health_mult"]})
+    return out
+
+
+def scenario_health(scenario, creatures, level):
+    """A scenario target's health: its level's expected health, elite and scenario multiples."""
+    health = creatures[scenario["target_level"]][0]
+    if scenario["elite"]:
+        health *= ASSUMPTIONS["elite_health_mult"]
+    return health * scenario.get("hp_mult", 1) * health_factor(scenario["target_level"] - level)
+
+
+# The client's creature type of every bench target (CreatureType 7, Humanoid).
+HUMANOID_TYPE = 7
+
+
 def build_request(cls, level, talents, gear, scenario, creatures, rotation, iterations, seed):
     cfg = CLASSES[cls]
     eng = ENGAGEMENTS[cfg["engagement"]]
-    health, dps, armor = creatures[scenario["target_level"]]
+    if GROUP["on"] and not GROUP["tank"]:
+        # The tank holds the target: it never hits the player, and melee stand behind it.
+        eng = dict(eng, in_front=False, target_attacks_player=False)
+    _, dps, armor = creatures[scenario["target_level"]]
     if scenario["elite"]:
-        health *= ASSUMPTIONS["elite_health_mult"]
         dps *= ASSUMPTIONS["elite_damage_mult"]
-    health *= scenario.get("hp_mult", 1) * health_factor(scenario["target_level"] - level)
+    health = scenario_health(scenario, creatures, level)
     stats = [0.0] * 44
     # Stat indexes are read from proto/common.proto by stat_index(); filled in by the caller.
     stats[scenario["_armor_idx"]] = armor
@@ -2180,6 +2329,37 @@ SELF_SHIELDS = {17}
 # A rogue opens from Stealth; a priest shields first, as the levelling guides say ("shield and
 # Renew before the pull"): absorbed hits push no cast back.
 PREPULL = {4: [(1784, -1.0)], 5: [(17, -1.5)]}
+
+
+# A cooldown this long is not ready for every fight. The bench gives it only to a boss: on any
+# other target an arm (a preset, the list, the cooldown arm) fights without it. The simulator's
+# own autocast of its major cooldowns is not reached by this.
+ONCE_PER_RUN_MS = 600000
+
+
+def once_per_run_ids():
+    """Client spell ids (every rank) whose cooldown is ONCE_PER_RUN_MS or longer."""
+    out = set()
+    for r in client_rows("SpellCooldowns"):
+        try:
+            ms = max(int(r.get("RecoveryTime") or 0), int(r.get("CategoryRecoveryTime") or 0))
+        except ValueError:
+            continue
+        if ms >= ONCE_PER_RUN_MS and r["SpellID"].isdigit() and r.get("DifficultyID", "0") == "0":
+            out.add(int(r["SpellID"]))
+    return out
+
+
+def without_spells(rotation, drop):
+    """A fixed simulator rotation without the priority entries that cast one of these spells."""
+    def casts(node):
+        found = []
+        walk(node, lambda n: found.append(n["castSpell"].get("spellId", {}).get("spellId"))
+             if isinstance(n.get("castSpell"), dict) else None)
+        return any(sid in drop for sid in found)
+    rotation = dict(rotation)
+    rotation["priorityList"] = [item for item in rotation.get("priorityList", []) if not casts(item.get("action", {}))]
+    return rotation
 
 
 def strip_prepull(rotation):
@@ -2372,7 +2552,7 @@ def summarize(result, swing_speed, approach=0.0):
     large hits; compare kill times."""
     player = result["raidMetrics"]["parties"][0]["players"][0]
     n = result.get("iterationsDone") or player["dps"]["aggregatorData"]["n"]
-    casts, damage = {}, 0.0
+    casts, damage, threat = {}, 0.0, 0.0
     for action in player.get("actions", []):
         ident = action.get("id", {})
         key = "%s%s" % (ident.get("spellId") or ident.get("otherId") or ident.get("itemId") or "?",
@@ -2380,6 +2560,7 @@ def summarize(result, swing_speed, approach=0.0):
         tot = sum(t.get("casts", 0) for t in action.get("targets", []))
         dmg = sum(t.get("damage", 0.0) for t in action.get("targets", []))
         damage += dmg
+        threat += sum(t.get("threat", 0.0) for t in action.get("targets", []))
         casts[key] = (tot / n, dmg / n)
     mana = -sum(r.get("gain", 0.0) for r in player.get("resources", [])
                 if r.get("type") == "ResourceTypeMana" and r.get("gain", 0.0) < 0) / n
@@ -2393,17 +2574,18 @@ def summarize(result, swing_speed, approach=0.0):
                 swings += sum(t.get("casts", 0) for t in action.get("targets", []))
     out = {"n": n, "damage": damage / n, "taken": taken / n, "casts": casts, "mana": mana}
     if PULL["mobs"] > 1:
-        out.update(kill=float("nan"), dps=damage / n / PULL["seconds"])
-        return out
-    if not swings:
-        out.update(kill=float("nan"), dps=float("nan"))
+        out.update(kill=float("nan"), dps=damage / n / PULL["seconds"], tps=threat / n / PULL["seconds"])
         return out
     # Under the pull model the target's first swing comes `approach` seconds after the pull.
-    kill, clock = swing_speed * (swings / n - 0.5) + approach, "target swings"
+    swing_kill = swing_speed * (swings / n - 0.5) + approach if swings else float("nan")
+    kill, clock = swing_kill, "target swings"
     exact = result.get("avgIterationDuration")
     if exact and 0 < exact < EXACT_CLOCK_BELOW:
-        kill, clock = exact, "simulator"
-    out.update(kill=kill, dps=damage / n / kill, clock=clock, swing_kill=swing_speed * (swings / n - 0.5) + approach)
+        kill, clock = exact, "simulator"   # also a target killed before its first swing
+    if kill != kill:
+        out.update(kill=float("nan"), dps=float("nan"))
+        return out
+    out.update(kill=kill, dps=damage / n / kill, clock=clock, swing_kill=swing_kill, tps=threat / n / kill)
     return out
 
 
@@ -2477,6 +2659,11 @@ def main():
                                          "source preset as it is there")
     ap.add_argument("--other-lists", help="comma-separated trees: adds an arm per tree, this tree's character "
                                           "following that tree's list (`list-<tree>`), for hybrid and early builds")
+    ap.add_argument("--group", action="store_true",
+                    help="dungeon and raid fights as a party member (implies --grouped): a grouped regular "
+                         "target, a dungeon elite, a dungeon boss and, at level 60, a raid boss, each with the "
+                         "player's share of the health; the tank holds the target unless the tree is a tank "
+                         "tree (party share and boss health are ASSUMED). With --mobs, a grouped pack")
     ap.add_argument("--grouped", action="store_true",
                     help="answer the lists' 'in a group' condition as true (the bench still fights alone)")
     ap.add_argument("--listed-weapons", action="store_true",
@@ -2580,7 +2767,8 @@ def main():
     if not args.listed_weapons:
         open_weapons(cfg)
     PULL["mobs"], PULL["seconds"] = max(1, args.mobs), args.pull_seconds
-    GROUPED["on"] = args.grouped
+    GROUPED["on"] = args.grouped or args.group
+    GROUP["on"] = args.group
     RUN_TIMEOUT["seconds"] = args.run_timeout
     SIM_THREADS["n"] = max(1, args.threads)
     SIM_THREADS["low_priority"] = not args.normal_priority
@@ -2599,11 +2787,14 @@ def main():
         other_arms.append(("list-" + other, lists[other][args.context], None))
     floor = None if args.no_dot_floor else dot_floor_pct()
     data = None if args.no_runtime_rules or args.no_dot_floor else runtime_data()
+    GROUP["tank"] = args.group and args.tree in _tree_sets(open(DEFAULTS_LUA, encoding="utf-8").read(),
+                                                            "FOREVER_TANK_TREES").get(cls, set())
 
-    def rules_for(level_delta, elite, level=None):
+    def rules_for(level_delta, elite, level=None, boss=False):
         if data is None:
             return None
-        return RuntimeRules(data, cls, args.tree, level_delta, elite, PULL["mobs"] > 1, args.cooldown_gap, level)
+        return RuntimeRules(data, cls, args.tree, level_delta, elite, PULL["mobs"] > 1, args.cooldown_gap, level,
+                            boss)
 
     ids = IdMap(args.sim, cls, chains)
     # The printed conversion is for an ordinary even-level target and the tree's full build; each
@@ -2657,6 +2848,11 @@ def main():
         raise SystemExit("no wowsimcli in %s: build it there (see the top of this file), pass --cli, "
                          "or use --convert-only" % args.sim)
 
+    once_per_run = once_per_run_ids()
+    # Every bench target is a humanoid (build_request). The runtime offers a spell limited to other
+    # creature types (Exorcism, Holy Wrath: Demons and Undead) only against them, so no arm has it.
+    humanoid_bit = 1 << (HUMANOID_TYPE - 1)
+    wrong_type = set(sid for sid, mask in (data or runtime_data())["creature_types"].items() if not mask & humanoid_bit)
     # (name, list entries converted per scenario, or a fixed simulator rotation)
     arms = [("justac", entries, None)]
     for group in (args.without or "").split(";"):
@@ -2688,7 +2884,7 @@ def main():
     if cued:
         arms.append(("justac+cooldowns", [{"id": i, "gates": []} for i in cued] + list(entries), None))
     if args.justac_only:
-        arms = [arm for arm in arms if arm[0] in ("justac", "draft")]
+        arms = [arm for arm in arms if arm[0] != "justac+cooldowns"]   # ablations and drafts stay
     else:
         arms.append(("sim", None, strip_prepull(json.load(open(os.path.join(args.sim, tree_cfg["sim_preset"]), encoding="utf-8")))))
     src = os.path.join(PRESETS, tree_cfg.get("source_preset") or "none")
@@ -2761,6 +2957,14 @@ def main():
     if PULL["mobs"] > 1:
         say("- Pack: %d identical targets for a fixed %g s pull; the kill time column is empty and the comparison column "
             "compares damage per second (positive is more damage)." % (PULL["mobs"], PULL["seconds"]))
+    say("- A cooldown of %d minutes or more is pressed only against a boss: every arm fights other targets without it "
+        "(the simulator's autocast of its own major cooldowns is not reached)." % (ONCE_PER_RUN_MS // 60000))
+    if GROUP["on"]:
+        say("- Group fights (ASSUMED): the player deals %d%% of the party's damage, so a target has that share of its "
+            "health; a dungeon boss has %gx and a raid boss %gx (already the player's share) a regular target's health; "
+            "%s." % (100 * ASSUMPTIONS["party_share"], ASSUMPTIONS["dungeon_boss_health_mult"],
+                     ASSUMPTIONS["raid_boss_health_mult"],
+                     "a tank tree is hit as usual" if GROUP["tank"] else "the tank holds the target: no hits, melee behind it"))
     say("- Targets: client ExpectedStat build %s (health, armour, melee damage per second); elite = health x%g, damage x%g (assumed)."
         % (build, ASSUMPTIONS["elite_health_mult"], ASSUMPTIONS["elite_damage_mult"]))
     say("")
@@ -2891,27 +3095,41 @@ def main():
                 % ("; ".join(rule_notes) or "every weighed cast beats the wand"))
         say("")
         say("| Gear | Scenario | Target health | Arm | Kill time s (95% CI) | DPS (95% CI) | Damage taken per fight | "
-            "vs sim preset, % (95% CI) |")
-        say("|---|---|---|---|---|---|---|---|")
+            "vs sim preset, % (95% CI) | Threat per second |")
+        say("|---|---|---|---|---|---|---|---|---|")
         cast_tables, clocks, drift = [], set(), []
         speed = ASSUMPTIONS["target_swing_speed"]
         health_mults = [float(x) for x in args.health_mults.split(",")] if args.health_mults else None
         gaps = [int(x) for x in args.gaps.split(",")] if args.gaps else None
-        for sc in (gap_scenarios(level, gaps) if gaps else scenarios_for(level, health_mults)):
+        if args.group and PULL["mobs"] == 1:
+            level_set = group_scenarios(level, TOP_LEVEL)
+        elif args.group:
+            # A dungeon pack: elites one level above, for the fixed pull.
+            level_set = [{"name": "L%d dungeon pack of %d" % (level, PULL["mobs"]), "target_level": level + 1,
+                          "elite": True}]
+        elif gaps:
+            level_set = gap_scenarios(level, gaps)
+        else:
+            level_set = scenarios_for(level, health_mults)
+        for sc in level_set:
             sc["_armor_idx"], sc["_health_idx"] = armor_idx, health_idx
-            health = (creatures[sc["target_level"]][0] * (ASSUMPTIONS["elite_health_mult"] if sc["elite"] else 1)
-                      * sc.get("hp_mult", 1) * health_factor(sc["target_level"] - level))
+            health = scenario_health(sc, creatures, level)
             got = {}
             for name, arm_entries, fixed in arms:
                 if (name, level) in TIMED_OUT:
                     continue   # this arm never finished at this level: said once, not retried
                 rotation = fixed
+                if rotation is not None and not sc.get("boss"):
+                    rotation = without_spells(rotation, once_per_run)
                 if arm_entries is not None:
                     pressed = arm_entries
+                    if not sc.get("boss"):
+                        pressed = [e for e in pressed if e["id"] not in once_per_run]
+                    pressed = [e for e in pressed if e["id"] not in wrong_type]
                     if wand:
                         pressed, _ = weapon_rule_entries(arm_entries, cls, cfg, level, wand, approach_seconds(cfg))
                     rotation = Converter(ids, names, cfg["engagement"], floor,
-                                         rules_for(sc["target_level"] - level, sc["elite"], level),
+                                         rules_for(sc["target_level"] - level, sc["elite"], level, sc.get("boss", False)),
                                          talent_points(args.sim, cls, talents)).convert(pressed)
                 runs = []
                 for batch in range(args.batches):
@@ -2933,7 +3151,7 @@ def main():
                 if runs:
                     got[name] = runs
                     clocks.update(r.get("clock") for r in runs if r.get("clock"))
-                    drift.extend(abs(r["kill"] - r["swing_kill"]) for r in runs if r.get("clock") == "simulator")
+                    drift.extend(abs(r["kill"] - r["swing_kill"]) for r in runs if r.get("clock") == "simulator" and r["swing_kill"] == r["swing_kill"])
             for name, _, _ in arms:
                 if name not in got:
                     continue
@@ -2946,8 +3164,9 @@ def main():
                     measure = "dps" if pack else "kill"
                     pairs = [100 * (a[measure] - b[measure]) / b[measure] for a, b in zip(got[name], got["sim"])]
                     rel = "%+.1f [%+.1f, %+.1f]" % mean_ci(pairs)
-                say("| %s | %s | %d | %s | %s | %.1f [%.1f, %.1f] | %.0f | %s |"
-                    % ((label, sc["name"], health, name, kill) + dps + (taken, rel)))
+                tps = sum(r.get("tps", float("nan")) for r in got[name]) / len(got[name])
+                say("| %s | %s | %d | %s | %s | %.1f [%.1f, %.1f] | %.0f | %s | %.1f |"
+                    % ((label, sc["name"], health, name, kill) + dps + (taken, rel, tps)))
             cast_tables.append((sc["name"], dict((k, {"casts": merge_casts(v), "mana": sum(r["mana"] for r in v) / len(v)})
                                                  for k, v in got.items())))
         say("")

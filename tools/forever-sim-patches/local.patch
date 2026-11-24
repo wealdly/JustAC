@@ -58,8 +58,21 @@ index 8b0a9ef..a79c212 100644
  		aa.ranged.swingAt = max(aa.ranged.swingAt, sim.CurrentTime, 0)
  		aa.ranged.addWeaponAttack(sim, aa.ranged.unit.RangedSwingSpeed())
  	}
+diff --git a/sim/core/cast.go b/sim/core/cast.go
+index def017d..eebed42 100644
+--- a/sim/core/cast.go
++++ b/sim/core/cast.go
+@@ -154,6 +154,8 @@ func (unit *Unit) applySpellPushback() {
+ 
+ func (spell *Spell) makeCastFunc(config CastConfig) CastSuccessFunc {
+ 	return func(sim *Simulation, target *Unit) bool {
++		// LOCAL FIX (2026-11-24): a cast due to complete at this instant completes first.
++		spell.Unit.completeDueHardcast(sim)
+ 		spell.CurCast = spell.DefaultCast
+ 
+ 		if config.ModifyCast != nil {
 diff --git a/sim/core/character.go b/sim/core/character.go
-index 768a460..65ad255 100644
+index 768a460..ee3fccd 100644
 --- a/sim/core/character.go
 +++ b/sim/core/character.go
 @@ -42,6 +42,8 @@ type Character struct {
@@ -71,6 +84,20 @@ index 768a460..65ad255 100644
  	// Explicit provisional model; no implicit Revelation proc chance.
  	ForeverRevelationModel *proto.ForeverRevelationModel
  	// Optional explicit scenario assumption. Nil keeps the provisional rank convention.
+@@ -500,12 +502,7 @@ func (character *Character) initialize(agent Agent) {
+ 	character.gcdAction = &PendingAction{
+ 		Priority: ActionPriorityGCD,
+ 		OnAction: func(sim *Simulation) {
+-			if hc := &character.Hardcast; hc.Expires != startingCDTime && !character.IsCasting(sim) {
+-				hc.Expires = startingCDTime
+-				if hc.OnComplete != nil {
+-					hc.OnComplete(sim, hc.Target)
+-				}
+-			}
++			character.completeDueHardcast(sim)
+ 
+ 			if sim.CurrentTime < 0 {
+ 				return
 diff --git a/sim/core/environment.go b/sim/core/environment.go
 index 54424e0..2b6ed1b 100644
 --- a/sim/core/environment.go
@@ -83,6 +110,46 @@ index 54424e0..2b6ed1b 100644
  
  	// Targets need to be reset before the raid, so that players can check for
  	// the presence of permanent target auras in their Reset handlers.
+diff --git a/sim/core/gcd.go b/sim/core/gcd.go
+index 25413eb..c2cfe55 100644
+--- a/sim/core/gcd.go
++++ b/sim/core/gcd.go
+@@ -4,6 +4,21 @@ import (
+ 	"time"
+ )
+ 
++// LOCAL FIX (2026-11-24): completes a cast whose time is up but whose completion has not run
++// yet. A cast that ends with the global cooldown completes inside the GCD action, and anything
++// acting first at that same instant (a wand shot, after which the rotation starts the next
++// cast) found the unit no longer casting, so a new cast overwrote the finished one and it never
++// landed: a level 10 priest's Mind Blast, 1.5 s like its global cooldown, completed in 1 of 11
++// fights. Called before a cast starts and from both completion actions.
++func (unit *Unit) completeDueHardcast(sim *Simulation) {
++	if hc := &unit.Hardcast; hc.Expires != startingCDTime && !unit.IsCasting(sim) {
++		hc.Expires = startingCDTime
++		if hc.OnComplete != nil {
++			hc.OnComplete(sim, hc.Target)
++		}
++	}
++}
++
+ // Note that this is only used when the hardcast and GCD actions happen at different times.
+ func (unit *Unit) newHardcastAction(sim *Simulation) {
+ 	if unit.hardcastAction != nil && !unit.hardcastAction.consumed {
+@@ -15,12 +30,7 @@ func (unit *Unit) newHardcastAction(sim *Simulation) {
+ 		pa := &PendingAction{
+ 			NextActionAt: unit.Hardcast.Expires,
+ 			OnAction: func(sim *Simulation) {
+-				if hc := &unit.Hardcast; hc.Expires != startingCDTime && !unit.IsCasting(sim) {
+-					hc.Expires = startingCDTime
+-					if hc.OnComplete != nil {
+-						hc.OnComplete(sim, hc.Target)
+-					}
+-				}
++				unit.completeDueHardcast(sim)
+ 			},
+ 		}
+ 		unit.hardcastAction = pa
 diff --git a/sim/core/pet.go b/sim/core/pet.go
 index 71feea0..51f346c 100644
 --- a/sim/core/pet.go
@@ -1316,10 +1383,18 @@ index 2d4282e..76471bc 100644
  	return mage
  }
 diff --git a/sim/paladin/paladin.go b/sim/paladin/paladin.go
-index 99b9e0e..298f098 100644
+index 99b9e0e..c0f28d8 100644
 --- a/sim/paladin/paladin.go
 +++ b/sim/paladin/paladin.go
-@@ -171,9 +171,9 @@ func NewPaladin(character *core.Character, options *proto.Player, paladinOptions
+@@ -130,6 +130,7 @@ func (paladin *Paladin) Initialize() {
+ 	// Active abilities
+ 	paladin.registerForbearance()
+ 	paladin.registerHolyStrike()
++	paladin.registerHammerOfTheRighteous()
+ 	paladin.registerTemplarsBulwark()
+ 	paladin.registerConsecration()
+ 	paladin.registerHolyShock()
+@@ -171,9 +172,9 @@ func NewPaladin(character *core.Character, options *proto.Player, paladinOptions
  	paladin.PseudoStats.CanParry = true
  	paladin.EnableManaBar()
  	paladin.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
@@ -2076,6 +2151,43 @@ index 04dd2e5..0e455bc 100644
  	rogue.VanishAura = rogue.RegisterAura(core.Aura{
  		Label:    "Vanish",
  		ActionID: core.ActionID{SpellID: 457437},
+diff --git a/sim/shaman/chain_lightning.go b/sim/shaman/chain_lightning.go
+index 3f20c59..471c9fc 100644
+--- a/sim/shaman/chain_lightning.go
++++ b/sim/shaman/chain_lightning.go
+@@ -53,6 +53,12 @@ func (shaman *Shaman) newChainLightningSpellConfig(rank int, cdTimer *core.Timer
+ 	spellCoeff := ChainLightningSpellCoef[rank]
+ 	manaCost := ChainLightningManaCost[rank]
+ 	level := ChainLightningLevel[rank]
++	if !isOverload && shaman.Env.IsForever() {
++		// LOCAL FIX (2026-11-24): damage and coefficient from the current client (see clientDamage).
++		if low, high, coefficient, ok := clientDamage("chain_lightning", spellId, shaman.Level); ok {
++			baseDamageLow, baseDamageHigh, spellCoeff = low, high, coefficient
++		}
++	}
+ 	if isOverload && shaman.Env.IsForever() {
+ 		damage := chainLightningOverloadDamage[rank]
+ 		baseDamageLow, baseDamageHigh = damage.rangeAtLevel(shaman.Level)
+diff --git a/sim/shaman/lightning_bolt.go b/sim/shaman/lightning_bolt.go
+index 21a7c73..44066d2 100644
+--- a/sim/shaman/lightning_bolt.go
++++ b/sim/shaman/lightning_bolt.go
+@@ -70,8 +70,13 @@ func (shaman *Shaman) newLightningBoltSpellConfig(rank int, isOverload bool) cor
+ 	castTime := LightningBoltCastTime[rank]
+ 	manaCost := LightningBoltManaCost[rank]
+ 	level := LightningBoltLevel[rank]
+-	if !isOverload && shaman.Env.IsForever() && rank < len(foreverLightningBoltRankDamage) {
+-		baseDamageLow, baseDamageHigh = foreverLightningBoltRankDamage[rank].rangeAtLevel(shaman.Level)
++	if !isOverload && shaman.Env.IsForever() {
++		// LOCAL FIX (2026-11-24): every rank's damage and coefficient from the current client.
++		if low, high, coefficient, ok := clientDamage("lightning_bolt", spellId, shaman.Level); ok {
++			baseDamageLow, baseDamageHigh, spellCoeff = low, high, coefficient
++		} else if rank < len(foreverLightningBoltRankDamage) {
++			baseDamageLow, baseDamageHigh = foreverLightningBoltRankDamage[rank].rangeAtLevel(shaman.Level)
++		}
+ 	}
+ 	if isOverload && shaman.Env.IsForever() {
+ 		damage := lightningBoltOverloadDamage[rank]
 diff --git a/sim/shaman/shaman.go b/sim/shaman/shaman.go
 index acaec7e..75dab66 100644
 --- a/sim/shaman/shaman.go
@@ -3152,6 +3264,90 @@ index f4bbaa9..28905df 100644
  	warlock.AddStatDependency(stats.BonusArmor, stats.Armor, 1)
  
  	switch warlock.Options.Armor {
+diff --git a/sim/warrior/heroic_strike_cleave.go b/sim/warrior/heroic_strike_cleave.go
+index d69ee12..310c46c 100644
+--- a/sim/warrior/heroic_strike_cleave.go
++++ b/sim/warrior/heroic_strike_cleave.go
+@@ -153,7 +153,7 @@ func (warrior *Warrior) makeQueueSpellsAndAura(srcSpell *WarriorSpell, realismIC
+ 
+ 		ExtraCastCondition: func(sim *core.Simulation, target *core.Unit) bool {
+ 			return warrior.curQueueAura == nil &&
+-				!isQueueQueued &&
++				!isQueueQueued && !warrior.queuePending &&
+ 				warrior.CurrentRage() >= srcSpell.DefaultCast.Cost &&
+ 				!warrior.IsCasting(sim) &&
+ 				realismICD.IsReady(sim)
+@@ -162,12 +162,14 @@ func (warrior *Warrior) makeQueueSpellsAndAura(srcSpell *WarriorSpell, realismIC
+ 		ApplyEffects: func(sim *core.Simulation, target *core.Unit, spell *core.Spell) {
+ 			if realismICD.IsReady(sim) {
+ 				isQueueQueued = true
++				warrior.queuePending = true
+ 				realismICD.Use(sim)
+ 				sim.AddPendingAction(&core.PendingAction{
+ 					NextActionAt: sim.CurrentTime + realismICD.Duration,
+ 					OnAction: func(sim *core.Simulation) {
+ 						queueAura.Activate(sim)
+ 						isQueueQueued = false
++						warrior.queuePending = false
+ 					},
+ 				})
+ 			}
+diff --git a/sim/warrior/shield_block.go b/sim/warrior/shield_block.go
+index b3cecd0..339aded 100644
+--- a/sim/warrior/shield_block.go
++++ b/sim/warrior/shield_block.go
+@@ -44,6 +44,8 @@ func (warrior *Warrior) RegisterShieldBlockCD() {
+ 	warrior.ShieldBlock = warrior.RegisterSpell(DefensiveStance, core.SpellConfig{
+ 		ActionID:    actionID,
+ 		SpellSchool: core.SpellSchoolPhysical,
++		// Local change: a rotation can press it (it was only a major cooldown that never fires).
++		Flags: core.SpellFlagAPL,
+ 
+ 		RageCost: core.RageCostOptions{
+ 			Cost: 10,
+diff --git a/sim/warrior/tank_warrior/tank_warrior.go b/sim/warrior/tank_warrior/tank_warrior.go
+index 46a2b57..14331bc 100644
+--- a/sim/warrior/tank_warrior/tank_warrior.go
++++ b/sim/warrior/tank_warrior/tank_warrior.go
+@@ -66,7 +66,6 @@ func (war *TankWarrior) Initialize() {
+ 	war.Warrior.Initialize()
+ 
+ 	war.RegisterShieldWallCD()
+-	war.RegisterShieldBlockCD()
+ 	war.DefensiveStanceAura.BuildPhase = core.CharacterBuildPhaseTalents
+ }
+ 
+diff --git a/sim/warrior/warrior.go b/sim/warrior/warrior.go
+index 1f53804..c248703 100644
+--- a/sim/warrior/warrior.go
++++ b/sim/warrior/warrior.go
+@@ -108,6 +108,9 @@ type Warrior struct {
+ 	CleaveQueue        *WarriorSpell
+ 	curQueueAura       *core.Aura
+ 	curQueuedAutoSpell *WarriorSpell
++	// Local change: a next-swing attack waiting out its reaction delay. One slot for both
++	// Heroic Strike and Cleave, so the other cannot slip in and replace it before it lands.
++	queuePending bool
+ 
+ 	BattleStanceAura    *core.Aura
+ 	DefensiveStanceAura *core.Aura
+@@ -192,6 +195,8 @@ func (warrior *Warrior) Initialize() {
+ 	warrior.registerOverpowerSpell(overpowerRevengeTimer)
+ 	warrior.registerRevengeSpell(overpowerRevengeTimer)
+ 	warrior.registerShieldSlamSpell()
++	// Local change: every warrior with a shield can press it (the bench runs Protection as this spec).
++	warrior.RegisterShieldBlockCD()
+ 	warrior.registerSlamSpell()
+ 	warrior.registerSunderArmorSpell()
+ 	warrior.registerThunderClapSpell()
+@@ -221,6 +226,7 @@ func (warrior *Warrior) Initialize() {
+ func (warrior *Warrior) Reset(sim *core.Simulation) {
+ 	warrior.curQueueAura = nil
+ 	warrior.curQueuedAutoSpell = nil
++	warrior.queuePending = false
+ 
+ 	// Reset Stance
+ 	switch warrior.WarriorInputs.Stance {
 diff --git a/sim/core/crit_levels_local.go b/sim/core/crit_levels_local.go
 new file mode 100644
 index 0000000..94bffe1
@@ -3598,6 +3794,77 @@ index 0000000..b67da33
 +	effect := rank.Effects[0]
 +	return math.Round(effect.BasePoints * (1 - effect.Variance/2)), math.Round(effect.BasePoints * (1 + effect.Variance/2))
 +}
+diff --git a/sim/paladin/hammer_of_the_righteous.go b/sim/paladin/hammer_of_the_righteous.go
+new file mode 100644
+index 0000000..3ba9071
+--- /dev/null
++++ b/sim/paladin/hammer_of_the_righteous.go
+@@ -0,0 +1,65 @@
++package paladin
++
++import (
++	"time"
++
++	"github.com/wowsims/classic/sim/core"
++)
++
++// Hammer of the Righteous is a Forever paladin ability from level 40 (client 1.60.1.71037,
++// spell 407632, taught by the class's skill line). It strikes the target and up to three more
++// nearby enemies (effect 1 chain targets 4) for Holy damage equal to three times (effect 3) the
++// main-hand weapon's damage per second, costs 6% of base mana and has a 6 second category
++// cooldown. The tooltip names a cooldown shared with Crusader Strike, which Forever has no
++// ability for, so it has a timer of its own here. Melee hit table, as Holy Strike.
++// ASSUMED (local change): weapon damage per second includes attack power the way the white
++// swing does, and threat is the damage's (effect 2's 120 is not read).
++func (paladin *Paladin) registerHammerOfTheRighteous() {
++	if !paladin.Env.IsForever() || paladin.Level < 40 {
++		return
++	}
++	const weaponMultiplier = 3.0
++	numTargets := min(4, int(paladin.Env.GetNumTargets()))
++	results := make([]*core.SpellResult, numTargets)
++
++	paladin.RegisterSpell(core.SpellConfig{
++		ActionID:    core.ActionID{SpellID: 407632},
++		SpellSchool: core.SpellSchoolHoly,
++		DefenseType: core.DefenseTypeMelee,
++		ProcMask:    core.ProcMaskMeleeMHSpecial,
++		Flags:       core.SpellFlagMeleeMetrics | core.SpellFlagAPL,
++
++		RequiredLevel: 40,
++
++		ManaCost: core.ManaCostOptions{
++			BaseCost:   0.06,
++			Multiplier: paladin.benediction(),
++		},
++		Cast: core.CastConfig{
++			DefaultCast: core.Cast{
++				GCD: core.GCDDefault,
++			},
++			IgnoreHaste: true,
++			CD: core.Cooldown{
++				Timer:    paladin.NewTimer(),
++				Duration: time.Second * 6,
++			},
++		},
++
++		DamageMultiplier: paladin.spellWeaponSpecializationModifier(),
++		ThreatMultiplier: 1,
++
++		ApplyEffects: func(sim *core.Simulation, target *core.Unit, spell *core.Spell) {
++			weapon := paladin.AutoAttacks.MH()
++			baseDamage := weapon.CalculateAverageWeaponDamage(spell.MeleeAttackPower(target)) /
++				weapon.SwingSpeed * weaponMultiplier
++			for idx := range results {
++				results[idx] = spell.CalcDamage(sim, target, baseDamage, spell.OutcomeMeleeSpecialHitAndCrit)
++				target = sim.Environment.NextTargetUnit(target)
++			}
++			for _, result := range results {
++				spell.DealDamage(sim, result)
++			}
++		},
++	})
++}
 diff --git a/sim/rogue/level_rank.go b/sim/rogue/level_rank.go
 new file mode 100644
 index 0000000..bf5a9b6
@@ -3662,6 +3929,30 @@ index 0000000..bf5a9b6
 +		return 25
 +	}
 +	return 0
++}
+diff --git a/sim/shaman/level_ranks.go b/sim/shaman/level_ranks.go
+new file mode 100644
+index 0000000..a5327fe
+--- /dev/null
++++ b/sim/shaman/level_ranks.go
+@@ -0,0 +1,18 @@
++package shaman
++
++// LOCAL ADDITION for levelling analysis; not upstream. Helper over level_ranks_generated.go.
++
++// clientDamage is the current client's damage range and spell power coefficient of the rank with
++// this spell id (its first effect), for a caster of this level; ok is false when the generated
++// table does not have it. The hand-written tables came from earlier clients: by client 71037
++// Chain Lightning rank 1 was 215 (85 to 97 here, 2026-11-24) and Lightning Bolt rank 3 was 52.
++func clientDamage(slug string, spellID int32, level int32) (low, high, coefficient float64, ok bool) {
++	for i := range levelRanks[slug] {
++		rank := &levelRanks[slug][i]
++		if rank.SpellID == spellID && rank.Effects[0].Effect == 2 {
++			low, high = rank.DamageRange(0, level)
++			return low, high, rank.Effects[0].Coefficient, true
++		}
++	}
++	return 0, 0, 0, false
 +}
 diff --git a/sim/warlock/level_ranks.go b/sim/warlock/level_ranks.go
 new file mode 100644

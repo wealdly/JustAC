@@ -3,6 +3,32 @@
 
 ## [Unreleased]
 
+## [6.7.0] - 2026-11-24
+
+### WoW Forever: tanking
+
+- Tanking in a group (assigned Tank, or in a tank stance or form with no role set): Sunder Armor moves ahead of your filler attacks until its stack is full, for threat and for your group's physical damage. Alone, the order is unchanged.
+- Protection warriors: Shield Block is now part of your attack queue, pressed on cooldown, since its blocks give the rage and Revenge chances your attacks run on.
+- Protection paladins: Holy Shield is now part of your attack queue, kept up, since its blocks return mana and deal damage.
+- Threat button: as a tank with three or more enemies attacking others and your target in reach, it offers a group taunt such as Challenging Shout. A shaman in the Tank role gets Stoneclaw Totem, which turns nearby enemies onto the totem.
+- Threat button: a taunt that pulls the enemy straight to you, such as Taunt, comes before Mocking Blow, and threat abilities go by how much threat they add, so Sunder Armor comes before Demoralizing Shout.
+- Threat button: a press out of range now shows with a red hotkey instead of not showing, so you can close the distance.
+
+### WoW Forever: classes
+
+- Marksmanship hunters: Sniper Shot leads Aimed Shot only while Rapid Killing's next-shot bonus is up, as the leveling guides play it; otherwise Aimed Shot comes first.
+- Feral cat: Ferocious Bite now spends your combo points when Rip would not be worth starting, such as on a nearly dead enemy or in a short group fight, instead of building past five with Claw.
+- Feral bear: Swipe fills on a single target until you learn Lacerate or Primal Bite.
+- Shadow priests: Shadow Word: Death waits while your own health is low, since it costs health when the target survives.
+- Fire mages: Fireball is the filler again from level 40 instead of Frostfire Bolt, which deals far less damage. Frostfire Bolt against an enemy that resists fire is up to you.
+- Retribution paladins: Consecration drops behind your other attacks when the last enemy is about to die, saving its mana for healing and the next pull.
+- Enhancement shamans fighting alone use Earth Shock on cooldown, as the leveling guides do; Flame Shock is offered in a group, where fights last long enough for it.
+
+### Both clients
+
+- The interrupt and threat button sits closer to the queue, and the defensive upkeep button keeps the same small gap from the defensive icons, in line with it.
+- A crowd-control escape on the upkeep button now glows white, so it no longer looks like the blue mitigation upkeep reminder.
+
 ## [6.6.0] - 2026-11-23
 
 ### WoW Forever: new

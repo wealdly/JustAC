@@ -303,6 +303,21 @@ All are **model** findings unless marked; each is a question to ask of a line, n
   faster. Time already spent on an ordinary target does not release them: used late in that kill
   they are missing on the next pull. The price in the same runs is 10 to 18% on even-level kills
   for a Combat rogue and 0 to 5% for the other five trees. Not measured in game.
+- **The tank's threat feeds the group's damage** (decided 2026-11-24). With a strong tank
+  signal (grouped, and the assigned role is Tank, or no role and a tank aura is up), a list entry
+  with bonus threat in the client data (Sunder Armor) ranks just ahead of the list's filler: the
+  first damaging entry without a cooldown above it (`tank=` in the generated data). Attacks on a
+  cooldown keep their place, since their damage is threat too, and the stacking rule ends the
+  extra presses once the stack is full. Solo, or a tank tree alone, the list's own order holds.
+  Taunts stay with the Threat button, and threat presses with no damage stay in the defensive
+  queue. **Model** (2026-11-24, the simulator's threat, `average` gear, 3 batches of 300,
+  grouped): Protection warrior's threat rose 0 to 2% for 0 to 2.5% of its own damage on elites
+  (the party's gain from the armor is not in that number); Fury was unchanged. On a pack of four
+  the tank's threat on the enemies it is not hitting is small at every level (about 20 to 35 a
+  second at 40 to 60, from Thunder Clap and rage gained) and no list entry raises it:
+  Demoralizing Shout added about 2 a second each (its Forever threat is unpublished; the
+  simulator's value is provisional) and cost 4 to 8% damage, so it stays in the defensive queue.
+  Holding a pack stays with the player and the Threat button. Not measured in game.
 - On a dying target a DoT with a real hit up front still goes out when it is instant. A cast-time
   one must be mostly its hit (Immolate is not). Damage that lands after a long delay (Bane of
   Doom) waits for a boss, an elite or a higher-level enemy: time already spent on a target does

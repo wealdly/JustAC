@@ -901,6 +901,14 @@ end
 -- Export for UINameplateOverlay (builds the shared skeleton; callers handle strata + Masque)
 UIFrameFactory.CreateBaseIcon = CreateBaseIcon
 
+-- The gap a "position 0" slot (the interrupt slot, the defensive upkeep slot) adds beyond the
+-- icon spacing: one proc glow's reach, (UIAnimations.PROC_GLOW_SCALE - 1) / 2 of an icon past its
+-- edge. A lit slot's glow then stops at the next icon's edge; a full two-glow clearance left too
+-- wide a gap beside the queue.
+local function GlowGapExtra(size, spacing)
+    return math.max(0, size * (UIAnimations.PROC_GLOW_SCALE - 1) / 2 - spacing)
+end
+
 -- Helper: Create a single defensive icon button at the specified index (0-based)
 -- Position offset is calculated based on index, orientation, and defensive position.
 -- When detached=true, parents to addon.defensiveFrame and lays out along detachedOrientation.
@@ -919,11 +927,15 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button:SetAlpha(0)
     button:Show()
 
+    local iconOffset = index * (actualIconSize + spacing)
+    -- The upkeep slot (index -1) sits a glow's reach before the first icon, in line with the
+    -- interrupt slot beside the queue.
+    if index < 0 then iconOffset = iconOffset - GlowGapExtra(actualIconSize, spacing) end
+
     if isDetached then
         -- Detached mode: lay out along detachedOrientation within defensiveFrame.
         -- Mirrors the spell-icon layout in CreateSpellIcons.
         local detachOrientation = profile.defensives.detachedOrientation or "LEFT"
-        local iconOffset = index * (actualIconSize + spacing)
         -- Grab tab location per orientation:
         --   LEFT → tab at RIGHT  → icons start at LEFT, no reserve needed
         --   RIGHT → tab at LEFT  → icons start at RIGHT, no reserve needed
@@ -946,7 +958,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         -- so the BAR_SPACING clearance above the defensive icons is preserved regardless of spacing value.
         local firstIconCenter = actualIconSize / 2
         local effectiveSpacing = spacing
-        local iconOffset = index * (actualIconSize + spacing)
 
         -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
         -- predictable position (right for horizontal, bottom for vertical).
@@ -1693,10 +1704,9 @@ end
 -- "Position 0": before slot 1, opposite the queue's growth. For RIGHT/UP, icon 1 is shifted
 -- inward by grabTabReserve to make room for the grab tab at the same edge; this mirrors that
 -- shift so the icon sits next to icon 1 rather than beyond the grab tab. The gap is the icon
--- spacing, widened to a proc glow's reach on both icons (UIAnimations.PROC_GLOW_SCALE) so the
--- slot's glow and icon 1's glow never overlap.
+-- spacing, widened to one proc glow's reach (GlowGapExtra) so the slot's glow stops at icon 1.
 local function AnchorPositionZero(addon, button, orientation, spacing, size)
-    local extra = math.max(0, size * (UIAnimations.PROC_GLOW_SCALE - 1) - spacing)   -- beyond the usual gap
+    local extra = GlowGapExtra(size, spacing)   -- beyond the usual gap
     if orientation == "LEFT" then
         button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing - extra, 0)
     elseif orientation == "RIGHT" then

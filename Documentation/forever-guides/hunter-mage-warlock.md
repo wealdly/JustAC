@@ -32,6 +32,14 @@ wand rule), leaving it out was 8 to 15% faster on ordinary targets with Improved
 equal on elites, and 35 to 40% faster at 1/3 or 2/3, where a stack lands one cast in three. No
 change at 20 and 25. Combustion no longer waits for five stacks.
 
+**Fire: Fireball fills, not Frostfire Bolt (JustAC, 2026-11-24).** The guides name Frostfire
+Bolt the filler from 40, but the client data gives it about half Fireball's damage: at 50, 182 at
+81% of spell power against 374 at 100%, a 3 second cast against 3.5 (its tooltip reads the same
+value). No Fire talent closes the gap; only Frost talents (Frigid Power, Piercing Ice, Ice
+Barrier) add to it alone. Simulated at 40 to 60 (`average` gear, 3 batches of 300), Fireball
+filling was never slower and 1 to 18% faster, solo and grouped, most on elites and bosses.
+Frostfire Bolt against a fire-resistant enemy is left to the player. Not checked in game.
+
 **Left to the player (JustAC, 2026-11-22).** The automatic lists offer only what they name
 (tools/test_closed_lists.py). Damaging abilities no list names, and why:
 - Hunter: Explosive Trap (placed at your feet, so where the fight happens is yours); Black Arrow
@@ -51,6 +59,8 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Single target: Hunter's Mark before combat, pet attacks first, maintain Serpent Sting, Summon Hawk on cooldown keeping two hawks, Aimed Shot on cooldown, Arcane Shot when two hawks will stay up 6+ seconds, Immolation Trap in melee range.
 - 2-7 targets: Multi-Shot and Explosive Trap on cooldown, hawks, Arcane Shot as above, Volley. 8+: Explosive Trap, Volley, Multi-Shot while moving.
+- Leveling (Icy Veins beast mastery leveling guide, updated 2026-11-16, read 2026-11-24 in a browser): Hunter's Mark before combat, pet attacks first, Serpent Sting, Summon Hawk on cooldown (two hawks), Aimed Shot on cooldown, Auto Shot; Arcane Shot only when mana is capped; Bestial Wrath and Rapid Fire saved for elites.
+- JustAC (2026-11-24): no change. Simulated at 10 to 50 with a cat: Arcane Shot held to 80% mana up to 13% slower (elites at 20 and 30); Summon Hawk before Serpent Sting within 2%.
 
 **Sources**
 
@@ -155,6 +165,8 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Single target: Hunter's Mark, Sniper Shot, Aimed Shot, Serpent Sting, Arcane Shot (each on cooldown), Immolation Trap in melee range.
 - 2-7 targets: Multi-Shot, Explosive Trap, Sniper Shot, Arcane Shot (only at 3 or fewer), Volley. 8+: Explosive Trap, Volley, Multi-Shot while moving.
+- Leveling (Icy Veins marksmanship leveling guide, updated 2026-11-16, read 2026-11-24 in a browser): Hunter's Mark before combat, pet in first, Serpent Sting (Rapid Killing wants it on the target when it dies), Sniper Shot when the Rapid Killing buff is up and otherwise Aimed Shot, Summon Hawk on cooldown, Aimed Shot on cooldown, Auto Shot; Arcane Shot only when mana is capped; Rapid Fire saved for elites.
+- JustAC (2026-11-24): Sniper Shot now leads only while Rapid Killing's next-shot buff (415407) is up. Simulated with no Rapid Killing (the simulator lacks it): kills 2 to 11% faster at 40 to 60, one row 1.7% slower (60 against a level 61 target). Serpent Sting without its Aimed and Multi-Shot waits was mixed (4 to 13% faster at 20, 40 and 50, up to 5.7% slower at 30); dropping mana gates is not judged from the simulator, which starts every fight on full mana.
 
 **Sources**
 
@@ -234,6 +246,8 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Ranged: Hunter's Mark, Serpent Sting (do not reapply early), Aimed Shot and Arcane Shot on cooldown; multi-target Multi-Shot, Explosive Trap, Volley.
 - Melee: Hunter's Mark, pre-cast Aimed Shot before running in, Serpent Sting on the way, Immolation Trap once in melee and on cooldown, Summon Hawk keeping two, then Raptor Strike, Mongoose Bite and Strider Kick on cooldown.
+- Leveling (Icy Veins survival leveling guide, updated 2026-11-20, read 2026-11-24 in a browser): Hunter's Mark before combat, pet in, Serpent Sting, Arcane Shot, then Raptor Strike and Mongoose Bite in melee, Strider Kick and back to range for Arcane Shot.
+- JustAC (2026-11-24): no change. The weave between range and melee is positioning, which stays with the player; the list already leads with the ranged shots out of melee and the melee attacks in range. The simulator's Survival fight is melee only, so it cannot judge the weave.
 
 **Sources**
 
@@ -563,6 +577,8 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Bane of Doom if the target lives 60+ seconds, otherwise Bane of Agony; Corruption, Siphon Life and Immolate kept up with refreshes timed to expiry; Shadow Bolt only on Nightfall procs; Life Tap when needed (ideally while moving); Wrack as the channelled filler, interrupted for refreshes and Nightfall.
 - AoE sections not extracted (tabbed content).
+- Leveling (Icy Veins affliction leveling guide, updated 2026-11-16, read 2026-11-24 in a browser): Curse of the Elements against durable enemies; Immolate can be precast on the pull; Bane of Agony and Corruption when the enemy survives them; Siphon Life only on long fights; finish with the wand; Life Tap between applications.
+- JustAC (2026-11-24): no change. Simulated at 10 to 50: without Curse of the Elements 1 to 7% faster at 20 and 30 but 6 to 12% slower at 40 and 50; Immolate first mixed (9% faster to 8% slower); Siphon Life is not in the simulator's build, so dropping it changed nothing.
 
 **Sources**
 
@@ -741,6 +757,7 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Bane as for Affliction; Immolate and Corruption timed to expiry; Conflagrate on cooldown while Immolate is up; Shadowburn only when the Shadow and Flame fire-damage buff is missing or under 3 seconds (not an execute); Incinerate filler; Life Tap when health allows.
 - AoE sections not extracted (tabbed content).
+- JustAC (2026-11-24): no change. Simulated at 10 to 50: without Curse of the Elements up to 3.5% faster on regular targets but up to 10.5% slower on elites; Immolate first 3 to 12% faster on elites but 17 to 18% slower on regular targets at 40; without Corruption mixed (4% faster to 9% slower).
 
 **Sources**
 

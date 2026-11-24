@@ -28,7 +28,9 @@ KNOWN_UNNAMED = {
     "HUNTER": {2975, 3674, 13812, 17254, 24118, 24424, 24584, 24845, 26094, 444680,
                1264727, 1264745, 1264937, 1265043, 1265059, 1265831, 1265887},
     # Felfire (60): no guide or sim names it and its source is unclear; revisit with one.
-    "MAGE": {24530},
+    # Frostfire Bolt (40): the client gives it about half Fireball's damage, and Fireball fills
+    # faster at 40 to 60 (2026-11-24); its use against a fire-resistant enemy is the player's.
+    "MAGE": {24530, 401502},
     # Seal of Command (Retribution, 20): Command or Righteousness follows weapon speed (guides);
     # the seal entries already wait while any seal is up, so a chosen Command is kept.
     "PALADIN": {20375},

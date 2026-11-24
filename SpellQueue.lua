@@ -1401,6 +1401,38 @@ local function NoteManaStarved(rotationList)
     if short then buildStarved = true end
 end
 
+--- Applications, not aura prerequisites (Forever): a DoT that does its damage over time is not
+--- started where it cannot tick out, in a short group fight or on a non-boss target already below
+--- DOT_MIN_TARGET_PCT. A big upfront hit (frontal) still pays, but on a dying target a cast-time
+--- spell must be mostly its hit: the cast costs more than a part-hit returns. In a fast solo fight
+--- a first application has a higher floor, and only a spell that is mostly its hit skips it. A DoT
+--- that already ran on this target is past that question. True only on confirmed reads.
+local function DotWontStart(id)
+    if not id or BlizzardAPI.HasGamePick() then return false end
+    if fastSoloFight
+       and not (SpellDB and SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(id))
+       and BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
+       and BlizzardAPI.IsUnitHealthBelow("target", FAST_DOT_MIN_TARGET_PCT) == true
+       and not (DotTracker and DotTracker.HasRunOnTarget
+                and DotTracker.HasRunOnTarget(BlizzardAPI.GetDisplaySpellID(id))) then
+        return true
+    end
+    local frontal = SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(id)
+    if not frontal and (shortGroupFight or SpellQueue._lowValueTarget == "others") then return true end
+    if BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
+       and BlizzardAPI.IsUnitHealthBelow("target", DOT_MIN_TARGET_PCT) == true
+       and not (BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss()) then
+        local hitPays = frontal
+        if frontal and not (SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(id)) then
+            local cast = BlizzardAPI.GetCastSeconds and BlizzardAPI.GetCastSeconds(BlizzardAPI.GetDisplaySpellID(id))
+            hitPays = not (type(cast) == "number" and cast > 0)
+        end
+        if not hitPays then return true end
+    end
+    return false
+end
+SpellQueue._DotWontStart = DotWontStart   -- tests
+
 local function GateVerdict(g, ctx)
     local t = g.t
     if t == "any" or t == "all" then
@@ -1562,7 +1594,8 @@ local function GateVerdict(g, ctx)
         -- Engine truth, GCD excluded: the real cooldown either is running or is not.
         -- `neg` means the entry wants it RUNNING (SimC's `cooldown.x.remains`).
         if not (g.id and BlizzardAPI.IsSpellOnCooldown) then
-            return ctx.strict and false or nil
+            if ctx.strict then return false end
+            return nil
         end
         -- Forever ranks: the gate names rank 1; ask the rank the player has.
         local id = (RotationImport and RotationImport.HighestKnownRank(g.id)) or g.id
@@ -1578,7 +1611,10 @@ local function GateVerdict(g, ctx)
     if t == "prev" then
         -- The last cast is plain (our own casts), so this reads the same in both modes.
         -- `neg`: NOT right after it (Windwalker's no-repeat rule is this, about itself).
-        if not (g.id and BlizzardAPI.WasLastCast) then return ctx.strict and false or nil end
+        if not (g.id and BlizzardAPI.WasLastCast) then
+            if ctx.strict then return false end
+            return nil
+        end
         return BlizzardAPI.WasLastCast(g.id, g.gcd == true) ~= (g.neg == true)
     end
     if t == "buff" then
@@ -1599,42 +1635,17 @@ local function GateVerdict(g, ctx)
         return up and true or false
     end
     if t == "debuff" and g.refresh and ctx.skipRefresh then return nil end
-    -- Applications, not aura prerequisites (Forever): a DoT that does its damage over time is
-    -- not started where it cannot tick out, in a short group fight or on a non-boss target
-    -- already below DOT_MIN_TARGET_PCT. A big upfront hit (frontal) still pays, but on a dying
-    -- target a cast-time spell must be mostly its hit: the cast costs more than a part-hit returns.
-    -- In a fast solo fight a first application has a higher floor, and only a spell that is mostly
-    -- its hit skips it. A DoT that already ran on this target is past that question.
-    if fastSoloFight and (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
-       and not BlizzardAPI.HasGamePick()
-       and not (SpellDB and SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(g.id))
-       and BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
-       and BlizzardAPI.IsUnitHealthBelow("target", FAST_DOT_MIN_TARGET_PCT) == true
-       and not (g.id and DotTracker and DotTracker.HasRunOnTarget
-                and DotTracker.HasRunOnTarget(BlizzardAPI.GetDisplaySpellID(g.id))) then
+    if (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict and DotWontStart(g.id) then
         return false
-    end
-    if (t == "dot" or (t == "debuff" and g.refresh)) and not ctx.strict
-       and not BlizzardAPI.HasGamePick() then
-        local frontal = SpellDB and SpellDB.IsFrontalDot and SpellDB.IsFrontalDot(g.id)
-        if not frontal and (shortGroupFight or SpellQueue._lowValueTarget == "others") then return false end
-        if BlizzardAPI.IsUnitHealthBelow and UnitExists("target")
-           and BlizzardAPI.IsUnitHealthBelow("target", DOT_MIN_TARGET_PCT) == true
-           and not (BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss()) then
-            local hitPays = frontal
-            if frontal and not (SpellDB.IsMostlyUpfrontDot and SpellDB.IsMostlyUpfrontDot(g.id)) then
-                local cast = BlizzardAPI.GetCastSeconds
-                    and BlizzardAPI.GetCastSeconds(BlizzardAPI.GetDisplaySpellID(g.id))
-                hitPays = not (type(cast) == "number" and cast > 0)
-            end
-            if not hitPays then return false end
-        end
     end
     if t == "debuff" then
         -- Time left on my own DoT (DotTracker.IsTimeLeftBelow: the engine's timer or mine from
         -- the cast) against N seconds, or against a spell's cast time (ncast). Presence alone
         -- cannot establish remaining seconds or stack requirements: anything else is unknown.
         if g.op then
+            -- Waiting for more time on a DoT the queue will not start (Ferocious Bite waits on
+            -- Rip): that wait never ends, so it is met and the entry spends without it.
+            if (g.op == ">" or g.op == ">=") and not ctx.strict and DotWontStart(g.id) then return true end
             if not (g.id and DotTracker and DotTracker.IsTimeLeftBelow) then return nil end
             local n = g.n
             if g.ncast then
@@ -1814,6 +1825,8 @@ local function rankOf(spellID, simcRec)
     if r.simcMode then
         local ctx = ContextRank(spellID, r.arch, r.range, r.role, r.execute, r.outOfMelee, r.dying)
         local simc = (simcRec and simcRec.rank) or SIMC_UNRANKED
+        -- A threat entry with a strong tank signal: just ahead of the list's filler (tank=).
+        if r.tankLift and simcRec and simcRec.tank and simcRec.tank < simc then simc = simcRec.tank - 0.5 end
         if simc > SIMC_UNRANKED then simc = SIMC_UNRANKED end
         return ctx * CONTEXT_STRIDE + simc
     elseif r.contextOrder == "ac" then
@@ -2018,9 +2031,11 @@ local function HoldAutomaticBurst(spellID, b)
        or SpellQueue._rotationIsCustom or BlizzardAPI.HasGamePick() then return false end
     local spec = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     local explicit = spec and b.profile and b.profile.burstTriggers and b.profile.burstTriggers[spec]
-    for _, id in ipairs(explicit or {}) do
-        if id == spellID or (BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id) == spellID) then
-            return false
+    if explicit then
+        for _, id in ipairs(explicit) do
+            if id == spellID or (BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id) == spellID) then
+                return false
+            end
         end
     end
     -- Anything that pays out after the cast is mostly lost on a confirmed dying last enemy, in
@@ -2028,6 +2043,13 @@ local function HoldAutomaticBurst(spellID, b)
     if b.ctxDying == true and SpellDB
        and ((SpellDB.GainsOverTime and SpellDB.GainsOverTime(spellID))
             or (SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID))) then
+        return true
+    end
+    -- Area damage that comes only over time (Consecration) needs the last enemy to outlive
+    -- it: the line a damage over time spell on the target needs. Its mana is then spent on a
+    -- corpse (2026-11-24 simulation: 15-20% less mana per fight for 2-3% longer kills).
+    if SpellDB and SpellDB.IsAreaDot and SpellDB.IsAreaDot(spellID)
+       and BlizzardAPI.IsFightEnding(b.ctxEnemies, DOT_MIN_TARGET_PCT) == true then
         return true
     end
     if SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID) then
@@ -2349,6 +2371,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local powerCapped = heuristicPromos and BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
     -- Arm the hoisted rankOf for this build (see its definition above).
     rankState.simcMode, rankState.contextOrder = simcMode, contextOrder
+    rankState.tankLift = simcMode and not SpellQueue._rotationIsCustom and SpellDB ~= nil
+        and SpellDB.HasStrongTankSignal ~= nil and SpellDB.HasStrongTankSignal() == true
     -- See leadBarred below. SimC ordering only: "delegated" is a property of that data.
     local leadsMode = (b.leadMode == "mylist") and simcMode
     local pickID = leadsMode and b.primarySpellID or nil
@@ -3012,12 +3036,13 @@ function SpellQueue._StageContext(b)
         b.ctxTargetWorthwhile = IsWorthwhileFight(b, true)
         b.ctxCooldownFight = IsWorthwhileFight(b, false, true)   -- for a long cooldown: age is no reason
     end
-    shortGroupFight = inCombat and b.ctxWorthwhile == false and BlizzardAPI.IsGrouped() == true
+    local grouped = BlizzardAPI.IsGrouped()
+    shortGroupFight = inCombat and b.ctxWorthwhile == false and grouped == true
     lastCtx.shortGroupFight = shortGroupFight
     -- Every clause is a positive read: an unknown level, kind, group state or enemy count is
     -- not a fast fight, and neither is a target that has already lasted (ctxTargetWorthwhile).
     fastSoloFight = false
-    if BlizzardAPI.IsForever() and b.ctxTargetWorthwhile == false and BlizzardAPI.IsGrouped() == false
+    if BlizzardAPI.IsForever() and b.ctxTargetWorthwhile == false and grouped == false
        and type(enemies) == "number" and enemies <= 1 and BlizzardAPI.GetTargetLevelDelta then
         local levelDelta = BlizzardAPI.GetTargetLevelDelta()
         fastSoloFight = type(levelDelta) == "number" and levelDelta <= 0
@@ -3026,7 +3051,7 @@ function SpellQueue._StageContext(b)
     local lowValue = false
     if b.profile ~= nil and b.profile.prioritizeOwnTargets == true then lowValue = SpellQueue._IsLowValueTarget(b) end
     SpellQueue._lowValueTarget = lowValue
-    lastCtx.lowValueTarget = SpellQueue._lowValueTarget
+    lastCtx.lowValueTarget = lowValue
     b.ctxPointCap = ctxPointCap
 end
 

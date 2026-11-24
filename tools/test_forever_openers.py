@@ -194,7 +194,7 @@ def create_runtime(real_gates=False):
     wait_end = source.index("\nfunction SpellQueue._StageFinalize(", wait_start)
     helpers = "\n".join(extract(name, source) for name in (
         "ProcPriorityEnabled", "ClaimSpellID", "HeldByUserHold", "HasUserHold", "CompareOp", "ResourceGateHolds", "MissingMinimumResource",
-        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget", "IsStackPayoffContext",
+        "IsBarGreyedOut", "IsRearAttackBlocked", "IsLiveAttackableTarget", "IsStackPayoffContext", "DotWontStart",
         "GateVerdict", "GatesConfirmed", "ProcGateBlocks", "SimcGateBlocks", "TieredSpenderType", "PointGateCap",
         "IsUnusableNonResource", "SimcPowerType", "ThresholdGateBlocks", "StackAtLeast", "StackHolds",
         "PlaceQueueSpell"

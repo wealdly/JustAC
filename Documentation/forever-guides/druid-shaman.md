@@ -48,6 +48,8 @@ Paraphrased priority; the beta-era notes below are historical.
 - Pre-cast Wrath to land on the pull (each Wrath grants two Eclipse charges that shorten Starfire).
 - Keep Insect Swarm and Moonfire up without early refreshes; fill with one Wrath then two Starfires.
 - AoE: DoTs on every target; Hurricane at 5+ enemies; at 2-4 the single-target pattern with more DoT upkeep.
+- Leveling (Icy Veins leveling guide, updated 2026-11-04, read 2026-11-24 in a browser): Moonfire and Insect Swarm (25) kept up, Wrath as the filler; with 3/3 Eclipse one Wrath then two Starfires, dropping Starfire when low on mana; do not refresh DoTs on an enemy close to dead.
+- JustAC (2026-11-24): the list already matches; no change. Starfire's Eclipse aura is not in the simulator, so it cannot be simulated.
 
 **Sources**
 
@@ -122,6 +124,9 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Keep Mark of the Wild, Thorns and Faerie Fire. Ferocious Bite only with Rip at 3-4+ seconds left, 5 combo points and 70+ energy (35-40+ with Omen of Clarity). Shifting Power at about 50 energy or less. Spend Omen of Clarity on Shred. Rip at 5 combo points if missing; Rake if missing; build with Claw (or Shred in the Shred variant).
 - AoE: the same, spreading Faerie Fire and switching targets only after spending combo points.
+- Leveling (Icy Veins feral leveling guide, updated 2026-11-15, read 2026-11-24 in a browser): open from Prowl with Ravage (Shred before it); Shifting Power on cooldown below 50 Energy; Rip at 4+ combo points if the enemy lives its whole duration; Rake when missing and the enemy lives another 9 seconds; Shred from behind, else Claw. Bear: Enrage (also before the pull), Faerie Fire, Primal Bite on cooldown (40), Lacerate filler (25), Swipe as the filler before those, Maul for spare rage.
+- JustAC (2026-11-24): Ferocious Bite waits on Rip, and the queue does not start Rip where it cannot tick out (a dying target, a short group fight, early in a fast solo fight), so the combo points went unspent: the simulator cast Rip 0.01 times a fight and Bite never. A wait on time left for a damage over time spell the queue will not start is now met (a general runtime rule). Simulated at 24 to 50: kills 4 to 13% faster on regular targets, 2 to 6% on elites, never slower. Bear, one target: Swipe fills ahead of Maul until Lacerate or Primal Bite is learned, 1 to 7% faster at 16, 20 and 24 (Maul replaces a swing, Swipe adds to it).
+- Simulator bench fix (2026-11-24): the simulator applies Faerie Fire's debuff (and the other shared debuffs its core registers under one id) as its top rank at every level, while the bench checked the rank learned at that level, so the debuff read as never up and was recast every global cooldown. Bench results for slow fights (elites, higher levels) with Faerie Fire before this date are too slow.
 
 **Sources**
 
@@ -368,6 +373,8 @@ Paraphrased priority; the beta-era notes below are historical.
 
 - Single target (up to two targets or a priority target): pre-place totems with Call of the Elements (Searing last), Flame Shock and refresh on expiry, Lightning Mastery and other cooldowns, Chain Lightning outside the Lightning Mastery window (only on Clearcasting in long fights), Lightning Bolt filler.
 - Multi-target (3+, no priority target): Magma Totem last before the pull, cooldowns, Chain Lightning and Fire Nova on cooldown, Flame Shock on targets without it, Lightning Bolt. Skip Flame Shock and Lightning Bolt when mana will not last.
+- Leveling (Icy Veins elemental leveling guide, updated 2026-11-16, read 2026-11-24 in a browser): open with Lightning Bolt from range, Searing Totem on one target, Flame Shock on the main target, Lightning Bolt filler, Lightning Mastery for burst or on cooldown.
+- JustAC (2026-11-24): no change. Simulated at 10 to 40: without Flame Shock 7 to 27% slower, without Searing Totem 13 to 76% slower.
 
 **Sources**
 
@@ -438,6 +445,8 @@ Paraphrased priority; the beta-era notes below are historical.
 - Before combat: Windfury Weapon, totems via Call of the Elements, Lightning Shield.
 - Single target: Magma Totem if missing (Searing when mana is short), Flame Shock if missing, Rage of the Farseer with trinkets, Stormstrike, Lightning Bolt at 5 Maelstrom Weapon, Earth Shock, Fire Nova with a fire totem.
 - AoE: Magma Totem, Fire Nova, Flame Shock cycled across targets, Rage of the Farseer, Stormstrike, Lightning Bolt at 5 stacks, Earth Shock.
+- Leveling (Icy Veins leveling guide, updated 2026-11-13, read 2026-11-24 in a browser): Earth Shock on cooldown; "Alternate Flame Shock & Earth Shock in groups"; Fire Nova with a Fire Totem and spare Mana; Magma Totem only if Mana allows.
+- JustAC (2026-11-24): on one or two targets, Earth Shock is the shock on cooldown alone and Flame Shock is offered in a group only. Simulated at 10 to 30: kills 2 to 6% faster at 10, 15 and 25 on regular targets, even at 20 and 30, 2 to 4% slower on elites at 10, 15 and 30 (the Flame Shock ticks pay in long fights). Searing before Magma made no difference before Magma is learned and split by fight length at 30, so the totem order stays.
 
 **Sources**
 

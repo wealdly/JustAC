@@ -1151,7 +1151,6 @@ local function HideInterruptSlot(clearPoints)
         UIAnimations.HideInterruptProcGlow(interruptIcon)
         UIAnimations.HideInterruptCastBar(interruptIcon)
         if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
-        interruptIcon.hasInterruptGlow = false
     end
     if clearPoints then interruptIcon:ClearAllPoints() end
     interruptIcon:Hide()

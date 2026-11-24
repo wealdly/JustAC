@@ -87,7 +87,7 @@ add_extras("hunter", "marksmanship", hunterEntries, hunterChains, [])
 sniperEntry = next(e for e in hunterEntries if e["id"] == sniperID)
 assert [e["id"] for e in hunterEntries].index(sniperID) < \
     [e["id"] for e in hunterEntries].index(aimedID)
-assert sniperEntry["gates"] == [] and not sniperEntry["delegated"]
+assert sniperEntry["gates"] == [{"t": "buff", "id": 415407}] and not sniperEntry["delegated"]
 
 rogueChains, _ = cfa.class_chains(cfa.CLASS_MASK["rogue"])
 shankID = rank1(rogueChains["shank"])
@@ -183,7 +183,7 @@ IN = {"HUNTER_F": [75, 6603, 1510, 13795],        # Auto Shot, Attack, Volley, I
       "PRIEST_F": [15473, 20554, 1277331],        # Shadowform, Berserking, Chastise (root side effect)
       "ROGUE_F": [53, 2480, 14251],               # Backstab, Shoot Bow, Riposte
       "SHAMAN_F": [8042, 8056],                   # Custom-eligible Earth Shock, Frost Shock
-      "MAGE_F": [5019, 401502],                   # Shoot (wand), Frostfire Bolt (slow side effect)
+      "MAGE_F": [5019],                           # Shoot (wand)
       "PALADIN_F": [2812, 21082]}                 # Holy Wrath, Seal of the Crusader
 OUT = {"HUNTER_F": [1494, 5118, 6991, 5116,       # Track Beasts, Aspect of the Cheetah, Feed Pet, Concussive Shot
                     19503, 1499, 1543],           # Scatter Shot (CC), Freezing Trap, Flare
@@ -282,13 +282,20 @@ for context in ("st", "cleave", "aoe"):
     ids = ids_of(classes.MAGE_F.frost[context])
     assert ids[0] != 11426 and ids[-2:] == [11426, 5019], (context, "absorb shield trails damage, wand last")
 # Every tree is a damage list in its talent style: tank lists drop threat and mitigation.
-for cls, tree, gone in (("WARRIOR_F", "protection", {2565, 71, 1160}),          # Shield Block, Defensive
-                        ("PALADIN_F", "protection", {20925}),                   # Holy Shield;
+for cls, tree, gone in (("WARRIOR_F", "protection", {71, 1160}),                # Defensive
+                        ("PALADIN_F", "protection", set()),                     # (Holy Shield stays: mana, damage)
                         ("DRUID_F", "feral_bear", {99})):                       # Holy Shield; Demo Roar
     for context in ("st", "cleave", "aoe"):
         ids = ids_of(classes[cls][tree][context]) if classes[cls][tree][context] else []
         assert not gone & set(ids), (cls, tree, context, "threat and mitigation leave tank lists")
 prot = ids_of(classes.WARRIOR_F.protection.st)
+assert 2565 in prot, "Shield Block (rage and Revenge from its blocks) is in Protection's list"
+assert ids_of(classes.PALADIN_F.protection.st)[1] == 20925, "Holy Shield (mana and damage from its blocks) leads after the seal"
+prot_entries = list(classes.WARRIOR_F.protection.st.values())
+sunder = next(e for e in prot_entries if e.id == 7386)
+assert sunder.tank and sunder.tank < prot.index(7386) + 1, "a strong tank signal lifts Sunder Armor ahead of the filler"
+assert prot[sunder.tank - 1] == 772, "Protection's filler is Rend"
+assert all(e.tank is None for e in prot_entries if e.id != 7386), "only threat entries carry tank="
 assert 7386 in prot, "Protection keeps Sunder Armor on a single target"
 prot_sunder = entry_of(classes.WARRIOR_F.protection.st, 7386)
 assert any(g["t"] == "stack" and g["id"] == 7386 and g["tgt"] and g["op"] == "<" and g["n"] == 1
@@ -408,7 +415,7 @@ for tree in ("discipline", "holy"):
 assert ids_of(classes.WARLOCK_F.affliction.st)[-3:] == [1316697, 686, 5019], "Wrack fills before Shadow Bolt"
 assert ids_of(classes.WARLOCK_F.destruction.st)[-3:] == [412758, 686, 5019], "Incinerate fills before Shadow Bolt"
 fire = ids_of(classes.MAGE_F.fire.st)
-assert fire.index(401502) + 1 == fire.index(133), "Frostfire Bolt fills before Fireball"
+assert 401502 not in fire and fire[-2:] == [133, 5019], "Fireball fills, not Frostfire Bolt (half its damage)"
 assert 120 in ids_of(classes.MAGE_F.fire.aoe), "Fire AoE uses Cone of Cold"
 arcane_aoe = ids_of(classes.MAGE_F.arcane.aoe)
 assert arcane_aoe.index(2120) < arcane_aoe.index(1449), "Arcane AoE opens with Flamestrike"
@@ -542,6 +549,20 @@ assert resto.index(8050) < resto.index(403), "Flame Shock before Lightning Bolt"
 enrage = entry_of(classes.DRUID_F.feral_bear.st, 5229)
 assert enrage["w"] and {"t": "health", "op": ">", "pct": 50} in [dict(g) for g in gate_list(enrage)], "Enrage is gated on health"
 assert any(g["t"] == "power" and g["res"] == "rage" and g["op"] == "<" for g in gate_list(enrage)), "Enrage only at low rage"
+# Marksmanship: Sniper Shot leads Aimed Shot only while Rapid Killing's next-shot buff is up.
+_mm = classes.HUNTER_F.marksmanship.st
+assert ids_of(_mm).index(1310687) < ids_of(_mm).index(19434), "Sniper Shot ahead of Aimed Shot"
+assert [dict(g) for g in gate_list(entry_of(_mm, 1310687))] == [{"t": "buff", "id": 415407}], "Sniper Shot on Rapid Killing"
+# Shadow Word: Death costs health when the target survives: held at half health or less.
+for _context in ("st", "aoe"):
+    _swd = entry_of(classes.PRIEST_F.shadow[_context], 1309595)
+    assert {"t": "health", "op": ">", "pct": 50} in [dict(g) for g in gate_list(_swd)], "Shadow Word: Death above half health"
+# Bear, one target: Swipe fills ahead of Maul until Lacerate or Primal Bite is learned.
+bear = ids_of(classes.DRUID_F.feral_bear.st)
+assert 779 in bear and bear.index(779) < bear.index(6807), "Swipe before Maul on one target"
+swipe = [dict(g) for g in gate_list(entry_of(classes.DRUID_F.feral_bear.st, 779))]
+assert {"t": "known", "id": 1328617, "neg": True} in swipe and {"t": "known", "id": 407995, "neg": True} in swipe, \
+    "Swipe fills only until Lacerate or Primal Bite is learned"
 enh = classes.SHAMAN_F.enhancement.st
 assert ids_of(enh).index(403) < ids_of(enh).index(408341), \
     "Single-target instant Bolt precedes Nova"
@@ -560,8 +581,19 @@ for context in ("st", "cleave", "aoe"):
     # The shocks share a 6s cooldown. Earth Shock fills while Flame Shock has more than 4s
     # left: asking for the whole cooldown never held before the talent that shortens it.
     shock = gate_list(entry_of(classes.SHAMAN_F.enhancement[context], 8042))
-    assert len(shock) == 1 and (shock[0]["t"], shock[0]["id"], shock[0]["op"], shock[0]["n"]) == \
-        ("debuff", 8050, ">", 4), (context, "Earth Shock waits on Flame Shock's time left", shock)
+    if context == "aoe":
+        assert len(shock) == 1 and (shock[0]["t"], shock[0]["id"], shock[0]["op"], shock[0]["n"]) == \
+            ("debuff", 8050, ">", 4), (context, "Earth Shock waits on Flame Shock's time left", shock)
+        continue
+    # One or two targets: alone Earth Shock is the shock on cooldown; in a group it waits on
+    # Flame Shock, which is offered in a group only (Icy Veins leveling, 2026-11-13).
+    group = shock[0]["g"] if len(shock) == 1 and shock[0]["t"] == "any" else None
+    branches = [group[i] for i in range(1, len(group) + 1)] if group else []
+    assert len(branches) == 2 and branches[0]["t"] == "group" and branches[0]["neg"] is True \
+        and (branches[1]["t"], branches[1]["id"], branches[1]["op"], branches[1]["n"]) == ("debuff", 8050, ">", 4), \
+        (context, "Earth Shock free alone, waiting on Flame Shock in a group", shock)
+    flame = gate_list(entry_of(classes.SHAMAN_F.enhancement[context], 8050))
+    assert any(g["t"] == "group" and not g["neg"] for g in flame), (context, "Flame Shock in a group only")
 assert ids_of(classes.SHAMAN_F.enhancement.aoe).index(408341) < \
     ids_of(classes.SHAMAN_F.enhancement.aoe).index(17364), "AoE Nova precedes Stormstrike"
 assert any(e["id"] == 403 and e["gates"][1]["t"] == "stack" and e["gates"][1]["n"] == 5

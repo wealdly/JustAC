@@ -104,6 +104,12 @@ EXTRA = {
                 # 2026-11-20 simulations): those trees leave it to the player.
                 dict(spell="hamstring", trees=["fury", "protection"], drop=True),
                 dict(spell="rend", trees=["protection"], at="before:heroic_strike", move=True),
+                # Shield Block is Protection's rage: with Shield Specialization its blocks refund
+                # rage and each block opens Revenge (guides: on cooldown). Ahead of Shield Slam it
+                # gave 2 to 16% faster kills at 20 to 60, solo and grouped, and even on a raid
+                # boss (2026-11-24 simulation, shield in Defensive Stance; rage per fight up by a
+                # third at 40). It keeps the source's re-press as its block buff ends.
+                dict(spell="shield_block", trees=["protection"], at="before:shield_slam", move=True),
                 # Protection's Sunder follows its main attacks: ahead of them it delayed Revenge and
                 # Shield Slam (2026-11-18 simulation, shield in Defensive Stance: 2 to 4% faster
                 # kills on regular targets, 7 to 8% on elites and long fights at five stacks). One
@@ -149,11 +155,13 @@ EXTRA = {
                dict(spell="hunters_mark", at="front", gates=["dot"]),
                dict(spell="raptor_strike", at="front"),
                dict(spell="mongoose_bite", at="front"),
-               # The Forever MM guide recommends Sniper Shot on cooldown ahead of Aimed Shot.
-               # Its imported fight-duration mana gate is unavailable; spell usability still
-               # determines whether Sniper Shot itself can be cast.
+               # Sniper Shot (a 4 s cast) ahead of Aimed Shot only while Rapid Killing's next-shot
+               # buff (415407, from a kill under your Serpent Sting) is up; otherwise Aimed Shot
+               # (Icy Veins marksmanship leveling, 2026-11-16). 2026-11-24 simulation, which has no
+               # Rapid Killing: kills 2 to 11% faster at 40 to 60, one row 1.7% slower. An
+               # unreadable buff leaves the entry as it was.
                dict(spell="sniper_shot", trees=["marksmanship"], at="before:aimed_shot",
-                    move=True, gates=[]),
+                    move=True, gates=[{"t": "buff", "id": 415407}]),
                # The Survival sim is melee only. Its guides keep the ranged shots for a target
                # out of melee (Arcane Shot, Multi-Shot on packs); last, so melee leads in range.
                dict(spell="counterattack", trees=["survival"], at="after:mongoose_bite"),
@@ -179,7 +187,12 @@ EXTRA = {
                 # Hammer of the Righteous (40): Protection's weapon strike on the target and up to
                 # three more, 6 s cooldown (kami). No sim lists it; it joins Protection's attacks
                 # ahead of Holy Strike. Holy and Retribution do not use it in any guide.
-                dict(spell="hammer_of_the_righteous", trees=["protection"], at="before:holy_strike")],
+                dict(spell="hammer_of_the_righteous", trees=["protection"], at="before:holy_strike"),
+                # Holy Shield, kept up (wowtbc): its blocks return mana (Shield Specialization) and
+                # deal Holy damage, so like Shield Block it feeds the damage list. At 60, where the
+                # simulator's build has it: kills 8 to 19% faster, threat 12 to 27% higher, solo
+                # and grouped (2026-11-24 simulation, Righteous Fury up).
+                dict(spell="holy_shield", trees=["protection"], at="front", move=True)],
     # Backstab is absent from the selected upstream APLs. Prefer it to Sinister Strike when
     # usable from behind, while keeping the tree's main builder (Mutilate, Hemorrhage) first.
     # Spell usability handles the rear requirement; no position signal is inferred here.
@@ -213,6 +226,11 @@ EXTRA = {
                    gates=[{"t": "power", "res": "rage", "op": "<", "n": 10},
                           {"t": "health", "op": ">", "pct": 50.0}]),
               dict(spell="swipe", trees=["feral_bear"], tiers=["cleave", "aoe"], at="front", move=True),
+              # One target: Swipe fills until Lacerate (25) or Primal Bite (40) is learned (Icy Veins
+              # feral leveling, 2026-11-15). It adds to the swing where Maul replaces it (2026-11-24
+              # simulation: kills 1 to 7% faster at 16, 20 and 24, elites included).
+              dict(spell="swipe", trees=["feral_bear"], tiers=["st"], at="before:maul", copy=True,
+                   gates=[{"t": "known", "id": 1328617, "neg": True}, {"t": "known", "id": 407995, "neg": True}]),
               dict(spell="wrath", trees=["balance"], at="end")],
     "warlock": [dict(spell="conflagrate", trees=["destruction"], at="after:immolate"),
                 # Launch fillers (level 40): Wrack (Affliction), Incinerate (Destruction);
@@ -236,11 +254,13 @@ EXTRA = {
              dict(spell="blast_wave", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
              dict(spell="arcane_explosion", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
              dict(spell="arcane_explosion", trees=["arcane"], tiers=["aoe"], at="after:evocation"),
-             # Launch guides: Arcane AoE opens with Flamestrike; Fire AoE adds Cone of Cold;
-             # the Frostfire Bolt build (level 40 talent) fills with it instead of Fireball.
+             # Launch guides: Arcane AoE opens with Flamestrike; Fire AoE adds Cone of Cold.
+             # The guides' Frostfire Bolt filler (from 40) is left out: the client gives it about
+             # half Fireball's damage (at 50, 182 at 81% of spell power against 374 at 100%, a
+             # 3 s cast against 3.5 s) and no Fire talent closes that; simulated, Fireball filling
+             # was never slower and up to 18% faster at 40 to 60, solo and grouped (2026-11-24).
              dict(spell="flamestrike", trees=["arcane"], tiers=["aoe"], at="before:arcane_explosion"),
              dict(spell="cone_of_cold", trees=["fire"], tiers=["aoe"], at="after:blast_wave"),
-             dict(spell="frostfire_bolt", trees=["fire"], at="before:fireball"),
              dict(spell="shoot", at="end"),
              # Arcane Blast is a level 20 talent, and the Arcane sim's other casts all wait on it
              # or on a proc. Until it is learned, Fireball fills, as Smite does for Shadow. After
@@ -361,6 +381,9 @@ REGATE = {
     # Maul banks 25 rage for Lacerate and Primal Bite (the sim's level 60 setup). Before either is
     # learned (Lacerate 25, Primal Bite 40) it is the bear's only single-target spender, and the
     # rage it waited on had nothing else to buy: it spends at its cost, as Heroic Strike does.
+    # Shadow Word: Death costs a tenth of your health when the target survives: held at half
+    # health or less, as Bloodrage is (2026-11-24 simulation: no change in kill time at 40 and 50).
+    "priest": {"shadow_word_death": dict(health=50)},
     "druid": {"innervate": dict(starved=True),
               "maul": dict(or_none_known={"feral_bear": ["lacerate", "primal_bite"]})},
     # Slam keeps the sim's cast-time condition (only once Improved Slam shortens the cast):
@@ -1402,6 +1425,14 @@ def generalize_entries(cls, tree, entries, chains):
                     gates = [{"t": "totem", "slot": 1}]
                 elif name == "flame_shock":
                     gates = [{"t": "debuff", "id": sid, "neg": True, "refresh": True}]
+                    # Enhancement alone: Earth Shock on cooldown (Icy Veins leveling, updated
+                    # 2026-11-13: "Alternate Flame Shock & Earth Shock in groups"). Flame Shock's
+                    # ticks pay only in a longer group fight; solo it took the shared shock
+                    # cooldown from Earth Shock (2026-11-24 simulation, Earth Shock leading: kills
+                    # 2 to 6% faster at 10, 15 and 25 on regular targets, even at 20 and 30, 2 to
+                    # 4% slower on elites at 10, 15 and 30).
+                    if tree == "enhancement" and context == "st":
+                        gates.append(IN_A_GROUP)
                 elif name == "earth_shock":
                     # The shocks share one cooldown (SpellCooldowns category, 6s in 1.60.1.70938),
                     # so a filler Earth Shock locks Flame Shock out for that long. Asking for more
@@ -1411,6 +1442,9 @@ def generalize_entries(cls, tree, entries, chains):
                     # (2026-11-20 simulation: kills 9 to 13% faster at 14 and 30, no change at 60).
                     gates = [{"t": "debuff", "id": rank1(chains["flame_shock"]), "op": ">",
                               "n": spell_meta(sid)[1] - EARTH_SHOCK_LATE_SECONDS}]
+                    # Alone it is the shock on cooldown: the Flame Shock wait applies in a group only.
+                    if tree == "enhancement" and context == "st":
+                        gates = [{"t": "any", "g": [dict(IN_A_GROUP, neg=True)] + gates}]
                 elif name == "lightning_bolt" and tree == "enhancement":
                     gates = [{"t": "stack", "id": 408505, "op": ">=", "n": 5, "required": True}]
                 elif name == "chain_lightning" and context == "st":
@@ -1611,10 +1645,11 @@ NOT_DPS = {
 NOT_DPS_ALL = ["grovel"]
 # The queue is a damage queue in every tree, a tank tree included: its list is that talent
 # style's damage order. Presses whose value is threat or mitigation leave the tank lists and the
-# pool (the tank sims lead with them); tank play belongs to the defensive queue.
+# pool (the tank sims lead with them); tank play belongs to the defensive queue. Shield Block is
+# not one of them, nor Holy Shield: Protection's rage, mana and Revenge come from their blocks
+# (EXTRA above).
 TANK_ONLY = {
-    "warrior": ["shield_block", "defensive_stance", "demoralizing_shout"],
-    "paladin": ["holy_shield"],
+    "warrior": ["defensive_stance", "demoralizing_shout"],
     "druid":   ["demoralizing_roar"],
 }
 _mechanic = _cooldown = None
@@ -1771,7 +1806,42 @@ def keeps_combat_form(sid):
                for eff, aura, _, _, form in effects_of(sid))
 
 
-def entry_lua(e, names):
+_effect_points = None
+
+
+def effect_points(sid):
+    """SpellEffect rows of sid as (effect, base points)."""
+    global _effect_points
+    if _effect_points is None:
+        _effect_points = {}
+        for r in cfa.rows("SpellEffect"):
+            _effect_points.setdefault(r["SpellID"], []).append(
+                (r["Effect"], float(r.get("EffectBasePointsF") or 0)))
+    return _effect_points.get(str(sid), [])
+
+
+def adds_threat(sid):
+    """Does sid carry bonus threat in the client data (Sunder Armor; the Threat button's boost)?"""
+    return any(eff == gfd.THREAT_EFFECT and points > 0 for eff, points in effect_points(sid))
+
+
+def tank_positions(lines):
+    """With a strong tank signal (grouped, as the tank) a threat entry ranks just ahead of the
+    first damaging entry without a cooldown above it: the list's filler. Attacks on a cooldown
+    keep their place, since their damage is threat too. id(entry) -> that filler's rank."""
+    out = {}
+    for i, e in enumerate(lines):
+        if not adds_threat(e["id"]):
+            continue
+        for j in range(i):
+            other = lines[j]["id"]
+            if deals_damage(other) and not adds_threat(other) and spell_meta(other)[1] == 0:
+                out[id(e)] = j + 1
+                break
+    return out
+
+
+def entry_lua(e, names, tank_at=None):
     parts = [f"id={e['id']}", "gates=" + lua(e["gates"])]
     if keeps_combat_form(e["id"]):
         parts.append("form=true")
@@ -1779,6 +1849,8 @@ def entry_lua(e, names):
         parts.append("delegated=true")
     if e.get("w"):
         parts.append("w=true")
+    if tank_at:
+        parts.append(f"tank={tank_at}")
     return "      {" + ",".join(parts) + "},  -- " + names.get(str(e["id"]), "?")
 
 
@@ -1926,7 +1998,8 @@ def main():
                                 lost=LOST.get(id(entry)) or ["hand pin: inspect source condition"],
                             ))
                     body.append(f"      {t} = {{")
-                    body += ["  " + entry_lua(e, names) for e in lists[t]]
+                    tank_at = tank_positions(lists[t])
+                    body += ["  " + entry_lua(e, names, tank_at.get(id(e))) for e in lists[t]]
                     body.append("      },")
             body.append("    },")
             gated = sum(1 for e in entries if e["gates"])

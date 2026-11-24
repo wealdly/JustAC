@@ -183,10 +183,14 @@ def main():
     check(sdb.GetEnergize(633) is None and sdb.GetEnergize(772) is None,
           "Forever: Lay on Hands' mana goes to its target; Rend gives nothing")
     check(r.LandsAtTarget(100) is False and r.GetEnergize(100) is None, "retail: no Forever look-ahead data")
+    check(sdb.GetAreaRadius(5730) == 8 and sdb.GetAreaRadius(1161) == 10,
+          "group taunt reach: the totem effect's 8 yards, Challenging Shout's 10")
     for sid, role, why in ((71, "tank", "Defensive Stance carries the effectively-tank aura"),
                            (5487, "tank", "Bear Form"), (25780, "tank", "Righteous Fury"),
                            (355, "taunt", "Taunt"), (6795, "taunt", "Growl"), (694, "taunt", "Mocking Blow"),
                            (1161, "groupTaunt", "Challenging Shout"),
+                           (5730, "groupTaunt", "Stoneclaw Totem: its effect turns every enemy within reach onto the totem"),
+                           (10428, "groupTaunt", "Stoneclaw Totem, top rank"),
                            (586, "drop", "Fade"), (9578, "drop", "Fade rank 2"), (1966, "drop", "Feint"),
                            (8998, "drop", "Cower"), (5384, "drop", "Feign Death"),
                            (7386, "boost", "Sunder Armor adds threat"),
@@ -199,6 +203,11 @@ def main():
     check(sdb.GainsOverTime(100) is False and sdb.GainsOverTime(18499) is False,
           "Forever: Charge pays at once; Berserker Rage is no gain over time")
     check(r.GainsOverTime(2687) is False, "retail: no Forever gain-over-time data")
+    check(sdb.IsAreaDot(26573) is True and sdb.IsAreaDot(20116) is True,
+          "Forever: Consecration is area damage over time, every rank")
+    check(sdb.IsAreaDot(2120) is False and sdb.IsAreaDot(10) is False and sdb.IsAreaDot(5740) is False,
+          "Forever: Flamestrike hits at once; Blizzard and Rain of Fire are channels")
+    check(r.IsAreaDot(26573) is False, "retail: no Forever area damage over time data")
     check(sdb.GetSelfAuraSeconds(2687) == 10 and sdb.GetSelfAuraSeconds(1719) == 15,
           "Forever: Bloodrage's triggered rage aura lasts 10s; Recklessness 15s")
     check(sdb.GetSelfAuraSeconds(78) is None and sdb.GetSelfAuraSeconds(71) is None,

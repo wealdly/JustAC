@@ -242,6 +242,31 @@ def rank_for_level(sid, level, chain_of, client):
     return have[-1] if have else sid
 
 
+# An action pressed at least this often a second for no damage at all is flagged: a debuff whose
+# "is it up?" check never matches what the simulator applies is recast every global cooldown
+# (2026-11-24: Faerie Fire 15 times in a 26 s fight). A buff or Life Tap is pressed far less often.
+REPEAT_PER_SECOND = 0.2
+
+
+def repeat_flags(run, names):
+    """Actions pressed over and over for no damage."""
+    out = []
+    if not run["kill"]:
+        return out
+    # A next-swing attack (Heroic Strike, Maul, Raptor Strike) is recorded twice: the queued press
+    # and the hit, under the same id with another tag. Resource events (OtherActionRageGain) are
+    # not presses.
+    dealt = set(a.split(":")[0] for a, (_, d) in run["casts"].items() if d > 0)
+    for action, (casts, damage) in sorted(run["casts"].items()):
+        key = action.split(":")[0]
+        if (action.startswith("OtherAction") or damage > 0 or key in dealt
+                or casts / run["kill"] < REPEAT_PER_SECOND):
+            continue
+        name = names.get(int(key), "?") if key.isdigit() else action
+        out.append("%s (%s): pressed %.1f times in a %.1f s fight for no damage" % (name, key, casts, run["kill"]))
+    return out
+
+
 def damage_flags(run, level, client, names, cls=None, chain_of=None):
     """Casts whose simulated damage is far from what the client's spell data says."""
     out = []
@@ -283,7 +308,7 @@ def main():
     optional = optional_spells()
     client = client_damage()
     spell_names = dict((int(r["ID"]), r["Name_lang"]) for r in __import__("check_forever_apl").rows("SpellName"))
-    flagged = []
+    flagged, repeated = [], []
     chain_of = {}
     import check_forever_apl as cfa
     JUDGEMENTS.update(int(r["ID"]) for r in cfa.rows("SpellName") if r["Name_lang"].startswith("Judgement of "))
@@ -328,6 +353,8 @@ def main():
                 details.append((cls, tree, level, verdict))
                 for flag in damage_flags(run, level, client, spell_names, cls, chain_of.setdefault(cls, class_chain_index(cls))):
                     flagged.append("| %s | %s | %d | %s |" % (cls, tree, level, flag))
+                for flag in repeat_flags(run, spell_names):
+                    repeated.append("| %s | %s | %d | %s |" % (cls, tree, level, flag))
             sys.stderr.write("swept %s %s\n" % (cls, tree))
     lines += ["", "## Damage per cast against the client's spell data", "",
               "A cast is listed when the simulator's damage per cast is above %g times the client's whole spell (hit plus "
@@ -335,6 +362,13 @@ def main():
               "no weapon strikes and no physical attacks (their attack power scaling is server-side)." % (HIGH, LOW), ""]
     if flagged:
         lines += ["| Class | Tree | Level | Spell |", "|---|---|---|---|"] + flagged
+    else:
+        lines.append("Nothing flagged.")
+    lines += ["", "## Pressed over and over for no damage", "",
+              "An action pressed %g times a second or more that deals no damage: usually a condition that never "
+              "reads true in the simulator (an aura id the simulator does not apply), so the press repeats." % REPEAT_PER_SECOND, ""]
+    if repeated:
+        lines += ["| Class | Tree | Level | Action |", "|---|---|---|---|"] + repeated
     else:
         lines.append("Nothing flagged.")
     bad = sum(1 for d in details if d[3] in ("FAIL", "FAILED"))

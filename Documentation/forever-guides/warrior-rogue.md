@@ -223,6 +223,8 @@ Note: KallTorak says Overpower shares a cooldown with Revenge, so weaving to Bat
 
 **Defensives / tanking cooldowns**
 - **Shield Block**: rotational, not emergency (2 blocks within 7 s, 5 s cooldown, +75% block). [W-IVO, W-KLC]
+- **JustAC (2026-11-24):** Protection's list presses Shield Block on cooldown, ahead of its attacks. It was left to the defensive side as mitigation, but its blocks are the tree's rage (Shield Specialization) and its Revenge. Simulated at 20 to 60 (`average` gear, 3 batches of 300), kills were 2 to 21% faster solo and grouped and never slower (rage per fight up by a third at 40). Not checked in game.
+- **In game (2026-11-24, level 16, grouped as Tank, Shield Specialization 5/5):** rage ran short (189 out-of-rage failures, mostly Sunder Armor and Thunder Clap) and Sunder Armor led only once while the player pressed it 27 times. Simulated at 16 to 20 grouped (`average` gear, 3 batches of 300): dropping Shield Block cost 20 to 27% threat and 5 to 23% damage, so it stays; Sunder Armor ahead of Thunder Clap raised threat on the main target 3 to 10% but cost up to 12% damage on short fights and adds nothing to a second enemy, so the order stays. The tank's threat on one target was about twice a damage dealer's of the level.
 - **Last Stand** (talent): emergency panic button. Now a **3 min** cooldown [KallTorak, wow.gg]. Gives 30% max HP for 20 s [kami]. Icy skips it at 30. KallTorak: do not die with it unused.
 - **Shield Wall** (28): 60% damage reduction for 12 s, 15 min baseline. Improved Shield Wall (2 points) takes off up to 11 min, so about 4 min [W-IVO, W-KLC]. Use it on over-pulls or dangerous bosses.
 - Retaliation (20, 15 min): big melee pulls. Disarm against hard-hitting melee. Concussion Blow (talent) as a utility stun. Intimidating Shout (22) when a pull breaks.
@@ -346,6 +348,8 @@ Source: https://www.icy-veins.com/wow-forever/combat-rogue-melee-dps-pve-rotatio
 Paraphrased priority; the beta-era notes below are historical.
 
 - Same shape as Assassination: maintain buffs, debuffs and Rupture; Garrote opener from stealth; Shank on cooldown unless it would cap energy; Sinister Strike builds (Backstab for the dagger variant); Eviscerate at 5 combo points when Slice and Dice and Rupture are up and Shank is on cooldown.
+- Leveling (Icy Veins combat leveling guide, updated 2026-11-18, read 2026-11-24 in a browser): open from Stealth (Cheap Shot or Garrote), Riposte when it procs, Sinister Strike to build, Slice and Dice when targets will last, else Eviscerate at 5 combo points; no Rupture.
+- JustAC (2026-11-24): no change. Simulated at 25 to 60: without Slice and Dice 1 to 10% slower almost everywhere (2 to 3% faster on regular level 60 targets); without Rupture no change before 60, 1 to 10% slower at 60.
 
 **Sources** (plus R-DEV, R-IVO, R-MOO, R-MTH, R-WT, R-PUG, R-ZK)
 

@@ -32,7 +32,15 @@ def main():
             [355] = "taunt", [694] = "taunt", [7400] = "taunt",   -- Taunt; Mocking Blow r1, r2
             [586] = "drop", [9578] = "drop", [1966] = "drop",     -- Fade r1, r2; Feint
             [7386] = "boost", [71] = "tank", [1161] = "groupTaunt",   -- Challenging Shout
+            [1160] = "boost",                                     -- Demoralizing Shout
         },
+            -- Generated order: attack-me Taunt before Mocking Blow; Sunder (34) before
+            -- Demoralizing Shout (11), though its id is higher.
+            FOREVER_THREAT_ORDER = { [355] = 2, [694] = 1, [7400] = 1, [7386] = 34, [1160] = 11 },
+            GetThreatOrder = function(id) return SpellDB.FOREVER_THREAT_ORDER[id] end,
+            -- Generated data, fixed for the session: Challenging Shout reaches 10 yards.
+            GetAreaRadius = function(id) if id == 1161 then return 10 end end,
+            IsTargetWithin = function(yards) return within[yards] end,
             GetSpecKey = function() return "WARRIOR_F" end,
             IsTankTree = function(spec, t) return spec == "WARRIOR_F" and t == "protection" end,
         }
@@ -54,26 +62,37 @@ def main():
         BlizzardAPI = {
             IsSecretValue = function(v) return rawequal(v, secret) end,
             IsGrouped = function() return grouped end,
+            NAMEPLATE_UNITS = {},
             IsSpellReady = function(id) return not cooldown[id] end,
             IsSpellUsable = function(id) return not unusable[id], short[id] == true end,
             AbilityInRange = function(id) if outOfRange[id] then return false end return nil end,
         }
-        function UnitExists(u) if u == "pet" then return pet end return target end
+        function UnitExists(u)
+            if u == "pet" then return pet end
+            local plate = u:match("^nameplate(%d+)$")
+            if plate then return tonumber(plate) <= plates end
+            return target
+        end
         function UnitCanAttack() return attackable end
         function UnitHasEffectivelyTankAura() return tankAura end
         function UnitGroupRolesAssigned() return role end
         function UnitThreatSituation() return state end
-        function UnitDetailedThreatSituation() return tanking end
+        function UnitDetailedThreatSituation(_, u)
+            if u ~= "target" and plateTanking ~= nil then return plateTanking end
+            return tanking
+        end
         function UnitThreatLeadSituation() return lead end
         C_Secrets = { ShouldUnitThreatStateBeSecret = function() return stateSecret end }
         function IsSecret(v) return rawequal(v, secret) end
+        for i = 1, 40 do BlizzardAPI.NAMEPLATE_UNITS[i] = "nameplate" .. i end
     """ + spelldb[t_start:t_end] + source[start:end])
     cue = lua.eval("DefensiveEngine.GetThreatCue")
     on = lua.eval("{defensives={threatCues=true}}")
     base = ("target, grouped, pet, tankAura, role = true, true, false, false, 'NONE';"
             "state, tanking, lead, stateSecret, tree, attackable = nil, nil, nil, false, 'arms', true;"
+            "plates, plateTanking, radius, within = 0, nil, {}, {};"
             "known, cooldown, unusable, short, outOfRange = {[355]=true,[694]=true,[7400]=true,"
-            "[586]=true,[9578]=true,[1966]=true,[7386]=true,[1161]=true}, {}, {}, {}, {}")
+            "[586]=true,[9578]=true,[1966]=true,[7386]=true,[1161]=true,[1160]=true}, {}, {}, {}, {}")
     for setup, role, spell, why in (
         ("state=0", None, None, "below the tank: nothing"),
         ("state=1", "drop", 9578, "about to pull: a threat drop, at its highest known rank"),
@@ -94,11 +113,31 @@ def main():
         ("tankAura=true; state=0; tanking=false", "taunt", 355, "a tank stance counts as a tank"),
         ("role='TANK'; state=0; tanking=false; cooldown[355]=true", "taunt", 7400,
          "Taunt on cooldown: Mocking Blow, highest known rank"),
-        ("role='TANK'; state=0; tanking=false; outOfRange[355]=true; outOfRange[7400]=true", "taunt", None,
-         "every taunt out of range: nothing to press"),
+        ("role='TANK'; state=0; tanking=false; outOfRange[355]=true; outOfRange[7400]=true", "taunt", 355,
+         "every taunt out of range: the first still shows, drawn out of range"),
+        ("role='TANK'; state=0; tanking=false; outOfRange[355]=true", "taunt", 7400,
+         "Taunt out of range, Mocking Blow in range: the one you can land"),
         ("role='TANK'; state=3; tanking=true; lead=0", None, None, "a secure lead: nothing"),
         ("role='TANK'; state=2; tanking=true; lead=1", "boost", 7386, "a slipping lead: a threat boost"),
-        ("role='TANK'; state=2; tanking=true; lead=1; short[7386]=true", "boost", None, "the boost unaffordable"),
+        ("role='TANK'; state=2; tanking=true; lead=1; short[7386]=true", "boost", 1160,
+         "Sunder unaffordable: the next threat ability"),
+        ("role='TANK'; state=2; tanking=true; lead=1; short[7386]=true; short[1160]=true", "boost", None,
+         "no threat ability affordable"),
+        # A group taunt for a pack loose on others, with the target inside its reach.
+        ("role='TANK'; state=0; tanking=false; plates=3; plateTanking=false; radius[1161]=10; within[10]=true",
+         "groupTaunt", 1161, "three loose enemies and the target within 10 yards: Challenging Shout"),
+        ("role='TANK'; state=0; tanking=false; plates=2; plateTanking=false; radius[1161]=10; within[10]=true",
+         "taunt", 355, "two loose enemies: the single taunt"),
+        ("role='TANK'; state=0; tanking=false; plates=5; plateTanking=false; radius[1161]=10; within[10]=false",
+         "taunt", 355, "the target out of reach: not across the room"),
+        ("role='TANK'; state=0; tanking=false; plates=5; plateTanking=false; radius[1161]=10",
+         "taunt", 355, "an unknown distance offers no group taunt"),
+        ("role='TANK'; state=0; tanking=false; plates=5; plateTanking=secret; radius[1161]=10; within[10]=true",
+         "taunt", 355, "secret plate reads count no loose enemy"),
+        ("role='TANK'; state=3; tanking=true; lead=0; plates=4; plateTanking=false; radius[1161]=10; within[10]=true",
+         "groupTaunt", 1161, "holding the target but a pack loose on others"),
+        ("state=1; plates=4; plateTanking=false; radius[1161]=10; within[10]=true", "drop", 9578,
+         "not the tank: a group taunt is never offered"),
         ("role='TANK'; state=2; tanking=true; lead=secret", None, None, "an unreadable lead: nothing"),
         ("role='TANK'; state=0; tanking=secret", None, None, "an unreadable tanking flag: nothing"),
         ("role=secret; state=1", "drop", 9578, "an unreadable role is not a tank"),

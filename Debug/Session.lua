@@ -535,6 +535,11 @@ function DebugCommands.StartDiagnostics(addon, arg)
                         end
                     end
                 end
+                -- The Threat button (shares the interrupt slot): which press it offered.
+                local threat = addon.threatIcon
+                if threat and rendered(threat) then
+                    ids[#ids+1] = "threat[1]=" .. SafeSecret(threat.spellID)
+                end
                 return table.concat(ids, ",")
             end,
             defensiveGlow=function()

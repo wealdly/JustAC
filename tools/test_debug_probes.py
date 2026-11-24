@@ -1021,7 +1021,7 @@ def test_critical_preparation_glow():
         renderClaim(nil,nil,740)
         assert(icon._maintGlowColor==colors.DEFENSIVE)
         renderClaim(42292,nil,nil)
-        assert(icon._maintGlowColor==colors.MOVEMENT)
+        assert(icon._maintGlowColor==colors.ESCAPE)   -- not the upkeep blue it shares the button with
         ApplyMaintenanceGlow(icon,nil,colors.MAINTENANCE)
     """)
     start = source.index("local GLOW_SETTLE_TIME =")

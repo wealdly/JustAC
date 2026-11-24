@@ -85,6 +85,7 @@ end
 local UnitThreatSituation = _G.UnitThreatSituation
 local UnitAffectingCombat = _G.UnitAffectingCombat
 local NAMEPLATE_UNITS, NAMEPLATE_TARGETS = {}, {}
+BlizzardAPI.NAMEPLATE_UNITS = NAMEPLATE_UNITS   -- shared: the Threat button's pack count
 for i = 1, 40 do
     NAMEPLATE_UNITS[i] = "nameplate" .. i
     NAMEPLATE_TARGETS[i] = "nameplate" .. i .. "target"
@@ -977,9 +978,23 @@ function BlizzardAPI.GetContentType()
     return CONTENT_BY_INSTANCE[instanceType] or "world"
 end
 
---- Relative level of a regular hostile target, or nil when unknown or non-regular.
---- UnitLevel returns -1 for skull-level targets; that is unknown here, not a numeric level.
-function BlizzardAPI.GetTargetLevelDelta()
+-- The target's level gap: read by several queue stages every build, so the answer is kept until
+-- the target, its classification or a level changes, or combat starts or ends (when secrecy can
+-- flip: the next read is live again). false marks an unknown answer. Kept only while the
+-- clearing events are registered; without them every call reads live.
+local targetDeltaMemo
+local targetDeltaMemoOn = false
+if CreateFrame then
+    local deltaFrame = CreateFrame("Frame")
+    for _, event in ipairs({"PLAYER_TARGET_CHANGED", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
+                            "PLAYER_LEVEL_UP", "UNIT_CLASSIFICATION_CHANGED", "UNIT_LEVEL"}) do
+        pcall(deltaFrame.RegisterEvent, deltaFrame, event)
+    end
+    deltaFrame:SetScript("OnEvent", function() targetDeltaMemo = nil end)
+    targetDeltaMemoOn = true
+end
+
+local function ReadTargetLevelDelta()
     local classOk, classification = pcall(UnitClassification, "target")
     if not classOk or IsSecretValue(classification)
        or (classification ~= "normal" and classification ~= "trivial") then return nil end
@@ -989,6 +1004,15 @@ function BlizzardAPI.GetTargetLevelDelta()
        or type(targetLevel) ~= "number" or targetLevel < 1
        or type(playerLevel) ~= "number" or playerLevel < 1 then return nil end
     return targetLevel - playerLevel
+end
+
+--- Relative level of a regular hostile target, or nil when unknown or non-regular.
+--- UnitLevel returns -1 for skull-level targets; that is unknown here, not a numeric level.
+function BlizzardAPI.GetTargetLevelDelta()
+    if not targetDeltaMemoOn then return ReadTargetLevelDelta() end
+    if targetDeltaMemo == nil then targetDeltaMemo = ReadTargetLevelDelta() or false end
+    if targetDeltaMemo == false then return nil end
+    return targetDeltaMemo
 end
 
 --- Is a surface set to be hidden in the content the player is in right now? `hideIn` is
@@ -2155,12 +2179,14 @@ BlizzardAPI.FIGHT_ENDING_TARGET_PCT = 20
 ---   * a live attackable target that is not a boss (a dying boss is an execute phase);
 ---   * a confirmed below-threshold health gate (== true, never just non-false).
 --- @param enemyCount number|nil the engaged-enemy count when the caller already has it
-function BlizzardAPI.IsFightEnding(enemyCount)
+--- @param pct number|nil a higher health line for a question that needs the enemy to last
+---   longer (damage over time); FIGHT_ENDING_TARGET_PCT when nil
+function BlizzardAPI.IsFightEnding(enemyCount, pct)
     if enemyCount == nil then enemyCount = BlizzardAPI.GetEngagedEnemyCount() end
     if enemyCount ~= 1 then return false end
     if not (UnitExists("target") and UnitCanAttack("player", "target")) then return false end
     if BlizzardAPI.IsTargetBoss() then return false end
-    return BlizzardAPI.IsUnitHealthBelow("target", BlizzardAPI.FIGHT_ENDING_TARGET_PCT) == true
+    return BlizzardAPI.IsUnitHealthBelow("target", pct or BlizzardAPI.FIGHT_ENDING_TARGET_PCT) == true
 end
 
 --- The combat phase: "precombat", "combat" or "postcombat". Post-combat straddles the end

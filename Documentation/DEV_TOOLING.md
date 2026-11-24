@@ -481,6 +481,71 @@ cooldowns. The bench fights alone, so a list condition "in a group" (`{t="group"
 reads false; `--grouped` answers it true, for what an entry kept for group play is worth there.
 Nothing else about the fight changes, so this is that entry's value only, not a group fight.
 
+`--group` is the group fight (it implies `--grouped`). Per level: a grouped regular target, a
+dungeon elite one level above, a dungeon boss two above and, at 60, a raid boss three above. The
+party's damage is modelled as health: each target has the player's share of it (a quarter, from
+three damage dealers, a tank and a healer), so its health falls at the party's rate. A dungeon
+boss has 12 times and a raid boss 5 times a regular target's health (the raid boss's already the
+player's share). These numbers are ASSUMED, not measured. The tank holds the target, so it never
+hits the player and melee stand behind it; a tank tree is hit as usual. A boss has no
+dying-target floor, and a grouped target that is not a long fight (no elite, boss, pack or higher
+level) gets the runtime's 20 second hold on damage over time. With `--mobs N`, the pull is a
+grouped pack. In every scenario a cooldown of ten minutes or more (Recklessness) is pressed only
+against a boss: no arm, presets included, has it for every trash fight. The simulator's autocast
+of its own major cooldowns is not reached by that.
+
+**Group pass, 2026-11-24** (client 1.60.1, `average` gear, 3 batches of 300, levels 20 to 60,
+every tree):
+- A grouped elite is still a long fight. Treating it as a short one (no DoT for 20 seconds, no
+  stacking, no cooldowns) made elite kills up to 54% slower: priests, Combat rogue, Affliction
+  and both hunters lost most. The runtime keeps the elite rule in a group.
+- The 20 second DoT hold on a grouped regular target pays. Without it Shadow, Subtlety and
+  Destruction killed 2 to 3 times slower; only the healer priests' damage lists gained (12 to
+  24% at 40 to 60), and their mana is for healing.
+- Stacking Sunder Armor as Arms or Fury on a dungeon elite is mixed (up to 20% faster or 8%
+  slower without it), and it pays on every boss: no change.
+- Fire: with Fireball in place of Frostfire Bolt, kills were never slower and up to 18% faster
+  at 40 to 60, solo and grouped. The client's own data gives Frostfire Bolt about half
+  Fireball's base damage, and its tooltip reads the same value. Applied: Fireball fills
+  (forever-guides/hunter-mage-warlock.md).
+- Faults found and fixed: Heating Up (400625) read as never active, because the simulator
+  registers it as 44445, so Pyroblast never fired in the Fire list (the bench now maps an aura by
+  the simulator's label for it); a target killed before its first swing had no kill time; and
+  `--justac-only` also dropped `--without` arms.
+- Packs (`--group --mobs 4`, elites one level above, a 20 second pull), each tree's AoE list
+  against its single-target list: the AoE list deals 25 to 250% more from 40 in most trees, and
+  never less. Equal (no AoE spell the level uses, or none listed): Affliction, Enhancement,
+  Protection warrior, Survival, the priests; rogues, Feral cat and Protection paladin have no
+  AoE list. Retribution's AoE list showed 7% less only because the bench pressed Holy Wrath on
+  its humanoid targets, which the runtime offers only against Demons and Undead: the bench now
+  leaves out every spell whose creature types (the generated CREATURE_TYPES) exclude humanoids.
+- Protection paladin at 40 to 60, with Hammer of the Righteous added to the simulator (see
+  forever-sim-patches): 3 to 14% faster kills than before it existed; it spends mana Seal and
+  Judgement would have used, but is a net gain at every level. The preset's lead at 60 (12 to
+  16%) is Holy Shield's damage, which the lists leave to the player as a tank press.
+- Arcane: Arcane Blast only above a mana floor (30, 50 or 70%, Fireball below) was slower in
+  every scenario but the raid boss (up to 43% on solo elites, 3 to 10% on dungeon bosses; 8%
+  faster at 70% on the two and a half minute raid boss). Arcane Blast freely stays. The preset's
+  lead on bosses comes from a mana gem and a Frostbolt filler timed to the fight's remaining
+  length, which the queue cannot know.
+- Tanks and threat (2026-11-24): the report now gives each arm's threat per second (the
+  simulator's own threat), and a Protection paladin fights with Righteous Fury up (left out, its
+  threat was its damage alone). The bench stacks Sunder Armor in a group as the runtime does, and
+  a next-swing attack waits while another is queued. Results are in FOREVER_DPS_PRINCIPLES
+  (the tank's threat), the warrior and paladin guides (Shield Block, Holy Shield).
+- Sanity check of the day's lists against 6.6.0 (same runtime, `average` gear, 3 to 8 batches,
+  solo and grouped at 20, 40 and 60; Feral, bear, Shadow, Retribution, both Protections,
+  Marksmanship, Fire, Enhancement): equal or faster everywhere but two rows. Marksmanship on a
+  grouped level 40 elite is 11% slower: the old list opened with Sniper Shot, the new one waits for
+  Rapid Killing, which a fresh bench fight never has (a chain of pulls often carries it). Solo
+  Enhancement on a level 60 elite is 4% slower: Flame Shock pays on that long fight, Earth Shock on
+  the short ones. Both stand. The coverage sweep at 10 to 60 failed nothing and found nothing
+  pressed without damage. Regenerating also refreshed Defaults.lua, which had missed Holy Shield's
+  shield in Protection paladin's tree gear.
+- Open: Survival's preset weaves ranged and melee (positioning, the player's); the healer
+  trees' damage lists spend their mana slower than the presets by design and are not judged
+  here (the bench has no healing to make room for).
+
 Fight length is calibrated from the game: `--calibrate <path to JustAC.lua>` reads the solo
 kills JustAC recorded (`/jac inspect mobprofile arm`, then play and `/reload`), simulates each
 with the bench's class, tree and gear, and scales each target's health by the measured over
@@ -502,7 +567,7 @@ pressed, or does not have. Run it after any simulator or list change; a comparis
 means nothing at a level where the entries they differ in are missing. It also lists any spell
 whose simulated damage per cast is far from the client's spell data. 2026-11-23: 46 of 168
 tree-levels failed before the rank changes, 1 of 164 after (the enhancement shaman at level 5),
-with nothing flagged by the damage check. Pet stats by level come from the Classic server table
+with nothing flagged by the damage check. 2026-11-24 at levels 10 to 40: 1 of 111 fails (Protection paladin at 40: the simulator has no Hammer of the Righteous); the damage check flagged Chain Lightning (a stale simulator table, fixed) and level 40 warlock spells whose crits double (Ruin, Pandemic), which are not faults. The sweep also lists any action pressed over and over for no damage, which found Faerie Fire recast every global cooldown (a bench aura-id fault, fixed). At 50 and 60: 2 of 56 fail (the same Hammer of the Righteous gap, since added: Protection passes at 40 to 60, and the damage check's flag on it is its weapon-based damage, whose client value is a placeholder 1); the damage check's high flags there come from gear spell power and crit talents (the check leaves spell power out), not from wrong tables. Pet stats by level come from the Classic server table
 the simulator's own rows were taken from; no WoW Forever pet damage has been measured in game. Every report says which kill time clock it used; a report on the
 target-swing clock is from an unpatched build and runs slow under Thunder Clap. Results before
 2026-11-23 used that clock, and priest and mage results before that date had no wand at all.

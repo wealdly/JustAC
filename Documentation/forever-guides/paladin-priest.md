@@ -44,6 +44,8 @@ Paraphrased priority; the beta-era notes below are historical.
 - Shockadin build: Crusader judgement, then maintain Seal of Righteousness (refresh under 10 seconds when nothing else is ready); Hammer of Wrath below 20%; Consecration, Judgement, Holy Strike, Holy Shock on cooldown; Exorcism on Demons and Undead.
 - AoE: same as single target, with Holy Wrath on cooldown against several Demons or Undead; Crusader judgement on one target only.
 - Neither build uses Seal of Fury for damage.
+- Leveling (Icy Veins leveling guide, updated 2026-11-15, read 2026-11-24 in a browser): keep a seal up (Righteousness or Command by weapon speed), Judgement and Holy Strike on cooldown, Consecration only with plenty of mana and not when the target dies within its 8 seconds, Exorcism on Undead and Demons, Hammer of Wrath from 44; save mana by not refreshing a seal early and skipping presses an auto attack would make unneeded.
+- JustAC (2026-11-24): the list order stays. Simulated at 10 to 30, Holy Strike right after Judgement was even to 1.8% slower, Seal of Command first even to 2.2% slower at 30, and a Seal of the Crusader opener 14 to 30% slower. Consecration, as area damage over time with no hit of its own, now waits on a non-boss last enemy that is nearly dead (the line a new damage over time spell already waits on): about 15 to 20% less mana per fight at 20 to 40 for kills 2 to 3% longer. The simulator scores kill time only, not the drinking that mana saves.
 
 **Sources**
 
@@ -166,6 +168,7 @@ Seal of Command and Seal of Righteousness right after each auto attack. Not avai
 - Seal of Fury (new): small Holy damage per swing; with a shield equipped you gain an absorb worth 50% of the Holy damage; Judgement of it taunts 4 s.
 - First real taunt for Paladins; Righteous Fury, Retribution Aura at 16; Consecration at 20; Templar's Bulwark at 30.
 - Hammer of the Righteous at 40+ (target + 3 nearby, 6 s CD - kami). JustAC lists it ahead of Holy Strike (2026-11-22).
+- **JustAC (2026-11-24):** Protection's list keeps Holy Shield up (wowtbc: maintain it). Its blocks return mana through Shield Specialization and deal Holy damage; at 60 (the simulator's builds have it there) kills were 8 to 19% faster and threat 12 to 27% higher, solo and grouped, with Righteous Fury up. Not checked in game.
 - Seal of Command (Retribution talent) is left to the player: Command or Righteousness follows weapon speed, and the seal entries already wait while any seal is up (2026-11-22).
 - Stats: spell power valued for threat (icy: SP first); mobalytics: Stamina first then Str/Agi. Disagreement.
 
@@ -358,6 +361,9 @@ Paraphrased priority; the beta-era notes below are historical.
 - Opener: Fade, pre-cast Mind Blast (the only hard cast) so it lands as combat starts, then Shadow Word: Pain, Devouring Plague, Shadow Word: Death, Vampiric Embrace, Mind Blast, Mind Flay.
 - Priority: Shadow Word: Pain, Devouring Plague, Mind Blast, Shadow Word: Death, Vampiric Embrace, Mind Flay. Refresh DoTs right after they expire (no clipping); never clip Mind Flay (Improved Mind Flay ramps each tick). Inner Focus with Mind Flay.
 - AoE: Shadow Word: Pain on every target, Devouring Plague on the lowest-health target, the rest on the primary target. No debuff limit in Forever.
+- Leveling (Icy Veins leveling guide, updated 2026-11-17, read 2026-11-24 in a browser): Power Word: Shield, Mind Blast to pull, Shadow Word: Pain, Devouring Plague, Mind Flay, then finish with the wand; Smite opens before Mind Flay is learned; skip Devouring Plague and Mind Flay when short on mana (rarely needed before 30); Shadow Word: Death for burst, as it costs health when the target survives.
+- JustAC (2026-11-24): the order stays. Simulated at 10 to 40: Mind Blast before Shadow Word: Pain was mixed (13% faster to 12% slower, elites slower at 20 and 40); without Devouring Plague 6 to 21% slower from 20; Shadow Word: Death only below 20% target health 10 to 15% slower at 40. Shadow Word: Death now waits at half health or less (no change in kill time at 40 and 50). Finishing with the wand is Mana Conservation's job.
+- Simulator fix (2026-11-24, local core change in the simulator checkout): a cast ending at the same instant as its global cooldown (a 1.5 s Mind Blast) was overwritten by the next cast when a wand shot fired first at that instant, and never landed. A level 10 Shadow priest's Mind Blast landed in 9% of fights; kills went from 14.4 s to 11.2 s once fixed. Earlier low-level caster results with a wand may be slightly slow.
 
 **Sources**
 

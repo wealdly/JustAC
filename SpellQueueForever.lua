@@ -692,8 +692,9 @@ end
 local HOLD_RANGE_AFTER = 3
 local holdGUID, holdSince, holdConfirmed
 
+local CAST_READS = { UnitCastingInfo, UnitChannelInfo }
 local function TargetCasting()
-    for _, read in ipairs({ UnitCastingInfo, UnitChannelInfo }) do
+    for _, read in ipairs(CAST_READS) do
         if read then
             local ok, name = pcall(read, "target")
             if ok and name ~= nil and not BlizzardAPI.IsSecretValue(name) then return true end

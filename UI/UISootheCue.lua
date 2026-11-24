@@ -268,7 +268,7 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
                 showAlways = true,   -- enrage is not a dispelName; default criteria would suppress it
                 style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
             }
-            local cyan = UIAnimations.SOOTHE_PROC_COLOR or { r = 0.55, g = 0.90, b = 1.00 }
+            local cyan = UIAnimations.SOOTHE_PROC_COLOR
             opts.customDispelColorCurve = GetSelectorCurve(cyan.r, cyan.g, cyan.b)
             pcall(button.AddDispelTypeTexture, button, slot.glow, opts)
 

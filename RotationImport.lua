@@ -505,7 +505,8 @@ local function Resolve(lines)
         if e and e.id and BuildHolds(e.b) then
             local kept = seen[e.id]
             if not kept then
-                kept = { id = e.id, gates = e.gates or {}, delegated = e.delegated, empower = e.empower }
+                kept = { id = e.id, gates = e.gates or {}, delegated = e.delegated, empower = e.empower,
+                         w = e.w, tank = e.tank }
                 seen[e.id] = kept
                 out[#out + 1] = kept
             else
@@ -701,7 +702,7 @@ local function BuildLookup(specKey)
             for i = 1, #list do
                 local e = list[i]
                 if e and e.id and not m[e.id] then
-                    local rec = { rank = i, gates = e.gates, delegated = e.delegated, w = e.w }
+                    local rec = { rank = i, gates = e.gates, delegated = e.delegated, w = e.w, tank = e.tank }
                     m[e.id] = rec
                     local b = baseID(e.id)
                     if b ~= e.id and not m[b] then m[b] = rec end
@@ -837,6 +838,7 @@ end
 --- Is spellID listed only for several targets: absent from this spec's single-target list
 --- but present in its cleave or AoE list? False when the spec has no single-target list.
 --- Plain static data - reads no combat state.
+local WIDE_CONTEXTS = { "cleave", "aoe" }
 function RotationImport.IsWideOnly(spellID)
     if not spellID then return false end
     local SpellDB = cachedSpellDB
@@ -851,7 +853,7 @@ function RotationImport.IsWideOnly(spellID)
     if not st then return false end
     local b = baseID(spellID)
     if st[spellID] or st[b] then return false end
-    for _, ctx in ipairs({ "cleave", "aoe" }) do
+    for _, ctx in ipairs(WIDE_CONTEXTS) do
         local m = byCtx[ctx]
         if m and (m[spellID] or m[b]) then return true end
     end
@@ -891,14 +893,15 @@ end
 
 function RotationImport.IsLeftOut(spellID, context)
     if not spellID then return false end
+    -- A listed entry is never left out; the reads below are for unlisted ids only.
+    if RotationImport.GetEntry(spellID, context) ~= nil then return false end
     local base = RotationImport.RankBase(spellID)
     -- Unlisted and not castable in the current form: an unranked filler that breaks the form.
-    if not CastableInForm(base) then return RotationImport.GetEntry(spellID, context) == nil end
+    if not CastableInForm(base) then return true end
     local specKey = CurrentSpecKey()
     local trees = specKey and leftOut[specKey]
     if not trees then return false end
     Rot(specKey)
     local set = trees[installed[specKey]]
-    if not (set and (set[spellID] or set[base])) then return false end
-    return RotationImport.GetEntry(spellID, context) == nil
+    return (set and (set[spellID] or set[base])) and true or false
 end

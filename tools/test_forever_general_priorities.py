@@ -208,9 +208,12 @@ def check_pushback_priority():
     lua.globals().SetupPushback()
     # The real Enhancement list: Earth Shock shares the shocks' cooldown, so it answers pushback
     # only while Flame Shock is known to have more than that cooldown left.
-    for below, expected in (("false", "8042"), ("true", "nil"), ("nil", "nil")):
+    # Alone it is the shock on cooldown (a group only waits on Flame Shock): it answers either way.
+    for grouped, below, expected in (("true", "false", "8042"), ("true", "true", "nil"), ("true", "nil", "nil"),
+                                     ("false", "true", "8042"), ("false", "nil", "8042")):
         lua.globals().SetupPushback()
         lua.execute(f"""
+            BlizzardAPI.IsGrouped = function() return {grouped} end
             local saved = DotTracker
             DotTracker = {{ IsTimeLeftBelow = function(id, seconds)
                 assert(id == 8050 and seconds == 4)
@@ -222,7 +225,7 @@ def check_pushback_priority():
             SpellQueue._StagePushback(b, pool)
             DotTracker = saved
             assert(b.recommendedSpells[1] == 403 and b.recommendedSpells[2] == {expected},
-                   "Flame Shock below 4s left = {below}")
+                   "grouped = {grouped}, Flame Shock below 4s left = {below}")
         """)
     lua.globals().SetupPushback()
     lua.execute("""

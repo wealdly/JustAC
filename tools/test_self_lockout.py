@@ -237,8 +237,9 @@ def main():
     check('not DE.IsSelfLockedOut(9035) and Queue() == "9035,2061"')
     # An area debuff (Demoralizing Shout: every enemy within 10 yards) stays held on a new target
     # within its radius; one farther away, or out of any range read, gets it offered again.
-    check("SpellDB.GetEnemyMitigationRadius(1160) == 10 and SpellDB.GetEnemyMitigationRadius(11556) == 10")
-    check("SpellDB.GetEnemyMitigationRadius(99) == 10 and SpellDB.GetEnemyMitigationRadius(9035) == nil")
+    check("SpellDB.GetAreaRadius(1160) == 10 and SpellDB.GetAreaRadius(11556) == 10")
+    check("SpellDB.GetAreaRadius(99) == 10 and SpellDB.GetAreaRadius(9035) == nil")
+    check("SpellDB.GetAreaRadius(1161) == 10")   # Challenging Shout, the same table
     lua.execute("within = {}; SpellDB.IsTargetWithin = function(y) return within[y] end")
     lua.execute('DE.NoteSpellcastSent("", "s1", 1160)')
     check('DE.NoteSpellcastSucceeded("s1") == true and DE.IsSelfLockedOut(1160)')

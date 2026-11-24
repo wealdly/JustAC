@@ -89,14 +89,27 @@ def main():
         count += 1
 
     check('SpellDB.GetForeverAbilityRole(8154) == "protection"')
+    # Strong tank signal: grouped, then the assigned role, then a tank aura; anything unreadable is no signal.
+    lua.execute("""
+        grouped, role, tankAura = true, "NONE", false
+        BlizzardAPI.IsGrouped = function() return grouped end
+        function UnitGroupRolesAssigned() return role end
+        function UnitHasEffectivelyTankAura() return tankAura end
+    """)
+    for setup, expected in (('role = "TANK"', True), ('role = "NONE"; tankAura = true', True),
+                            ('role = "DAMAGER"; tankAura = true', False), ('role = "NONE"; tankAura = false', False),
+                            ('grouped = false; role = "TANK"', False), ('grouped = nil; role = "TANK"', False),
+                            ('grouped = true; role = "NONE"; tankAura = nil', False)):
+        lua.execute(setup)
+        check(f"SpellDB.HasStrongTankSignal() == {str(expected).lower()}")
     check('SpellDB.GetInterruptAbility(8042).kind == "interrupt"')
     check('SpellDB.GetInterruptAbility(8044).kind == "interrupt"')
     check("SpellDB.IsOffensiveSpell(8042) and SpellDB.IsOffensiveSpell(8044)")
     check("SpellDB.GetForeverTotemSlot(8154) == 2")
     check("SpellDB.IsMaintainedProtection(8154)")
-    for sid in (8071, 5277, 22812, 5384, 543, 6143, 6197, 5675, 2565, 8042, 8044):
+    for sid in (8071, 5277, 22812, 5384, 543, 6143, 6197, 5675, 8042, 8044):
         check(f"not Filter({sid}, profile)")
-    for sid in (689, 6789, 1311606, 15237, 20925, 20230, 402927, 8050, 8056, 403):
+    for sid in (689, 6789, 1311606, 15237, 20925, 20230, 402927, 2565, 8050, 8056, 403):
         check(f"Filter({sid}, profile)")
     lua.execute("SpellQueue._rotationIsCustom = true; Next()")
     check("Filter(8071, profile)")

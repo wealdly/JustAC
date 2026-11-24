@@ -187,6 +187,17 @@ def main():
     assert bench.ranks_for_level(cast, family, 60)["castSpell"]["spellId"]["spellId"] == 10151, "no book rank"
     assert bench.ranks_for_level(cast, family, 14)["castSpell"]["spellId"]["spellId"] == 143
     assert bench.ranks_for_level(cast, family, 14) is not cast and cast["castSpell"]["spellId"]["spellId"] == 25306
+    # A shared debuff the simulator registers under one id for every rank (Faerie Fire 9907):
+    # the aura check keeps that id, the cast still takes the level's rank.
+    ff = [([770, 778, 9749, 9907], [18, 30, 42, 54])]
+    bench.FIXED_IDS.add(9907)
+    line = {"castSpell": {"spellId": {"spellId": 9907}},
+            "condition": {"not": {"val": {"auraIsActive": {"auraId": {"spellId": 9907}}}}}}
+    ranked = bench.ranks_for_level(line, ff, 24)
+    assert ranked["castSpell"]["spellId"]["spellId"] == 770, "the cast is the level's rank"
+    assert ranked["condition"]["not"]["val"]["auraIsActive"]["auraId"]["spellId"] == 9907, "the check keeps the fixed aura"
+    if os.path.isdir(sim):
+        assert 9907 in bench.core_fixed_auras(sim) and 24977 in bench.core_fixed_auras(sim)
 
     # A "known" gate on a talent follows the build being run, not the simulator's spell book.
     class Names:
@@ -274,6 +285,32 @@ def main():
     assert even.dot(Conv, fireball, "absent")[0] == "absent", "a spell that is mostly its hit has no health rule"
     pack = bench.RuntimeRules(data, "warrior", "fury", 0, False, True)
     assert pack.dot(Conv, rend, "absent")[0] == "absent", "no health rules in a fixed pull"
+    boss = bench.RuntimeRules(data, "warrior", "fury", 2, True, False, boss=True)
+    assert "35" not in boss.dot(Conv, rend, "absent")[1], "a boss has no dying-target floor"
+    bench.GROUPED["on"] = True
+    try:
+        grouped = bench.RuntimeRules(data, "warrior", "fury", 0, False, False)
+        value, said = grouped.dot(Conv, rend, "absent")
+        assert "70" not in said, "the fast-fight floor is solo only"
+        assert "20 s" in said and "currentTime" in str(value), "a short group fight waits before a DoT"
+        grouped_elite = bench.RuntimeRules(data, "warrior", "fury", 1, True, False)
+        assert "20 s" not in grouped_elite.dot(Conv, rend, "absent")[1], "an elite is not a short group fight"
+        assert grouped.dot(Conv, fireball, "absent")[0] == "absent", "a spell that is mostly its hit still goes"
+    finally:
+        bench.GROUPED["on"] = False
+    apl = {"priorityList": [{"action": {"castSpell": {"spellId": {"spellId": 1719}}}},
+                            {"action": {"condition": {"x": 1}, "castSpell": {"spellId": {"spellId": 23881}}}}]}
+    kept = bench.without_spells(apl, {1719})["priorityList"]
+    assert len(kept) == 1 and "23881" in str(kept), "a once-per-run cooldown leaves a fixed rotation"
+    assert 1719 in bench.once_per_run_ids() and 12292 not in bench.once_per_run_ids(), "30 min in, 30 s out"
+    sim = os.environ.get("FOREVER_SIM", "<sources>/wow-forever-sim")
+    if os.path.isdir(os.path.join(sim, "sim", "mage")):
+        labels = bench.labelled_auras(sim, "mage")
+        assert labels.get("heating up") == {44445}, "the simulator's Heating Up is registered as 44445"
+    share = bench.ASSUMPTIONS["party_share"]
+    sets = bench.group_scenarios(30, 60)
+    assert [s.get("boss", False) for s in sets] == [False, False, True] and sets[0]["hp_mult"] == share
+    assert len(bench.group_scenarios(60, 60)) == 4, "a raid boss at the top level"
     print("forever sim bench: setup usability, pack requests, damage taken and runtime rules read as intended")
     return 0
 
