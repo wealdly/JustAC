@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell archetype data (GENERATED -- do not edit by hand).
--- Source: wago.tools DB2 build 12.1.0.69875. Regenerate with tools/gen_archetypes.sh.
+-- Source: wago.tools DB2 build 12.1.5.70961. Regenerate with tools/gen_archetypes.sh.
 -- Player class damage spells grouped by archetype; value = range; comment = name.
 -- Indirect-damage spells (triggered/cloned) are intentionally absent (neutral).
 -- Plus builder/spender roles: spender = costs an accumulator resource, builder =
@@ -1009,7 +1009,7 @@ SpellDB.RegisterArchetypes({
         [1269224] = "ranged",  -- Blaze of Glory
         [1270116] = "melee",  -- Phalanx
     },
-    st = {  -- 1877 spells (value = range)
+    st = {  -- 1878 spells (value = range)
         [53] = "melee",  -- Backstab
         [116] = "ranged",  -- Frostbolt (via 228597)
         [133] = "ranged",  -- Fireball
@@ -2887,6 +2887,7 @@ SpellDB.RegisterArchetypes({
         [1301418] = "ranged",  -- Aflame
         [1301742] = "ranged",  -- Starfall
         [1308093] = "ranged",  -- Spirit's Wrath
+        [1319015] = "ranged",  -- Blood Fletching
     },
 })
 

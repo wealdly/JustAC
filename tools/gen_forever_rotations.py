@@ -223,6 +223,13 @@ EXTRA = {
     # Caster leveling guides describe wanding as a low-health/finishing fallback; keep Shoot last
     # so listed spells take precedence and spell usability hides it without a usable wand.
     "mage": [dict(spell="cone_of_cold", trees=["frost"], tiers=["cleave", "aoe"], at="front", move=True),
+             # Fire's only Scorch line stacks Fire Vulnerability to five once Improved Scorch is
+             # taken. Levelling fights end before the stacks pay for five Scorch casts: at level 30
+             # leaving it out was 8 to 15% faster on ordinary targets with Improved Scorch 3/3 and
+             # equal on elites, and 35 to 40% faster at 1/3, where a stack lands one cast in three
+             # and the list cast Scorch about 13 times a fight (2026-11-23 simulation; no change at
+             # 20 and 25, before the talent). The tree leaves Scorch to the player.
+             dict(spell="scorch", trees=["fire"], drop=True),
              # The Arcane and Fire sims list no AoE spell. Guide AoE (forever-guides/): Fire
              # Flamestrike > Blast Wave > Arcane Explosion, Arcane Explosion at 3+ for Arcane.
              dict(spell="flamestrike", trees=["fire"], tiers=["aoe"], at="before:pyroblast"),
@@ -326,6 +333,17 @@ REGATE = {
         # arrives and neither was cast (2026-11-20 simulation without the thresholds: kills 7%
         # faster at 40, 15% at 60, 10 to 18% on elites; no change at 25).
         "hemorrhage": dict(drop={"subtlety": [ENERGY_FLOOR]}),
+        # Slice and Dice is kept up first on every list (levelling guides; about 60% of a level 12
+        # rogue's damage was auto attacks in game) from 1 combo point: its 9 s covers most of a
+        # levelling fight (12 logged at level 12 on 2026-11-23: median 11.7 s). Simulated at those
+        # fight lengths, 1 point was 2 to 6% faster than 2; 2 points paid only past about 14 s
+        # (1 to 3%), too little for a fight-length rule. One rule for every tree.
+        "slice_and_dice": dict(
+            drop={tree: [{"t": "resource", "res": "combo_points"}, {"t": "any"}]
+                  for tree in ("assassination", "combat", "subtlety")},
+            add={tree: [{"t": "resource", "res": "combo_points", "op": ">=", "n": 1},
+                        {"t": "buff", "id": 5171, "dur": 6, "neg": True}]
+                 for tree in ("assassination", "combat", "subtlety")}),
         # Vanish carried the same unreachable energy threshold. Without it the sim re-opens from
         # stealth far more often (2026-11-20 simulation: kills 31% faster at 40, 16% at 60, 6 to
         # 8% on elites). Fought alone, Vanish drops the fight: the enemy resets, so that is not
@@ -697,6 +715,61 @@ def one_stack_on_packs(lists):
             pack[i] = dict(e, gates=[dict(g, once=True) if is_one_stack_gate(e, g) else g for g in e["gates"]])
 
 
+def maintained_auras(entries):
+    """Auras an entry keeps up: it is cast while the aura is missing, short of stacks or running
+    out on the target (a gate on the aura that holds when there is too little of it)."""
+    out = set()
+
+    def visit(g):
+        for m in g.get("g", []):
+            visit(m)
+        if g.get("t") == "stack" and g.get("op") in ("<", "<="):
+            out.add(g.get("id"))
+        elif g.get("t") in ("debuff", "dot") and (g.get("neg") or g.get("op") in ("<", "<=")):
+            out.add(g.get("id"))
+    for e in entries:
+        for g in e.get("gates", []):
+            visit(g)
+    return out
+
+
+def release_waits(gates, gone):
+    """The gates with every wait for an aura in `gone` (stacks reached, or present on the target)
+    read as already met: nothing in the list keeps that aura up any more, so waiting for it would
+    hold the entry for good. A met member makes an `any` group met; it leaves an `all` group."""
+    def waits(g):
+        if g.get("id") not in gone:
+            return False
+        if g.get("t") == "stack":
+            return g.get("op") in ("=", ">=", ">")
+        return g.get("t") == "debuff" and not g.get("neg") and g.get("op") not in ("<", "<=")
+
+    def met(g):
+        """True when g now always holds; else the simplified gate."""
+        if waits(g):
+            return True
+        if g.get("t") in ("any", "all"):
+            kept = []
+            for m in g.get("g", []):
+                r = met(m)
+                if r is True:
+                    if g["t"] == "any":
+                        return True
+                    continue
+                kept.append(r)
+            if not kept:
+                return True
+            return dict(g, g=kept)
+        return g
+
+    out = []
+    for g in gates:
+        r = met(g)
+        if r is not True:
+            out.append(r)
+    return out
+
+
 def add_extras(cls, tree, entries, chains, unresolved):
     """Place the class's EXTRA abilities into one tree's entries (in place). Returns the ids a
     drop row took out: unlisted, a class ability still reached the queue as an unranked filler,
@@ -709,6 +782,7 @@ def add_extras(cls, tree, entries, chains, unresolved):
             return None
         return rank1(chain)
     fronts = []
+    before_maintained = maintained_auras(entries)
 
     def place(x, items, default):
         at = x.get("at", default)
@@ -773,13 +847,24 @@ def add_extras(cls, tree, entries, chains, unresolved):
             e["w"] = True
         place(x, [e], "end")
     entries[0:0] = fronts
+    # An entry dropped here may have been the only one keeping an aura up (Fire's Scorch stacked
+    # Fire Vulnerability, and Combustion waited for five stacks): the waits on it are released.
+    if dropped:
+        gone = before_maintained - maintained_auras(entries)
+        if gone:
+            for e in entries:
+                e["gates"] = release_waits(e["gates"], gone)
     return dropped
 
 
 def keeps_own_buff(e):
+    """Does the entry only keep its own buff up: cast while the buff is missing, at most with a
+    minimum of the resource it spends (Slice and Dice at two combo points)?"""
     g = e["gates"]
-    return (bool(g) and all(x.get("t") == "buff" and x.get("neg") and x.get("dur") for x in g)
-            and any(x.get("id") == e["id"] for x in g))
+    own = [x for x in g if x.get("t") == "buff" and x.get("neg") and x.get("dur")]
+    spend = [x for x in g if x.get("t") == "resource" and x.get("op") == ">="]
+    return (bool(own) and len(own) + len(spend) == len(g)
+            and any(x.get("id") == e["id"] for x in own))
 TIERS = [("st", 1), ("cleave", 2), ("aoe", 3)]
 OPS = {"OpLt": "<", "OpLe": "<=", "OpGt": ">", "OpGe": ">=", "OpEq": "=", "OpNe": "!="}
 FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "=": "=", "!=": "!="}

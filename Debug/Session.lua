@@ -647,7 +647,9 @@ function DebugCommands.StartDiagnostics(addon, arg)
         for _, event in ipairs({"ACTION_RANGE_CHECK_UPDATE", "SPELL_RANGE_CHECK_UPDATE",
             "UI_ERROR_MESSAGE", "DAMAGE_METER_COMBAT_SESSION_UPDATED",
             "DAMAGE_METER_CURRENT_SESSION_UPDATED", "DAMAGE_METER_RESET",
-            "ACTIONBAR_SLOT_CHANGED", "SPELLS_CHANGED", "PLAYER_EQUIPMENT_CHANGED", "CVAR_UPDATE"}) do
+            "ACTIONBAR_SLOT_CHANGED", "SPELLS_CHANGED", "PLAYER_EQUIPMENT_CHANGED", "CVAR_UPDATE",
+            -- A creature's emote (a flee: "attempts to run away in fear"), with its sender's GUID.
+            "CHAT_MSG_MONSTER_EMOTE"}) do
             s.frame:RegisterEvent(event)
         end
         if B and B.IsForever and B.IsForever() then
@@ -670,16 +672,16 @@ function DebugCommands.StartDiagnostics(addon, arg)
         "PLAYER_TARGET_CHANGED", "UPDATE_SHAPESHIFT_FORM", "UNIT_PET", "PLAYER_LEVEL_UP"}) do
         s.frame:RegisterEvent(event)
     end
-    s.frame:SetScript("OnEvent", function(_, event, unit, a, b, c, d)
+    s.frame:SetScript("OnEvent", function(_, event, unit, a, b, c, d, ...)
         if DebugCommands._diagnosticSession ~= s then return end
         if event == "UNIT_PET" and unit ~= "player" then return end
         if event == "PLAYER_TARGET_CHANGED" then s.epoch = s.epoch + 1 end
-        if s.signalEvent then s.signalEvent(event, unit, a, b, c, d) end
+        if s.signalEvent then s.signalEvent(event, unit, a, b, c, d, ...) end
         if event == "SPELL_UPDATE_COOLDOWN" or event == "UNIT_COMBAT" or event:match("^UNIT_SPELLCAST_")
            or event == "ACTION_RANGE_CHECK_UPDATE" or event == "SPELL_RANGE_CHECK_UPDATE"
            or event == "PLAYER_SWING" or event == "PLAYER_SWING_RANGE_UPDATE" or event == "CVAR_UPDATE"
            or event:match("^DAMAGE_METER_") or event == "UI_ERROR_MESSAGE" or event == "UNIT_AURA"
-           or event == "UNIT_POWER_FREQUENT" then
+           or event == "UNIT_POWER_FREQUENT" or event == "CHAT_MSG_MONSTER_EMOTE" then
             return
         end
         if event == "PLAYER_REGEN_DISABLED" then s.pulls = s.pulls + 1 end

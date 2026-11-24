@@ -1,0 +1,3689 @@
+diff --git a/sim/core/attack.go b/sim/core/attack.go
+index 8b0a9ef..a79c212 100644
+--- a/sim/core/attack.go
++++ b/sim/core/attack.go
+@@ -462,6 +462,16 @@ type AutoAttacks struct {
+ 
+ 	enabled    bool
+ 	weaponRole bool
++
++	// Distance band of the ranged auto attack. The default is the bow and gun minimum with
++	// no maximum; a wand (wand.go) has no minimum and a 30 yard maximum.
++	rangedMinDistance float64
++	rangedMaxDistance float64 // 0: no maximum
++}
++
++func (aa *AutoAttacks) rangedInRange() bool {
++	distance := aa.mh.unit.DistanceFromTarget
++	return distance >= aa.rangedMinDistance && (aa.rangedMaxDistance == 0 || distance <= aa.rangedMaxDistance)
+ }
+ 
+ // Ordinary spells retain Classic casting restrictions. Only explicitly marked
+@@ -502,6 +512,8 @@ func (unit *Unit) EnableAutoAttacks(agent Agent, options AutoAttackOptions) {
+ 
+ 		IsDualWielding: options.OffHand.SwingSpeed != 0,
+ 
++		rangedMinDistance: MinRangedAttackDistance,
++
+ 		mh: WeaponAttack{
+ 			agent:        agent,
+ 			unit:         unit,
+@@ -656,7 +668,10 @@ func (aa *AutoAttacks) reset(sim *Simulation) {
+ 	// Make sure extra attacks are reset
+ 	aa.mh.extraAttacks = 0
+ 	aa.mh.extraAttacksPending = 0
+-	aa.mh.spell.SetMetricsSplit(0)
++	// A ranged-only unit (a caster with a wand, see wand.go) registers no melee spell.
++	if aa.mh.spell != nil {
++		aa.mh.spell.SetMetricsSplit(0)
++	}
+ 
+ 	if aa.ranged.spell != nil {
+ 		aa.ranged.extraAttacks = 0
+@@ -732,7 +747,7 @@ func (aa *AutoAttacks) startPull(sim *Simulation) {
+ 		}
+ 	}
+ 
+-	if aa.AutoSwingRanged && aa.mh.unit.DistanceFromTarget >= MinRangedAttackDistance {
++	if aa.AutoSwingRanged && aa.rangedInRange() {
+ 		aa.ranged.addWeaponAttack(sim, aa.ranged.unit.RangedSwingSpeed())
+ 	}
+ }
+@@ -786,7 +801,7 @@ func (aa *AutoAttacks) EnableAutoSwing(sim *Simulation) {
+ 		}
+ 	}
+ 
+-	if aa.AutoSwingRanged && aa.mh.unit.DistanceFromTarget >= MinRangedAttackDistance {
++	if aa.AutoSwingRanged && aa.rangedInRange() {
+ 		aa.ranged.swingAt = max(aa.ranged.swingAt, sim.CurrentTime, 0)
+ 		aa.ranged.addWeaponAttack(sim, aa.ranged.unit.RangedSwingSpeed())
+ 	}
+diff --git a/sim/core/character.go b/sim/core/character.go
+index 768a460..65ad255 100644
+--- a/sim/core/character.go
++++ b/sim/core/character.go
+@@ -42,6 +42,8 @@ type Character struct {
+ 	Class               proto.Class
+ 	Spec                proto.Spec
+ 	ForeverTier1Bonuses bool
++	// LOCAL ADDITION (wand.go): fraction added to wand damage (Wand Specialization).
++	WandDamageBonus float64
+ 	// Explicit provisional model; no implicit Revelation proc chance.
+ 	ForeverRevelationModel *proto.ForeverRevelationModel
+ 	// Optional explicit scenario assumption. Nil keeps the provisional rank convention.
+diff --git a/sim/core/environment.go b/sim/core/environment.go
+index 54424e0..2b6ed1b 100644
+--- a/sim/core/environment.go
++++ b/sim/core/environment.go
+@@ -287,6 +287,7 @@ func (env *Environment) reset(sim *Simulation) {
+ 	env.resetting = true
+ 	// Reset primary targets damage taken for tracking health fights.
+ 	env.Encounter.DamageTaken = 0
++	env.Encounter.pullEngaged, env.Encounter.PullEngagedAt = false, 0 // local addition (pull_model_local.go)
+ 
+ 	// Targets need to be reset before the raid, so that players can check for
+ 	// the presence of permanent target auras in their Reset handlers.
+diff --git a/sim/core/pet.go b/sim/core/pet.go
+index 71feea0..51f346c 100644
+--- a/sim/core/pet.go
++++ b/sim/core/pet.go
+@@ -162,12 +162,18 @@ func (pet *Pet) Enable(sim *Simulation, petAgent PetAgent) {
+ 
+ 	pet.OnPetEnable(sim)
+ 
+-	pet.SetGCDTimer(sim, max(0, sim.CurrentTime))
+-	if sim.CurrentTime >= 0 {
++	// Local addition (pull_model_local.go): a pet out at the pull first has to reach the target.
++	arrive := time.Duration(0)
++	if sim.CurrentTime <= 0 {
++		arrive = sim.pullPetTravel(pet.Owner)
++	}
++	pet.pullArriveAt = arrive
++	pet.SetGCDTimer(sim, max(arrive, sim.CurrentTime))
++	if sim.CurrentTime >= 0 && arrive == 0 {
+ 		pet.AutoAttacks.EnableAutoSwing(sim)
+ 	} else {
+ 		pet.prepullAutoSwing = &PendingAction{
+-			NextActionAt: 0,
++			NextActionAt: arrive,
+ 			OnAction: func(sim *Simulation) {
+ 				pet.prepullAutoSwing = nil
+ 				pet.AutoAttacks.EnableAutoSwing(sim)
+diff --git a/sim/core/sim.go b/sim/core/sim.go
+index 0f32069..daf5027 100644
+--- a/sim/core/sim.go
++++ b/sim/core/sim.go
+@@ -299,7 +299,7 @@ func (sim *Simulation) run() *proto.RaidSimResult {
+ 	sim.runOnce()
+ 	firstIterationDuration := sim.Duration
+ 	if sim.Encounter.EndFightAtHealth != 0 {
+-		firstIterationDuration = sim.CurrentTime
++		firstIterationDuration = sim.pullFightLength()
+ 	}
+ 	totalDuration := firstIterationDuration
+ 
+@@ -335,7 +335,7 @@ func (sim *Simulation) run() *proto.RaidSimResult {
+ 		sim.runOnce()
+ 		iterDuration := sim.Duration
+ 		if sim.Encounter.EndFightAtHealth != 0 {
+-			iterDuration = sim.CurrentTime
++			iterDuration = sim.pullFightLength()
+ 		}
+ 		totalDuration += iterDuration
+ 	}
+@@ -465,7 +465,18 @@ func (sim *Simulation) Cleanup() {
+ 	// quite at the Duration. Explicitly set this so that accesses to CurrentTime
+ 	// during the doneIteration phase will return the Duration value, which is
+ 	// intuitive.
+-	sim.CurrentTime = sim.Duration
++	//
++	// LOCAL CHANGE (2026-11-23): a fight sized by health ends at the kill, and that time is
++	// the fight's length. Overwriting it with the nominal duration made the reported
++	// iteration duration, damage per second and aura uptimes those of a 600 s fight. The
++	// kill time is kept and becomes this iteration's duration. (No comparison with Duration:
++	// after the first iteration reset() makes that iteration's kill time the base duration, so a
++	// longer fight would be cut back to it.)
++	if sim.Encounter.EndFightAtHealth != 0 && sim.CurrentTime > 0 {
++		sim.Duration = sim.pullFightLength()
++	} else {
++		sim.CurrentTime = sim.Duration
++	}
+ 
+ 	for _, pa := range sim.pendingActions {
+ 		if pa.CleanUp != nil {
+diff --git a/sim/core/spell.go b/sim/core/spell.go
+index 5d5b839..ca5c30b 100644
+--- a/sim/core/spell.go
++++ b/sim/core/spell.go
+@@ -621,6 +621,7 @@ func (spell *Spell) applyEffects(sim *Simulation, target *Unit) {
+ 		defer func(was bool) { env.pullSafeEffect = was }(env.pullSafeEffect)
+ 		env.pullSafeEffect = true
+ 	}
++	sim.pullLanded(spell, target) // local addition (pull_model_local.go)
+ 	spell.ApplyEffects(sim, target, spell)
+ }
+ 
+diff --git a/sim/core/target.go b/sim/core/target.go
+index 04a91eb..911f3dc 100644
+--- a/sim/core/target.go
++++ b/sim/core/target.go
+@@ -25,6 +25,10 @@ type Encounter struct {
+ 	// In health fight: set to true until we get something to base on
+ 	DurationIsEstimate bool
+ 
++	// LOCAL ADDITION (pull_model_local.go): has the player pulled yet, and when.
++	pullEngaged   bool
++	PullEngagedAt time.Duration
++
+ 	// Value to multiply by, for damage spells which are subject to the aoe cap.
+ 	aoeCapMultiplier float64
+ }
+diff --git a/sim/core/unit.go b/sim/core/unit.go
+index f053885..1058532 100644
+--- a/sim/core/unit.go
++++ b/sim/core/unit.go
+@@ -62,6 +62,8 @@ type Unit struct {
+ 	// How far this unit is from its target(s). Measured in yards, this is used
+ 	// for calculating spell travel time for certain spells.
+ 	StartDistanceFromTarget float64
++	// LOCAL ADDITION (pull_model_local.go): when a pet sent at the pull reaches the target.
++	pullArriveAt time.Duration
+ 	DistanceFromTarget      float64
+ 
+ 	MovementHandler *MovementHandler
+@@ -576,7 +578,11 @@ func (unit *Unit) reset(sim *Simulation, _ Agent) {
+ }
+ 
+ func (unit *Unit) startPull(sim *Simulation) {
+-	unit.AutoAttacks.startPull(sim)
++	// Local addition (pull_model_local.go): a held target starts swinging at the pull, and a pet
++	// still on its way starts when it arrives (Pet.Enable schedules that).
++	if !sim.pullHoldsTarget(unit) && unit.pullArriveAt <= sim.CurrentTime {
++		unit.AutoAttacks.startPull(sim)
++	}
+ 
+ 	if unit.Type == PlayerUnit {
+ 		unit.SetGCDTimer(sim, max(0, unit.GCD.ReadyAt()))
+diff --git a/sim/druid/claw.go b/sim/druid/claw.go
+index e081f68..79a04a0 100644
+--- a/sim/druid/claw.go
++++ b/sim/druid/claw.go
+@@ -7,11 +7,16 @@ import (
+ )
+ 
+ func (druid *Druid) registerClawSpell() {
+-	flatDamageBonus := 115.0
++	// The rank the level has learned (5 ranks, 20 to 58): effect 0 is the flat bonus.
++	rankInfo := rankFor("claw", druid.Level)
++	if rankInfo == nil {
++		return
++	}
++	flatDamageBonus := rankInfo.Points(0)
+ 
+ 	druid.Claw = druid.RegisterSpell(Cat, core.SpellConfig{
+ 		SpellCode:   SpellCode_DruidClaw,
+-		ActionID:    core.ActionID{SpellID: 9850},
++		ActionID:    core.ActionID{SpellID: rankInfo.SpellID},
+ 		SpellSchool: core.SpellSchoolPhysical,
+ 		DefenseType: core.DefenseTypeMelee,
+ 		ProcMask:    core.ProcMaskMeleeMHSpecial,
+diff --git a/sim/druid/demoralizing_roar.go b/sim/druid/demoralizing_roar.go
+index a7f09f7..86b03b8 100644
+--- a/sim/druid/demoralizing_roar.go
++++ b/sim/druid/demoralizing_roar.go
+@@ -4,18 +4,12 @@ import (
+ 	"github.com/wowsims/classic/sim/core"
+ )
+ 
+-const DemoralizingRoarRanks = 5
+-
+-var DemoralizingRoarSpellId = [DemoralizingRoarRanks + 1]int32{0, 99, 1735, 9490, 9747, 9898}
+-var DemoralizingRoarLevel = [DemoralizingRoarRanks + 1]int{0, 10, 20, 30, 40, 50}
+-
+ func (druid *Druid) registerDemoralizingRoarSpell() {
+-	rank := map[int32]int{
+-		25: 2,
+-		40: 4,
+-		50: 5,
+-		60: 5,
+-	}[druid.Level]
++	// The rank the level has learned (5 ranks: 10, 20, 32, 42, 52 in the client tables).
++	rankInfo, rank := druid.learnedRank("demoralizing_roar")
++	if rankInfo == nil {
++		return
++	}
+ 
+ 	druid.DemoralizingRoarAuras = druid.NewEnemyAuraArray(func(target *core.Unit) *core.Aura {
+ 		// Feral Aggression is gone from the Forever tree and more than folded in: the beta client's rank 5
+@@ -27,19 +21,19 @@ func (druid *Druid) registerDemoralizingRoarSpell() {
+ 	// The October 8 notes confirm nonzero per-target threat, but publish no
+ 	// amount. Preserve the existing Classic-derived rank convention as a
+ 	// provisional scenario; do not mistake it for a measured Forever value.
+-	flatThreat := 2 * float64(DemoralizingRoarLevel[rank])
++	flatThreat := 2 * float64(rankInfo.Level)
+ 	if druid.Env.IsForever() && druid.ForeverDemoralizingThreat != nil {
+ 		flatThreat = *druid.ForeverDemoralizingThreat
+ 	}
+ 
+ 	druid.DemoralizingRoar = druid.RegisterSpell(Bear, core.SpellConfig{
+-		ActionID:    core.ActionID{SpellID: DemoralizingRoarSpellId[rank]},
++		ActionID:    core.ActionID{SpellID: rankInfo.SpellID},
+ 		SpellSchool: core.SpellSchoolPhysical,
+ 		ProcMask:    core.ProcMaskEmpty,
+ 		Flags:       core.SpellFlagAPL,
+ 
+ 		Rank:          rank,
+-		RequiredLevel: DemoralizingRoarLevel[rank],
++		RequiredLevel: int(rankInfo.Level),
+ 
+ 		RageCost: core.RageCostOptions{
+ 			Cost: 10,
+diff --git a/sim/druid/druid.go b/sim/druid/druid.go
+index 92bba35..46f3d3b 100644
+--- a/sim/druid/druid.go
++++ b/sim/druid/druid.go
+@@ -268,8 +268,8 @@ func New(character *core.Character, form DruidForm, selfBuffs SelfBuffs, talents
+ 		Character:         *character,
+ 		SelfBuffs:         selfBuffs,
+ 		Talents:           &proto.DruidTalents{},
+-		StartingForm:      form,
+-		form:              form,
++		StartingForm:      learnedForm(form, character.Level),
++		form:              learnedForm(form, character.Level),
+ 		lastCatFormExitAt: core.NeverExpires,
+ 		furorBearSince:    core.NeverExpires,
+ 	}
+@@ -277,9 +277,9 @@ func New(character *core.Character, form DruidForm, selfBuffs SelfBuffs, talents
+ 	druid.EnableManaBar()
+ 
+ 	druid.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	druid.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
++	druid.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(character.Class, character.Level)*core.CritRatingPerCritChance)
+ 	druid.AddStatDependency(stats.Agility, stats.Dodge, core.DodgePerAgiAtLevel[character.Class]*core.DodgeRatingPerDodgeChance)
+-	druid.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[character.Class]*core.SpellCritRatingPerCritChance)
++	druid.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(character.Class, character.Level)*core.SpellCritRatingPerCritChance)
+ 	druid.AddStatDependency(stats.BonusArmor, stats.Armor, 1)
+ 
+ 	// Druids get extra melee haste
+diff --git a/sim/druid/enrage.go b/sim/druid/enrage.go
+index 1c24c65..039c789 100644
+--- a/sim/druid/enrage.go
++++ b/sim/druid/enrage.go
+@@ -11,6 +11,10 @@ import (
+ // Forever adds 10 Rage up front
+ // (beta client 1.60.1.69893, effect 1 of 5229).
+ func (druid *Druid) registerEnrageSpell() {
++	// Learned at 12.
++	if rankFor("enrage", druid.Level) == nil {
++		return
++	}
+ 	actionID := core.ActionID{SpellID: 5229}
+ 	rageMetrics := druid.NewRageMetrics(actionID)
+ 	// Enraged Idol (1291060): 10 more Rage over the duration (effect 1 points), one more a tick.
+diff --git a/sim/druid/faerie_fire.go b/sim/druid/faerie_fire.go
+index 993054b..755c0ba 100644
+--- a/sim/druid/faerie_fire.go
++++ b/sim/druid/faerie_fire.go
+@@ -7,11 +7,17 @@ import (
+ )
+ 
+ func (druid *Druid) registerFaerieFireSpell() {
+-	actionID := core.ActionID{SpellID: 9907}
++	// The rank the level has learned (4 ranks, 18 to 54): its id, mana cost and level. The armor
++	// taken is core.FaerieFireAura's, which knows the top rank only.
++	rankInfo := rankFor("faerie_fire", druid.Level)
++	if rankInfo == nil {
++		return
++	}
++	actionID := core.ActionID{SpellID: rankInfo.SpellID}
+ 	manaCostOptions := core.ManaCostOptions{
+-		FlatCost: 115,
++		FlatCost: rankInfo.Cost,
+ 	}
+-	flatThreatBonus := 2. * 54
++	flatThreatBonus := 2. * float64(rankInfo.Level)
+ 
+ 	druid.FaerieFireAuras = druid.NewEnemyAuraArray(func(target *core.Unit) *core.Aura {
+ 		return core.FaerieFireAura(target)
+diff --git a/sim/druid/feral/feral.go b/sim/druid/feral/feral.go
+index 312e075..3b92028 100644
+--- a/sim/druid/feral/feral.go
++++ b/sim/druid/feral/feral.go
+@@ -102,7 +102,9 @@ func (cat *FeralDruid) Initialize() {
+ func (cat *FeralDruid) Reset(sim *core.Simulation) {
+ 	cat.Druid.Reset(sim)
+ 	cat.Druid.CancelShapeshift(sim)
+-	cat.CatFormAura.Activate(sim)
++	if cat.CatFormAura != nil { // learned at 20
++		cat.CatFormAura.Activate(sim)
++	}
+ 	cat.readyToShift = false
+ 	//cat.berserkUsed = false
+ 	cat.poolingMana = false
+diff --git a/sim/druid/ferocious_bite.go b/sim/druid/ferocious_bite.go
+index c4b64c0..54dc043 100644
+--- a/sim/druid/ferocious_bite.go
++++ b/sim/druid/ferocious_bite.go
+@@ -16,6 +16,17 @@ type FerociousBiteRankInfo struct {
+ }
+ 
+ var ferociousBiteRanks = []FerociousBiteRankInfo{
++	{
++		// Forever's first rank, learned at 24. Not in this table before: the numbers are the client's
++		// (1328618: 17 points with a .714 spread, 30 a combo point, effect 1 70 as Energy per hundred),
++		// while the ranks below are the simulator's own tuning.
++		id:           1328618,
++		level:        24,
++		dmgBase:      10.9,
++		dmgRange:     12.1,
++		dmgPerCombo:  30.0,
++		dmgPerEnergy: 0.7,
++	},
+ 	{
+ 		id:           22568,
+ 		level:        32,
+@@ -59,10 +70,15 @@ var ferociousBiteRanks = []FerociousBiteRankInfo{
+ }
+ 
+ func (druid *Druid) registerFerociousBiteSpell() {
+-	// Ferocious Bite Rank V is not available until AQ release
+-	rank := core.TernaryInt(core.IncludeAQ, 4, 3)
+-	config := druid.newFerociousBiteSpellConfig(ferociousBiteRanks[rank])
+-	druid.FerociousBite = druid.RegisterSpell(Cat, config)
++	// The highest rank the level has learned. The level 60 rank is not available until AQ release.
++	maxRank := core.TernaryInt(core.IncludeAQ, len(ferociousBiteRanks)-1, len(ferociousBiteRanks)-2)
++	for rank := maxRank; rank >= 0; rank-- {
++		if druid.Level >= ferociousBiteRanks[rank].level {
++			config := druid.newFerociousBiteSpellConfig(ferociousBiteRanks[rank])
++			druid.FerociousBite = druid.RegisterSpell(Cat, config)
++			return
++		}
++	}
+ }
+ 
+ func (druid *Druid) newFerociousBiteSpellConfig(rank FerociousBiteRankInfo) core.SpellConfig {
+diff --git a/sim/druid/forms.go b/sim/druid/forms.go
+index 738f987..a1dc462 100644
+--- a/sim/druid/forms.go
++++ b/sim/druid/forms.go
+@@ -41,13 +41,25 @@ func formWeapon(equipped core.Weapon, interval float64) core.Weapon {
+ 	return weapon
+ }
+ 
++// pawLevelScale scales the fixed paw weapons with the character's level. The linear rule is
++// Classic's (vmangos Player::UpdateDamagePhysical: in a feral form the weapon damage is
++// level * 0.85 * attack speed to level * 1.25 * attack speed); the level 60 anchors it
++// multiplies (43.84-65.76 at 1.0 for the cat, 109-165 at 2.5 for the bear) are the simulator's own.
++func (druid *Druid) pawLevelScale() float64 {
++	return float64(druid.Level) / float64(core.CharacterMaxLevel)
++}
++
+ func (druid *Druid) GetCatWeapon() core.Weapon {
++	if druid.Level < CatFormLevel {
++		return druid.EquippedMainHandWeapon() // Cat Form is not learned yet
++	}
+ 	if druid.Env != nil && druid.Env.IsForever() {
+ 		return formWeapon(druid.EquippedMainHandWeapon(), 1)
+ 	}
++	scale := druid.pawLevelScale()
+ 	return core.Weapon{
+-		BaseDamageMin:        43.84,
+-		BaseDamageMax:        65.76,
++		BaseDamageMin:        43.84 * scale,
++		BaseDamageMax:        65.76 * scale,
+ 		SwingSpeed:           1.0,
+ 		NormalizedSwingSpeed: 1.0,
+ 		AttackPowerPerDPS:    core.DefaultAttackPowerPerDPS,
+@@ -55,12 +67,16 @@ func (druid *Druid) GetCatWeapon() core.Weapon {
+ }
+ 
+ func (druid *Druid) GetBearWeapon() core.Weapon {
++	if druid.Level < BearFormLevel {
++		return druid.EquippedMainHandWeapon() // Bear Form is not learned yet
++	}
+ 	if druid.Env != nil && druid.Env.IsForever() {
+ 		return formWeapon(druid.EquippedMainHandWeapon(), 2.5)
+ 	}
++	scale := druid.pawLevelScale()
+ 	return core.Weapon{
+-		BaseDamageMin:        109,
+-		BaseDamageMax:        165,
++		BaseDamageMin:        109 * scale,
++		BaseDamageMax:        165 * scale,
+ 		SwingSpeed:           2.5,
+ 		NormalizedSwingSpeed: 2.5,
+ 		AttackPowerPerDPS:    core.DefaultAttackPowerPerDPS,
+@@ -103,6 +119,10 @@ func (druid *Druid) GetDynamicPredStrikeStats() stats.Stats {
+ }
+ 
+ func (druid *Druid) registerCatFormSpell() {
++	// Learned at 20: before that there is no form and the druid fights in caster form.
++	if druid.Level < CatFormLevel {
++		return
++	}
+ 	actionID := core.ActionID{SpellID: 768}
+ 
+ 	statBonus := druid.GetFormShiftStats().Add(stats.Stats{
+@@ -296,17 +316,44 @@ func (druid *Druid) furorShiftEnergy(sim *core.Simulation) float64 {
+ 
+ // Dire Bear Form: 180 attack power, 1240 health, 360% more armor from items and
+ // 50% more threat in Forever (30% in Classic). Rage replaces mana while it lasts.
++// These are the level 60 values; registerBearFormSpell takes the form the level has.
+ const BearFormArmorMultiplier = 4.6
+ const BearFormThreatMultiplier = 1.5
+ 
++// bearFormBonuses is the health and the armor multiplier of the bear form the level has, from the
++// form's passive in the client tables: Bear Form (10 to 39) is 180% more armor from items and 20
++// health plus 18 a level above 10; Dire Bear Form (from 40) is 360% and 600 health plus 32 a level
++// above 40, which is the 1240 and 4.6 above at 60.
++func (druid *Druid) bearFormBonuses() (health float64, armorMultiplier float64) {
++	passive := rankFor("dire_bear_form_passive", druid.Level)
++	if passive == nil {
++		passive = rankFor("bear_form_passive", druid.Level)
++	}
++	if passive == nil {
++		return 1240, BearFormArmorMultiplier
++	}
++	healthEffect := passive.Effects[2]
++	health = healthEffect.BasePoints + healthEffect.PerLevel*float64(druid.Level-passive.Level)
++	return health, 1 + passive.Points(1)/100
++}
++
+ func (druid *Druid) registerBearFormSpell() {
++	// Learned at 10: before that there is no form and the druid fights in caster form.
++	if druid.Level < BearFormLevel {
++		return
++	}
++	// Bear Form until Dire Bear Form replaces it at 40.
+ 	actionID := core.ActionID{SpellID: 9634}
++	if druid.Level < DireBearFormLevel {
++		actionID = core.ActionID{SpellID: 5487}
++	}
++	formHealth, formArmorMultiplier := druid.bearFormBonuses()
+ 	threatMultiplier := core.TernaryFloat64(druid.Env.IsForever(), BearFormThreatMultiplier, 1.3)
+ 	healthMetrics := druid.NewHealthMetrics(actionID)
+ 
+ 	statBonus := druid.GetFormShiftStats().Add(stats.Stats{
+ 		stats.AttackPower: 3 * float64(druid.Level),
+-		stats.Health:      1240,
++		stats.Health:      formHealth,
+ 	})
+ 
+ 	feralApDep := druid.NewDynamicStatDependency(stats.FeralAttackPower, stats.AttackPower, 1)
+@@ -343,7 +390,7 @@ func (druid *Druid) registerBearFormSpell() {
+ 			predBonus = druid.GetDynamicPredStrikeStats()
+ 			druid.AddStatsDynamic(sim, predBonus)
+ 			druid.AddStatsDynamic(sim, statBonus)
+-			druid.ApplyDynamicEquipScaling(sim, stats.Armor, BearFormArmorMultiplier)
++			druid.ApplyDynamicEquipScaling(sim, stats.Armor, formArmorMultiplier)
+ 			druid.EnableDynamicStatDep(sim, feralApDep)
+ 
+ 			if hotwDep != nil {
+@@ -377,7 +424,7 @@ func (druid *Druid) registerBearFormSpell() {
+ 
+ 			druid.AddStatsDynamic(sim, predBonus.Invert())
+ 			druid.AddStatsDynamic(sim, statBonus.Invert())
+-			druid.RemoveDynamicEquipScaling(sim, stats.Armor, BearFormArmorMultiplier)
++			druid.RemoveDynamicEquipScaling(sim, stats.Armor, formArmorMultiplier)
+ 			druid.DisableDynamicStatDep(sim, feralApDep)
+ 
+ 			if hotwDep != nil {
+@@ -397,13 +444,18 @@ func (druid *Druid) registerBearFormSpell() {
+ 				druid.AutoAttacks.EnableAutoSwing(sim)
+ 				druid.manageCooldownsEnabled()
+ 				druid.UpdateManaRegenRates()
+-				druid.EnrageAura.Deactivate(sim)
+-				druid.MaulQueueAura.Deactivate(sim)
++				// Enrage is learned at 12 and Maul at 10; either may be absent.
++				if druid.EnrageAura != nil {
++					druid.EnrageAura.Deactivate(sim)
++				}
++				if druid.MaulQueueAura != nil {
++					druid.MaulQueueAura.Deactivate(sim)
++				}
+ 			}
+ 		},
+ 	})
+ 
+-	druid.attachThickHide(druid.BearFormAura, BearFormArmorMultiplier)
++	druid.attachThickHide(druid.BearFormAura, formArmorMultiplier)
+ 	rageMetrics := druid.NewRageMetrics(actionID)
+ 
+ 	// The Bear half of Furor is the Classic one, a chance at 10 Rage on the shift.
+diff --git a/sim/druid/forms_test.go b/sim/druid/forms_test.go
+index 888d148..470e08b 100644
+--- a/sim/druid/forms_test.go
++++ b/sim/druid/forms_test.go
+@@ -10,6 +10,7 @@ import (
+ 
+ func TestClassicFormWeaponsRemainFixed(t *testing.T) {
+ 	d := &Druid{}
++	d.Level = core.CharacterMaxLevel
+ 	d.Env = &core.Environment{Ruleset: proto.Ruleset_RulesetClassic}
+ 	d.Equipment[proto.ItemSlot_ItemSlotMainHand] = core.Item{ID: 1, WeaponType: proto.WeaponType_WeaponTypeStaff, SwingSpeed: 3, WeaponDamageMin: 120, WeaponDamageMax: 180}
+ 	cat, bear := d.GetCatWeapon(), d.GetBearWeapon()
+diff --git a/sim/druid/frenzied_regeneration.go b/sim/druid/frenzied_regeneration.go
+index 1f6356c..5b90b74 100644
+--- a/sim/druid/frenzied_regeneration.go
++++ b/sim/druid/frenzied_regeneration.go
+@@ -14,11 +14,12 @@ var FrenziedRegenerationLevel = [FrenziedRegenerationRanks + 1]int{0, 36, 46, 56
+ 
+ // Converts up to 10 Rage per second into health for 10 sec.
+ func (druid *Druid) registerFrenziedRegenerationCD() {
+-	rank := map[int32]int{
+-		40: 1,
+-		50: 2,
+-		60: 3,
+-	}[druid.Level]
++	rank := 0
++	for candidate := 1; candidate <= FrenziedRegenerationRanks; candidate++ {
++		if int(druid.Level) >= FrenziedRegenerationLevel[candidate] {
++			rank = candidate
++		}
++	}
+ 	if rank == 0 {
+ 		return
+ 	}
+diff --git a/sim/druid/lacerate.go b/sim/druid/lacerate.go
+index 3943f21..a6ccf65 100644
+--- a/sim/druid/lacerate.go
++++ b/sim/druid/lacerate.go
+@@ -11,13 +11,30 @@ const LacerateMaxStacks int32 = 5
+ // Forever trains Lacerate at 42, 50 and 58 (414644, 1235826, 1235827). Beta client 1.60.1.69893: 15 Rage, 10% weapon
+ // damage per existing stack on the hit (Sept 30 class deep dive), and a bleed of 10 / 12 / 15 a tick per stack over 15 sec that no longer scales with
+ // attack power. The client does not carry threat, so the 3.33x is still Season of Discovery's.
++//
++// The client tables also carry two lower ranks, learned at 25 (1328617) and 34 (1328616) for 4 and 6 a
++// tick. From 42 the three ranks above stay under the one id the presets name, so the action ids are
++// these and only the tick damage follows the client rank.
++var lacerateSpellId = [...]int32{0, 1328617, 1328616, 414644}
++var lacerateLevel = [...]int{0, 25, 34, 42}
++
+ func (druid *Druid) registerLacerateSpell() {
+-	druid.registerLacerateBleedSpell()
++	rankInfo := rankFor("lacerate", druid.Level)
++	if rankInfo == nil {
++		return
++	}
++	spellID := lacerateSpellId[1]
++	for rank := 1; rank < len(lacerateLevel); rank++ {
++		if int(druid.Level) >= lacerateLevel[rank] {
++			spellID = lacerateSpellId[rank]
++		}
++	}
++	druid.registerLacerateBleedSpell(rankInfo.Points(0))
+ 	ursineTwins := druid.Ranged().EffectID() == IdolOfTheUrsineTwins
+ 
+ 	druid.Lacerate = druid.RegisterSpell(Bear, core.SpellConfig{
+ 		SpellCode:   SpellCode_DruidLacerate,
+-		ActionID:    core.ActionID{SpellID: 414644},
++		ActionID:    core.ActionID{SpellID: spellID},
+ 		SpellSchool: core.SpellSchoolPhysical,
+ 		DefenseType: core.DefenseTypeMelee,
+ 		ProcMask:    core.ProcMaskMeleeMHSpecial,
+@@ -60,13 +77,7 @@ func (druid *Druid) registerLacerateSpell() {
+ 	})
+ }
+ 
+-func (druid *Druid) registerLacerateBleedSpell() {
+-	tickDamage := 10.0
+-	if druid.Level >= 58 {
+-		tickDamage = 15
+-	} else if druid.Level >= 50 {
+-		tickDamage = 12
+-	}
++func (druid *Druid) registerLacerateBleedSpell(tickDamage float64) {
+ 
+ 	druid.LacerateBleed = druid.RegisterSpell(Bear, core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: 414647},
+diff --git a/sim/druid/maul.go b/sim/druid/maul.go
+index 05cb1bb..5ec894b 100644
+--- a/sim/druid/maul.go
++++ b/sim/druid/maul.go
+@@ -4,25 +4,18 @@ import (
+ 	"github.com/wowsims/classic/sim/core"
+ )
+ 
+-const MaulRanks = 7
+-
+-var MaulSpellId = [MaulRanks + 1]int32{0, 6807, 6808, 6809, 8972, 9745, 9880, 9881}
+-var MaulBaseDamage = [MaulRanks + 1]float64{0, 18, 27, 37, 49, 71, 101, 128}
+-var MaulLevel = [MaulRanks + 1]int{0, 10, 18, 26, 34, 42, 50, 58}
+-
+ // Maul replaces the next melee swing, so it is queued through a separate APL spell
+ // and fired from the swing itself.
+ func (druid *Druid) registerMaulSpell() {
+-	rank := map[int32]int{
+-		25: 2,
+-		40: 4,
+-		50: 6,
+-		60: 7,
+-	}[druid.Level]
++	// The rank the level has learned (7 ranks, 10 to 58): effect 0 is the bonus damage.
++	rankInfo, rank := druid.learnedRank("maul")
++	if rankInfo == nil {
++		return
++	}
+ 
+-	level := MaulLevel[rank]
+-	spellID := MaulSpellId[rank]
+-	baseDamage := MaulBaseDamage[rank]
++	level := int(rankInfo.Level)
++	spellID := rankInfo.SpellID
++	baseDamage := rankInfo.Points(0)
+ 
+ 	rageCost := 15 - float64(druid.Talents.Ferocity)
+ 
+@@ -87,7 +80,7 @@ func (druid *Druid) registerMaulSpell() {
+ 
+ // Swaps the queued Maul in for the regular swing while there is rage to pay for it.
+ func (druid *Druid) MaulReplaceMH(sim *core.Simulation, mhSwingSpell *core.Spell) *core.Spell {
+-	if !druid.MaulQueueAura.IsActive() {
++	if druid.Maul == nil || !druid.MaulQueueAura.IsActive() {
+ 		return mhSwingSpell
+ 	}
+ 
+diff --git a/sim/druid/shred.go b/sim/druid/shred.go
+index 6fde146..56d3c9f 100644
+--- a/sim/druid/shred.go
++++ b/sim/druid/shred.go
+@@ -9,21 +9,16 @@ import (
+ func (druid *Druid) registerShredSpell() {
+ 	// Beta client 1.60.1.69893: 155% weapon damage, down from Classic's 225%, with the same flat bonus per rank.
+ 	damageMultiplier := 1.55
+-	flatDamageBonus := map[int32]float64{
+-		25: 24,
+-		40: 44,
+-		50: 64,
+-		60: 80,
+-	}[druid.Level]
++	// The rank the level has learned (5 ranks, 20 to 54): effect 0 is the flat bonus.
++	rankInfo := rankFor("shred", druid.Level)
++	if rankInfo == nil {
++		return
++	}
++	flatDamageBonus := rankInfo.Points(0)
+ 
+ 	druid.Shred = druid.RegisterSpell(Cat, core.SpellConfig{
+-		SpellCode: SpellCode_DruidShred,
+-		ActionID: core.ActionID{SpellID: map[int32]int32{
+-			25: 5221,
+-			40: 8992,
+-			50: 9829,
+-			60: 9830,
+-		}[druid.Level]},
++		SpellCode:   SpellCode_DruidShred,
++		ActionID:    core.ActionID{SpellID: rankInfo.SpellID},
+ 		SpellSchool: core.SpellSchoolPhysical,
+ 		DefenseType: core.DefenseTypeMelee,
+ 		ProcMask:    core.ProcMaskMeleeMHSpecial,
+diff --git a/sim/druid/swipe.go b/sim/druid/swipe.go
+index 2e4086b..f021a2c 100644
+--- a/sim/druid/swipe.go
++++ b/sim/druid/swipe.go
+@@ -4,27 +4,20 @@ import (
+ 	"github.com/wowsims/classic/sim/core"
+ )
+ 
+-const SwipeRanks = 5
+-
+-var SwipeSpellId = [SwipeRanks + 1]int32{0, 779, 780, 769, 9754, 9908}
+-var SwipeBaseDamage = [SwipeRanks + 1]float64{0, 18, 25, 36, 60, 83}
+-var SwipeLevel = [SwipeRanks + 1]int{0, 16, 24, 34, 44, 54}
+-
+ // See https://www.wowhead.com/classic/spell=436895/s03-tuning-and-overrides-passive-druid
+ // Modifies Threat +101%:
+ const SwipeThreatMultiplier = 2.0
+ 
+ func (druid *Druid) registerSwipeBearSpell() {
+-	rank := map[int32]int{
+-		25: 2,
+-		40: 3,
+-		50: 4,
+-		60: 5,
+-	}[druid.Level]
++	// The rank the level has learned (5 ranks, 16 to 54): effect 0 is the damage.
++	rankInfo, rank := druid.learnedRank("swipe")
++	if rankInfo == nil {
++		return
++	}
+ 
+-	level := SwipeLevel[rank]
+-	spellID := SwipeSpellId[rank]
+-	baseDamage := SwipeBaseDamage[rank]
++	level := int(rankInfo.Level)
++	spellID := rankInfo.SpellID
++	baseDamage := rankInfo.Points(0)
+ 
+ 	rageCost := 20 - float64(druid.Talents.Ferocity)
+ 	numHits := min(3, druid.Env.GetNumTargets())
+diff --git a/sim/druid/tank/tank.go b/sim/druid/tank/tank.go
+index f76a61c..da0f3bd 100644
+--- a/sim/druid/tank/tank.go
++++ b/sim/druid/tank/tank.go
+@@ -75,6 +75,8 @@ func (bear *FeralTankDruid) Initialize() {
+ func (bear *FeralTankDruid) Reset(sim *core.Simulation) {
+ 	bear.Druid.Reset(sim)
+ 	bear.Druid.CancelShapeshift(sim)
+-	bear.BearFormAura.Activate(sim)
++	if bear.BearFormAura != nil { // learned at 10
++		bear.BearFormAura.Activate(sim)
++	}
+ 	bear.Druid.PseudoStats.Stunned = false
+ }
+diff --git a/sim/druid/tigers_fury.go b/sim/druid/tigers_fury.go
+index a9ac6f1..79714a7 100644
+--- a/sim/druid/tigers_fury.go
++++ b/sim/druid/tigers_fury.go
+@@ -8,19 +8,23 @@ import (
+ )
+ 
+ func (druid *Druid) registerTigersFurySpell() {
+-	actionID := core.ActionID{SpellID: map[int32]int32{
+-		25: 5217,
+-		40: 6793,
+-		50: 9845,
+-		60: 9846,
+-	}[druid.Level]}
+-
+-	dmgBonus := map[int32]float64{
+-		25: 10.0,
+-		40: 20.0,
+-		50: 30.0,
+-		60: 40.0,
+-	}[druid.Level]
++	// Tiger's Fury is not in the Forever client's class spell tables (level_ranks_generated.go
++	// has no row for it; Forever registers Shifting Power instead), so the ranks are Classic's:
++	// learned at 24, 32, 40 and 48 for 10, 20, 30 and 40 damage.
++	var spellID int32
++	var dmgBonus float64
++	for _, rank := range []struct {
++		level, id int32
++		bonus     float64
++	}{{24, 5217, 10}, {32, 6793, 20}, {40, 9845, 30}, {48, 9846, 40}} {
++		if druid.Level >= rank.level {
++			spellID, dmgBonus = rank.id, rank.bonus
++		}
++	}
++	if spellID == 0 {
++		return
++	}
++	actionID := core.ActionID{SpellID: spellID}
+ 
+ 	// Forever pays a share of Physical damage rather than Classic's flat amount, so it
+ 	// scales with the cat's weapon and attack power instead of fading as gear improves.
+diff --git a/sim/hunter/hunter.go b/sim/hunter/hunter.go
+index 0dd6c1e..56c4a58 100644
+--- a/sim/hunter/hunter.go
++++ b/sim/hunter/hunter.go
+@@ -339,8 +339,8 @@ func NewHunter(character *core.Character, options *proto.Player) *Hunter {
+ 	hunter.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+ 	hunter.AddStatDependency(stats.Agility, stats.AttackPower, 1)
+ 	hunter.AddStatDependency(stats.Agility, stats.RangedAttackPower, 2)
+-	hunter.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
+-	hunter.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[character.Class]*core.SpellCritRatingPerCritChance)
++	hunter.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(character.Class, character.Level)*core.CritRatingPerCritChance)
++	hunter.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(character.Class, character.Level)*core.SpellCritRatingPerCritChance)
+ 
+ 	guardians.ConstructGuardians(&hunter.Character)
+ 
+diff --git a/sim/hunter/lacerating_strikes.go b/sim/hunter/lacerating_strikes.go
+index 60d0bc8..58035f5 100644
+--- a/sim/hunter/lacerating_strikes.go
++++ b/sim/hunter/lacerating_strikes.go
+@@ -9,7 +9,7 @@ import (
+ // The bleed lasts 21 sec and carries 40% of the Mongoose Bite that applied it. The tooltip gives
+ // no tick interval, so it ticks every 3 sec like every other bleed.
+ func (hunter *Hunter) registerLaceratingStrikesSpell() {
+-	if !hunter.Talents.LaceratingStrikes {
++	if !hunter.Talents.LaceratingStrikes || hunter.MongooseBite == nil {
+ 		return
+ 	}
+ 
+diff --git a/sim/hunter/mongoose_bite.go b/sim/hunter/mongoose_bite.go
+index 799f728..b2cc617 100644
+--- a/sim/hunter/mongoose_bite.go
++++ b/sim/hunter/mongoose_bite.go
+@@ -6,11 +6,12 @@ import (
+ 	"github.com/wowsims/classic/sim/core"
+ )
+ 
+-func (hunter *Hunter) getMongooseBiteConfig(rank int) core.SpellConfig {
+-	spellId := [5]int32{0, 1495, 14269, 14270, 14271}[rank]
+-	baseDamage := [5]float64{0, 15, 22, 37, 57}[rank]
+-	manaCost := [5]float64{0, 30, 40, 50, 65}[rank]
+-	level := [5]int{0, 16, 30, 44, 58}[rank]
++func (hunter *Hunter) getMongooseBiteConfig(spellRank *core.SpellRank) core.SpellConfig {
++	rank := rankNumber("mongoose_bite", spellRank)
++	spellId := spellRank.SpellID
++	baseDamage := spellRank.Points(0)
++	manaCost := spellRank.Cost
++	level := int(spellRank.Level)
+ 
+ 	spellConfig := core.SpellConfig{
+ 		SpellCode:     SpellCode_HunterMongooseBite,
+@@ -67,6 +68,12 @@ func (hunter *Hunter) getMongooseBiteConfig(rank int) core.SpellConfig {
+ }
+ 
+ func (hunter *Hunter) registerMongooseBiteSpell() {
++	// The rank the hunter's level has learned (client spell tables); none before level 16.
++	rank := rankFor("mongoose_bite", hunter.Level)
++	if rank == nil {
++		return
++	}
++
+ 	// Aura is only used as a pre-requisite for Mongoose Bite
+ 	hunter.DefensiveState = hunter.RegisterAura(core.Aura{
+ 		Label:    "Defensive State",
+@@ -82,13 +89,6 @@ func (hunter *Hunter) registerMongooseBiteSpell() {
+ 		},
+ 	}))
+ 
+-	rank := map[int32]int{
+-		25: 1,
+-		40: 2,
+-		50: 3,
+-		60: 4,
+-	}[hunter.Level]
+-
+ 	config := hunter.getMongooseBiteConfig(rank)
+ 	hunter.MongooseBite = hunter.GetOrRegisterSpell(config)
+ }
+diff --git a/sim/hunter/pet.go b/sim/hunter/pet.go
+index 101cb4c..e3d5012 100644
+--- a/sim/hunter/pet.go
++++ b/sim/hunter/pet.go
+@@ -61,16 +61,30 @@ func (hunter *Hunter) NewHunterPet() *HunterPet {
+ 		attackSpeed = 2.5
+ 	}
+ 
+-	baseMinDamage = 18.17 * attackSpeed
+-	baseMaxDamage = 27.66 * attackSpeed
++	// The pet's body by level (2026-11-23). Attributes follow the Classic server table
++	// (core.ClassicPetLevelStats entry 1, vmangos pet_levelstats): the simulator's level-60
++	// strength, agility, intellect and spirit are that table's level-60 row, so each attribute
++	// is the level-60 value times the table's ratio for the level, and level 60 is unchanged.
++	// Base hit damage is linear in level, as in Classic (a hunter pet's swing is level - level/4
++	// to level + level/4), anchored on the simulator's level-60 damage. Whether WoW Forever
++	// changed either curve has not been measured.
++	levelScale := hunterPetLevelScale(hunter.Level)
++	byTable := func(pick func(core.PetLevelStat) float64) float64 {
++		return core.PetLevelRatio(1, hunter.Level, 60, pick)
++	}
+ 
+-	hunterPetBaseStats = stats.Stats{
+-		stats.Strength:  136,
+-		stats.Agility:   100,
+-		stats.Stamina:   274,
+-		stats.Intellect: 50,
+-		stats.Spirit:    80,
++	baseMinDamage = 18.17 * attackSpeed * levelScale
++	baseMaxDamage = 27.66 * attackSpeed * levelScale
+ 
++	hunterPetBaseStats = stats.Stats{
++		stats.Strength:  136 * byTable(func(s core.PetLevelStat) float64 { return s.Strength }),
++		stats.Agility:   100 * byTable(func(s core.PetLevelStat) float64 { return s.Agility }),
++		stats.Stamina:   274 * byTable(func(s core.PetLevelStat) float64 { return s.Stamina }),
++		stats.Intellect: 50 * byTable(func(s core.PetLevelStat) float64 { return s.Intellect }),
++		stats.Spirit:    80 * byTable(func(s core.PetLevelStat) float64 { return s.Spirit }),
++
++		// Classic: attack power is twice strength less 20 at every level (the table's strength is
++		// 22 at level 1, so it never goes negative).
+ 		stats.AttackPower: -20,
+ 	}
+ 
+@@ -114,6 +128,15 @@ func (hunter *Hunter) NewHunterPet() *HunterPet {
+ 	return hp
+ }
+ 
++// hunterPetLevelScale is the share of the level-60 base hit damage a pet of this level has:
++// level / 60, the shape of Classic's own formula (see NewHunterPet).
++func hunterPetLevelScale(level int32) float64 {
++	if level >= 60 {
++		return 1
++	}
++	return float64(max(level, 1)) / 60
++}
++
+ func (hp *HunterPet) GetPet() *core.Pet {
+ 	return &hp.Pet
+ }
+@@ -136,8 +159,9 @@ func (hp *HunterPet) Initialize() {
+ 		// Forever keeps the selected pet's swing speed, but does not reduce
+ 		// its base hit damage for a faster pet.
+ 		weapon := *hp.AutoAttacks.MH()
+-		weapon.BaseDamageMin = 18.17 * 2
+-		weapon.BaseDamageMax = 27.66 * 2
++		levelScale := hunterPetLevelScale(hp.hunterOwner.Level)
++		weapon.BaseDamageMin = 18.17 * 2 * levelScale
++		weapon.BaseDamageMax = 27.66 * 2 * levelScale
+ 		weapon.APScalingSpeed = 2
+ 		hp.AutoAttacks.SetMH(weapon)
+ 	}
+@@ -187,6 +211,14 @@ func (hp *HunterPet) ExecuteCustomRotation(sim *core.Simulation) {
+ 		return true
+ 	}
+ 
++	if hp.focusDump == nil && hp.specialAbility == nil {
++		// Nothing learned at this pet level (or no ability for this family): auto attacks only.
++		if hp.GCD.IsReady(sim) {
++			hp.WaitUntil(sim, sim.CurrentTime+time.Millisecond*500)
++		}
++		return
++	}
++
+ 	if hp.focusDump == nil {
+ 		if !tryCast(hp.specialAbility) && hp.GCD.IsReady(sim) {
+ 			hp.WaitUntil(sim, sim.CurrentTime+time.Millisecond*500)
+diff --git a/sim/hunter/pet_abilities.go b/sim/hunter/pet_abilities.go
+index c3c082b..c2e58b6 100644
+--- a/sim/hunter/pet_abilities.go
++++ b/sim/hunter/pet_abilities.go
+@@ -45,26 +45,13 @@ func (hp *HunterPet) NewPetAbility(abilityType PetAbilityType, isPrimary bool) *
+ }
+ 
+ func (hp *HunterPet) newClaw() *core.Spell {
+-	baseDamageMin := map[int32]float64{
+-		25: 16,
+-		40: 26,
+-		50: 35,
+-		60: 43,
+-	}[hp.Owner.Level]
+-
+-	baseDamageMax := map[int32]float64{
+-		25: 22,
+-		40: 36,
+-		50: 49,
+-		60: 59,
+-	}[hp.Owner.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 16830,
+-		40: 16832,
+-		50: 3010,
+-		60: 3009,
+-	}[hp.Owner.Level]
++	// The rank a pet of this level can have (client spell tables), at every level 1-60.
++	rank := petRankFor("claw", hp.Level)
++	if rank == nil {
++		return nil
++	}
++	baseDamageMin, baseDamageMax := petRankRoll(rank)
++	spellID := rank.SpellID
+ 
+ 	return hp.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+@@ -96,26 +83,13 @@ func (hp *HunterPet) newClaw() *core.Spell {
+ }
+ 
+ func (hp *HunterPet) newBite() *core.Spell {
+-	baseDamageMin := map[int32]float64{
+-		25: 31,
+-		40: 49,
+-		50: 66,
+-		60: 81,
+-	}[hp.Owner.Level]
+-
+-	baseDamageMax := map[int32]float64{
+-		25: 37,
+-		40: 59,
+-		50: 80,
+-		60: 99, // SpellEffect 17261: base 90, variance .2 => 81–99.
+-	}[hp.Owner.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 17257,
+-		40: 17259,
+-		50: 17260,
+-		60: 17261,
+-	}[hp.Owner.Level]
++	// The rank a pet of this level can have (client spell tables), at every level 1-60.
++	rank := petRankFor("bite", hp.Level)
++	if rank == nil {
++		return nil
++	}
++	baseDamageMin, baseDamageMax := petRankRoll(rank)
++	spellID := rank.SpellID
+ 
+ 	return hp.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+@@ -152,26 +126,14 @@ func (hp *HunterPet) newBite() *core.Spell {
+ 
+ // Beta client: every rank lower, and no more growth per level.
+ func (hp *HunterPet) newLightningBreath() *core.Spell {
+-	baseDamageMin := map[int32]float64{
+-		25: 32,
+-		40: 32,
+-		50: 71,
+-		60: 86,
+-	}[hp.Owner.Level]
+-
+-	baseDamageMax := map[int32]float64{
+-		25: 36,
+-		40: 36,
+-		50: 81,
+-		60: 98,
+-	}[hp.Owner.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 25009,
+-		40: 25009, // rank 4 not available in SoD Phase 2
+-		50: 25011,
+-		60: 25012,
+-	}[hp.Owner.Level]
++	// The rank a pet of this level can have (client spell tables), at every level 1-60.
++	// Rank 4 is learned at pet level 36; the old bracket table kept rank 3 at level 40.
++	rank := petRankFor("lightning_breath", hp.Level)
++	if rank == nil {
++		return nil
++	}
++	baseDamageMin, baseDamageMax := petRankRoll(rank)
++	spellID := rank.SpellID
+ 
+ 	return hp.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+@@ -209,26 +171,17 @@ func (hp *HunterPet) newScreech() *core.Spell {
+ 	if hp.Env.IsForever() {
+ 		return hp.newDemoralizingScreech()
+ 	}
+-	baseDamageMin := map[int32]float64{
+-		25: 9,
+-		40: 9,
+-		50: 21,
+-		60: 24,
+-	}[hp.Owner.Level]
+-
+-	baseDamageMax := map[int32]float64{
+-		25: 13,
+-		40: 13,
+-		50: 27,
+-		60: 42,
+-	}[hp.Owner.Level]
+-
+-	spellID := map[int32]int32{
+-		15: 24580,
+-		40: 24580,
+-		50: 24581,
+-		60: 24582,
+-	}[hp.Owner.Level]
++	// Classic ruleset only (Forever uses newDemoralizingScreech, which is level-aware). These are
++	// the old bracket rows: the highest bracket at or below the pet's level, the lowest below 25.
++	bracket := int32(25)
++	for _, level := range []int32{40, 50, 60} {
++		if hp.Level >= level {
++			bracket = level
++		}
++	}
++	baseDamageMin := map[int32]float64{25: 9, 40: 9, 50: 21, 60: 24}[bracket]
++	baseDamageMax := map[int32]float64{25: 13, 40: 13, 50: 27, 60: 42}[bracket]
++	spellID := map[int32]int32{25: 24580, 40: 24580, 50: 24581, 60: 24582}[bracket]
+ 
+ 	return hp.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+@@ -310,19 +263,14 @@ func (hp *HunterPet) newScreech() *core.Spell {
+ // }
+ 
+ func (hp *HunterPet) newScorpidPoison() *core.Spell {
+-	// Beta client: 2/4/5 a tick, down from 3/6/8.
+-	baseDamageTick := map[int32]float64{
+-		25: 2,
+-		40: 4,
+-		50: 4,
+-		60: 5,
+-	}[hp.Owner.Level]
+-	spellID := map[int32]int32{
+-		25: 24583,
+-		40: 24586,
+-		50: 24586,
+-		60: 24587,
+-	}[hp.Owner.Level]
++	// Beta client: 1/2/4/5 a tick by rank. The rank a pet of this level can have (client spell
++	// tables); none before pet level 8.
++	rank := petRankFor("scorpid_poison", hp.Level)
++	if rank == nil {
++		return nil
++	}
++	baseDamageTick := rank.Points(1)
++	spellID := rank.SpellID
+ 
+ 	return hp.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+diff --git a/sim/hunter/raptor_strike.go b/sim/hunter/raptor_strike.go
+index a930851..176206f 100644
+--- a/sim/hunter/raptor_strike.go
++++ b/sim/hunter/raptor_strike.go
+@@ -8,11 +8,7 @@ import (
+ 
+ const RaptorStrikeRanks = 8
+ 
+-var RaptorStrikeSpellId = [RaptorStrikeRanks + 1]int32{0, 2973, 14260, 14261, 14262, 14263, 14264, 14265, 14266}
+ var RaptorStrikeSpellIdMeleeSpecialist = [RaptorStrikeRanks + 1]int32{0, 415335, 415336, 415337, 415338, 415340, 415341, 415342, 415343}
+-var RaptorStrikeBaseDamage = [RaptorStrikeRanks + 1]float64{0, 5, 11, 21, 30, 35, 40, 55, 70}
+-var RaptorStrikeManaCost = [RaptorStrikeRanks + 1]float64{0, 10, 25, 35, 45, 55, 70, 85, 100}
+-var RaptorStrikeLevel = [RaptorStrikeRanks + 1]int{0, 1, 8, 16, 24, 32, 40, 48, 56}
+ 
+ // Returns true if the regular melee swing should be used, false otherwise.
+ func (hunter *Hunter) TryRaptorStrike(sim *core.Simulation, mhSwingSpell *core.Spell) *core.Spell {
+@@ -22,12 +18,13 @@ func (hunter *Hunter) TryRaptorStrike(sim *core.Simulation, mhSwingSpell *core.S
+ 	return mhSwingSpell
+ }
+ 
+-func (hunter *Hunter) getRaptorStrikeConfig(rank int) core.SpellConfig {
+-	spellID := RaptorStrikeSpellId[rank]
+-	manaCost := RaptorStrikeManaCost[rank]
+-	level := RaptorStrikeLevel[rank]
++func (hunter *Hunter) getRaptorStrikeConfig(spellRank *core.SpellRank) core.SpellConfig {
++	rank := rankNumber("raptor_strike", spellRank)
++	spellID := spellRank.SpellID
++	manaCost := spellRank.Cost
++	level := int(spellRank.Level)
+ 
+-	hunter.RaptorStrikeHit = hunter.newRaptorStrikeHitSpell(rank)
++	hunter.RaptorStrikeHit = hunter.newRaptorStrikeHitSpell(spellRank)
+ 
+ 	spellConfig := core.SpellConfig{
+ 		SpellCode:     SpellCode_HunterRaptorStrike,
+@@ -65,9 +62,9 @@ func (hunter *Hunter) getRaptorStrikeConfig(rank int) core.SpellConfig {
+ 	return spellConfig
+ }
+ 
+-func (hunter *Hunter) newRaptorStrikeHitSpell(rank int) *core.Spell {
+-	spellID := RaptorStrikeSpellId[rank]
+-	baseDamage := RaptorStrikeBaseDamage[rank]
++func (hunter *Hunter) newRaptorStrikeHitSpell(spellRank *core.SpellRank) *core.Spell {
++	spellID := spellRank.SpellID
++	baseDamage := spellRank.Points(0)
+ 
+ 	return hunter.RegisterSpell(core.SpellConfig{
+ 		SpellCode:   SpellCode_HunterRaptorStrikeHit,
+@@ -136,12 +133,11 @@ func (hunter *Hunter) makeQueueSpellsAndAura() *core.Spell {
+ }
+ 
+ func (hunter *Hunter) registerRaptorStrikeSpell() {
+-	rank := map[int32]int{
+-		25: 4,
+-		40: 6,
+-		50: 7,
+-		60: 8,
+-	}[hunter.Level]
++	// The rank the hunter's level has learned (client spell tables), at every level 1-60.
++	rank := rankFor("raptor_strike", hunter.Level)
++	if rank == nil {
++		return
++	}
+ 
+ 	config := hunter.getRaptorStrikeConfig(rank)
+ 	hunter.RaptorStrike = hunter.GetOrRegisterSpell(config)
+diff --git a/sim/hunter/wing_clip.go b/sim/hunter/wing_clip.go
+index fa99606..a94c4f5 100644
+--- a/sim/hunter/wing_clip.go
++++ b/sim/hunter/wing_clip.go
+@@ -6,11 +6,14 @@ import (
+ 	"github.com/wowsims/classic/sim/core"
+ )
+ 
+-func (hunter *Hunter) getWingClipConfig(rank int) core.SpellConfig {
+-	spellId := [4]int32{0, 2974, 14267, 14268}[rank]
+-	baseDamage := [4]float64{0, 5, 25, 50}[rank]
+-	manaCost := [4]float64{0, 40, 60, 80}[rank]
+-	level := [4]int{0, 12, 38, 60}[rank]
++func (hunter *Hunter) getWingClipConfig(spellRank *core.SpellRank) core.SpellConfig {
++	rank := rankNumber("wing_clip", spellRank)
++	spellId := spellRank.SpellID
++	// Client effects: 0 is the movement slow (a negative percent), 1 the damage.
++	slow := -spellRank.Points(0) / 100
++	baseDamage := spellRank.Points(1)
++	manaCost := spellRank.Cost
++	level := int(spellRank.Level)
+ 
+ 	return core.SpellConfig{
+ 		SpellCode:     SpellCode_HunterWingClip,
+@@ -43,7 +46,7 @@ func (hunter *Hunter) getWingClipConfig(rank int) core.SpellConfig {
+ 		ApplyEffects: func(sim *core.Simulation, target *core.Unit, spell *core.Spell) {
+ 			result := spell.CalcAndDealDamage(sim, target, baseDamage, spell.OutcomeMeleeWeaponSpecialHitAndCrit)
+ 			if hunter.Env.IsForever() && result.Landed() {
+-				hunter.slowTarget(sim, target, spell.SpellID, 10*time.Second, []float64{0, .5, .55, .6}[rank])
++				hunter.slowTarget(sim, target, spell.SpellID, 10*time.Second, slow)
+ 				// Trait134455 / curve82786 is 7/13/20%, not 7/14/21%.
+ 				// The registered level-60 ability is max rank; the server's
+ 				// additional downrank proc penalty is not exported/assumed.
+@@ -56,12 +59,12 @@ func (hunter *Hunter) getWingClipConfig(rank int) core.SpellConfig {
+ }
+ 
+ func (hunter *Hunter) registerWingClipSpell() {
+-	rank := map[int32]int{
+-		25: 1,
+-		40: 2,
+-		50: 3,
+-		60: 3,
+-	}[hunter.Level]
++	// The rank the hunter's level has learned (client spell tables); none before level 12.
++	// Rank 3 is learned at 60, so a level-50 hunter has rank 2 (the old bracket table gave it rank 3).
++	rank := rankFor("wing_clip", hunter.Level)
++	if rank == nil {
++		return
++	}
+ 
+ 	config := hunter.getWingClipConfig(rank)
+ 	hunter.WingClip = hunter.GetOrRegisterSpell(config)
+diff --git a/sim/mage/arcane_blast.go b/sim/mage/arcane_blast.go
+index 9e4d4d2..066b983 100644
+--- a/sim/mage/arcane_blast.go
++++ b/sim/mage/arcane_blast.go
+@@ -19,6 +19,13 @@ func (mage *Mage) registerArcaneBlastSpell() {
+ 	// cost 175%, stacking four times; the buff (400573) lasts 15 sec from its first application and is
+ 	// no longer spent by other spells. 30451 is kept as the action id the APLs already name.
+ 	baseDamage := []float64{218, 254}
++	// LOCAL CHANGE (2026-11-23): the damage of the rank the level has, from the client spell
++	// tables (rank 1 at 20 is about 32, growing half a point a level). The level 60 rank's
++	// 218-254 was used at every level: a level 30 mage hit about seven times too hard.
++	if rank := rankFor("arcane_blast", mage.Level); rank != nil {
++		low, high := rank.DamageRange(0, mage.Level)
++		baseDamage = []float64{low, high}
++	}
+ 	spellCoeff := .429
+ 	baseManaCost := .15
+ 	castTime := time.Millisecond * 1500
+diff --git a/sim/mage/mage.go b/sim/mage/mage.go
+index 2d4282e..76471bc 100644
+--- a/sim/mage/mage.go
++++ b/sim/mage/mage.go
+@@ -171,6 +171,8 @@ func (mage *Mage) ResolveTalentTree() {
+ 	} else {
+ 		core.FillTalentsProto(mage.Talents.ProtoReflect(), mage.talentsString, TalentTreeSizes)
+ 	}
++	// Local addition (sim/core/wand.go): Wand Specialization.
++	mage.WandDamageBonus = core.WandSpecializationBonus(mage.Talents.WandSpecialization)
+ }
+ 
+ func NewMage(character *core.Character, options *proto.Player) *Mage {
+@@ -187,7 +189,7 @@ func NewMage(character *core.Character, options *proto.Player) *Mage {
+ 	mage.EnableManaBar()
+ 
+ 	mage.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	mage.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[mage.Class]*core.SpellCritRatingPerCritChance)
++	mage.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(mage.Class, mage.Level)*core.SpellCritRatingPerCritChance)
+ 
+ 	switch mage.Options.Armor {
+ 	case proto.Mage_Options_NoArmor:
+@@ -205,6 +207,8 @@ func NewMage(character *core.Character, options *proto.Player) *Mage {
+ 	}
+ 
+ 	guardians.ConstructGuardians(&mage.Character)
++	// Local addition: shoot an equipped wand between casts (sim/core/wand.go).
++	mage.EnableWandAutoAttack(mage)
+ 
+ 	return mage
+ }
+diff --git a/sim/paladin/paladin.go b/sim/paladin/paladin.go
+index 99b9e0e..298f098 100644
+--- a/sim/paladin/paladin.go
++++ b/sim/paladin/paladin.go
+@@ -171,9 +171,9 @@ func NewPaladin(character *core.Character, options *proto.Player, paladinOptions
+ 	paladin.PseudoStats.CanParry = true
+ 	paladin.EnableManaBar()
+ 	paladin.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	paladin.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
++	paladin.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(character.Class, character.Level)*core.CritRatingPerCritChance)
+ 	paladin.AddStatDependency(stats.Agility, stats.Dodge, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
+-	paladin.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[character.Class]*core.SpellCritRatingPerCritChance)
++	paladin.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(character.Class, character.Level)*core.SpellCritRatingPerCritChance)
+ 
+ 	// Paladins get 1 block value per 20 str
+ 	paladin.PseudoStats.BlockValuePerStrength = 0.05
+diff --git a/sim/priest/power_word_shield.go b/sim/priest/power_word_shield.go
+index 3e95d26..0409c6d 100644
+--- a/sim/priest/power_word_shield.go
++++ b/sim/priest/power_word_shield.go
+@@ -1,60 +1,67 @@
+ package priest
+ 
+-// func (priest *Priest) registerPowerWordShieldSpell() {
+-// 	coeff := 0.8057
+-
+-// 	wsDuration := time.Second * 15
+-
+-// 	cd := core.Cooldown{}
+-
+-// 	priest.PowerWordShield = priest.RegisterSpell(core.SpellConfig{
+-// 		ActionID:    core.ActionID{SpellID: 48066},
+-// 		SpellSchool: core.SpellSchoolHoly,
+-// 		ProcMask:    core.ProcMaskSpellHealing,
+-// 		Flags:       SpellFlagPriest | core.SpellFlagHelpful | core.SpellFlagAPL,
+-
+-// 		ManaCost: core.ManaCostOptions{
+-// 			BaseCost:   0.23,
+-// 			Multiplier: 1,
+-// 		},
+-// 		Cast: core.CastConfig{
+-// 			DefaultCast: core.Cast{
+-// 				GCD: core.GCDDefault,
+-// 			},
+-// 			CD: cd,
+-// 		},
+-// 		ExtraCastCondition: func(sim *core.Simulation, target *core.Unit) bool {
+-// 			return !priest.WeakenedSouls.Get(target).IsActive()
+-// 		},
+-
+-// 		DamageMultiplier: 1 *
+-// 			(1 + .05*float64(priest.Talents.ImprovedPowerWordShield)) *
+-// 			(1 + .02*float64(priest.Talents.SpiritualHealing)),
+-// 		ThreatMultiplier: 1 - []float64{0, .07, .14, .20}[priest.Talents.SilentResolve],
+-
+-// 		Shield: core.ShieldConfig{
+-// 			Aura: core.Aura{
+-// 				Label:    "Power Word Shield",
+-// 				Duration: time.Second * 30,
+-// 			},
+-// 		},
+-
+-// 		ApplyEffects: func(sim *core.Simulation, target *core.Unit, spell *core.Spell) {
+-// 			shieldAmount := 2230.0 + coeff*spell.HealingPower(target)
+-// 			shield := spell.Shield(target)
+-// 			shield.Apply(sim, shieldAmount)
+-
+-// 			weakenedSoul := priest.WeakenedSouls.Get(target)
+-// 			weakenedSoul.Duration = wsDuration
+-// 			weakenedSoul.Activate(sim)
+-// 		},
+-// 	})
+-
+-// 	priest.WeakenedSouls = priest.NewRaidAuraArray(func(target *core.Unit) *core.Aura {
+-// 		return target.GetOrRegisterAura(core.Aura{
+-// 			Label:    "Weakened Soul",
+-// 			ActionID: core.ActionID{SpellID: 6788},
+-// 			Duration: time.Second * 15,
+-// 		})
+-// 	})
+-// }
++import (
++	"time"
++
++	"github.com/wowsims/classic/sim/core"
++)
++
++// Power Word: Shield.
++//
++// LOCAL ADDITION for levelling analysis (2026-11-23); the upstream version was commented out (a
++// level 80 spell, id 48066). A levelling priest shields before most pulls, and an absorbed hit
++// deals no damage, so it pushes no cast back (applySpellPushback skips a hit whose damage is
++// zero): without the shield every simulated priest took pushback on every hit.
++//
++// From the client spell tables (level_ranks_generated.go): the rank the level has, its absorb
++// (base points plus per-level growth up to the rank's cap, plus 0.1 of healing power), mana
++// cost and 30 s duration. Weakened Soul (6788) lasts 15 s and blocks a second shield. Improved
++// Power Word: Shield adds 5% a point, as in Classic (ASSUMED unchanged in Forever).
++func (priest *Priest) registerPowerWordShieldSpell() {
++	rank := rankFor("power_word_shield", priest.Level)
++	if rank == nil {
++		return
++	}
++	effect := rank.Effects[0]
++	grown := min(priest.Level, max(rank.MaxLevel, rank.Level))
++	absorb := effect.BasePoints + effect.PerLevel*float64(max(0, grown-rank.Level))
++
++	priest.WeakenedSouls = priest.NewRaidAuraArray(func(target *core.Unit) *core.Aura {
++		return target.GetOrRegisterAura(core.Aura{
++			Label:    "Weakened Soul",
++			ActionID: core.ActionID{SpellID: 6788},
++			Duration: time.Second * 15,
++		})
++	})
++
++	spell := priest.RegisterSpell(core.SpellConfig{
++		ActionID:    core.ActionID{SpellID: rank.SpellID},
++		SpellSchool: core.SpellSchoolHoly,
++		ProcMask:    core.ProcMaskSpellHealing,
++		Flags:       SpellFlagPriest | core.SpellFlagHelpful | core.SpellFlagAPL,
++
++		ManaCost: core.ManaCostOptions{FlatCost: rank.Cost},
++		Cast: core.CastConfig{
++			DefaultCast: core.Cast{GCD: core.GCDDefault},
++		},
++		ExtraCastCondition: func(_ *core.Simulation, target *core.Unit) bool {
++			return !priest.WeakenedSouls.Get(target).IsActive()
++		},
++
++		DamageMultiplier: 1 + .05*float64(priest.Talents.ImprovedPowerWordShield),
++		ThreatMultiplier: 1,
++
++		Shield: core.ShieldConfig{
++			Aura: core.Aura{
++				Label:    "Power Word Shield",
++				Duration: time.Duration(rank.DurationMs) * time.Millisecond,
++			},
++		},
++
++		ApplyEffects: func(sim *core.Simulation, target *core.Unit, spell *core.Spell) {
++			spell.Shield(target).Apply(sim, absorb+effect.Coefficient*spell.HealingPower(target))
++			priest.WeakenedSouls.Get(target).Activate(sim)
++		},
++	})
++	priest.PowerWordShield = []*core.Spell{spell}
++}
+diff --git a/sim/priest/priest.go b/sim/priest/priest.go
+index 3ca2afc..4e0d1df 100644
+--- a/sim/priest/priest.go
++++ b/sim/priest/priest.go
+@@ -124,6 +124,8 @@ func (priest *Priest) Initialize() {
+ 	priest.registerHolyNovaSpell()
+ 	priest.registerPenanceSpell()
+ 	priest.registerDarkSacrifice()
++	// Local addition (power_word_shield.go): the shield a levelling priest casts before a pull.
++	priest.registerPowerWordShieldSpell()
+ 
+ 	priest.registerPowerInfusionCD()
+ }
+@@ -142,11 +144,13 @@ func New(character *core.Character, talents string) *Priest {
+ 		Talents:   &proto.PriestTalents{},
+ 	}
+ 	core.FillTalentsProto(priest.Talents.ProtoReflect(), talents, TalentTreeSizes)
++	// Local addition (sim/core/wand.go): Wand Specialization.
++	priest.WandDamageBonus = core.WandSpecializationBonus(priest.Talents.WandSpecialization)
+ 
+ 	priest.EnableManaBar()
+ 
+ 	priest.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	priest.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[priest.Class]*core.SpellCritRatingPerCritChance)
++	priest.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(priest.Class, priest.Level)*core.SpellCritRatingPerCritChance)
+ 
+ 	// Set mana regen to 12.5 + Spirit/4 each 2s tick
+ 	priest.SpiritManaRegenPerSecond = func() float64 {
+diff --git a/sim/priest/shadow/shadow_priest.go b/sim/priest/shadow/shadow_priest.go
+index 1868b56..6b8c4d9 100644
+--- a/sim/priest/shadow/shadow_priest.go
++++ b/sim/priest/shadow/shadow_priest.go
+@@ -34,6 +34,8 @@ func NewShadowPriest(character *core.Character, options *proto.Player) *ShadowPr
+ 		Priest:  basePriest,
+ 		options: shadowOptions.Options,
+ 	}
++	// Local addition: shoot an equipped wand between casts (sim/core/wand.go).
++	spriest.EnableWandAutoAttack(spriest)
+ 
+ 	return spriest
+ }
+diff --git a/sim/priest/smite/smite_priest.go b/sim/priest/smite/smite_priest.go
+index a25bb29..27549f3 100644
+--- a/sim/priest/smite/smite_priest.go
++++ b/sim/priest/smite/smite_priest.go
+@@ -29,10 +29,13 @@ func NewSmitePriest(character *core.Character, options *proto.Player) *SmitePrie
+ 	basePriest.Latency = float64(basePriest.ChannelClipDelay.Milliseconds())
+ 	basePriest.PowerInfusionTarget = smiteOptions.GetOptions().GetPowerInfusionTarget()
+ 
+-	return &SmitePriest{
++	smite := &SmitePriest{
+ 		Priest:  basePriest,
+ 		options: smiteOptions.Options,
+ 	}
++	// Local addition: shoot an equipped wand between casts (sim/core/wand.go).
++	smite.EnableWandAutoAttack(smite)
++	return smite
+ }
+ 
+ type SmitePriest struct {
+diff --git a/sim/rogue/ambush.go b/sim/rogue/ambush.go
+index 852fdda..446c294 100644
+--- a/sim/rogue/ambush.go
++++ b/sim/rogue/ambush.go
+@@ -7,19 +7,12 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerAmbushSpell() {
+-	flatDamageBonus := map[int32]float64{
+-		25: 28,
+-		40: 50,
+-		50: 92,
+-		60: 116,
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 8676,
+-		40: 8725,
+-		50: 11268,
+-		60: 11269,
+-	}[rogue.Level]
++	rank := rogue.learnedRank("ambush")
++	if rank == nil {
++		return
++	}
++	flatDamageBonus := rank.Points(0)
++	spellID := rank.SpellID
+ 
+ 	damageMultiplier := 2.5 * []float64{1, 1.05, 1.1}[rogue.Talents.Opportunity]
+ 
+diff --git a/sim/rogue/backstab.go b/sim/rogue/backstab.go
+index 1d2f152..197794d 100644
+--- a/sim/rogue/backstab.go
++++ b/sim/rogue/backstab.go
+@@ -7,19 +7,12 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerBackstabSpell() {
+-	flatDamageBonus := map[int32]float64{
+-		25: 32,
+-		40: 60,
+-		50: 90,
+-		60: core.TernaryFloat64(core.IncludeAQ, 150, 140),
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 2590,
+-		40: 8721,
+-		50: 11279,
+-		60: core.TernaryInt32(core.IncludeAQ, 25300, 11281),
+-	}[rogue.Level]
++	rank := rogue.learnedRank("backstab")
++	if rank == nil {
++		return
++	}
++	flatDamageBonus := rank.Points(0)
++	spellID := rank.SpellID
+ 
+ 	damageMultiplier := 1.5 *
+ 		[]float64{1, 1.05, 1.1}[rogue.Talents.Opportunity] *
+diff --git a/sim/rogue/eviscerate.go b/sim/rogue/eviscerate.go
+index c3a85cd..7ccadce 100644
+--- a/sim/rogue/eviscerate.go
++++ b/sim/rogue/eviscerate.go
+@@ -7,33 +7,14 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerEviscerate() {
+-	flatDamage := map[int32]float64{
+-		25: 10,
+-		40: 22,
+-		50: 34,
+-		60: core.TernaryFloat64(core.IncludeAQ, 54, 48),
+-	}[rogue.Level]
+-
+-	comboDamageBonus := map[int32]float64{
+-		25: 31,
+-		40: 71,
+-		50: 110,
+-		60: core.TernaryFloat64(core.IncludeAQ, 170, 151),
+-	}[rogue.Level]
+-
+-	damageVariance := map[int32]float64{
+-		25: 20,
+-		40: 44,
+-		50: 68,
+-		60: core.TernaryFloat64(core.IncludeAQ, 108, 96),
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 6762,
+-		40: 8624,
+-		50: 11299,
+-		60: core.TernaryInt32(core.IncludeAQ, 31016, 11300),
+-	}[rogue.Level]
++	rank := rogue.learnedRank("eviscerate")
++	if rank == nil {
++		return
++	}
++	// The client stores the mean of the roll and its spread, and the step per combo point.
++	flatDamage, damageVariance := rollRange(rank.Effects[0])
++	comboDamageBonus := rank.Effects[0].PerResource
++	spellID := rank.SpellID
+ 
+ 	rogue.Eviscerate = rogue.RegisterSpell(core.SpellConfig{
+ 		SpellCode:    SpellCode_RogueEviscerate,
+diff --git a/sim/rogue/expose_armor.go b/sim/rogue/expose_armor.go
+index e90b289..190cdf3 100644
+--- a/sim/rogue/expose_armor.go
++++ b/sim/rogue/expose_armor.go
+@@ -11,23 +11,26 @@ import (
+ // per combo point instead (rank 5 340 -> 450, a little under Classic's talented 510), so no
+ // talent multiplier is applied.
+ func (rogue *Rogue) registerExposeArmorSpell() {
++	rank := rogue.learnedRank("expose_armor")
++	if rank == nil {
++		return
++	}
++
+ 	rogue.ExposeArmorAuras = rogue.NewEnemyAuraArray(func(target *core.Unit) *core.Aura {
+ 		return core.ExposeArmorAura(target, 0)
+ 	})
+ 
+-	spellID := map[int32]int32{
+-		25: 8647,
+-		40: 8650,
+-		50: 11197,
+-		60: 11198,
+-	}[rogue.Level]
++	spellID := rank.SpellID
+ 
++	// Armor per combo point, from the client's aura effect (points per resource), which the
++	// generated rank table does not carry.
+ 	arpenPerCombo := map[int32]float64{
+-		25: 90,
+-		40: 270,
+-		50: 360,
+-		60: 450,
+-	}[rogue.Level]
++		8647:  90,
++		8649:  180,
++		8650:  270,
++		11197: 360,
++		11198: 450,
++	}[spellID]
+ 
+ 	// Improved Expose Armor takes 5 Energy off and hands 1 combo point back per rank, on a 5
+ 	// point spend.
+diff --git a/sim/rogue/feint.go b/sim/rogue/feint.go
+index 9e73804..0d70441 100644
+--- a/sim/rogue/feint.go
++++ b/sim/rogue/feint.go
+@@ -7,6 +7,9 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerFeintSpell() {
++	if rogue.learnedRank("feint") == nil {
++		return
++	}
+ 	rogue.Feint = rogue.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: 1966},
+ 		SpellSchool: core.SpellSchoolPhysical,
+diff --git a/sim/rogue/garrote.go b/sim/rogue/garrote.go
+index 3f2335a..f6fef98 100644
+--- a/sim/rogue/garrote.go
++++ b/sim/rogue/garrote.go
+@@ -7,19 +7,14 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerGarrote() {
+-	baseDamage := map[int32]float64{
+-		25: 34,
+-		40: 59,
+-		50: 74,
+-		60: 92,
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 8631,
+-		40: 8633,
+-		50: 11289,
+-		60: 11290,
+-	}[rogue.Level]
++	rank := rogue.learnedRank("garrote")
++	if rank == nil {
++		return
++	}
++	baseDamage := rank.Points(0)
++	spellID := rank.SpellID
++	tickLength := time.Duration(rank.Effects[0].PeriodMs) * time.Millisecond
++	numTicks := rank.DurationMs / rank.Effects[0].PeriodMs
+ 
+ 	rogue.Garrote = rogue.GetOrRegisterSpell(core.SpellConfig{
+ 		SpellCode:   SpellCode_RogueGarrote,
+@@ -55,8 +50,8 @@ func (rogue *Rogue) registerGarrote() {
+ 			Aura: core.Aura{
+ 				Label: "Garrote",
+ 			},
+-			NumberOfTicks: 6,
+-			TickLength:    time.Second * 3,
++			NumberOfTicks: numTicks,
++			TickLength:    tickLength,
+ 			OnSnapshot: func(sim *core.Simulation, target *core.Unit, dot *core.Dot, isRollover bool) {
+ 				damage := baseDamage + dot.Spell.MeleeAttackPower(target)*0.03
+ 				dot.Snapshot(target, damage, isRollover)
+diff --git a/sim/rogue/items_sets_pve.go b/sim/rogue/items_sets_pve.go
+index d811d0f..47540b4 100644
+--- a/sim/rogue/items_sets_pve.go
++++ b/sim/rogue/items_sets_pve.go
+@@ -175,7 +175,9 @@ var ItemSetEmblemsOfVeiledShadows = core.NewItemSet(core.ItemSet{
+ 			rogue.RegisterAura(core.Aura{
+ 				Label: "Emblems of Veiled Shadows 3pc",
+ 				OnInit: func(aura *core.Aura, sim *core.Simulation) {
+-					rogue.SliceAndDice.Cost.FlatModifier -= 10
++					if rogue.SliceAndDice != nil {
++						rogue.SliceAndDice.Cost.FlatModifier -= 10
++					}
+ 				},
+ 			})
+ 		},
+@@ -249,7 +251,9 @@ var ItemSetDeathdealersEmbrace = core.NewItemSet(core.ItemSet{
+ 			rogue.RegisterAura(core.Aura{
+ 				Label: "Deathdealer Eviscerate Bonus",
+ 				OnInit: func(aura *core.Aura, sim *core.Simulation) {
+-					rogue.Eviscerate.DamageMultiplierAdditive += 0.15
++					if rogue.Eviscerate != nil {
++						rogue.Eviscerate.DamageMultiplierAdditive += 0.15
++					}
+ 				},
+ 			})
+ 		},
+diff --git a/sim/rogue/mutilate.go b/sim/rogue/mutilate.go
+index a721fa9..1511658 100644
+--- a/sim/rogue/mutilate.go
++++ b/sim/rogue/mutilate.go
+@@ -13,19 +13,28 @@ func (rogue *Rogue) registerMutilateSpell() {
+ 
+ 	// The beta client ranks Mutilate: 23, 33, 48 and 67 flat added to each hand's weapon damage
+ 	// before the 75%. Rank 1 is level 30, so level 25 borrows it.
++	// These ranks are not in the generated rank table, so each level takes the highest row at
++	// or below it; below 40 that is rank 1.
++	bracket := int32(25)
++	for _, level := range []int32{40, 50, 60} {
++		if rogue.Level >= level {
++			bracket = level
++		}
++	}
++
+ 	flatDamage := map[int32]float64{
+ 		25: 23,
+ 		40: 33,
+ 		50: 48,
+ 		60: 67,
+-	}[rogue.Level]
++	}[bracket]
+ 
+ 	spellID := map[int32]int32{
+ 		25: 1310707,
+ 		40: 399956,
+ 		50: 1241582,
+ 		60: 1241584,
+-	}[rogue.Level]
++	}[bracket]
+ 
+ 	actionID := core.ActionID{SpellID: spellID}
+ 	strikeFlags := SpellFlagBuilder | SpellFlagColdBlooded | core.SpellFlagMeleeMetrics | core.SpellFlagNoOnCastComplete
+@@ -126,5 +135,8 @@ func (rogue *Rogue) mutilateDamage(target *core.Unit, flatDamage float64, weapon
+ 
+ // Instant Poison leaves nothing behind, so only the two lingering poisons count.
+ func (rogue *Rogue) isPoisoned(target *core.Unit) bool {
++	if rogue.deadlyPoisonTick == nil {
++		return false
++	}
+ 	return rogue.deadlyPoisonTick.Dot(target).IsActive() || rogue.woundPoisonDebuffAuras.Get(target).IsActive()
+ }
+diff --git a/sim/rogue/poisons.go b/sim/rogue/poisons.go
+index 618677f..d9fb34f 100644
+--- a/sim/rogue/poisons.go
++++ b/sim/rogue/poisons.go
+@@ -71,7 +71,7 @@ func (rogue *Rogue) multiplyPoisonDamage(multiplier float64) {
+ 		}
+ 	}
+ 
+-	if !rogue.Env.IsForever() {
++	if !rogue.Env.IsForever() && rogue.deadlyPoisonTick != nil {
+ 		for _, target := range rogue.Env.Encounter.TargetUnits {
+ 			if dot := rogue.deadlyPoisonTick.Dot(target); dot.IsActive() {
+ 				dot.SnapshotAttackerMultiplier *= multiplier
+@@ -93,7 +93,7 @@ func (rogue *Rogue) applyPoisons() {
+ // Apply Instant Poison to weapon and enable procs
+ func (rogue *Rogue) applyInstantPoison() {
+ 	procMask := rogue.getPoisonProcMask(proto.RogueOptions_InstantPoison)
+-	if procMask == core.ProcMaskUnknown {
++	if procMask == core.ProcMaskUnknown || rogue.poisonBracket() == 0 {
+ 		return
+ 	}
+ 
+@@ -118,7 +118,7 @@ func (rogue *Rogue) applyInstantPoison() {
+ // Apply Deadly Poison to weapon and enable procs
+ func (rogue *Rogue) applyDeadlyPoison() {
+ 	procMask := rogue.getPoisonProcMask(proto.RogueOptions_DeadlyPoison)
+-	if procMask == core.ProcMaskUnknown {
++	if procMask == core.ProcMaskUnknown || rogue.poisonBracket() == 0 {
+ 		return
+ 	}
+ 
+@@ -142,7 +142,7 @@ func (rogue *Rogue) applyDeadlyPoison() {
+ // Apply Wound Poison to weapon and enable procs
+ func (rogue *Rogue) applyWoundPoison() {
+ 	procMask := rogue.getPoisonProcMask(proto.RogueOptions_WoundPoison)
+-	if procMask == core.ProcMaskUnknown {
++	if procMask == core.ProcMaskUnknown || rogue.poisonBracket() == 0 {
+ 		return
+ 	}
+ 
+@@ -169,23 +169,29 @@ func (rogue *Rogue) applyWoundPoison() {
+ ///////////////////////////////////////////////////////////////////////////
+ 
+ func (rogue *Rogue) registerInstantPoisonSpell() {
++	if rogue.poisonBracket() == 0 {
++		return
++	}
+ 	rogue.InstantPoison = rogue.makeInstantPoison()
+ }
+ 
+ func (rogue *Rogue) registerDeadlyPoisonSpell() {
++	if rogue.poisonBracket() == 0 {
++		return
++	}
+ 	// Beta client 1.60.1.69893: about a third less a tick at every rank (rank 5 34 -> 23).
+ 	baseDamageTick := map[int32]float64{
+ 		25: 6,
+ 		40: 9,
+ 		50: 14,
+ 		60: core.TernaryFloat64(core.IncludeAQ, 23, 18),
+-	}[rogue.Level]
++	}[rogue.poisonBracket()]
+ 	spellID := map[int32]int32{
+ 		25: 2823,
+ 		40: 2824,
+ 		50: 11355,
+ 		60: core.TernaryInt32(core.IncludeAQ, 25347, 11356),
+-	}[rogue.Level]
++	}[rogue.poisonBracket()]
+ 
+ 	rogue.deadlyPoisonTick = rogue.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID, Tag: 100},
+@@ -235,6 +241,9 @@ func (rogue *Rogue) registerDeadlyPoisonSpell() {
+ }
+ 
+ func (rogue *Rogue) registerWoundPoisonSpell() {
++	if rogue.poisonBracket() == 0 {
++		return
++	}
+ 	woundPoisonDebuffAura := core.Aura{
+ 		Label:     "WoundPoison-" + strconv.Itoa(int(rogue.Index)),
+ 		ActionID:  core.ActionID{SpellID: 13219},
+@@ -266,21 +275,21 @@ func (rogue *Rogue) makeInstantPoison() *core.Spell {
+ 		40: 29,
+ 		50: 45,
+ 		60: 76,
+-	}[rogue.Level]
++	}[rogue.poisonBracket()]
+ 
+ 	damageVariance := map[int32]float64{
+ 		25: 4,
+ 		40: 8,
+ 		50: 12,
+ 		60: 24,
+-	}[rogue.Level]
++	}[rogue.poisonBracket()]
+ 
+ 	spellID := map[int32]int32{
+ 		25: 8679,
+ 		40: 8688,
+ 		50: 11338,
+ 		60: 11340,
+-	}[rogue.Level]
++	}[rogue.poisonBracket()]
+ 
+ 	return rogue.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+diff --git a/sim/rogue/preparation.go b/sim/rogue/preparation.go
+index 8ef2a17..fae4878 100644
+--- a/sim/rogue/preparation.go
++++ b/sim/rogue/preparation.go
+@@ -41,7 +41,7 @@ func (rogue *Rogue) registerPreparationCD() {
+ 		Type:     core.CooldownTypeDPS,
+ 		Priority: core.CooldownPriorityDefault,
+ 		ShouldActivate: func(sim *core.Simulation, character *core.Character) bool {
+-			return !rogue.Vanish.CD.IsReady(sim)
++			return rogue.Vanish != nil && !rogue.Vanish.CD.IsReady(sim)
+ 		},
+ 	})
+ }
+diff --git a/sim/rogue/rogue.go b/sim/rogue/rogue.go
+index bbf5b34..71bb245 100644
+--- a/sim/rogue/rogue.go
++++ b/sim/rogue/rogue.go
+@@ -46,6 +46,7 @@ type Rogue struct {
+ 	Options *proto.RogueOptions
+ 
+ 	sliceAndDiceDurations [6]time.Duration
++	ruptureRank           *core.SpellRank
+ 
+ 	AdrenalineRush *core.Spell
+ 	Backstab       *core.Spell
+@@ -182,8 +183,8 @@ func NewRogue(character *core.Character, options *proto.Player, rogueOptions *pr
+ 	rogue.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+ 	rogue.AddStatDependency(stats.Agility, stats.AttackPower, 1)
+ 	rogue.AddStatDependency(stats.Agility, stats.RangedAttackPower, 1)
+-	rogue.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
+-	rogue.AddStatDependency(stats.Agility, stats.Dodge, core.DodgePerAgiAtLevel[character.Class]*core.DodgeRatingPerDodgeChance)
++	rogue.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(character.Class, character.Level)*core.CritRatingPerCritChance)
++	rogue.AddStatDependency(stats.Agility, stats.Dodge, core.DodgePerAgiForLevel(character.Class, character.Level)*core.DodgeRatingPerDodgeChance)
+ 	rogue.AddStatDependency(stats.BonusArmor, stats.Armor, 1)
+ 
+ 	guardians.ConstructGuardians(&rogue.Character)
+diff --git a/sim/rogue/rupture.go b/sim/rogue/rupture.go
+index c0475fa..95c362d 100644
+--- a/sim/rogue/rupture.go
++++ b/sim/rogue/rupture.go
+@@ -7,12 +7,12 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerRupture() {
+-	spellID := map[int32]int32{
+-		25: 1943,
+-		40: 8640,
+-		50: 11273,
+-		60: 11275,
+-	}[rogue.Level]
++	rank := rogue.learnedRank("rupture")
++	if rank == nil {
++		return
++	}
++	rogue.ruptureRank = rank
++	spellID := rank.SpellID
+ 
+ 	rogue.Rupture = rogue.RegisterSpell(core.SpellConfig{
+ 		SpellCode:    SpellCode_RogueRupture,
+@@ -94,19 +94,11 @@ func (rogue *Rogue) registerRupture() {
+ func (rogue *Rogue) RuptureDamage(target *core.Unit, comboPoints int32) float64 {
+ 	// Beta client 1.60.1.69893 cut every rank's tick and its per combo point step (rank 6 60 + 8
+ 	// -> 35 + 4.73). The attack power share below is not in the client and stays Classic's.
+-	baseTickDamage := map[int32]float64{
+-		25: 5,
+-		40: 11,
+-		50: 16,
+-		60: 35,
+-	}[rogue.Level]
+-
+-	comboTickDamage := map[int32]float64{
+-		25: 1.18,
+-		40: 2.37,
+-		50: 2.96,
+-		60: 4.73,
+-	}[rogue.Level]
++	if rogue.Rupture == nil {
++		return 0
++	}
++	baseTickDamage := rogue.ruptureRank.Points(0)
++	comboTickDamage := rogue.ruptureRank.Effects[0].PerResource
+ 
+ 	return baseTickDamage + comboTickDamage*float64(comboPoints) +
+ 		[]float64{0, 0.04 / 4, 0.10 / 5, 0.18 / 6, 0.21 / 7, 0.24 / 8}[comboPoints]*rogue.Rupture.MeleeAttackPower(target)
+diff --git a/sim/rogue/sinister_strike.go b/sim/rogue/sinister_strike.go
+index 62cfc6f..d8795e8 100644
+--- a/sim/rogue/sinister_strike.go
++++ b/sim/rogue/sinister_strike.go
+@@ -7,20 +7,12 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerSinisterStrikeSpell() {
+-
+-	flatDamageBonus := map[int32]float64{
+-		25: 15,
+-		40: 33,
+-		50: 52,
+-		60: 68,
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 1759,
+-		40: 8621,
+-		50: 11293,
+-		60: 11294,
+-	}[rogue.Level]
++	rank := rogue.learnedRank("sinister_strike")
++	if rank == nil {
++		return
++	}
++	flatDamageBonus := rank.Points(0)
++	spellID := rank.SpellID
+ 
+ 	rogue.SinisterStrike = rogue.RegisterSpell(core.SpellConfig{
+ 		SpellCode:   SpellCode_RogueSinisterStrike,
+diff --git a/sim/rogue/slice_and_dice.go b/sim/rogue/slice_and_dice.go
+index 7d46a49..4a0f55f 100644
+--- a/sim/rogue/slice_and_dice.go
++++ b/sim/rogue/slice_and_dice.go
+@@ -7,19 +7,12 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerSliceAndDice() {
+-	hasteBonusByRank := map[int32]float64{
+-		25: 0.20,
+-		40: 0.20,
+-		50: 0.30,
+-		60: 0.30,
+-	}[rogue.Level]
+-
+-	spellID := map[int32]int32{
+-		25: 5171,
+-		40: 5171,
+-		50: 6774,
+-		60: 6774,
+-	}[rogue.Level]
++	rank := rogue.learnedRank("slice_and_dice")
++	if rank == nil {
++		return
++	}
++	hasteBonusByRank := rank.Points(1) / 100
++	spellID := rank.SpellID
+ 
+ 	actionID := core.ActionID{SpellID: spellID}
+ 
+diff --git a/sim/rogue/talents.go b/sim/rogue/talents.go
+index b14ffb7..2cf645d 100644
+--- a/sim/rogue/talents.go
++++ b/sim/rogue/talents.go
+@@ -422,6 +422,9 @@ func (rogue *Rogue) registerBladeFlurryCD() {
+ 			}
+ 
+ 			// Since this is our last BF, wait until we have SND / procs up.
++			if rogue.SliceAndDiceAura == nil {
++				return true
++			}
+ 			sndTimeRemaining := rogue.SliceAndDiceAura.RemainingDuration(sim)
+ 			return sndTimeRemaining >= time.Second
+ 		},
+diff --git a/sim/rogue/vanish.go b/sim/rogue/vanish.go
+index 04dd2e5..0e455bc 100644
+--- a/sim/rogue/vanish.go
++++ b/sim/rogue/vanish.go
+@@ -7,6 +7,9 @@ import (
+ )
+ 
+ func (rogue *Rogue) registerVanishSpell() {
++	if rogue.learnedRank("vanish") == nil {
++		return
++	}
+ 	rogue.VanishAura = rogue.RegisterAura(core.Aura{
+ 		Label:    "Vanish",
+ 		ActionID: core.ActionID{SpellID: 457437},
+diff --git a/sim/shaman/shaman.go b/sim/shaman/shaman.go
+index acaec7e..75dab66 100644
+--- a/sim/shaman/shaman.go
++++ b/sim/shaman/shaman.go
+@@ -32,9 +32,9 @@ func NewShaman(character *core.Character, talents string, mainHandImbue, offHand
+ 
+ 	// Add Shaman stat dependencies
+ 	shaman.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	shaman.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[character.Class]*core.CritRatingPerCritChance)
++	shaman.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(character.Class, character.Level)*core.CritRatingPerCritChance)
+ 	shaman.AddStatDependency(stats.Agility, stats.Dodge, core.DodgePerAgiAtLevel[character.Class]*core.DodgeRatingPerDodgeChance)
+-	shaman.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[character.Class]*core.SpellCritRatingPerCritChance)
++	shaman.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(character.Class, character.Level)*core.SpellCritRatingPerCritChance)
+ 	shaman.AddStatDependency(stats.BonusArmor, stats.Armor, 1)
+ 	shaman.PseudoStats.BlockValuePerStrength = .05 // 20 str = 1 block
+ 
+diff --git a/sim/warlock/armors.go b/sim/warlock/armors.go
+index 3294d91..f1da32c 100644
+--- a/sim/warlock/armors.go
++++ b/sim/warlock/armors.go
+@@ -6,26 +6,18 @@ import (
+ )
+ 
+ func (warlock *Warlock) applyDemonArmor() {
+-	spellID := map[int32]int32{
+-		25: 706,
+-		40: 11733,
+-		50: 11734,
+-		60: 11735,
+-	}[warlock.Level]
+-
+-	armor := map[int32]float64{
+-		25: 210.0,
+-		40: 390.0,
+-		50: 480.0,
+-		60: 570.0,
+-	}[warlock.Level]
+-
+-	shadowRes := map[int32]float64{
+-		25: 3.0,
+-		40: 9.0,
+-		50: 12.0,
+-		60: 15.0,
+-	}[warlock.Level]
++	// The rank the warlock's level has learned (client spell tables): Demon Armor from level 20
++	// (effect 0 armor, effect 1 shadow resistance), Demon Skin (armor only) before that.
++	rank := rankFor("demon_armor", warlock.Level)
++	shadowRes := rank.Points(1)
++	if rank == nil {
++		rank = rankFor("demon_skin", warlock.Level)
++	}
++	if rank == nil {
++		return
++	}
++	spellID := rank.SpellID
++	armor := rank.Points(0)
+ 
+ 	// Demonic Aegis: 15% per point (beta client talent 1235316)
+ 	aegis := 1 + 0.15*float64(warlock.Talents.DemonicAegis)
+diff --git a/sim/warlock/curses.go b/sim/warlock/curses.go
+index a4b1565..7be8b0f 100644
+--- a/sim/warlock/curses.go
++++ b/sim/warlock/curses.go
+@@ -5,6 +5,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/wowsims/classic/sim/core"
++	"github.com/wowsims/classic/sim/core/stats"
+ )
+ 
+ const BaneOfAgonyRanks = 6
+@@ -113,26 +114,14 @@ func (warlock *Warlock) registerCurseOfRecklessnessSpell() {
+ 
+ 	warlock.CurseOfRecklessnessAuras = warlock.NewEnemyAuraArray(core.CurseOfRecklessnessAura)
+ 
+-	spellID := map[int32]int32{
+-		25: 704,
+-		40: 7658,
+-		50: 7659,
+-		60: 11717,
+-	}[playerLevel]
+-
+-	rank := map[int32]int{
+-		25: 1,
+-		40: 2,
+-		50: 3,
+-		60: 4,
+-	}[playerLevel]
+-
+-	manaCost := map[int32]float64{
+-		25: 35.0,
+-		40: 60.0,
+-		50: 90.0,
+-		60: 115.0,
+-	}[playerLevel]
++	// The rank the warlock's level has learned (client spell tables); none before level 14.
++	spellRank := rankFor("curse_of_recklessness", playerLevel)
++	if spellRank == nil {
++		return
++	}
++	spellID := spellRank.SpellID
++	rank := rankNumber("curse_of_recklessness", spellRank)
++	manaCost := spellRank.Cost
+ 
+ 	warlock.CurseOfRecklessness = warlock.RegisterSpell(core.SpellConfig{
+ 		ActionID:    core.ActionID{SpellID: spellID},
+@@ -171,33 +160,22 @@ func (warlock *Warlock) registerCurseOfRecklessnessSpell() {
+ }
+ 
+ func (warlock *Warlock) registerCurseOfElementsSpell() {
+-	playerLevel := warlock.Level
+-	if playerLevel < 40 {
+-		return
+-	}
+-
+ 	// Beta client 1.60.1: Curse of Shadow is gone from the spellbook and Curse of the Elements took it
+ 	// over, reducing every magic resistance and raising all magic damage taken (school mask 126 against
+-	// Classic's Fire and Frost). Its ranks are new ids learned at 30, 40 and 50, the last at Classic's
++	// Classic's Fire and Frost). Its ranks are new ids learned at 20, 30, 40 and 50, the last at Classic's
+ 	// top rank values of 75 resistance and 10%. The raid debuffs in core only split that into Fire and
+ 	// Frost plus Shadow and Arcane, so the curse applies both; Nature and Holy are not covered.
+-	spellID := map[int32]int32{
+-		40: 1311677,
+-		50: 1311680,
+-		60: 1311680,
+-	}[playerLevel]
+-
+-	rank := map[int32]int{
+-		40: 3,
+-		50: 4,
+-		60: 4,
+-	}[playerLevel]
+-
+-	manaCost := map[int32]float64{
+-		40: 150.0,
+-		50: 200.0,
+-		60: 200.0,
+-	}[playerLevel]
++	// The rank is the one the warlock's level has learned (client spell tables); none before level 20.
++	spellRank := rankFor("curse_of_the_elements", warlock.Level)
++	if spellRank == nil {
++		return
++	}
++	spellID := spellRank.SpellID
++	rank := rankNumber("curse_of_the_elements", spellRank)
++	manaCost := spellRank.Cost
++	// Client effects: 0 is the resistance reduction (negative), 1 the percent more damage taken.
++	resistance := -spellRank.Points(0)
++	damageTaken := 1 + spellRank.Points(1)/100
+ 
+ 	elementsAuras := warlock.NewEnemyAuraArray(core.CurseOfElementsAura)
+ 	shadowAuras := warlock.NewEnemyAuraArray(core.CurseOfShadowAura)
+@@ -205,6 +183,10 @@ func (warlock *Warlock) registerCurseOfElementsSpell() {
+ 		debuffs := []*core.Aura{elementsAuras.Get(unit)}
+ 		if !warlock.Env.IsForever() {
+ 			debuffs = append(debuffs, shadowAuras.Get(unit))
++		} else if spellRank.SpellID != 1311680 {
++			// The core aura is the top rank (75 resistance, 10%). A lower rank applies its own
++			// numbers, in the same exclusive categories so it never stacks with the raid debuff.
++			debuffs = []*core.Aura{lowRankCurseOfElementsAura(unit, spellRank.SpellID, resistance, damageTaken)}
+ 		}
+ 		return unit.RegisterAura(core.Aura{
+ 			Label:    "Curse of the Elements-" + warlock.Label,
+@@ -262,6 +244,50 @@ func (warlock *Warlock) registerCurseOfElementsSpell() {
+ 	})
+ }
+ 
++// lowRankCurseOfElementsAura is a Forever Curse of the Elements below the top rank: every magic
++// school takes more damage and (Holy aside) loses resistance, by the rank's own numbers. It mirrors
++// core.CurseOfElementsAura, which only knows the top rank.
++func lowRankCurseOfElementsAura(target *core.Unit, spellID int32, resistance float64, damageTaken float64) *core.Aura {
++	aura := target.GetOrRegisterAura(core.Aura{
++		Label:    "Curse of Elements (rank " + strconv.Itoa(int(spellID)) + ")",
++		ActionID: core.ActionID{SpellID: spellID},
++		Duration: time.Minute * 5,
++	})
++	resistanceStats := map[stats.SchoolIndex]stats.Stat{
++		stats.SchoolIndexArcane: stats.ArcaneResistance,
++		stats.SchoolIndexFire:   stats.FireResistance,
++		stats.SchoolIndexFrost:  stats.FrostResistance,
++		stats.SchoolIndexNature: stats.NatureResistance,
++		stats.SchoolIndexShadow: stats.ShadowResistance,
++	}
++	for _, school := range []stats.SchoolIndex{stats.SchoolIndexArcane, stats.SchoolIndexFire, stats.SchoolIndexFrost, stats.SchoolIndexHoly, stats.SchoolIndexNature, stats.SchoolIndexShadow} {
++		school := school
++		aura.NewExclusiveEffect("spellDamage"+strconv.Itoa(int(school)), false, core.ExclusiveEffect{
++			Priority: damageTaken,
++			OnGain: func(ee *core.ExclusiveEffect, sim *core.Simulation) {
++				ee.Aura.Unit.PseudoStats.SchoolDamageTakenMultiplier[school] *= damageTaken
++			},
++			OnExpire: func(ee *core.ExclusiveEffect, sim *core.Simulation) {
++				ee.Aura.Unit.PseudoStats.SchoolDamageTakenMultiplier[school] /= damageTaken
++			},
++		})
++		resistanceStat, ok := resistanceStats[school]
++		if !ok {
++			continue
++		}
++		aura.NewExclusiveEffect("resistance"+strconv.Itoa(int(school)), false, core.ExclusiveEffect{
++			Priority: resistance,
++			OnGain: func(ee *core.ExclusiveEffect, sim *core.Simulation) {
++				ee.Aura.Unit.AddStatDynamic(sim, resistanceStat, -resistance)
++			},
++			OnExpire: func(ee *core.ExclusiveEffect, sim *core.Simulation) {
++				ee.Aura.Unit.AddStatDynamic(sim, resistanceStat, resistance)
++			},
++		})
++	}
++	return aura
++}
++
+ func (warlock *Warlock) registerAmplifyCurseSpell() {
+ 	if !warlock.Talents.AmplifyCurse {
+ 		return
+diff --git a/sim/warlock/dps/dps_warlock.go b/sim/warlock/dps/dps_warlock.go
+index 8df64f2..3add6ce 100644
+--- a/sim/warlock/dps/dps_warlock.go
++++ b/sim/warlock/dps/dps_warlock.go
+@@ -31,6 +31,8 @@ func NewDpsWarlock(character *core.Character, options *proto.Player) *DpsWarlock
+ 	warlock := &DpsWarlock{
+ 		Warlock: warlock.NewWarlock(character, options, options.GetWarlock().Options),
+ 	}
++	// Local addition: shoot an equipped wand between casts (sim/core/wand.go).
++	warlock.EnableWandAutoAttack(warlock)
+ 
+ 	return warlock
+ }
+diff --git a/sim/warlock/felhunter.go b/sim/warlock/felhunter.go
+index 82ca4f0..f7ddce2 100644
+--- a/sim/warlock/felhunter.go
++++ b/sim/warlock/felhunter.go
+@@ -11,89 +11,95 @@ func (warlock *Warlock) makeFelhunter() *WarlockPet {
+ 		Name:          "Felhunter",
+ 		PowerModifier: 0.77,
+ 	}
+-	switch warlock.Level {
+-	case 25:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  50,
+-			stats.Agility:   40,
+-			stats.Stamina:   87,
+-			stats.Intellect: 35,
+-			stats.Spirit:    61,
+-			stats.Mana:      653,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 24,
+-				BaseDamageMax: 40,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 40:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  74,
+-			stats.Agility:   58,
+-			stats.Stamina:   148,
+-			stats.Intellect: 49,
+-			stats.Spirit:    97,
+-			stats.Mana:      653,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 24,
+-				BaseDamageMax: 40,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 50:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  107,
+-			stats.Agility:   71,
+-			stats.Stamina:   190,
+-			stats.Intellect: 59,
+-			stats.Spirit:    123,
+-			stats.Mana:      912,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				// Not updated
+-				BaseDamageMin: 24,
+-				BaseDamageMax: 40,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 60:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  129,
+-			stats.Agility:   85,
+-			stats.Stamina:   234,
+-			stats.Intellect: 70,
+-			stats.Spirit:    150,
+-			stats.Mana:      1066,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 70,
+-				BaseDamageMax: 97,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
++	bracket := func(level int32) PetConfig {
++		cfg := PetConfig{}
++		switch level {
++		case 25:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  50,
++				stats.Agility:   40,
++				stats.Stamina:   87,
++				stats.Intellect: 35,
++				stats.Spirit:    61,
++				stats.Mana:      653,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 24,
++					BaseDamageMax: 40,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 40:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  74,
++				stats.Agility:   58,
++				stats.Stamina:   148,
++				stats.Intellect: 49,
++				stats.Spirit:    97,
++				stats.Mana:      653,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 24,
++					BaseDamageMax: 40,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 50:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  107,
++				stats.Agility:   71,
++				stats.Stamina:   190,
++				stats.Intellect: 59,
++				stats.Spirit:    123,
++				stats.Mana:      912,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					// Not updated
++					BaseDamageMin: 24,
++					BaseDamageMax: 40,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 60:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  129,
++				stats.Agility:   85,
++				stats.Stamina:   234,
++				stats.Intellect: 70,
++				stats.Spirit:    150,
++				stats.Mana:      1066,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 70,
++					BaseDamageMax: 97,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
+ 		}
++
++		return cfg
+ 	}
++	cfg.Stats, cfg.AutoAttacks = demonBodyAtLevel(417, warlock.Level, bracket)
+ 
+ 	return warlock.makePet(cfg, warlock.Options.Summon == proto.WarlockOptions_Felhunter)
+ }
+diff --git a/sim/warlock/imp.go b/sim/warlock/imp.go
+index 0994bad..7ac9bd0 100644
+--- a/sim/warlock/imp.go
++++ b/sim/warlock/imp.go
+@@ -14,56 +14,62 @@ func (warlock *Warlock) makeImp() *WarlockPet {
+ 		PowerModifier: 0.33,
+ 	}
+ 
+-	switch warlock.Level {
+-	case 25:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  47,
+-			stats.Agility:   25,
+-			stats.Stamina:   49,
+-			stats.Intellect: 94,
+-			stats.Spirit:    95,
+-			stats.Mana:      149,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
+-		}
+-	case 40:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  70,
+-			stats.Agility:   29,
+-			stats.Stamina:   67,
+-			stats.Intellect: 163,
+-			stats.Spirit:    163,
+-			stats.Mana:      318,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
+-		}
+-	case 50:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  101,
+-			stats.Agility:   32,
+-			stats.Stamina:   71,
+-			stats.Intellect: 212,
+-			stats.Spirit:    211,
+-			stats.Mana:      476,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
+-		}
+-	case 60:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  122,
+-			stats.Agility:   35,
+-			stats.Stamina:   86,
+-			stats.Intellect: 264,
+-			stats.Spirit:    260,
+-			stats.Mana:      576,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
++	bracket := func(level int32) PetConfig {
++		cfg := PetConfig{}
++		switch level {
++		case 25:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  47,
++				stats.Agility:   25,
++				stats.Stamina:   49,
++				stats.Intellect: 94,
++				stats.Spirit:    95,
++				stats.Mana:      149,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
++			}
++		case 40:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  70,
++				stats.Agility:   29,
++				stats.Stamina:   67,
++				stats.Intellect: 163,
++				stats.Spirit:    163,
++				stats.Mana:      318,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
++			}
++		case 50:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  101,
++				stats.Agility:   32,
++				stats.Stamina:   71,
++				stats.Intellect: 212,
++				stats.Spirit:    211,
++				stats.Mana:      476,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
++			}
++		case 60:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  122,
++				stats.Agility:   35,
++				stats.Stamina:   86,
++				stats.Intellect: 264,
++				stats.Spirit:    260,
++				stats.Mana:      576,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.454 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 0.9075 * core.CritRatingPerCritChance,
++			}
+ 		}
++
++		return cfg
+ 	}
++	cfg.Stats, cfg.AutoAttacks = demonBodyAtLevel(416, warlock.Level, bracket)
+ 
+ 	return warlock.makePet(cfg, warlock.Options.Summon == proto.WarlockOptions_Imp)
+ }
+@@ -108,11 +114,18 @@ func (warlock *Warlock) registerImpBloodPact() {
+ 
+ func (wp *WarlockPet) registerImpFireboltSpell() {
+ 	warlockLevel := wp.owner.Level
+-	// assuming max rank available
+-	rank := map[int32]int{25: 3, 40: 5, 50: 6, 60: 7}[warlockLevel]
+-
++	// The highest rank the imp's level (its owner's) has learned. The client lists demon abilities
++	// outside the warlock's own skill lines, so there is no generated table for them; the learn
++	// levels are this file's own (they match the client's SpellLevels rows).
++	fireboltLevels := [8]int32{0, 1, 8, 18, 28, 38, 48, 58}
++	rank := 0
++	for r := 1; r < len(fireboltLevels); r++ {
++		if fireboltLevels[r] <= warlockLevel {
++			rank = r
++		}
++	}
+ 	if rank == 0 {
+-		rank = 1
++		return
+ 	}
+ 
+ 	if wp.owner.Options.MaxFireboltRank != proto.WarlockOptions_NoMaximum {
+diff --git a/sim/warlock/incinerate.go b/sim/warlock/incinerate.go
+index 2f3ee68..94d8c6a 100644
+--- a/sim/warlock/incinerate.go
++++ b/sim/warlock/incinerate.go
+@@ -1,6 +1,7 @@
+ package warlock
+ 
+ import (
++	"math"
+ 	"time"
+ 
+ 	"github.com/wowsims/classic/sim/core"
+@@ -13,15 +14,22 @@ func (warlock *Warlock) registerIncinerateSpell() {
+ 
+ 	// Beta client 1.60.1: three ranks, learned at 40 (412758), 50 (1293812) and 60 (1293813), 2.5 sec
+ 	// cast, 0.714 coefficient and 25% more damage on a target with Immolate. The highest rank the
+-	// character's level allows is the one registered.
+-	if warlock.Level < 40 {
++	// character's level has learned is the one registered (client spell tables).
++	spellRank := rankFor("incinerate", warlock.Level)
++	if spellRank == nil {
+ 		return
+ 	}
+ 
+-	spellID := map[int32]int32{40: 412758, 50: 1293812, 60: 1293813}[warlock.Level]
+-	rank := map[int32]int{40: 1, 50: 2, 60: 3}[warlock.Level]
+-	baseDamage := map[int32][]float64{40: {100, 114}, 50: {146, 168}, 60: {201, 233}}[warlock.Level]
+-	manaCost := map[int32]float64{40: 205, 50: 265, 60: 325}[warlock.Level]
++	spellID := spellRank.SpellID
++	rank := rankNumber("incinerate", spellRank)
++	// The client stores the mean, its growth per caster level above the rank's level (for nine
++	// levels: SpellLevels.MaxLevel is 49, 59 and 69) and the spread; the tooltip rounds both ends.
++	// The old table held each rank at its grown value (100-114 at 40, 146-168 at 50), which a
++	// character has only nine levels after learning it.
++	effect := spellRank.Effects[0]
++	mean := effect.BasePoints + effect.PerLevel*float64(min(warlock.Level-spellRank.Level, 9))
++	baseDamage := []float64{math.Round(mean * (1 - effect.Variance/2)), math.Round(mean * (1 + effect.Variance/2))}
++	manaCost := spellRank.Cost
+ 	spellCoeff := 0.714
+ 	castTime := time.Millisecond * 2500
+ 
+@@ -32,7 +40,7 @@ func (warlock *Warlock) registerIncinerateSpell() {
+ 		DefenseType:   core.DefenseTypeMagic,
+ 		ProcMask:      core.ProcMaskSpellDamage,
+ 		Flags:         core.SpellFlagAPL | core.SpellFlagResetAttackSwing | WarlockFlagDestruction,
+-		RequiredLevel: int(warlock.Level),
++		RequiredLevel: int(spellRank.Level),
+ 		Rank:          rank,
+ 		MissileSpeed:  20,
+ 
+diff --git a/sim/warlock/pet.go b/sim/warlock/pet.go
+index 69e8418..626be39 100644
+--- a/sim/warlock/pet.go
++++ b/sim/warlock/pet.go
+@@ -35,6 +35,75 @@ type PetConfig struct {
+ 	AutoAttacks   core.AutoAttackOptions
+ }
+ 
++// demonBodyAtLevel is a demon's own stats and weapon at any owner level. The simulator only has
++// rows at levels 25, 40, 50 and 60 (bracket returns one of them).
++// ASSUMPTION (levelling analysis, not measured in game): between two rows every value is
++// interpolated linearly by level; below 25 the level-25 row is scaled by level/25. The crit
++// constants are the same in every row and are kept as they are. A bracket level returns its own
++// row unchanged. Owner-stat inheritance (makeStatInheritance) is separate and applies on top.
++//
++// 2026-11-23: the attributes, mana and health no longer use that interpolation. The simulator's
++// rows at 25, 40, 50 and 60 are rows of the Classic server table (core.ClassicPetLevelStats,
++// vmangos pet_levelstats; entry is the demon's creature id), so each of those stats is the
++// nearest row at or below the level (the level-25 row below 25) times the table's ratio for the
++// level. Weapon damage, which the table does not hold, keeps the interpolation.
++func demonBodyAtLevel(entry int32, level int32, bracket func(level int32) PetConfig) (stats.Stats, core.AutoAttackOptions) {
++	brackets := []int32{25, 40, 50, 60}
++	lowLevel, highLevel := int32(0), brackets[0]
++	for i, b := range brackets {
++		if level >= b {
++			lowLevel = b
++			highLevel = b
++			if i+1 < len(brackets) {
++				highLevel = brackets[i+1]
++			}
++		}
++	}
++	high := bracket(highLevel)
++	if lowLevel == highLevel {
++		return high.Stats, high.AutoAttacks
++	}
++	low := PetConfig{}
++	if lowLevel > 0 {
++		low = bracket(lowLevel)
++		if level == lowLevel {
++			return low.Stats, low.AutoAttacks
++		}
++	}
++	t := float64(level-lowLevel) / float64(highLevel-lowLevel)
++	lerp := func(a float64, b float64) float64 { return a + (b-a)*t }
++
++	body := high.Stats
++	for stat := range body {
++		if stats.Stat(stat) == stats.MeleeCrit || stats.Stat(stat) == stats.SpellCrit {
++			continue
++		}
++		body[stat] = lerp(low.Stats[stat], high.Stats[stat])
++	}
++	anchorLevel := lowLevel
++	if anchorLevel == 0 {
++		anchorLevel = brackets[0]
++	}
++	anchor := bracket(anchorLevel).Stats
++	for stat, pick := range map[stats.Stat]func(core.PetLevelStat) float64{
++		stats.Strength:  func(s core.PetLevelStat) float64 { return s.Strength },
++		stats.Agility:   func(s core.PetLevelStat) float64 { return s.Agility },
++		stats.Stamina:   func(s core.PetLevelStat) float64 { return s.Stamina },
++		stats.Intellect: func(s core.PetLevelStat) float64 { return s.Intellect },
++		stats.Spirit:    func(s core.PetLevelStat) float64 { return s.Spirit },
++		stats.Mana:      func(s core.PetLevelStat) float64 { return s.Mana },
++		stats.Health:    func(s core.PetLevelStat) float64 { return s.Health },
++	} {
++		if anchor[stat] != 0 {
++			body[stat] = anchor[stat] * core.PetLevelRatio(entry, level, anchorLevel, pick)
++		}
++	}
++	attacks := high.AutoAttacks
++	attacks.MainHand.BaseDamageMin = lerp(low.AutoAttacks.MainHand.BaseDamageMin, high.AutoAttacks.MainHand.BaseDamageMin)
++	attacks.MainHand.BaseDamageMax = lerp(low.AutoAttacks.MainHand.BaseDamageMax, high.AutoAttacks.MainHand.BaseDamageMax)
++	return body, attacks
++}
++
+ func (warlock *Warlock) petFromSummon(summon proto.WarlockOptions_Summon) *WarlockPet {
+ 	switch summon {
+ 	case proto.WarlockOptions_Imp:
+diff --git a/sim/warlock/succubus.go b/sim/warlock/succubus.go
+index cb7b13e..02498ff 100644
+--- a/sim/warlock/succubus.go
++++ b/sim/warlock/succubus.go
+@@ -14,100 +14,113 @@ func (warlock *Warlock) makeSuccubus() *WarlockPet {
+ 		PowerModifier: 0.77,
+ 	}
+ 
+-	switch warlock.Level {
+-	case 25:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  50,
+-			stats.Agility:   40,
+-			stats.Stamina:   87,
+-			stats.Intellect: 35,
+-			stats.Spirit:    61,
+-			stats.Mana:      119,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 23,
+-				BaseDamageMax: 38,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 40:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  74,
+-			stats.Agility:   58,
+-			stats.Stamina:   148,
+-			stats.Intellect: 49,
+-			stats.Spirit:    97,
+-			stats.Mana:      521,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 41,
+-				BaseDamageMax: 61,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 50:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  107,
+-			stats.Agility:   71,
+-			stats.Stamina:   190,
+-			stats.Intellect: 59,
+-			stats.Spirit:    123,
+-			stats.Mana:      912,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				// Not updated
+-				BaseDamageMin: 41,
+-				BaseDamageMax: 61,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 60:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  129,
+-			stats.Agility:   85,
+-			stats.Stamina:   234,
+-			stats.Intellect: 70,
+-			stats.Spirit:    150,
+-			stats.Mana:      1066,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 95,
+-				BaseDamageMax: 131,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
++	bracket := func(level int32) PetConfig {
++		cfg := PetConfig{}
++		switch level {
++		case 25:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  50,
++				stats.Agility:   40,
++				stats.Stamina:   87,
++				stats.Intellect: 35,
++				stats.Spirit:    61,
++				stats.Mana:      119,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 23,
++					BaseDamageMax: 38,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 40:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  74,
++				stats.Agility:   58,
++				stats.Stamina:   148,
++				stats.Intellect: 49,
++				stats.Spirit:    97,
++				stats.Mana:      521,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 41,
++					BaseDamageMax: 61,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 50:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  107,
++				stats.Agility:   71,
++				stats.Stamina:   190,
++				stats.Intellect: 59,
++				stats.Spirit:    123,
++				stats.Mana:      912,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					// Not updated
++					BaseDamageMin: 41,
++					BaseDamageMax: 61,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 60:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  129,
++				stats.Agility:   85,
++				stats.Stamina:   234,
++				stats.Intellect: 70,
++				stats.Spirit:    150,
++				stats.Mana:      1066,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 95,
++					BaseDamageMax: 131,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
+ 		}
++
++		return cfg
+ 	}
++	cfg.Stats, cfg.AutoAttacks = demonBodyAtLevel(1863, warlock.Level, bracket)
+ 
+ 	return warlock.makePet(cfg, warlock.Options.Summon == proto.WarlockOptions_Succubus)
+ }
+ 
+ func (wp *WarlockPet) registerSuccubusLashOfPainSpell() {
+ 	warlockLevel := wp.owner.Level
+-	// assuming max rank available
+-	rank := map[int32]int{25: 1, 40: 3, 50: 4, 60: 6}[warlockLevel]
+-
++	// The highest rank the succubus's level (its owner's) has learned; none before level 20. The
++	// client lists demon abilities outside the warlock's own skill lines, so there is no generated
++	// table for them; the learn levels are this file's own (they match the client's SpellLevels rows).
++	lashLevels := [7]int32{0, 20, 28, 36, 44, 52, 60}
++	rank := 0
++	for r := 1; r < len(lashLevels); r++ {
++		if lashLevels[r] <= warlockLevel {
++			rank = r
++		}
++	}
+ 	if rank == 0 {
+-		rank = 1
++		return
+ 	}
+ 
+ 	spellCoeff := [7]float64{0, .429, .429, .429, .429, .429, .429}[rank]
+diff --git a/sim/warlock/voidwalker.go b/sim/warlock/voidwalker.go
+index 6959871..acad55d 100644
+--- a/sim/warlock/voidwalker.go
++++ b/sim/warlock/voidwalker.go
+@@ -12,89 +12,95 @@ func (warlock *Warlock) makeVoidwalker() *WarlockPet {
+ 		PowerModifier: 0.77,
+ 	}
+ 
+-	switch warlock.Level {
+-	case 25:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  50,
+-			stats.Agility:   40,
+-			stats.Stamina:   87,
+-			stats.Intellect: 35,
+-			stats.Spirit:    61,
+-			stats.Mana:      60,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 2,
+-				BaseDamageMax: 7,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 40:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  74,
+-			stats.Agility:   58,
+-			stats.Stamina:   148,
+-			stats.Intellect: 49,
+-			stats.Spirit:    97,
+-			stats.Mana:      637,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 5,
+-				BaseDamageMax: 15,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 50:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  107,
+-			stats.Agility:   71,
+-			stats.Stamina:   190,
+-			stats.Intellect: 59,
+-			stats.Spirit:    123,
+-			stats.Mana:      1028,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				// Not updated
+-				BaseDamageMin: 5,
+-				BaseDamageMax: 15,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
+-		}
+-	case 60:
+-		cfg.Stats = stats.Stats{
+-			stats.Strength:  129,
+-			stats.Agility:   85,
+-			stats.Stamina:   234,
+-			stats.Intellect: 70,
+-			stats.Spirit:    150,
+-			stats.Mana:      1066,
+-			stats.MP5:       0,
+-			stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
+-			stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
+-		}
+-		cfg.AutoAttacks = core.AutoAttackOptions{
+-			MainHand: core.Weapon{
+-				BaseDamageMin: 31,
+-				BaseDamageMax: 46,
+-				SwingSpeed:    2,
+-			},
+-			AutoSwingMelee: true,
++	bracket := func(level int32) PetConfig {
++		cfg := PetConfig{}
++		switch level {
++		case 25:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  50,
++				stats.Agility:   40,
++				stats.Stamina:   87,
++				stats.Intellect: 35,
++				stats.Spirit:    61,
++				stats.Mana:      60,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 2,
++					BaseDamageMax: 7,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 40:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  74,
++				stats.Agility:   58,
++				stats.Stamina:   148,
++				stats.Intellect: 49,
++				stats.Spirit:    97,
++				stats.Mana:      637,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 5,
++					BaseDamageMax: 15,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 50:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  107,
++				stats.Agility:   71,
++				stats.Stamina:   190,
++				stats.Intellect: 59,
++				stats.Spirit:    123,
++				stats.Mana:      1028,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					// Not updated
++					BaseDamageMin: 5,
++					BaseDamageMax: 15,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
++		case 60:
++			cfg.Stats = stats.Stats{
++				stats.Strength:  129,
++				stats.Agility:   85,
++				stats.Stamina:   234,
++				stats.Intellect: 70,
++				stats.Spirit:    150,
++				stats.Mana:      1066,
++				stats.MP5:       0,
++				stats.MeleeCrit: 3.2685 * core.CritRatingPerCritChance,
++				stats.SpellCrit: 3.3355 * core.CritRatingPerCritChance,
++			}
++			cfg.AutoAttacks = core.AutoAttackOptions{
++				MainHand: core.Weapon{
++					BaseDamageMin: 31,
++					BaseDamageMax: 46,
++					SwingSpeed:    2,
++				},
++				AutoSwingMelee: true,
++			}
+ 		}
++
++		return cfg
+ 	}
++	cfg.Stats, cfg.AutoAttacks = demonBodyAtLevel(1860, warlock.Level, bracket)
+ 
+ 	return warlock.makePet(cfg, warlock.Options.Summon == proto.WarlockOptions_Voidwalker)
+ }
+diff --git a/sim/warlock/warlock.go b/sim/warlock/warlock.go
+index f4bbaa9..28905df 100644
+--- a/sim/warlock/warlock.go
++++ b/sim/warlock/warlock.go
+@@ -194,9 +194,9 @@ func NewWarlock(character *core.Character, options *proto.Player, warlockOptions
+ 	warlock.EnableManaBar()
+ 
+ 	warlock.AddStatDependency(stats.Strength, stats.AttackPower, core.APPerStrength[character.Class])
+-	warlock.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiAtLevel[warlock.Class]*core.CritRatingPerCritChance)
++	warlock.AddStatDependency(stats.Agility, stats.MeleeCrit, core.CritPerAgiForLevel(warlock.Class, warlock.Level)*core.CritRatingPerCritChance)
+ 	warlock.AddStatDependency(stats.Agility, stats.Dodge, core.DodgePerAgiAtLevel[character.Class]*core.DodgeRatingPerDodgeChance)
+-	warlock.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntAtLevel[warlock.Class]*core.SpellCritRatingPerCritChance)
++	warlock.AddStatDependency(stats.Intellect, stats.SpellCrit, core.CritPerIntForLevel(warlock.Class, warlock.Level)*core.SpellCritRatingPerCritChance)
+ 	warlock.AddStatDependency(stats.BonusArmor, stats.Armor, 1)
+ 
+ 	switch warlock.Options.Armor {
+diff --git a/sim/core/crit_levels_local.go b/sim/core/crit_levels_local.go
+new file mode 100644
+index 0000000..94bffe1
+--- /dev/null
++++ b/sim/core/crit_levels_local.go
+@@ -0,0 +1,16 @@
++package core
++
++import "github.com/wowsims/classic/sim/core/proto"
++
++// LOCAL ADDITION (2026-11-23), beside CritPerAgiForLevel in base_stats.go.
++//
++// CritPerIntForLevel is spell crit (percent) per Intellect at a level, from the client's
++// PlayerExpectedStat (spellCritPerIntByLevel). Every class read the level-cap constant
++// CritPerIntAtLevel at every level, which understates a low-level caster's crit from
++// intellect several times over (priest: 0.1273 per point at level 10 against the cap's value).
++func CritPerIntForLevel(c proto.Class, level int32) float64 {
++	if table, ok := spellCritPerIntByLevel[c]; ok && level >= 1 && level < CharacterMaxLevel && table[level] > 0 {
++		return table[level]
++	}
++	return CritPerIntAtLevel[c]
++}
+diff --git a/sim/core/pull_model_local.go b/sim/core/pull_model_local.go
+new file mode 100644
+index 0000000..86f9538
+--- /dev/null
++++ b/sim/core/pull_model_local.go
+@@ -0,0 +1,85 @@
++package core
++
++import (
++	"os"
++	"time"
++)
++
++// Pull model for a solo fight sized by health.
++//
++// LOCAL ADDITION for levelling analysis (2026-11-23); not upstream. Off unless the environment
++// variable WOWSIM_PULL_MODEL is "1", so every other use of the simulator is unchanged.
++//
++// A simulated fight started at time zero with the target already swinging at the player. A real
++// solo pull starts when the player's first attack lands: a caster's opening cast is finished
++// before the fight begins, and the target then has to reach the caster before it can swing. Kills
++// recorded in game (JustAC's mob profile, a priest at levels 9 to 14) were a median 0.78 of the
++// simulated time, about 0.7 at levels 13 and 14, and the opening cast was most of the gap.
++//
++// With the model on:
++//   - the target does not swing until the player (or a pet) first lands anything on it;
++//   - it then needs distance / PullApproachYardsPerSecond seconds to arrive before its first
++//     swing (nothing for a player in melee range);
++//   - a pet sent from range needs the same time to reach the target before it does anything;
++//   - the fight's reported length runs from that first landing to the kill, as a kill timed in
++//     game does.
++//
++// ASSUMED: the approach speed (a creature's ordinary run speed), and that the target is pulled
++// from the player's standing distance.
++var pullModelOn = os.Getenv("WOWSIM_PULL_MODEL") == "1"
++
++const PullApproachYardsPerSecond = 7.0
++
++// pullHoldsTarget: does the target wait for the pull before it attacks?
++func (sim *Simulation) pullHoldsTarget(unit *Unit) bool {
++	return pullModelOn && unit.Type == EnemyUnit && sim.Encounter.EndFightAtHealth > 0 && !sim.Encounter.pullEngaged
++}
++
++// pullPetTravel is how long a pet needs to reach the target after it is sent at the pull: its
++// owner's distance at the approach speed, nothing for an owner in melee range. Until then it
++// neither swings nor uses an ability. Six level 15 hunter fights logged in game (2026-11-23, a
++// boar, target one level below) had the simulator's damage split (hunter 251 a fight against
++// 237 to 258, pet 105 against 105 to 126) but ran 11 to 15 s against the simulator's 10 to 11:
++// the pet dealt its damage in about 4 s less than the fight lasted.
++func (sim *Simulation) pullPetTravel(owner *Character) time.Duration {
++	if !pullModelOn || owner == nil || sim.Encounter.EndFightAtHealth <= 0 {
++		return 0
++	}
++	distance := owner.StartDistanceFromTarget
++	if distance <= MaxMeleeAttackDistance {
++		return 0
++	}
++	return time.Duration(distance / PullApproachYardsPerSecond * float64(time.Second))
++}
++
++// pullLanded is called when a spell's effects are applied: the first one a player or pet lands
++// on an enemy once the fight has started is the pull.
++func (sim *Simulation) pullLanded(spell *Spell, target *Unit) {
++	enc := &sim.Encounter
++	if !pullModelOn || enc.pullEngaged || enc.EndFightAtHealth <= 0 || sim.CurrentTime < 0 ||
++		target == nil || target.Type != EnemyUnit || spell.Unit.Type == EnemyUnit || spell.Flags.Matches(SpellFlagHelpful) {
++		return
++	}
++	enc.pullEngaged = true
++	enc.PullEngagedAt = sim.CurrentTime
++	arrive := sim.CurrentTime
++	if owner := spell.Unit; owner.Type == PlayerUnit && owner.DistanceFromTarget > MaxMeleeAttackDistance {
++		arrive += time.Duration(owner.DistanceFromTarget / PullApproachYardsPerSecond * float64(time.Second))
++	}
++	for _, enemy := range enc.TargetUnits {
++		enemy := enemy
++		StartDelayedAction(sim, DelayedActionOptions{
++			DoAt:     arrive,
++			OnAction: func(sim *Simulation) { enemy.AutoAttacks.startPull(sim) },
++		})
++	}
++}
++
++// pullFightLength is the fight's length for a health-sized fight: from the pull to the kill with
++// the model on, the whole iteration otherwise.
++func (sim *Simulation) pullFightLength() time.Duration {
++	if pullModelOn && sim.Encounter.pullEngaged {
++		return sim.CurrentTime - sim.Encounter.PullEngagedAt
++	}
++	return sim.CurrentTime
++}
+diff --git a/sim/core/spell_rank.go b/sim/core/spell_rank.go
+new file mode 100644
+index 0000000..c726ef5
+--- /dev/null
++++ b/sim/core/spell_rank.go
+@@ -0,0 +1,81 @@
++package core
++
++// Per-level spell ranks.
++//
++// LOCAL ADDITION for levelling analysis (2026-11-23); not upstream. Several classes defined
++// their abilities only at levels 25, 40, 50 and 60, so a character of any other level had
++// nothing to press. Each class now carries every rank of every learnable ability from the
++// client spell tables (sim/<class>/level_ranks_generated.go, written by JustAC's
++// tools/forever-sim-patches/gen_class_ranks.py), and picks the rank its level has.
++
++// RankEffect is one effect of a rank, as the client stores it.
++type RankEffect struct {
++	Effect      int32   // SpellEffect.Effect (2 school damage, 6 apply aura, ...)
++	Aura        int32   // SpellEffect.EffectAura (3 periodic damage, ...)
++	BasePoints  float64 // the effect's value (the tooltip's low end)
++	PerLevel    float64 // points gained per caster level above the rank's level
++	PerResource float64 // points per combo point
++	Coefficient float64 // spell power coefficient
++	Variance    float64 // spread of the roll, as a fraction of the base points
++	PeriodMs    int32   // aura period
++}
++
++// SpellRank is one rank of an ability.
++type SpellRank struct {
++	SpellID    int32
++	Level      int32 // level the rank is learned at
++	MaxLevel   int32 // level its per-level growth stops at (0: none recorded)
++	Cost       float64
++	CostPct    float64
++	PowerType  int32
++	CastMs     int32
++	DurationMs int32
++	CooldownMs int32
++	Effects    [3]RankEffect
++}
++
++// RankAtLevel returns the highest rank learned at or below level (ranks in learn order), or
++// nil when the character has none yet.
++func RankAtLevel(ranks []SpellRank, level int32) *SpellRank {
++	var best *SpellRank
++	for i := range ranks {
++		if ranks[i].Level <= level && (best == nil || ranks[i].Level >= best.Level) {
++			best = &ranks[i]
++		}
++	}
++	return best
++}
++
++// Points is the base points of effect i, or 0 for a nil rank.
++func (rank *SpellRank) Points(i int) float64 {
++	if rank == nil {
++		return 0
++	}
++	return rank.Effects[i].BasePoints
++}
++
++// DamageRange is the low and high roll of effect i for a caster of this level: the client's mean
++// (base points plus per-level growth, which stops at MaxLevel) spread by its variance.
++func (rank *SpellRank) DamageRange(i int, level int32) (float64, float64) {
++	if rank == nil {
++		return 0, 0
++	}
++	effect := rank.Effects[i]
++	grown := level
++	if rank.MaxLevel > 0 && grown > rank.MaxLevel {
++		grown = rank.MaxLevel
++	}
++	mean := effect.BasePoints
++	if grown > rank.Level {
++		mean += effect.PerLevel * float64(grown-rank.Level)
++	}
++	return mean * (1 - effect.Variance/2), mean * (1 + effect.Variance/2)
++}
++
++// ID is the rank's spell id, or 0 for a nil rank.
++func (rank *SpellRank) ID() int32 {
++	if rank == nil {
++		return 0
++	}
++	return rank.SpellID
++}
+diff --git a/sim/core/wand.go b/sim/core/wand.go
+new file mode 100644
+index 0000000..d5c44ca
+--- /dev/null
++++ b/sim/core/wand.go
+@@ -0,0 +1,110 @@
++package core
++
++import (
++	"time"
++
++	"github.com/wowsims/classic/sim/core/proto"
++)
++
++// Wand auto attack for casters.
++//
++// LOCAL ADDITION for levelling analysis (2026-11-18); not upstream. The engine had no wand:
++// caster classes never attacked, so a levelling caster's largest filler was missing.
++//
++// Model. With a wand equipped, the character shoots it whenever it is neither casting nor
++// inside a global cooldown, once per the wand's speed. A cast or a global cooldown stops the
++// shooting; it resumes WandRestartDelay after the character is free again.
++//
++// ASSUMPTIONS, none of them measured on WoW Forever:
++//   - Damage is the wand's own roll. No attack power, no spell power.
++//   - The shot uses the ranged hit and crit table and cannot be blocked.
++//   - The shot's school is Arcane for every wand: the item data used here carries no school,
++//     and Arcane keeps class school talents (Shadow Mastery) from applying to it. Resistance
++//     is taken against that school.
++//   - Wand Specialization adds 13% wand damage per rank, 2 ranks (Character.WandDamageBonus):
++//     the client's talent spell 6057 (mage) reads 13 and the levelling guides say 13% a rank for
++//     the priest too, whose spell 14524 reads 25.
++//   - The restart delay is 0.5s (a Blizzard post of 2026-09-23 says Auto Shot and wands are
++//     meant to have a 0.5s delay; it does not say how it applies after a cast).
++
++// From the 1.60.1.70938 client data for Shoot (5019): range 0 to 30 yards, missile speed 20.
++const WandRestartDelay = 500 * time.Millisecond
++const WandMaxRange = 30
++const WandMissileSpeed = 20
++
++// WandSpecializationBonus is the damage fraction for a Wand Specialization rank (see the
++// assumptions above).
++func WandSpecializationBonus(rank int32) float64 {
++	switch {
++	case rank <= 0:
++		return 0
++	default:
++		return 0.13 * float64(min(rank, 2))
++	}
++}
++
++// EnableWandAutoAttack gives the character a wand auto attack when a wand is equipped, and
++// reports whether it did. Call it once while the agent is constructed, and only for a class
++// that has no other auto attack: it replaces the unit's auto attack options.
++func (character *Character) EnableWandAutoAttack(agent Agent) bool {
++	item := character.GetRangedWeapon()
++	if item == nil || item.RangedWeaponType != proto.RangedWeaponType_RangedWeaponTypeWand || item.SwingSpeed <= 0 {
++		return false
++	}
++
++	weapon := newWeaponFromItem(item, 0)
++	weapon.SpellSchool = SpellSchoolArcane
++	character.EnableAutoAttacks(agent, AutoAttackOptions{
++		Ranged:          weapon,
++		AutoSwingRanged: true,
++	})
++
++	stopped := false
++	var resumeAt, gcdUntil time.Duration
++	character.RegisterResetEffect(func(_ *Simulation) {
++		stopped = false
++		resumeAt, gcdUntil = 0, 0
++	})
++
++	// The global cooldown of a real cast. The engine's own GCD timer cannot be asked: with
++	// nothing to cast, the rotation keeps pushing it forward as its way of waiting.
++	MakePermanent(character.RegisterAura(Aura{
++		Label: "Wand Stopped By Casts",
++		OnCastComplete: func(_ *Aura, sim *Simulation, spell *Spell) {
++			if spell == character.AutoAttacks.RangedAuto() || spell.CurCast.GCD <= 0 {
++				return
++			}
++			gcdUntil = max(gcdUntil, sim.CurrentTime-spell.CurCast.CastTime+spell.CurCast.GCD)
++		},
++	}))
++
++	character.AutoAttacks.rangedMinDistance = 0
++	character.AutoAttacks.rangedMaxDistance = WandMaxRange
++
++	config := character.AutoAttacks.RangedConfig()
++	config.MissileSpeed = WandMissileSpeed
++	// Caster classes get a single attack table, keyed as main hand (environment.go), so the
++	// shot is resolved against that one; there is no ranged table to use.
++	config.CastType = proto.CastType_CastTypeMainHand
++	config.ExtraCastCondition = func(sim *Simulation, _ *Unit) bool {
++		// A channel stops the wand as a cast does (2026-11-23: it was left out, so the wand
++		// resumed within 100 ms of a channel's end instead of after the restart delay).
++		if character.IsCasting(sim) || character.IsChanneling(sim) || sim.CurrentTime < gcdUntil {
++			stopped = true
++			return false
++		}
++		if stopped {
++			stopped = false
++			resumeAt = sim.CurrentTime + WandRestartDelay
++		}
++		return sim.CurrentTime >= resumeAt
++	}
++	config.ApplyEffects = func(sim *Simulation, target *Unit, spell *Spell) {
++		baseDamage := spell.Unit.AutoAttacks.Ranged().BaseDamage(sim) * (1 + character.WandDamageBonus)
++		result := spell.CalcDamage(sim, target, baseDamage, spell.OutcomeRangedHitAndCritNoBlock)
++		spell.WaitTravelTime(sim, func(sim *Simulation) {
++			spell.DealDamage(sim, result)
++		})
++	}
++	return true
++}
+diff --git a/sim/druid/level_ranks.go b/sim/druid/level_ranks.go
+new file mode 100644
+index 0000000..8968ff3
+--- /dev/null
++++ b/sim/druid/level_ranks.go
+@@ -0,0 +1,41 @@
++package druid
++
++import "github.com/wowsims/classic/sim/core"
++
++// LOCAL ADDITION for levelling analysis: abilities take the rank the character's level has
++// learned (level_ranks_generated.go, from the client spell tables) instead of a table that
++// only knew levels 25, 40, 50 and 60.
++
++// Levels the forms are learned at (client SpellLevels: Bear Form 5487, Cat Form 768, Dire Bear Form 9634).
++const (
++	BearFormLevel     int32 = 10
++	CatFormLevel      int32 = 20
++	DireBearFormLevel int32 = 40
++)
++
++// learnedRank returns the rank of an ability the druid's level has learned and its 1-based
++// rank number, or nil and 0 before the first rank.
++func (druid *Druid) learnedRank(slug string) (*core.SpellRank, int) {
++	rank := rankFor(slug, druid.Level)
++	if rank == nil {
++		return nil, 0
++	}
++	number := 0
++	for _, candidate := range levelRanks[slug] {
++		if candidate.Level <= druid.Level {
++			number++
++		}
++	}
++	return rank, number
++}
++
++// learnedForm drops a starting form the level has not learned: such a druid fights in caster form.
++func learnedForm(form DruidForm, level int32) DruidForm {
++	if form.Matches(Cat) && level < CatFormLevel {
++		return Humanoid
++	}
++	if form.Matches(Bear) && level < BearFormLevel {
++		return Humanoid
++	}
++	return form
++}
+diff --git a/sim/hunter/level_ranks.go b/sim/hunter/level_ranks.go
+new file mode 100644
+index 0000000..b67da33
+--- /dev/null
++++ b/sim/hunter/level_ranks.go
+@@ -0,0 +1,77 @@
++package hunter
++
++import (
++	"math"
++
++	"github.com/wowsims/classic/sim/core"
++)
++
++// LOCAL ADDITION for levelling analysis; not upstream. Helpers over level_ranks_generated.go.
++
++// rankNumber is the 1-based number of a rank within its ability, or 0 when it is not one of them.
++func rankNumber(slug string, rank *core.SpellRank) int {
++	if rank == nil {
++		return 0
++	}
++	for i := range levelRanks[slug] {
++		if levelRanks[slug][i].SpellID == rank.SpellID {
++			return i + 1
++		}
++	}
++	return 0
++}
++
++// Pet abilities. The generated table lists a pet ability under the hunter's teaching spell (effect
++// "learn spell", no numbers), so it only gives the pet level each rank needs. The spell the pet
++// casts is the one the teaching spell triggers; its id and effect are copied here from the same
++// client tables (SpellEffect.EffectTriggerSpell of the teaching rank, then that spell's row).
++// Level is the PET level required, the same as the teaching rank's; a pet has its owner's level.
++// Effect 0 is the hit (base points and variance); Scorpid Poison's damage per tick is effect 1.
++var petAbilityRanks = map[string][]core.SpellRank{
++	"bite": {
++		{SpellID: 17253, Level: 1, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 8, Variance: 0.25, Coefficient: 1}}},
++		{SpellID: 17255, Level: 8, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 17, Variance: 0.11764705926, Coefficient: 1}}},
++		{SpellID: 17256, Level: 16, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 26, Variance: 0.15384615958, Coefficient: 1}}},
++		{SpellID: 17257, Level: 24, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 34, Variance: 0.17647059262, Coefficient: 1}}},
++		{SpellID: 17258, Level: 32, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 44, Variance: 0.18181818724, Coefficient: 1}}},
++		{SpellID: 17259, Level: 40, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 54, Variance: 0.18518517911, Coefficient: 1}}},
++		{SpellID: 17260, Level: 48, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 73, Variance: 0.19178082049, Coefficient: 1}}},
++		{SpellID: 17261, Level: 56, Cost: 35, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 90, Variance: 0.20000000298, Coefficient: 1}}},
++	},
++	"claw": {
++		{SpellID: 16827, Level: 1, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 5, Variance: 0.40000000596, Coefficient: 1}}},
++		{SpellID: 16828, Level: 8, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 10, Variance: 0.40000000596, Coefficient: 1}}},
++		{SpellID: 16829, Level: 16, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 14, Variance: 0.28571429849, Coefficient: 1}}},
++		{SpellID: 16830, Level: 24, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 19, Variance: 0.31578946114, Coefficient: 1}}},
++		{SpellID: 16831, Level: 32, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 25, Variance: 0.31999999285, Coefficient: 1}}},
++		{SpellID: 16832, Level: 40, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 31, Variance: 0.32258063555, Coefficient: 1}}},
++		{SpellID: 3010, Level: 48, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 42, Variance: 0.33333334327, Coefficient: 1}}},
++		{SpellID: 3009, Level: 56, Cost: 25, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 51, Variance: 0.3137255013, Coefficient: 1}}},
++	},
++	"lightning_breath": {
++		{SpellID: 24844, Level: 1, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 9, Variance: 0.16666667163}}},
++		{SpellID: 25008, Level: 12, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 21, Variance: 0.09090909362}}},
++		{SpellID: 25009, Level: 24, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 34, Variance: 0.10526315868}}},
++		{SpellID: 25010, Level: 36, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 50, Variance: 0.14545454085}}},
++		{SpellID: 25011, Level: 48, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 76, Variance: 0.14285714924}}},
++		{SpellID: 25012, Level: 60, Cost: 50, Effects: [3]core.RankEffect{{Effect: 2, BasePoints: 92, Variance: 0.13207547367}}},
++	},
++	"scorpid_poison": {
++		{SpellID: 24640, Level: 8, Cost: 30, Effects: [3]core.RankEffect{{Effect: 63, BasePoints: 5}, {Effect: 6, Aura: 3, BasePoints: 1, PeriodMs: 2000}}},
++		{SpellID: 24583, Level: 24, Cost: 30, Effects: [3]core.RankEffect{{Effect: 63, BasePoints: 5}, {Effect: 6, Aura: 3, BasePoints: 2, PeriodMs: 2000}}},
++		{SpellID: 24586, Level: 40, Cost: 30, Effects: [3]core.RankEffect{{Effect: 63, BasePoints: 5}, {Effect: 6, Aura: 3, BasePoints: 4, PeriodMs: 2000}}},
++		{SpellID: 24587, Level: 56, Cost: 30, Effects: [3]core.RankEffect{{Effect: 63, BasePoints: 5}, {Effect: 6, Aura: 3, BasePoints: 5, PeriodMs: 2000}}},
++	},
++}
++
++// petRankFor is the rank of a pet ability a pet of this level can have, or nil before its first.
++func petRankFor(slug string, petLevel int32) *core.SpellRank {
++	return core.RankAtLevel(petAbilityRanks[slug], petLevel)
++}
++
++// petRankRoll is the low and high roll of a pet ability's hit: the client stores the mean and the
++// spread, and the tooltip rounds both ends (rank 8 Bite: 90 and 0.2, so 81 to 99).
++func petRankRoll(rank *core.SpellRank) (float64, float64) {
++	effect := rank.Effects[0]
++	return math.Round(effect.BasePoints * (1 - effect.Variance/2)), math.Round(effect.BasePoints * (1 + effect.Variance/2))
++}
+diff --git a/sim/rogue/level_rank.go b/sim/rogue/level_rank.go
+new file mode 100644
+index 0000000..bf5a9b6
+--- /dev/null
++++ b/sim/rogue/level_rank.go
+@@ -0,0 +1,59 @@
++package rogue
++
++import (
++	"math"
++
++	"github.com/wowsims/classic/sim/core"
++)
++
++// LOCAL ADDITION for levelling analysis: abilities take the rank the character's level has
++// learned (level_ranks_generated.go) instead of a table keyed on levels 25, 40, 50 and 60.
++
++// Ranks taught by Ahn'Qiraj books, learnable at 60 only when core.IncludeAQ is set.
++var aqBookRanks = map[int32]bool{
++	31016: true, // Eviscerate rank 9
++	25300: true, // Backstab rank 9
++}
++
++// learnedRank is the highest rank of an ability the rogue's level has learned, or nil before
++// the first rank.
++func (rogue *Rogue) learnedRank(slug string) *core.SpellRank {
++	if core.IncludeAQ {
++		return rankFor(slug, rogue.Level)
++	}
++	var best *core.SpellRank
++	ranks := levelRanks[slug]
++	for i := range ranks {
++		if aqBookRanks[ranks[i].SpellID] || ranks[i].Level > rogue.Level {
++			continue
++		}
++		if best == nil || ranks[i].Level >= best.Level {
++			best = &ranks[i]
++		}
++	}
++	return best
++}
++
++// rollRange turns a client effect (mean base points and a spread given as a fraction of
++// them) into the low end and width of the roll.
++func rollRange(effect core.RankEffect) (float64, float64) {
++	width := math.Round(effect.BasePoints * effect.Variance)
++	return effect.BasePoints - width/2, width
++}
++
++// poisonBracket is the level whose poison values apply. The proc spells of the poisons are
++// not in the rank data, so they stay on the four bracket rows: a level uses the highest row
++// at or below it, and levels 20 to 24 use the level 25 row. Poisons are learned at 20.
++func (rogue *Rogue) poisonBracket() int32 {
++	switch {
++	case rogue.Level >= 60:
++		return 60
++	case rogue.Level >= 50:
++		return 50
++	case rogue.Level >= 40:
++		return 40
++	case rogue.Level >= 20:
++		return 25
++	}
++	return 0
++}
+diff --git a/sim/warlock/level_ranks.go b/sim/warlock/level_ranks.go
+new file mode 100644
+index 0000000..77f24f7
+--- /dev/null
++++ b/sim/warlock/level_ranks.go
+@@ -0,0 +1,18 @@
++package warlock
++
++import "github.com/wowsims/classic/sim/core"
++
++// LOCAL ADDITION for levelling analysis; not upstream. Helper over level_ranks_generated.go.
++
++// rankNumber is the 1-based number of a rank within its ability, or 0 when it is not one of them.
++func rankNumber(slug string, rank *core.SpellRank) int {
++	if rank == nil {
++		return 0
++	}
++	for i := range levelRanks[slug] {
++		if levelRanks[slug][i].SpellID == rank.SpellID {
++			return i + 1
++		}
++	}
++	return 0
++}

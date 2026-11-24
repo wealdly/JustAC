@@ -532,6 +532,12 @@ def test_log_capacity():
             assert(DebugCommands._diagnosticSession.dropped==limit+1-kept)
             assert(JustACGlobal.diagnosticBaseline.id=='baseline')
             assert(JustACGlobal.diagnosticSummary.id=='summary')
+            -- A row built from a secret value (an enemy's name in a group) is replaced, never
+            -- indexed: in game indexing a secret string throws.
+            issecretvalue=function(v) return type(v)=='string' and v:find('SECRET',1,true)~=nil end
+            emit('ENR target=SECRET name')
+            assert(JustACGlobal.probeLog[#JustACGlobal.probeLog]=='<secret row>')
+            issecretvalue=nil
         """)
 
 
@@ -690,7 +696,12 @@ def test_eligibility_evidence_capture():
                 return 'SPELL_FAILED_OUT_OF_RANGE'
             end
             Enum={DamageMeterSessionType={Overall=0,Current=1,Expired=2},DamageMeterType={DamageDone=0}}
-            function UnitGUID(unit) assert(unit=='player'); return 'player-guid' end
+            targetGUID, targetName = 'Creature-0-1-2-3-504-AB', 'Kobold Tunneler'
+            function UnitName(unit) if unit == 'target' then return targetName end return 'Me' end
+            function UnitGUID(unit)
+                if unit == 'target' then return targetGUID end
+                assert(unit=='player'); return 'player-guid'
+            end
             aggregateCalls=0
             meterSource={totalAmount=25,combatSpells={{spellID=679,totalAmount=25,amountPerSecond=5}}}
             C_DamageMeter={
@@ -732,6 +743,45 @@ def test_eligibility_evidence_capture():
         assert "name=plain:SPELL_FAILED_OUT_OF_RANGE" in text
         assert "recentCast=plain:679" in text and "association=unconfirmed" in text
         assert "localized error" not in text
+        assert "notBehind=plain:unavailable:string" in text, "no client string: unavailable, not false"
+        lua.execute("SPELL_FAILED_NOT_BEHIND='You must be behind your target.'")
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
+        s.ticker.fn()
+        assert "notBehind=plain:false" in s.last["signal.failure.event"]
+        event(s.frame, "UI_ERROR_MESSAGE", 23, "You must be behind your target.")
+        s.ticker.fn()
+        text = s.last["signal.failure.event"]
+        assert "notBehind=plain:true" in text and "behind your target" not in text
+        event(s.frame, "UI_ERROR_MESSAGE", 23, lua.globals().secretPayload)
+        s.ticker.fn()
+        assert "notBehind=secret:<secret>" in s.last["signal.failure.event"]
+        # A creature emote: from the target (GUID, the 12th argument), the text as a template
+        # with the sender's name taken out, and the secrecy of each part.
+        def last_emote():
+            return [r for r in lua.globals().JustACGlobal.probeLog.values() if "EVIDENCE emote" in r][-1]
+
+        def emote(text, sender, guid):
+            event(s.frame, "CHAT_MSG_MONSTER_EMOTE", text, sender, "", "", "", "", 0, 0, "", 0, 1, guid)
+            return last_emote()
+        row = emote("Kobold Tunneler attempts to run away in fear!", "Kobold Tunneler", "Creature-0-1-2-3-504-AB")
+        assert "fromTarget=plain:true" in row and "template=plain:%s_attempts_to_run_away_in_fear!" in row, row
+        assert "Kobold" not in row and "guidSecret=false" in row, row
+        assert "fromTargetByName=plain:true" in row and "guidAt=plain:12" in row and "args=12" in row, row
+        assert "targetGuid=plain:true" in row, row
+        row = emote("Gnoll (Elite) goes into a frenzy!", "Gnoll (Elite)", "Creature-0-9-9-9-111-CD")
+        assert "fromTarget=plain:false" in row and "template=plain:%s_goes_into_a_frenzy!" in row, row
+        assert "fromTargetByName=plain:false" in row, row
+        event(s.frame, "CHAT_MSG_MONSTER_EMOTE", "Kobold Tunneler flees!", "Kobold Tunneler")
+        row = last_emote()
+        assert "fromTarget=plain:unknown:no guid" in row and "guidAt=plain:none" in row, row
+        assert "fromTargetByName=plain:true" in row, "no GUID: the name still matches the target"
+        row = emote(lua.globals().secretPayload, "Kobold", lua.globals().secretPayload)
+        assert "fromTarget=secret:<secret>" in row and "template=secret:<secret>" in row, row
+        assert "guidSecret=true" in row, row
+        lua.execute("targetGUID = secretPayload")
+        row = emote("x", "Kobold", "Creature-0-1-2-3-504-AB")
+        assert "fromTarget=secret:<secret>" in row, "a secret target GUID is no comparison"
+        lua.execute("targetGUID = 'Creature-0-1-2-3-504-AB'")
         event(s.frame, "PLAYER_TARGET_CHANGED")
         event(s.frame, "UI_ERROR_MESSAGE", 23, "localized error")
         s.ticker.fn()

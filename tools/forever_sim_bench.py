@@ -40,7 +40,18 @@ Arms compared
   list-<tree>        optional (--other-lists): this tree's character following another tree's list
   draft              optional (--draft FILE): the same tree read from a proposed copy of the lists
   justac-without-<ids>   optional (--without): the generated list minus some entries
-All arms run without pre-pull actions: a levelling pull has no countdown.
+All arms run without their own pre-pull actions: a levelling pull has no countdown. Every arm
+instead gets the class's levelling pre-pull casts (PREPULL): a rogue's Stealth, a priest's Power
+Word: Shield (a local simulator addition; absorbed hits push no cast back).
+
+Pull model (on by default, --no-pull-model turns it off; needs the simulator's local change): a
+fight starts when the player's first attack lands. Until then the target does not attack, so a
+caster's opening cast is free, as in a real pull; the target then needs distance / 7 yards a
+second to reach a caster before its first swing, and a pet sent from range needs the same to
+reach the target. Kill time runs from that first landing, as a kill timed in game does. Checked
+against kills logged in game (2026-11-23): six level 15 hunter fights with a boar ran 11 to 15 s
+with 251 hunter and 105 pet damage; the model gives 12.0 s, 264 and 93 (before it: 10.9 s, 237
+and 126).
 
 Assumptions (each is a modelling choice, not a measured fact; see ASSUMPTIONS below and the
 printed report)
@@ -68,17 +79,27 @@ printed report)
   - The simulator's combat tables are Classic's and its Forever rules are partly
     provisional. Use the output to compare two orderings under the same assumptions, never
     as absolute damage numbers.
+  - Local simulator changes the bench relies on (tools/forever-sim-patches): the fight's
+    real length, and the wand for priests and mages. What the model still cannot be trusted
+    for is listed in Documentation/DEV_TOOLING.md ("What the simulator cannot be trusted for").
 
 Classes (every class and tree in Data/Forever/Rotations.lua has an entry in CLASSES)
   - Each tree runs on the simulator spec that plays it, with its own weapons, armour and
     engagement. A tree the simulator has no spec for (restoration druid and shaman, holy
     paladin, discipline and holy priest) runs its damage list on the class's damage spec
     with the healer build; its "sim" arm is that damage spec's preset.
-  - Level brackets: the simulator defines every rogue attack, the feral druid's Shred, Maul
-    and Swipe and the hunter's melee attacks only at levels 25, 40, 50 and 60. Those trees
-    are refused at any other level (BRACKET_LEVELS).
-  - Hunter: no pet by default (the simulator's pet has level 60 stats at every owner level;
-    --pet names a family), shooting from 30 yards and never hit; vendor ammunition by level.
+  - Level brackets: upstream, the simulator defines every rogue attack, the feral druid's
+    Shred, Maul and Swipe, the hunter's melee attacks and pet abilities and the warlock's
+    demons only at levels 25, 40, 50 and 60. The local changes (tools/forever-sim-patches) give
+    them the rank the level has, from the client spell tables, so every tree runs at every
+    level. What is still bracket-only (rogue poisons, Mutilate, shaman imbues) is listed in
+    each report; tools/forever_sim_sweep.py shows what a level is missing.
+  - Pets: a hunter fights beside a cat (2.0 s swing) from level 10 and a warlock beside an imp
+    unless --pet says otherwise (assumed defaults). With the local changes the hunter pet's and
+    the demons' attributes follow the Classic server table by level (the simulator's own level
+    rows are rows of it), and the hunter pet's base hit is linear in level as in Classic. Whether
+    WoW Forever changed those curves is not measured, and the pet is about half of a hunter's
+    damage. The hunter shoots from 30 yards and is never hit; vendor ammunition by level.
   - Spec options the lists do not cast are the same for every arm and printed in the report:
     no mage or priest armour spell, no rogue poisons, the enhancement weapon imbue by level.
   - A simulator run that never finishes (a preset that loops on a free instant action at a
@@ -286,7 +307,7 @@ CLASSES.update({
             "balance": {"sim_preset": "ui/balance_druid/apls/launch.apl.json",
                         "source_preset": "druid/balance/launch.apl.json",
                         "talents": "533222011550135--505003", "main_tree": 0},
-            "feral": {"sim_preset": "ui/feral_druid/apls/feral.apl.json", "levels": BRACKET_LEVELS,
+            "feral": {"sim_preset": "ui/feral_druid/apls/feral.apl.json",
                       "source_preset": "druid/feralcat/default.apl.json",
                       "talents": "05002-55000032021032212051-055", "main_tree": 1, "form": "Cat",
                       "caveats": ["The simulator's Claw is the level 60 rank at every level (a flat 115 bonus "
@@ -295,7 +316,7 @@ CLASSES.update({
                                   "presets here is not evidence."],
                       "spec": ("feralDruid", {"options": {}}), "engagement": "melee",
                       "stat_weights": AGILITY_WEIGHTS, "suffix": {"name": "of the Tiger", "stats": (0, 1)}},
-            "feral_bear": {"sim_preset": "ui/feral_tank_druid/apls/forever_bear.apl.json", "levels": BRACKET_LEVELS,
+            "feral_bear": {"sim_preset": "ui/feral_tank_druid/apls/forever_bear.apl.json",
                            "source_preset": "druid/feralbear/default.apl.json",
                            "talents": "01-50022332120132012551-055", "main_tree": 1, "form": "Bear",
                            "spec": ("feralTankDruid", {"options": {}}), "engagement": "melee",
@@ -314,12 +335,15 @@ CLASSES.update({
         "proto_class": "ClassHunter",
         # No pet by default: the simulator's hunter pet has one fixed set of stats (a level 60
         # pet) at every owner level. --pet names a family for a level 60 run.
-        "spec": ("hunter", {"options": {"petType": "PetNone", "petUptime": 1}}),
+        # petAttackSpeed: a 2.0 s swing, the ordinary Classic pet (ASSUMED for the default cat). Left
+        # out, the simulator's option reads as its first value, a 1.0 s swing (Broken Tooth).
+        "spec": ("hunter", {"options": {"petType": "PetNone", "petUptime": 1, "petAttackSpeed": "Two"}}),
         "spec_for_level": hunter_spec,
         "pets": {"option": "petType", "none": "PetNone",
                  "names": ["Cat", "WindSerpent", "Wolf", "Bat", "Bear", "Owl", "Boar", "CarrionBird", "Crab",
                            "Crocolisk", "Gorilla", "Hyena", "Raptor", "Scorpid", "Spider", "Tallstrider", "Turtle"],
-                 "note": "the simulator's pet has level 60 stats at every owner level"},
+                 "note": "the pet's body scales linearly with level from the simulator's level 60 values (local change, "
+                         "an assumption)"},
         "race": "RaceNightElf",
         "engagement": "ranged",
         "class_id": 3,
@@ -342,7 +366,7 @@ CLASSES.update({
                              "source_preset": "hunter/dps/mm.apl.json",
                              "talents": "502-0053552001523051-50002", "main_tree": 1},
             # The survival list comes from the melee preset: it fights in melee range.
-            "survival": {"sim_preset": "ui/hunter/apls/survival.apl.json", "levels": BRACKET_LEVELS,
+            "survival": {"sim_preset": "ui/hunter/apls/survival.apl.json",
                          "source_preset": "hunter/dps/sv_melee.apl.json",
                          "talents": "502-005205-500230230050122151", "main_tree": 2, "engagement": "melee",
                          "caveats": ["The list comes from the melee preset and runs in melee range, where no shot "
@@ -453,7 +477,6 @@ CLASSES.update({
         "race": "RaceHuman",
         "engagement": "melee",
         "class_id": 4,
-        "levels": BRACKET_LEVELS,
         "rank_by_chain": True,
         "ui": ["rogue"],
         "weapon": {"inv": (13, 21), "subclasses": (4, 7, 13, 15)},
@@ -462,6 +485,9 @@ CLASSES.update({
         "suffix": MONKEY,
         "forms": {"Stealth": 30},
         "form_spells": {1784: "Stealth"},
+        # A levelling rogue opens nearly every fight from Stealth: every arm casts it a second before
+        # the pull (the simulator's own Stealth spell and aura), so the lists' openers can fire.
+        "stealth": {"spell": 1784, "aura": 1787},   # 1787: FIXED_IDS (filled from here below)
         "form_word": "",
         "trees": {
             "assassination": {"sim_preset": "ui/rogue/apls/forever_mutilate.apl.json",
@@ -579,6 +605,12 @@ STANCE_FORMS = {"Battle": 17, "Defensive": 18, "Berserker": 19}
 STANCE_SPELLS = {2457: "Battle", 71: "Defensive", 2458: "Berserker"}
 CLIENT_CSV = os.path.join(ROOT, "Documentation", "wow_spell_csv_forever")
 ITEM_CLASS_WEAPON, ITEM_CLASS_ARMOR, SUBCLASS_SHIELD, SUBCLASS_WAND = 2, 4, 6, 19
+# The pet a levelling character fights beside when --pet names none (ASSUMED: the first demon, and
+# a cat). Before 2026-11-23 the default was no pet, which is not how either class levels: a
+# Demonology list then cast Searing Pain without end, its brand needing the demon's attacks.
+# A hunter has no pet before level 10 (HUNTER_PET_LEVEL, as in Classic).
+DEFAULT_PET = {"warlock": "imp", "hunter": "cat"}
+HUNTER_PET_LEVEL = 10
 # A fight against several targets: their count and the fixed length of the pull (seconds).
 PULL = {"mobs": 1, "seconds": 20.0}
 # The bench fights alone. --grouped answers the lists' "in a group" condition as true, for what
@@ -928,8 +960,10 @@ class RuntimeRules:
             return Converter.const("false"), "major cooldown held: needs an elite, several enemies or a much higher level"
         if sid not in self.d["delayed"]:
             return None, None
-        if self.d["threat"].get(sid) == "boost" and (self.tree in self.d["tank_trees"].get(self.cls, set())
-                                                     or self.early_armor):
+        # SpellDB.IsPlayerTank grouped (the tank tree, no role in the simulator), or an early-armor
+        # tree: a threat-building armor reduction is not held. A tank alone holds it like the rest.
+        grouped_tank = GROUPED["on"] and self.tree in self.d["tank_trees"].get(self.cls, set())
+        if self.d["threat"].get(sid) == "boost" and (grouped_tank or self.early_armor):
             return None, "slow payoff, not held in this tree"
         if sid in self.d["dots"]:
             if self.lasting:
@@ -1010,13 +1044,28 @@ def harvest_sim_ids(sim, cls):
     return found
 
 
+# Classes whose simulator code registers its spells from the generated rank tables
+# (sim/<class>/level_ranks_generated.go, tools/forever-sim-patches): there the table's ids are the
+# simulator's action ids. Every other class has the table too (for checks against client data)
+# but registers its own ids, so the table must not be read as the simulator's: with it the mage's
+# Arcane Blast was sent as the client rank id and never cast (2026-11-23).
+RANKED_BY_TABLE = ("rogue", "druid", "hunter", "warlock")
+
+
+def scanned(cls, name):
+    """Is this simulator source file one the id scans read?"""
+    if not name.endswith(".go") or name.endswith("_test.go"):
+        return False
+    return name != "level_ranks_generated.go" or cls in RANKED_BY_TABLE
+
+
 def source_literals(sim, cls):
     """Every integer literal in the simulator's Go source for the class and its core."""
     out = set()
     for folder in (os.path.join(sim, "sim", cls), os.path.join(sim, "sim", "core")):
         for base, _, files in os.walk(folder):
             for name in files:
-                if name.endswith(".go") and not name.endswith("_test.go"):
+                if scanned(cls, name):
                     text = open(os.path.join(base, name), encoding="utf-8", errors="replace").read()
                     out.update(int(n) for n in re.findall(r"\b\d{2,7}\b", text))
     return out
@@ -1042,7 +1091,7 @@ def rank_tables(sim, cls, client_levels=False):
     for base, _, names in os.walk(os.path.join(sim, "sim", cls)):
         if os.path.basename(base).startswith("_"):
             continue
-        files += [os.path.join(base, n) for n in sorted(names) if n.endswith(".go") and not n.endswith("_test.go")]
+        files += [os.path.join(base, n) for n in sorted(names) if scanned(cls, n)]
     config = os.path.join(sim, "sim", "core", "config.go")
     include_aq = bool(re.search(r"IncludeAQ\s*=\s*true", open(config, encoding="utf-8").read())) if os.path.exists(config) else True
     # A class that registers every rank under its own id names its level arrays freely
@@ -1096,7 +1145,7 @@ def bracket_only(sim, cls):
         if os.path.basename(base).startswith("_"):
             continue
         for n in sorted(names):
-            if n.endswith(".go") and not n.endswith("_test.go"):
+            if scanned(cls, n):
                 text = open(os.path.join(base, n), encoding="utf-8", errors="replace").read()
                 if re.search(r"\}\[\w+(?:\.\w+)*\.Level\]", text):
                     out.append(n[:-3])
@@ -1109,7 +1158,7 @@ def struct_spell_ids(sim, cls):
     out = set()
     for base, _, names in os.walk(os.path.join(sim, "sim", cls)):
         for n in names:
-            if n.endswith(".go") and not n.endswith("_test.go"):
+            if scanned(cls, n):
                 text = open(os.path.join(base, n), encoding="utf-8", errors="replace").read()
                 out.update(int(x) for x in re.findall(r"(?i)\bspellid:\s*(\d+)", text))
     return out
@@ -1125,6 +1174,12 @@ def client_spell_levels():
 BOOK_RANKS = (25286, 25361)
 
 
+# Ids the simulator uses at every level though they sit in a rank family: an aura a class entry
+# names as the one the simulator always applies (the rogue's Stealth aura is 1787 whatever rank of
+# Stealth was cast).
+FIXED_IDS = set()
+
+
 def ranks_for_level(rotation, tables, level):
     """A copy of the rotation in which every id of a rank family is the highest rank the
     level has (rank 1 when it has none: the spell is then not registered and never cast)."""
@@ -1138,7 +1193,7 @@ def ranks_for_level(rotation, tables, level):
     rotation = json.loads(json.dumps(rotation))
 
     def visit(node):
-        if isinstance(node.get("spellId"), int) and node["spellId"] in best:
+        if isinstance(node.get("spellId"), int) and node["spellId"] in best and node["spellId"] not in FIXED_IDS:
             node["spellId"] = best[node["spellId"]]
     walk(rotation, visit)
     return rotation
@@ -1308,6 +1363,11 @@ class Converter:
             aid, is_dot, warn = self.ids.aura(g["id"])
             if warn:
                 self.note(APPROX, "debuff gate: " + warn)
+                if g.get("neg") or t == "dot":
+                    # "Cast while X is not on the target", and the simulator has no X: the entry
+                    # would be pressed without end (2026-11-23: Demonology at 30 cast Searing Pain 27
+                    # times a fight and nothing else). The line is left out instead.
+                    self.unkept = g["id"]
             if g.get("op"):
                 if g.get("ncast"):
                     rhs = {"spellCastTime": {"spellId": self.spell_ref(g["ncast"], "debuff gate cast time")}}
@@ -1349,6 +1409,14 @@ class Converter:
                 val["auraNumStacks"]["sourceUnit"] = {"type": "CurrentTarget"}
             self.note(EXACT, "stacks of %d %s %s on the %s" % (aid, g["op"], g["n"], "target" if g.get("tgt") else "player"))
             return self.cmp(val, g["op"], g["n"])
+        if t == "bench_unhindered":
+            early = {"cmp": {"op": OPS["<"], "lhs": {"currentTime": {}}, "rhs": {"const": {"val": "%gs" % g["n"]}}}}
+            if not g.get("shield"):
+                self.note(EXACT, "weapon stage: only in the first %g s of the fight, before the target arrives" % g["n"])
+                return early
+            self.note(EXACT, "weapon stage: only before the target arrives (%g s) or while the shield %d holds"
+                      % (g["n"], g["shield"]))
+            return {"or": {"vals": [early, {"auraIsActive": {"auraId": {"spellId": g["shield"]}}}]}}
         if t == "execute":
             if g["op"] == "<" and g["pct"] in (20, 25, 35):
                 self.note(EXACT, "target below %d%% health" % g["pct"])
@@ -1419,7 +1487,10 @@ class Converter:
         if t == "starved":
             self.note(APPROX, "mana-starved gate: read as false (the runtime derives it from what is affordable; no simulator value matches)")
             return self.const("false")
-        # stealth, totem, prev, tick and anything new
+        if t == "stealth" and self.ids.cfg.get("stealth"):
+            self.note(EXACT, "stealthed: the fight opens from Stealth (cast before the pull in every arm)")
+            return {"auraIsActive": {"auraId": {"spellId": self.ids.cfg["stealth"]["aura"]}}}
+        # stealth (a class with no opener from it here), totem, prev, tick and anything new
         self.note(LOST, "gate %s cannot be expressed: read as holding, the way the runtime treats an unreadable gate"
                   % json.dumps(g, separators=(",", ":")))
         return self.const("true")
@@ -1453,7 +1524,12 @@ class Converter:
                 if said:
                     self.note(EXACT, "runtime: " + said)
             action = {"castSpell": {"spellId": ref}}
+            self.unkept = None
             conds = [self.gate(g) for g in gates]
+            if self.unkept:
+                self.note(LOST, "LINE OMITTED: cast to keep %d on the target, an aura the simulator does not have "
+                                "(as written it would be pressed without end)" % self.unkept)
+                continue
             if hold is not None:
                 conds.append(hold)
             if len(conds) == 1:
@@ -1483,8 +1559,37 @@ def talent_points(sim, cls, build):
     return out
 
 
+# Talents a levelling build takes before anything else, per class: (tree, index in the talent string,
+# ranks). Wand Specialization is the priest's and mage's first two points in the levelling guides
+# (Documentation/forever-guides: "Wand Specialization 2/2 first"), while the simulator's presets
+# are level 60 builds that reach it last or never: a level 13 priest had none.
+LEVELLING_FIRST = ["Wand Specialization"]
+# Wand Specialization: 13% wand damage per rank, 2 ranks (client talent spell 6057 is 13; the
+# guides say 13% a rank for the priest too, whose spell 14524 reads 25).
+WAND_SPEC_PER_RANK = 0.13
+
+
+def talent_position(sim, cls, name):
+    """(tree, index, max points) of the class's talent with this name, or None."""
+    data = json.load(open(os.path.join(sim, "ui", "core", "talents", "trees", cls + ".json"), encoding="utf-8"))
+    for tree, block in enumerate(data):
+        for idx, talent in enumerate(block["talents"]):
+            if talent.get("name") == name:
+                return tree, idx, talent["maxPoints"]
+    return None
+
+
+def wand_spec_bonus(sim, cls, talents):
+    """Fraction Wand Specialization adds to wand damage under this talent string (any class that
+    has the talent)."""
+    if not talents:
+        return 0.0
+    return WAND_SPEC_PER_RANK * talent_points(sim, cls, talents).get("Wand Specialization", 0)
+
+
 def talents_for_level(sim, cls, tree_cfg, level):
-    """The simulator's preset build for the tree, cut to the level's points (level - 9).
+    """The simulator's preset build for the tree, cut to the level's points (level - 9), after the
+    class's levelling-first talents (LEVELLING_FIRST).
 
     Points go into the build's main tree in row order (the order of the talent string),
     then into the other trees in order. Once the level has the 31 points the last talent
@@ -1499,6 +1604,15 @@ def talents_for_level(sim, cls, tree_cfg, level):
     order = [tree_cfg["main_tree"]] + [i for i in range(3) if i != tree_cfg["main_tree"]]
     main = order[0]
     last = len(layout[main]) - 1
+    for name in LEVELLING_FIRST:
+        where = talent_position(sim, cls, name)
+        if not where:
+            continue
+        tree, idx, ranks = where
+        take = min(ranks, points)
+        got[tree][idx] = take
+        full[tree][idx] = max(full[tree][idx], take)
+        points -= take
     capstone = full[main][last] > 0 and points >= layout[main][last][0] * 5 + 1
     if capstone:
         points -= 1
@@ -1506,8 +1620,8 @@ def talents_for_level(sim, cls, tree_cfg, level):
         for idx, want in enumerate(full[tree]):
             if tree == main and idx == last and capstone:
                 continue
-            take = min(want, points)
-            got[tree][idx] = take
+            take = min(want - got[tree][idx], points)
+            got[tree][idx] += take
             points -= take
     if capstone:
         spent_above = sum(got[main][:last])
@@ -1969,6 +2083,8 @@ def build_request(cls, level, talents, gear, scenario, creatures, rotation, iter
     spec_field, spec_value = cfg["spec"]
     if cfg.get("spec_for_level"):
         spec_value = {"options": dict(spec_value.get("options", {}), **cfg["spec_for_level"](level))}
+    if cfg.get("pets") and level < HUNTER_PET_LEVEL:
+        spec_value = {"options": dict(spec_value.get("options", {}), **{cfg["pets"]["option"]: cfg["pets"]["none"]})}
     player = {
         "name": "bench", "race": gear[2].get("race") or cfg["race"], "class": cfg["proto_class"], "level": level,
         "knownSpells": gear[2].get("spells") or [],
@@ -2046,6 +2162,26 @@ def stat_index(sim, name):
     return int(re.search(r"\b%s = (\d+);" % name, block).group(1))
 
 
+def with_prepull(rotation, cfg):
+    """The rotation with the class's own pre-pull casts (PREPULL), each on the character itself."""
+    casts = PREPULL.get(cfg["class_id"], [])
+    if not casts:
+        return rotation
+    actions = [{"action": {"castSpell": {"spellId": {"spellId": sid}, "target": {"type": "Self"}}},
+                "doAtValue": {"const": {"val": "%gs" % at}}} for sid, at in casts]
+    return dict(rotation, prepullActions=actions)
+
+
+# Pre-pull casts that absorb hits (Power Word: Shield, rank 1): while one holds, a cast is not
+# pushed back, and the queue in game prices it unhindered (SpellQueue.NoteAbsorbedHit).
+SELF_SHIELDS = {17}
+# What a levelling character casts on itself before every pull, in every arm, by class id: the
+# rank-1 id (the level's rank is chosen like every other id) and when, in seconds before the pull.
+# A rogue opens from Stealth; a priest shields first, as the levelling guides say ("shield and
+# Renew before the pull"): absorbed hits push no cast back.
+PREPULL = {4: [(1784, -1.0)], 5: [(17, -1.5)]}
+
+
 def strip_prepull(rotation):
     rotation = dict(rotation)
     rotation.pop("prepullActions", None)
@@ -2081,7 +2217,8 @@ def run_cli(cli, request, keep, label):
     try:
         proc = subprocess.run([cli, "sim", "--infile", infile, "--outfile", outfile], capture_output=True, text=True,
                               timeout=RUN_TIMEOUT["seconds"],
-                              env=dict(os.environ, GOMAXPROCS=str(SIM_THREADS["n"])), **low_priority_args())
+                              env=dict(os.environ, GOMAXPROCS=str(SIM_THREADS["n"]),
+                                       WOWSIM_PULL_MODEL="1" if PULL_MODEL["on"] else "0"), **low_priority_args())
     except subprocess.TimeoutExpired:
         return None, "the simulator did not finish within %d s (a rotation that never advances time)" % RUN_TIMEOUT["seconds"]
     if proc.returncode != 0 or not os.path.exists(outfile):
@@ -2092,15 +2229,147 @@ def run_cli(cli, request, keep, label):
     return result, None
 
 
-def summarize(result, swing_speed):
+# The pull model (the simulator's local sim/core/pull_model_local.go, on unless --no-pull-model):
+# the target does not attack until the player's first attack lands and then has to reach a player
+# at range; a pet sent from range has to reach the target; the fight is timed from that first
+# landing. APPROACH_YARDS_PER_SECOND must equal the simulator's PullApproachYardsPerSecond.
+PULL_MODEL = {"on": True}
+FIXED_IDS.update(cfg["stealth"]["aura"] for cfg in CLASSES.values() if cfg.get("stealth"))
+APPROACH_YARDS_PER_SECOND = 7.0
+MELEE_YARDS = 5.0
+
+
+# The queue's weapon stage (SpellQueue._SpellBeatsWeapon and _PrepareWeaponFillers in
+# SpellQueueForever.lua): a single-target cast-time spell with no damage over time is pressed over
+# the wand only while it deals more per second, its cast lengthened by the hits expected to push
+# it back. The simulator presses a list as written, so without this a caster spent the fight
+# casting Smite under pushback where the game switches to the wand (a level 13 priest: 20.9 s
+# against about 10 s in game).
+PUSHBACK_FIRST, PUSHBACK_STEP, PUSHBACK_FLOOR = 1.0, 0.2, 0.2   # sim/core/cast.go
+GCD_SECONDS = 1.5
+
+
+def pushed_cast_seconds(cast, swing):
+    """A cast's expected length while the target swings every `swing` seconds and every hit lands:
+    each hit adds 1.0 s, then 0.2 s less per hit, never under 0.2 s."""
+    elapsed, hits = cast, 0
+    while swing > 0 and hits < 20 and (hits + 1) * swing <= elapsed:
+        elapsed += max(PUSHBACK_FLOOR, PUSHBACK_FIRST - PUSHBACK_STEP * hits)
+        hits += 1
+    return elapsed
+
+
+@functools.lru_cache(maxsize=None)
+def weapon_rule_spells(cls):
+    """rank-1 id -> [(learn level, growth cap, cast seconds, mean hit, per level)] for each rank of
+    a class ability the weapon stage weighs: a cast time, a direct hit, no damage over time. From
+    the client spell tables, the same the generator reads."""
+    import check_forever_apl as cfa
+    levels = {}
+    for r in cfa.rows("SpellLevels"):
+        if r["DifficultyID"] == "0":
+            levels[r["SpellID"]] = (int(float(r["SpellLevel"] or 0) or float(r["BaseLevel"] or 0)),
+                                    int(float(r["MaxLevel"] or 0)))
+    casts = dict((r["ID"], float(r["Base"] or 0) / 1000.0) for r in cfa.rows("SpellCastTimes"))
+    cast_of = dict((r["SpellID"], casts.get(r["CastingTimeIndex"], 0.0)) for r in cfa.rows("SpellMisc")
+                   if r["DifficultyID"] == "0")
+    hit, periodic = {}, set()
+    for r in cfa.rows("SpellEffect"):
+        if r["DifficultyID"] != "0":
+            continue
+        if r["Effect"] == "2" and float(r["EffectBasePointsF"] or 0) > 0:
+            hit[r["SpellID"]] = (float(r["EffectBasePointsF"]), float(r["EffectRealPointsPerLevel"] or 0))
+        if r["Effect"] == "6" and r["EffectAura"] == "3":
+            periodic.add(r["SpellID"])
+    chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
+    out = {}
+    for chain in chains.values():
+        ranks = []
+        for sid, _ in chain:
+            if cast_of.get(sid, 0) > 0 and sid in hit and sid not in periodic:
+                learn, cap = levels.get(sid, (0, 0))
+                ranks.append((learn, cap, cast_of[sid], hit[sid][0], hit[sid][1]))
+        if ranks:
+            out[int(chain[0][0])] = sorted(ranks)
+    return out
+
+
+def spell_hit_at(ranks, level):
+    """(cast seconds, mean hit) of the rank a level has, or None before the first rank."""
+    have = [r for r in ranks if r[0] <= level]
+    if not have:
+        return None
+    learn, cap, cast, points, per_level = have[-1]
+    grown = max(0, (min(level, cap) if cap else level) - learn)
+    return cast, points + per_level * grown
+
+
+def wand_dps(gear, pool, bonus=0.0):
+    """Damage per second of the wand a setup wears (with `bonus`, Wand Specialization), or None."""
+    specs, custom = gear[0], gear[1]
+    items = dict((it.get("id"), it) for it in custom if isinstance(it, dict))
+    for spec in specs:
+        iid = spec.get("id") if isinstance(spec, dict) else None
+        it = items.get(iid) or pool.sim_db.get(iid)
+        if it and it.get("rangedWeaponType") == 8 and it.get("weaponSpeed"):
+            return (it["weaponDamageMin"] + it["weaponDamageMax"]) / 2.0 / it["weaponSpeed"] * (1 + bonus)
+    return None
+
+
+def weapon_rule_entries(entries, cls, cls_cfg, level, wand, approach):
+    """The list as the queue presses it beside a wand: each weighed cast that loses to the wand
+    once the target is on the character is pressed only before then. Returns (entries, notes)."""
+    if not wand:
+        return entries, []
+    eng = ENGAGEMENTS[cls_cfg["engagement"]]
+    spells = weapon_rule_spells(cls)
+    out, notes = [], []
+    for e in entries:
+        info = spells.get(e["id"]) and spell_hit_at(spells[e["id"]], level)
+        if not info:
+            out.append(e)
+            continue
+        cast, mean = info
+        free = mean / max(cast, GCD_SECONDS)
+        hit = mean / max(pushed_cast_seconds(cast, ASSUMPTIONS["target_swing_speed"]), GCD_SECONDS)
+        under_attack = hit if eng["target_attacks_player"] else free
+        if under_attack > wand:
+            out.append(e)
+            continue
+        shield = next((sid for sid, _ in PREPULL.get(cls_cfg["class_id"], []) if sid in SELF_SHIELDS), None)
+        if free > wand and eng["target_attacks_player"] and (approach > 0 or shield):
+            out.append(dict(e, gates=list(e.get("gates") or []) + [{"t": "bench_unhindered", "n": approach,
+                                                                    "shield": shield}]))
+            notes.append("%d: %.1f a second unhindered, %.1f pushed back, wand %.1f: cast only before the target "
+                         "arrives (%.1f s)%s" % (e["id"], free, hit, wand, approach,
+                                                  " or while the shield absorbs its hits" if shield else ""))
+        else:
+            notes.append("%d: %.1f a second at best, wand %.1f: left to the wand" % (e["id"], free, wand))
+    return out, notes
+
+
+def approach_seconds(cls_cfg):
+    """How long the target needs to reach the character under the pull model."""
+    distance = ENGAGEMENTS[cls_cfg["engagement"]].get("distance")
+    if not PULL_MODEL["on"] or not distance or distance <= MELEE_YARDS:
+        return 0.0
+    return distance / APPROACH_YARDS_PER_SECOND
+
+
+def summarize(result, swing_speed, approach=0.0):
     """One run -> damage per fight, kill time, casts per fight.
 
-    With a fight sized by health the simulator stops the iteration at the kill but then
-    reports a nominal 600 s duration, so its own damage per second and fight length are
-    unusable. Damage per fight is still right, and the target's melee swings are a clock:
-    it swings at t = 0 and every swing_speed seconds until the kill, so the mean kill time
-    is swing_speed x (mean swings - 0.5). That holds while nothing slows or stuns the
-    target (Thunder Clap would bias it)."""
+    Kill time is the simulator's mean iteration duration, which is the time of the killing
+    event in a build with the local fight-length change (sim/core/sim.go Cleanup, 2026-11-23).
+    An unchanged simulator reports its nominal duration there instead (600 s, or the
+    encounter's own): then the target's melee swings are the clock, as before. It swings at
+    t = 0 and every swing_speed seconds until the kill, so the mean kill time is
+    swing_speed x (mean swings - 0.5). That clock moves in swing_speed steps and runs slow
+    whenever the target's attacks are slowed (Thunder Clap: 20%), which made every list using
+    such a slow look faster than it was; out["clock"] says which one a run used.
+
+    Damage per fight includes the overkill of the last hit, so damage per second flatters
+    large hits; compare kill times."""
     player = result["raidMetrics"]["parties"][0]["players"][0]
     n = result.get("iterationsDone") or player["dps"]["aggregatorData"]["n"]
     casts, damage = {}, 0.0
@@ -2129,9 +2398,18 @@ def summarize(result, swing_speed):
     if not swings:
         out.update(kill=float("nan"), dps=float("nan"))
         return out
-    kill = swing_speed * (swings / n - 0.5)
-    out.update(kill=kill, dps=damage / n / kill)
+    # Under the pull model the target's first swing comes `approach` seconds after the pull.
+    kill, clock = swing_speed * (swings / n - 0.5) + approach, "target swings"
+    exact = result.get("avgIterationDuration")
+    if exact and 0 < exact < EXACT_CLOCK_BELOW:
+        kill, clock = exact, "simulator"
+    out.update(kill=kill, dps=damage / n / kill, clock=clock, swing_kill=swing_speed * (swings / n - 0.5) + approach)
     return out
+
+
+# A mean iteration duration below this (seconds) is a real kill time: an unchanged simulator
+# reports its nominal duration (600 s, or the bench's own 180 s cap) for every health-sized fight.
+EXACT_CLOCK_BELOW = 179.0
 
 
 # Two-sided 95% Student t quantiles by degrees of freedom (batch means).
@@ -2185,9 +2463,10 @@ def main():
                                            "target: replaces the usual target set with one scenario per multiple")
     ap.add_argument("--engagement", choices=sorted(ENGAGEMENTS), help="how the character meets the target "
                     "(default: the class's own)")
-    ap.add_argument("--pet", help="warlock demon (none, imp, voidwalker, succubus, felhunter; the simulator's demons "
-                                  "only act at owner levels 25, 40, 50 and 60) or hunter pet family (cat, wolf, boar, "
-                                  "...; the simulator's pet has level 60 stats at every level). Default none")
+    ap.add_argument("--pet", help="default: imp for a warlock, cat for a hunter from level 10 (an assumption). "
+                                  "Warlock demon (none, imp, voidwalker, succubus, felhunter) or hunter pet family "
+                                  "(cat, wolf, boar, ...). Pet and demon stats between the simulator's level brackets "
+                                  "are interpolated (local change, an assumption)")
     ap.add_argument("--wand", help="wand item id from the simulator's database, or 'none' (default: the crafted "
                                    "uncommon wand the level can equip)")
     ap.add_argument("--stance", choices=sorted(STANCE_FORMS), help="warrior stance at the pull (default: the tree's own)")
@@ -2212,6 +2491,18 @@ def main():
     ap.add_argument("--no-runtime-rules", action="store_true",
                     help="run the lists alone, without the queue's rules outside them (stacking, slow-payoff hold, "
                          "dying-target and fast-fight DoT rules)")
+    ap.add_argument("--no-weapon-rule", action="store_true",
+                    help="press a caster's list as written, instead of leaving a cast-time spell to the wand where "
+                         "the queue would (its weapon stage)")
+    ap.add_argument("--no-pull-model", action="store_true",
+                    help="start every fight at time zero with the target already swinging (the simulator's own "
+                         "start), instead of at the player's first landed attack with the target and a pet having to "
+                         "close the distance")
+    ap.add_argument("--any-level", action="store_true",
+                    help="run a tree at a level the simulator lacks its core attacks for (the coverage sweep, "
+                         "tools/forever_sim_sweep.py, does this to show what is missing)")
+    ap.add_argument("--justac-only", action="store_true",
+                    help="run the generated list (and --draft) alone: no simulator preset, source preset or cooldown arm")
     ap.add_argument("--gaps", help="comma-separated level gaps (target level minus player level, e.g. --gaps=-3,-2,-1,0,1,2): "
                                    "replaces the usual target set with one regular target per gap")
     ap.add_argument("--health-scale", type=float, help="multiply every target's health by this factor")
@@ -2248,6 +2539,9 @@ def main():
             cfg[key] = tree_cfg[key]
     if args.engagement:
         cfg["engagement"] = args.engagement
+    PULL_MODEL["on"] = not args.no_pull_model
+    if not args.pet and cls in DEFAULT_PET:
+        args.pet = DEFAULT_PET[cls]
     if args.pet:
         options = cfg["spec"][1].setdefault("options", {})
         if "summon" in options:
@@ -2272,7 +2566,7 @@ def main():
     if not args.levels:
         args.levels = "25,40,60" if allowed_levels else "20,40"
     refused = [x for x in args.levels.split(",") if allowed_levels and int(x) not in allowed_levels]
-    if refused and not args.convert_only:
+    if refused and not args.convert_only and not args.any_level:
         raise SystemExit("--levels %s: the simulator has %s %s's core attacks only at levels %s"
                          % (",".join(refused), cls, args.tree, ", ".join(str(x) for x in allowed_levels)))
     loadout_name = args.loadout or tree_cfg.get("loadout")
@@ -2393,9 +2687,12 @@ def main():
         cued = [i for i in ((data or runtime_data()).get("burst", {}).get(cls, [])) if i not in listed]
     if cued:
         arms.append(("justac+cooldowns", [{"id": i, "gates": []} for i in cued] + list(entries), None))
-    arms.append(("sim", None, strip_prepull(json.load(open(os.path.join(args.sim, tree_cfg["sim_preset"]), encoding="utf-8")))))
+    if args.justac_only:
+        arms = [arm for arm in arms if arm[0] in ("justac", "draft")]
+    else:
+        arms.append(("sim", None, strip_prepull(json.load(open(os.path.join(args.sim, tree_cfg["sim_preset"]), encoding="utf-8")))))
     src = os.path.join(PRESETS, tree_cfg.get("source_preset") or "none")
-    if os.path.isfile(src):
+    if os.path.isfile(src) and not args.justac_only:
         arms.append(("source", None, strip_prepull(json.load(open(src, encoding="utf-8")))))
     if args.new_source:
         # A newer upstream presets folder, not yet vendored: the same preset as it is there.
@@ -2410,7 +2707,8 @@ def main():
     say("- Simulator: `%s`, ruleset Forever, %d batches of %d iterations per arm and scenario, the same seeds for every arm "
         "(base seed %d). Intervals are 95%% Student t intervals over the batch means; the comparison column pairs batches by seed."
         % (args.sim, args.batches, args.iterations, args.seed))
-    say("- Kill time is measured from the target's own swing count (see summarize in the tool); damage per second is damage "
+    say("- Kill time is the simulator's time of the killing event, or the target's swing count in a build without the "
+        "local fight-length change (each level says which; see summarize in the tool). Damage per second is damage "
         "per fight divided by it. A negative last column means the arm kills faster than the simulator's preset.")
     say("- Arms: justac = `Data/Forever/Rotations.lua` %s/%s/%s; sim = `%s`; source = `tools/forever-apl-src/presets/%s`. "
         "Pre-pull actions removed from every arm." % (cls, args.tree, args.context, tree_cfg["sim_preset"],
@@ -2522,7 +2820,7 @@ def main():
                         result, err = run_cli(args.cli, request, args.keep, "calibration_%s_%d_b%d"
                                               % (kill["name"], target_level, batch))
                         if result is not None:
-                            simulated.append(summarize(result, ASSUMPTIONS["target_swing_speed"])["kill"])
+                            simulated.append(summarize(result, ASSUMPTIONS["target_swing_speed"], approach_seconds(cfg))["kill"])
                 if not simulated:
                     continue
                 sim_kill = sum(simulated) / len(simulated)
@@ -2586,11 +2884,16 @@ def main():
         gear = (specs, custom, extra)
         for line in gear_lines:
             say("  - %s" % line)
+        wand = None if args.no_weapon_rule else wand_dps(gear, pool, wand_spec_bonus(args.sim, cls, talents))
+        if wand:
+            _, rule_notes = weapon_rule_entries(entries, cls, cfg, level, wand, approach_seconds(cfg))
+            say("- Weapon stage (the queue's wand-or-cast rule; --no-weapon-rule runs the list as written): %s."
+                % ("; ".join(rule_notes) or "every weighed cast beats the wand"))
         say("")
         say("| Gear | Scenario | Target health | Arm | Kill time s (95% CI) | DPS (95% CI) | Damage taken per fight | "
             "vs sim preset, % (95% CI) |")
         say("|---|---|---|---|---|---|---|---|")
-        cast_tables = []
+        cast_tables, clocks, drift = [], set(), []
         speed = ASSUMPTIONS["target_swing_speed"]
         health_mults = [float(x) for x in args.health_mults.split(",")] if args.health_mults else None
         gaps = [int(x) for x in args.gaps.split(",")] if args.gaps else None
@@ -2604,14 +2907,18 @@ def main():
                     continue   # this arm never finished at this level: said once, not retried
                 rotation = fixed
                 if arm_entries is not None:
+                    pressed = arm_entries
+                    if wand:
+                        pressed, _ = weapon_rule_entries(arm_entries, cls, cfg, level, wand, approach_seconds(cfg))
                     rotation = Converter(ids, names, cfg["engagement"], floor,
                                          rules_for(sc["target_level"] - level, sc["elite"], level),
-                                         talent_points(args.sim, cls, talents)).convert(arm_entries)
+                                         talent_points(args.sim, cls, talents)).convert(pressed)
                 runs = []
                 for batch in range(args.batches):
                     seed = args.seed + batch * 1000003   # the same seeds for every arm
                     request = build_request(cls, level, talents, gear, sc, creatures,
-                                            ranks_for_level(rotation, conv.ids.tables, level), args.iterations, seed)
+                                            ranks_for_level(with_prepull(rotation, cfg), conv.ids.tables, level),
+                                            args.iterations, seed)
                     result, err = run_cli(args.cli, request, args.keep,
                                           "%s_%s_%s_b%d" % (os.path.basename(setup), sc["name"], name, batch))
                     if result is None:
@@ -2622,9 +2929,11 @@ def main():
                             % (label, sc["name"], health, name, err.replace("|", "/").replace("\n", " ")))
                         runs = []
                         break
-                    runs.append(summarize(result, speed))
+                    runs.append(summarize(result, speed, approach_seconds(cfg)))
                 if runs:
                     got[name] = runs
+                    clocks.update(r.get("clock") for r in runs if r.get("clock"))
+                    drift.extend(abs(r["kill"] - r["swing_kill"]) for r in runs if r.get("clock") == "simulator")
             for name, _, _ in arms:
                 if name not in got:
                     continue
@@ -2642,12 +2951,28 @@ def main():
             cast_tables.append((sc["name"], dict((k, {"casts": merge_casts(v), "mana": sum(r["mana"] for r in v) / len(v)})
                                                  for k, v in got.items())))
         say("")
+        if "target swings" in clocks:
+            say("Kill time clock: the target's swing count (%g s steps). This simulator build does not report "
+                "the fight's real length; the count runs slow while the target's attacks are slowed (Thunder "
+                "Clap), so a list using such a slow looks faster than it is." % speed)
+        elif clocks:
+            # The two clocks must agree unless the target's attacks were slowed (Thunder Clap) or it
+            # stopped swinging. 2026-11-23: a fault in the first fight-length change cut every fight
+            # to the first iteration's length, and only this comparison showed it.
+            say("Kill time clock: the simulator's own time of the killing event. Largest difference from the "
+                "target-swing clock at this level: %.1f s (more than about %g s without a slow on the target is a fault)."
+                % (max(drift) if drift else 0.0, speed / 2))
+        clocks.clear()
+        del drift[:]
+        say("")
         say("Casts per fight (damage per fight in brackets), by simulator action id:")
         say("")
         for name, got in cast_tables:
             say("- %s" % name)
             for arm in got:
-                parts = ["%s x%.2f (%.0f)" % (k, c, d) for k, (c, d) in sorted(got[arm]["casts"].items(), key=lambda kv: -kv[1][1]) if c > 0.005]
+                parts = ["%s x%.2f (%.0f)" % (k, c, d) for k, (c, d) in sorted(got[arm]["casts"].items(), key=lambda kv: -kv[1][1])
+                         # The simulator counts no casts for some spells (Execute) though they land: damage shows them.
+                         if c > 0.005 or d > 0.5]
                 spent = "; mana spent per fight %.0f" % got[arm]["mana"] if got[arm]["mana"] else ""
                 say("  - %s: %s%s" % (arm, ", ".join(parts), spent))
         say("")

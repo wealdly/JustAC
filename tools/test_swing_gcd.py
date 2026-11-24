@@ -20,7 +20,7 @@ def main():
     start = query.index("--- The length of the global cooldown last seen running")
     end = query.index("\nend\n", query.index("function BlizzardAPI.GetGCDLength(")) + len("\nend\n")
     queue = (ROOT / "SpellQueue.lua").read_text(encoding="utf-8")
-    q_start = queue.index("function SpellQueue._SwingFarOff(")
+    q_start = queue.index("local farSwingStart, farGcdStart, farAnswer")
     q_end = queue.index("\nend\n", q_start) + len("\nend\n")
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
@@ -28,7 +28,13 @@ def main():
         gcdStart, gcdDur, swing, now = 0, 0, nil, 100
         function GetTime() return now end
         function BlizzardAPI.GetGCDInfo() return gcdStart, gcdDur end
+        swingStart = nil   -- set by the per-swing cases; else every reading is its own swing
         function BlizzardAPI.GetSwingRemaining(kind) assert(kind == 0); return swing end
+        function BlizzardAPI.GetSwingWindow(kind)
+            assert(kind == 0)
+            if swing == nil then return nil end
+            return swingStart or (now + swing - 10), now + swing
+        end
     """ + query[start:end]
         + query[query.index("function BlizzardAPI.GetGCDRemaining("):query.index("function BlizzardAPI.GetGCDInfo(")]
         + queue[q_start:q_end])
@@ -63,6 +69,27 @@ def main():
         assert(SpellQueue._SwingFarOff() == true, "and it holds")
         now, swing = 101.4, 0.3                          -- the swing lands before the GCD ends
         assert(SpellQueue._SwingFarOff() == false, "a swing due before the next press is not far")
+
+        -- Held per swing: with no GCD running (waiting on a cooldown or rage) the swing timer
+        -- counting down no longer flips the answer halfway through the swing.
+        swingStart = 200
+        gcdStart, gcdDur, now, swing = 0, 0, 200.05, 1.85
+        assert(SpellQueue._SwingFarOff() == true, "just after a swing: the next is far")
+        now, swing = 200.6, 1.3
+        assert(SpellQueue._SwingFarOff() == true, "the clock alone does not change it")
+        swingStart, now, swing = 201.9, 201.95, 1.85
+        assert(SpellQueue._SwingFarOff() == true, "a new swing decides again")
+        gcdStart, gcdDur, now, swing = 202.4, 1.5, 202.45, 1.35
+        assert(SpellQueue._SwingFarOff() == false, "a press (its GCD starting) decides again")
+        now, swing = 203.0, 0.8
+        assert(SpellQueue._SwingFarOff() == false, "held while that GCD runs")
+        gcdStart, gcdDur, now, swing = 0, 0, 203.95, 1.85
+        swingStart = 203.8
+        assert(SpellQueue._SwingFarOff() == true, "the GCD ending and a new swing decide again")
+        swing = nil
+        assert(SpellQueue._SwingFarOff() == false, "not swinging: no change, and nothing held")
+        swing = 1.0
+        assert(SpellQueue._SwingFarOff() == false, "swinging again: decided afresh")
     """)
     print("Swing and GCD: remembered GCD length, swing compared with it, unknowns change nothing")
 

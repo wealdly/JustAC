@@ -336,13 +336,31 @@ function SpellDB.GainsOverTime(spellID)
 end
 
 --- What casting this does to threat, from the spell data: "tank" (the effectively-tank aura:
---- Defensive Stance, Bear Form, Righteous Fury), "taunt", "drop" (sheds threat: Fade, Feint,
+--- Defensive Stance, Bear Form, Righteous Fury), "taunt" (on the target), "groupTaunt" (every
+--- enemy around: Challenging Shout), "drop" (sheds threat: Fade, Feint,
 --- Feign Death) or "boost" (bonus threat: Sunder Armor). nil otherwise. Forever data, every
 --- rank; empty on retail.
 --- Is this talent tree a tank's (generated, Forever)? Its list is a damage order all the same.
 function SpellDB.IsTankTree(specKey, tree)
     local trees = SpellDB.FOREVER_TANK_TREES and specKey and SpellDB.FOREVER_TANK_TREES[specKey]
     return trees ~= nil and tree ~= nil and trees[tree] == true
+end
+
+--- Is the player the tank? An assigned group role decides: Tank is, Damage or Healer is not,
+--- whatever the stance or talents (a Protection-heavy leveler playing damage beside the group's
+--- tank). With no role, or an unreadable one: a tank stance or form, else a tank talent tree,
+--- which holds through a stance swap. Every read is plain or treated as not given.
+function SpellDB.IsPlayerTank()
+    local okRole, role = pcall(UnitGroupRolesAssigned, "player")
+    if okRole and not IsSecret(role) then
+        if role == "TANK" then return true end
+        if role == "DAMAGER" or role == "HEALER" then return false end
+    end
+    local okAura, aura = pcall(UnitHasEffectivelyTankAura, "player")
+    if okAura and not IsSecret(aura) and aura == true then return true end
+    local RI = LibStub("JustAC-RotationImport", true)
+    local tree = RI and RI.GetForeverTree and RI.GetForeverTree()
+    return SpellDB.IsTankTree(SpellDB.GetSpecKey(), tree) == true
 end
 
 --- Does this talent tree's damage repay an armor reduction at once (generated, Forever)? Only
@@ -2174,6 +2192,14 @@ SpellDB.SELF_LOCKOUTS = {
 --- Weakness; generated, Forever, every rank), in seconds, or nil.
 function SpellDB.GetEnemyMitigationDuration(spellID)
     local t = SpellDB.FOREVER_ENEMY_MITIGATION
+    if not (t and spellID) then return nil end
+    return StaticLookup(t, spellID)
+end
+
+--- For such a debuff that lands on every enemy around you (Demoralizing Shout, Demoralizing
+--- Roar), its radius in yards; nil for one cast on a single target (Hex of Weakness).
+function SpellDB.GetEnemyMitigationRadius(spellID)
+    local t = SpellDB.FOREVER_ENEMY_MITIGATION_RADIUS
     if not (t and spellID) then return nil end
     return StaticLookup(t, spellID)
 end

@@ -242,7 +242,7 @@ function StandardQueue.CreateTabArgs(addon)
                         type = "select",
                         name = L["Target Frame Anchor"],
                         desc = function()
-                            if addon.IsStandardTargetFrame and not addon:IsStandardTargetFrame() then
+                            if addon.HasTargetFrameAnchor and not addon:HasTargetFrameAnchor() then
                                 return L["Target Frame Replaced"]
                             end
                             return L["Target Frame Anchor desc"]
@@ -281,7 +281,7 @@ function StandardQueue.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             if panelDisabled(addon) then return true end
-                            if addon.IsStandardTargetFrame and not addon:IsStandardTargetFrame() then return true end
+                            if addon.HasTargetFrameAnchor and not addon:HasTargetFrameAnchor() then return true end
                             return InCombatLockdown()
                         end,
                     },

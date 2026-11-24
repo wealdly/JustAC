@@ -186,7 +186,7 @@ def main():
     for sid, role, why in ((71, "tank", "Defensive Stance carries the effectively-tank aura"),
                            (5487, "tank", "Bear Form"), (25780, "tank", "Righteous Fury"),
                            (355, "taunt", "Taunt"), (6795, "taunt", "Growl"), (694, "taunt", "Mocking Blow"),
-                           (1161, "taunt", "Challenging Shout"),
+                           (1161, "groupTaunt", "Challenging Shout"),
                            (586, "drop", "Fade"), (9578, "drop", "Fade rank 2"), (1966, "drop", "Feint"),
                            (8998, "drop", "Cower"), (5384, "drop", "Feign Death"),
                            (7386, "boost", "Sunder Armor adds threat"),

@@ -6,7 +6,7 @@ from pathlib import Path
 from wow_stubs import LuaRuntime
 
 from test_forever_defaults import PRELUDE
-from test_forever_openers import create_runtime
+from test_forever_openers import create_runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,6 +53,8 @@ def main():
     queue.globals().SpellDB.GetThreatRole = lambda sid: db.GetThreatRole(sid)
     queue.globals().SpellDB.IsTankTree = lambda spec, tree: db.IsTankTree(spec, tree)
     queue.execute("RotationImport = RotationImport or {}; RotationImport.GetForeverTree = function() return foreverTree end")
+    # The shared tank answer (SpellDB.IsPlayerTank) with no role or stance: the tank tree.
+    queue.execute("SpellDB.IsPlayerTank = function() return SpellDB.IsTankTree('WARRIOR_F', foreverTree) end")
 
     def validate(gates, spell):
         for gate in gates.values():
@@ -151,10 +153,8 @@ def main():
     assert db.IsTargetDot(6343) is False
     assert db.IsTrackedTargetAura(133) is False, "ordinary Fireball remains a repeatable nuke"
 
-    # Protection uses Sunder early for threat, then its own landed stack count holds it until
-    # the target changes or the debuff expires; the slow-payoff guard must not delay the opener.
-    # (The hold itself, tank tree or not, is covered in test_gate_groups.py: this runtime does
-    # not include it.)
+    # Protection alone on an ordinary target: Sunder's threat buys nothing, so it waits for a
+    # worthwhile fight like any slow payoff (the hold's cases are in test_gate_groups.py).
     obs.execute("now=60;tracked={};targetGUID='Creature-Sunder'")
     tracker.Reset()
     queue.execute("""
@@ -162,12 +162,10 @@ def main():
         entries=classes.WARRIOR_F.protection.st;pool={7386,78}
         ranges[7386],ranges[78]=true,true
     """)
-    assert build() == [7386], "Protection Sunder is available at the start of the fight"
-    tracker.OnCastSucceeded(7386)
-    obs.globals().now = 61
-    assert build() == [78], "a landed Sunder stack prevents repeating it on the same target"
+    assert build() == [78], "solo Protection does not open an ordinary fight with Sunder"
 
-    # A group can benefit from more applications, stopping at the generated maximum.
+    # Grouped, the tank applies Sunder at once and its own landed stack count paces it,
+    # stopping at the generated maximum.
     obs.execute("now=70;tracked={};targetGUID='Creature-Group'")
     tracker.Reset()
     queue.execute("""

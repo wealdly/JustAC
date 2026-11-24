@@ -342,6 +342,7 @@ end
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 local stdInterruptIcon = nil  -- Standard queue interrupt icon ("position 0")
+local stdThreatIcon = nil     -- Threat button (shares position 0)
 
 --- Restyle the maintenance slot's swipe to read "your protection is running out" rather than
 --- the default "on cooldown, wait" - a dark mask that clears means unavailable, the reverse of
@@ -473,6 +474,9 @@ if Masque then
         end
         if stdInterruptIcon then
             UIFrameFactory.ApplyTextOverlaySettings(stdInterruptIcon, profile.iconSize * firstIconScale, overlays)
+        end
+        if stdThreatIcon then
+            UIFrameFactory.ApplyTextOverlaySettings(stdThreatIcon, profile.iconSize * firstIconScale, overlays)
         end
         local defScale = profile.defensives and profile.defensives.iconScale or 1.0
         local defSz = profile.iconSize * defScale
@@ -1686,6 +1690,47 @@ function UIFrameFactory.CreateGrabTab(addon)
     UIFrameFactory.SetupClickThroughIconDrag(addon)
 end
 
+-- "Position 0": before slot 1, opposite the queue's growth. For RIGHT/UP, icon 1 is shifted
+-- inward by grabTabReserve to make room for the grab tab at the same edge; this mirrors that
+-- shift so the icon sits next to icon 1 rather than beyond the grab tab. The gap is the icon
+-- spacing, widened to a proc glow's reach on both icons (UIAnimations.PROC_GLOW_SCALE) so the
+-- slot's glow and icon 1's glow never overlap.
+local function AnchorPositionZero(addon, button, orientation, spacing, size)
+    local extra = math.max(0, size * (UIAnimations.PROC_GLOW_SCALE - 1) - spacing)   -- beyond the usual gap
+    if orientation == "LEFT" then
+        button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing - extra, 0)
+    elseif orientation == "RIGHT" then
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
+        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", -(grabTabReserve - spacing) + extra, 0)
+    elseif orientation == "UP" then
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH
+        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, grabTabReserve - spacing - extra)
+    elseif orientation == "DOWN" then
+        button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing + extra)
+    end
+end
+
+-- Tooltip on hover, right-click for a hotkey override: the same on every standalone button.
+local function WireStandaloneButton(addon, button)
+    button:SetScript("OnEnter", function(self)
+        if not self.spellID then return end
+        ShowIconHotkeyTooltip(addon, self)
+    end)
+    button:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if IsPanelLocked(profile) then return end
+            if self.spellID then
+                addon:OpenHotkeyOverrideDialog(self.spellID)
+            end
+        end
+    end)
+end
+
 -- Create a single interrupt icon positioned in the "leading" direction before slot 1.
 -- The icon overhangs outside mainFrame (like defensive icons).
 local function CreateInterruptIcon(addon, profile)
@@ -1729,54 +1774,12 @@ local function CreateInterruptIcon(addon, profile)
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
     if not button then return end
 
-    -- Position before slot 1 (opposite of queue growth direction)
-    -- No health bar is associated with the interrupt icon, so use spacing directly.
-    local effectiveSpacing = spacing
-
-    -- For RIGHT/UP, icon 1 is shifted inward by grabTabReserve to make room for
-    -- the grab tab at the same edge.  We mirror that shift here so the interrupt
-    -- sits adjacent to icon 1 (effectiveSpacing gap) rather than beyond the grab tab.
-    if orientation == "LEFT" then
-        -- Queue grows left-to-right; interrupt goes to the LEFT of mainFrame
-        button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
-    elseif orientation == "RIGHT" then
-        -- Queue grows right-to-left; interrupt adjacent to icon 1 (covers grab tab)
-        local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
-        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", -(grabTabReserve - effectiveSpacing), 0)
-    elseif orientation == "UP" then
-        -- Queue grows bottom-to-top; interrupt adjacent to icon 1 (covers grab tab)
-        local grabTabReserve = spacing + GRAB_TAB_LENGTH
-        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, grabTabReserve - effectiveSpacing)
-    elseif orientation == "DOWN" then
-        -- Queue grows top-to-bottom; interrupt goes ABOVE mainFrame
-        button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
-    end
+    AnchorPositionZero(addon, button, orientation, spacing, actualIconSize)
 
     -- Ensure interrupt renders above the grab tab when they overlap (RIGHT/UP)
     button:SetFrameLevel(button:GetFrameLevel() + 5)
 
-    -- Tooltip handling
-    button:SetScript("OnEnter", function(self)
-        if not self.spellID then return end
-        ShowIconHotkeyTooltip(addon, self)
-    end)
-
-    button:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    -- Right-click for hotkey override
-    button:RegisterForClicks("RightButtonUp")
-    button:SetScript("OnClick", function(self, mouseButton)
-        if mouseButton == "RightButton" then
-            local profile = addon:GetProfile()
-            if IsPanelLocked(profile) then return end
-
-            if self.spellID then
-                addon:OpenHotkeyOverrideDialog(self.spellID)
-            end
-        end
-    end)
+    WireStandaloneButton(addon, button)
 
     RegisterMasque(button, actualIconSize, profile)
 
@@ -1793,6 +1796,41 @@ local function CreateInterruptIcon(addon, profile)
     addon.interruptIcon = button
     addon.resolvedInterrupts = SpellDB.ResolveInterruptSpells()
     addon.resolvedSoothe = SpellDB.ResolveSootheSpells()
+end
+
+-- The Threat button (Forever, opt-in: defensives.threatCues), hidden until threat needs a
+-- press (DefensiveEngine.GetThreatCue). It shares position 0 with the interrupt slot, right
+-- before the queue, by urgency: an interrupt first, then the Threat button, then the soothe
+-- cue (UIRenderer: the threat cue is decided before the slot renders).
+local function CreateThreatIcon(addon, profile)
+    if stdThreatIcon then
+        if UIAnimations and stdThreatIcon.hasThreatGlow then UIAnimations.HideThreatProcGlow(stdThreatIcon) end
+        local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+        if MasqueGroup then MasqueGroup:RemoveButton(stdThreatIcon) end
+        UIFrameFactory.ReleaseIcon(stdThreatIcon)
+        stdThreatIcon = nil
+    end
+    addon.threatIcon = nil
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not (BlizzardAPI and BlizzardAPI.IsForever() and profile.defensives
+            and profile.defensives.threatCues == true) then
+        return
+    end
+
+    local actualIconSize = profile.iconSize * (profile.firstIconScale or 1.0)
+    local orientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing or 1
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
+    if not button then return end
+
+    AnchorPositionZero(addon, button, orientation, spacing, actualIconSize)
+    button:SetFrameLevel(button:GetFrameLevel() + 5)
+    WireStandaloneButton(addon, button)
+    RegisterMasque(button, actualIconSize, profile)
+    button:Hide()
+
+    stdThreatIcon = button
+    addon.threatIcon = button
 end
 
 function UIFrameFactory.CreateSpellIcons(addon)
@@ -1837,6 +1875,7 @@ function UIFrameFactory.CreateSpellIcons(addon)
     
     -- Create interrupt icon (position 0, hidden until interruptible cast detected)
     CreateInterruptIcon(addon, profile)
+    CreateThreatIcon(addon, profile)
     -- NOTE: CreateDefensiveIcons is called separately from UpdateFrameSize, not here,
     -- so that defensive icon creation is not gated by the mainFrame guard above.
 end

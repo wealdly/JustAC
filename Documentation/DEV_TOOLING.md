@@ -491,6 +491,42 @@ pleasant surprise, one that runs longer is not. The records do not say
 which character made a kill, so calibrate with the setup that matches the player.
 `python tools/test_forever_sim_bench.py` covers these checks without the simulator.
 
+#### What the simulator cannot be trusted for (2026-11-23 audit)
+
+The bench needs the simulator's local changes in
+[tools/forever-sim-patches](../tools/forever-sim-patches/README.md): the fight's real length, the
+wand for priests and mages, every class's ranks at every level and per-level crit rates.
+`python tools/forever_sim_sweep.py --sim <checkout>` is the coverage check: per class, tree and
+level (5 to 30 by default) it says which learned list entries the simulator pressed, never
+pressed, or does not have. Run it after any simulator or list change; a comparison of two lists
+means nothing at a level where the entries they differ in are missing. It also lists any spell
+whose simulated damage per cast is far from the client's spell data. 2026-11-23: 46 of 168
+tree-levels failed before the rank changes, 1 of 164 after (the enhancement shaman at level 5),
+with nothing flagged by the damage check. Pet stats by level come from the Classic server table
+the simulator's own rows were taken from; no WoW Forever pet damage has been measured in game. Every report says which kill time clock it used; a report on the
+target-swing clock is from an unpatched build and runs slow under Thunder Clap. Results before
+2026-11-23 used that clock, and priest and mage results before that date had no wand at all.
+
+Read the model's code, not run it, for these limits. Each is a reason a result may not carry
+over to the game:
+
+| Limit | What it biases |
+|---|---|
+| Every fight starts rested: full mana and health, every cooldown ready, no sequence of fights, no drinking | Mana-heavy lists pay nothing for downtime; a 3 to 10 minute cooldown is worth a full use every fight. Do not judge mana conservation or long cooldowns from it |
+| The player cannot die | A slower list that survives and a faster one that would die look alike; read damage taken per fight |
+| The last hit's overkill is counted as damage | Damage per second flatters large hits; compare kill times |
+| Pulls: with the pull model (on by default) a fight starts when the first attack lands, the target then runs to a caster and a pet runs to the target, all at an assumed 7 yards a second. No kiting, fleeing or mob casting. `--no-pull-model` gives the simulator's own start, the target swinging from time zero | Matched six logged level 15 hunter fights (kill time and the hunter and pet damage split). A caster's time before it is hit depends on the assumed speed and on standing 20 yards away |
+| The weapon stage (the queue's wand-or-cast rule) is applied from paper damage: a single-target cast-time spell without damage over time is pressed over the wand only while its client damage per second, its cast pushed back by the expected hits, beats the wand's; before the target arrives it is weighed unhindered. Wand Specialization (13% a rank) counts, and priest and mage levelling builds take it first, as the guides do. Spell power, crit and the mana margin are not in the comparison; `--no-weapon-rule` runs the list as written | A level 13 priest went from 20.9 s to 15.8 s; about 10 s is logged in game with a better wand and talents than the generated setup, so prefer a character file (`--gear file:`) |
+| Targets are immune to stuns, roots and slows (most classes do not even apply them) | Charge, Intercept and stuns are worth nothing; damage taken is overstated for them |
+| Elites: health x3 matches the simulator's planner; damage x1.5 has no source | Warrior and bear rage from damage taken, so their elite kill times |
+| Packs: every target attacks for the whole pull and none dies; area damage counts in full on each | Area attacks and late-pull damage taken are overstated |
+| Calibration scales target health to match recorded kill times. A recorded kill also holds multi-mob pulls (area damage split between targets) and chases after fleeing mobs | Dead time in the game (the run to the target, travel time, a chase) becomes extra health: more casts, more mana, more value for damage over time. 2026-11-23, 88 solo warrior kills at 14 to 16: recorded kills ran 17% longer than simulated (median), 1.6 to 1.8 times for mobs two or three levels below |
+| One stance for the whole fight (the tree's own, or `--stance`); no stance swaps | Protection is simulated in Defensive Stance, so Revenge is always available; logged level 15 to 16 Protection play spent 26 to 56% of samples there and pressed Revenge about half as often. Battle Stance (no Revenge) simulated 5% slower |
+| Upstream, rogue attacks, feral Maul, Shred, Swipe and Claw, hunter melee and pet abilities and warlock demons exist at 25, 40, 50 and 60 only, and crit per agility and intellect is the level 60 rate. The local changes fix these from client data; rogue poisons, Mutilate and shaman imbues are still bracket-only, and the simulator has no Shank, Cheap Shot, Victory Rush, Bash, Pounce or Ravage | A run on an unpatched simulator; the listed abilities |
+| Priest Spirit Tap never triggers; warlock Life Tap costs no health; caster staff swings are missing; weapon skill is always full for the level | Priest and warlock mana, and weapon versus spell comparisons |
+| Hunter pet and warlock demon stats by level are Classic server data (the table the simulator's own rows come from), not measured on WoW Forever | Any run with a pet |
+| Warrior: flat rage per swing, glancing damage and the swing reset after a cast are provisional | Heroic Strike against white swings |
+
 How the bench covers the [core principles](FOREVER_DPS_PRINCIPLES.md#core-principles):
 
 | Principle | Covered | Not covered |

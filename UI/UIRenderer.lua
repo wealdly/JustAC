@@ -1032,7 +1032,7 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     -- From "none" is turning a glow ON: immediate, per the rule above. Debouncing it
     -- cost a second render tick (an idle tick out of combat) on every glow onset.
     if not immediate and have ~= nil and have ~= "none" and have ~= "preparation"
-       and want ~= "proc" and want ~= "preparation" and want ~= "threat" then
+       and want ~= "proc" and want ~= "preparation" then
         local now = GetTime()
         if icon.pendingDefGlowState ~= want then
             icon.pendingDefGlowState = want
@@ -1051,15 +1051,12 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StopPrecombatGlow(icon)
     elseif have == "preparation" then
         UIAnimations.HidePreparationGlow(icon)
-    elseif have == "threat" then
-        UIAnimations.HideThreatProcGlow(icon)
     else
         -- Unknown starting state (fresh icon, combat-transition reset): clear all
         UIAnimations.HideProcGlow(icon)
         UIAnimations.StopDefensiveGlow(icon)
         UIAnimations.StopPrecombatGlow(icon)
         UIAnimations.HidePreparationGlow(icon)
-        UIAnimations.HideThreatProcGlow(icon)
     end
     if want == "proc" then
         -- Always animated (even OOC): a procced heal is the preferred top-up
@@ -1070,8 +1067,6 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         UIAnimations.StartPrecombatGlow(icon, isInCombat)
     elseif want == "preparation" then
         UIAnimations.ShowPreparationGlow(icon)
-    elseif want == "threat" then
-        UIAnimations.ShowThreatProcGlow(icon)
     end
     icon.appliedDefGlowState = want
 end
@@ -1127,12 +1122,6 @@ local function ComputeDefensiveGlowState(icon, isProc)
     icon.defGlowReason = "none"
     if icon.isWaiting then return "none" end
     local mode = icon.defGlowMode or "all"
-    -- A threat cue (aggro about to be pulled or already lost) carries its own tint in every
-    -- glow mode that shows glows at all: the colour is the whole message.
-    if icon.isThreatCue and mode ~= "none" then
-        icon.defGlowReason = "threat"
-        return "threat"
-    end
     if isProc and (mode == "all" or mode == "procOnly") then
         -- A procced HEAL only glows while there is something to heal: at full
         -- health with nobody low, the "press me" burst is noise (field report:
@@ -2140,7 +2129,6 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         ClearIconState(defensiveIcon)
         defensiveIcon.currentID = nil
         defensiveIcon.isPrecombatBuff = nil
-        defensiveIcon.isThreatCue = nil
         defensiveIcon.isWaiting = nil
         defensiveIcon.cachedMetadataID = nil
         defensiveIcon.cachedMetadataIsItem = nil
@@ -2179,7 +2167,6 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
-            icon.isThreatCue = entry.threat ~= nil or nil
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, entry.waiting, entry.precombat)
             anyVisible = true
         else
@@ -2233,6 +2220,44 @@ function UIRenderer.HideDefensiveIcons(addon)
     if addon.defensiveFrame and addon.defensiveFrame:IsShown() then
         FadeOutOrHide(addon.defensiveFrame)
     end
+end
+
+--- A slot's spell (interrupt or Threat button): texture and hotkey on a change, cooldowns and
+--- hotkey on a refresh tick, and the range colour every pass. Returns whether the spell changed.
+local function RefreshSlotSpell(icon, spellID, updateCooldowns, showHotkeys, hotkeyColor, unreachable)
+    local spellChanged = icon.spellID ~= spellID
+    if spellChanged then
+        icon.spellID = spellID
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+        if info and info.iconID then
+            icon.iconTexture:SetTexture(info.iconID)
+            icon.iconTexture:Show()
+        end
+        icon.cachedHotkey = nil
+    end
+    if spellChanged or updateCooldowns then UpdateButtonCooldowns(icon) end
+    if spellChanged or updateCooldowns or not icon.cachedHotkey then
+        SetIconHotkey(icon, LookupHotkey(spellID), showHotkeys)
+    end
+    -- Red text = out of range (per-frame; IsSpellInRange is cheap), or a pick the caller
+    -- cannot prove reaches.
+    UpdateRangeHotkeyColor(icon, CheckSpellRange(spellID) or unreachable == true, hotkeyColor)
+    return spellChanged
+end
+
+--- The Threat button: the threat press for now (nil hides it), with the threat glow, hotkey
+--- and range colour like the interrupt slot it shares.
+function UIRenderer.RenderThreatSlot(icon, spellID, updateCooldowns, showHotkeys, hotkeyColor)
+    if not spellID then
+        if icon.spellID or icon:IsShown() then
+            ClearIconState(icon)   -- ids, textures, cooldowns, hotkey + match key, glows
+            icon:Hide()
+        end
+        return
+    end
+    RefreshSlotSpell(icon, spellID, updateCooldowns, showHotkeys, hotkeyColor)
+    if UIAnimations and not icon.hasThreatGlow then UIAnimations.ShowThreatProcGlow(icon) end
+    if not icon:IsShown() then icon:Show() end
 end
 
 -- Full interrupt-slot teardown for RenderInterruptSlot (the overlay keeps its
@@ -2293,31 +2318,10 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
 
         if shouldShowInterrupt and intSpellID then
             interruptShown = true
-            local spellChanged = (intIcon.spellID ~= intSpellID)
-            if spellChanged then
-                intIcon.spellID = intSpellID
-                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(intSpellID)
-                if info and info.iconID then
-                    intIcon.iconTexture:SetTexture(info.iconID)
-                    intIcon.iconTexture:Show()
-                end
-                intIcon.cachedHotkey         = nil
-            end
-
-            if spellChanged or ctx.updateCooldowns then
-                UpdateButtonCooldowns(intIcon)
-            end
-
-            if spellChanged or ctx.updateCooldowns or not intIcon.cachedHotkey then
-                local hotkey = LookupHotkey(intSpellID)
-                SetIconHotkey(intIcon, hotkey, ctx.showHotkeys)
-            end
-
-            -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap). A
-            -- self-centred CC has no range to ask about, so the tracker says when it picked
-            -- one it cannot prove reaches (EvaluateInterrupt's last resort).
-            UpdateRangeHotkeyColor(intIcon,
-                CheckSpellRange(intSpellID) or intResult.unreachable == true, ctx.hotkeyColor)
+            -- A self-centred CC has no range to ask about, so the tracker says when it picked one
+            -- it cannot prove reaches (EvaluateInterrupt's last resort).
+            RefreshSlotSpell(intIcon, intSpellID, ctx.updateCooldowns, ctx.showHotkeys, ctx.hotkeyColor,
+                intResult.unreachable)
 
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.
@@ -2430,7 +2434,9 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
     if UISootheCue then
         local sid = ctx.sootheSpellID
         if ctx.profile and ctx.profile.showSootheCue == false then sid = nil end
-        if sid and ctx.active and not interruptShown then
+        -- It steps aside for any other plain claim on the slot as well (ctx.slotClaimed: the
+        -- Threat button, standard queue only), by the same plain-above-secret rule.
+        if sid and ctx.active and not interruptShown and not ctx.slotClaimed then
             UISootheCue.Show(UISootheCue.Create(intIcon, sid, intIcon.cachedIconSize))
         elseif intIcon.sootheCue then
             UISootheCue.Hide(intIcon.sootheCue)
@@ -3207,7 +3213,18 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
     end
 
-    -- ── Interrupt reminder (position 0) + soothe cue (shared renderer) ──────
+    -- ── Position 0, one slot by urgency: interrupt, then threat, then soothe ──────
+    -- The threat press is decided first, so the soothe cue (rendered with the interrupt) can
+    -- step aside for it; the Threat button itself steps aside for a shown interrupt.
+    local threatID
+    if addon.threatIcon then
+        local DE = DefensiveEngineRef
+        if not DE then
+            DE = LibStub("JustAC-DefensiveEngine", true)
+            DefensiveEngineRef = DE
+        end
+        threatID = DE and DE.GetThreatCue and DE.GetThreatCue(profile, shouldShowFrame and isInCombat)
+    end
     local intIcon = addon.interruptIcon
     if intIcon then
         local soothe = addon.resolvedSoothe
@@ -3223,7 +3240,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ictx.hotkeyColor        = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
         ictx.opacity            = nil   -- a mainFrame child: inherits frameOpacity, must not apply it twice
         ictx.sootheSpellID      = soothe and soothe[1] and soothe[1].spellID
+        ictx.slotClaimed        = threatID ~= nil   -- a plain claim below the interrupt
         UIRenderer.RenderInterruptSlot(intIcon, ictx)
+    end
+    if addon.threatIcon then
+        -- The soothe cue's visibility is secret, so it cannot push the Threat button aside;
+        -- a shown interrupt can.
+        if intIcon and intIcon:IsShown() then threatID = nil end
+        UIRenderer.RenderThreatSlot(addon.threatIcon, threatID, shouldUpdateCooldowns, showHotkeys,
+            textOverlays and textOverlays.hotkey and textOverlays.hotkey.color)
     end
 
     -- Move-cast dot visibility: explicit profile toggle, or the per-spec auto

@@ -75,6 +75,17 @@ function SpellQueue.NoteIncomingHit()
     return #Hits.times == 1
 end
 
+--- Record a hit a shield fully absorbed. Hits are being absorbed now, whoever's shield it is
+--- (Power Word: Shield, Ice Barrier, a party member's): the unabsorbed hits remembered from
+--- before it no longer predict pushback, so they are forgotten, and the first unabsorbed hit
+--- after the shield breaks counts again. Before this, up to Hits.WINDOW seconds after shielding
+--- a cast was still priced as pushed back. Returns true when a remembered hit was dropped.
+function SpellQueue.NoteAbsorbedHit()
+    if #Hits.times == 0 then return false end
+    wipe(Hits.times)
+    return true
+end
+
 --- Unabsorbed hits per second over the last window.
 function Hits.Rate(now)
     if not now then return 0 end

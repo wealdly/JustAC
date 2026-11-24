@@ -12,10 +12,11 @@ if not DebugCommands then return end
 -- removed without wrapping rows. SavedVariables flush on /reload or logout, not while the
 -- recorder is running.
 --------------------------------------------------------------------------------
+local IsSecret = DebugCommands._Common.IsSecret
+
 local PROBE_LOG_MAX = 30000
 local RESEARCH_LOG_MAX = 120000
 local PROBE_LOG_KEEP = 0.9
-
 local function ProbeLogStore()
     if not _G.JustACGlobal then _G.JustACGlobal = {} end
     local g = _G.JustACGlobal
@@ -26,6 +27,9 @@ end
 local function ProbeLogEmit(msg)
     local log = ProbeLogStore()
     msg = tostring(msg or "")
+    -- A row built from a secret value (an enemy's name in a group) is itself secret: it cannot
+    -- be searched or saved, so it is replaced, never indexed.
+    if IsSecret(msg) then msg = "<secret row>" end
     -- Most rows carry no color code: only those that do pay for stripping it.
     if msg:find("|", 1, true) then msg = msg:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
     local count = #log + 1

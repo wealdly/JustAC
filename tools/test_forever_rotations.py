@@ -690,3 +690,19 @@ for _context in ("st", "aoe"):
     assert _members[0]["t"] == "power" and _members[0]["n"] == 25, (_context, _members)
     _unknown = {dict(x)["id"] for x in dict(_members[1])["g"].values()}
     assert _unknown == {1328617, 407995}, (_context, "until Lacerate or Primal Bite is known", _unknown)
+
+# A drop that removes the only entry keeping an aura up releases every wait on that aura: Fire's
+# Scorch stacked Fire Vulnerability and Combustion waited for five stacks once the talent was known.
+from gen_forever_rotations import maintained_auras, release_waits  # noqa: E402
+_stacker = {"id": 2948, "gates": [{"t": "stack", "id": 22959, "op": "<", "n": 5, "tgt": True}]}
+_waiter = {"id": 11129, "gates": [{"t": "any", "g": [{"t": "known", "id": 11095, "neg": True},
+                                                      {"t": "stack", "id": 22959, "op": "=", "n": 5}]}]}
+assert maintained_auras([_stacker, _waiter]) == {22959}, "the stacker keeps Fire Vulnerability up"
+assert maintained_auras([_waiter]) == set(), "a wait for stacks keeps nothing up"
+assert release_waits(_waiter["gates"], {22959}) == [], "a met member makes the whole any-group met"
+_both = [{"t": "all", "g": [{"t": "power", "res": "mana", "op": ">=", "n": 50},
+                            {"t": "stack", "id": 22959, "op": ">=", "n": 3}]}]
+assert release_waits(_both, {22959}) == [{"t": "all", "g": [{"t": "power", "res": "mana", "op": ">=", "n": 50}]}], \
+    "an all-group keeps its other members"
+assert release_waits(_stacker["gates"], {22959}) == _stacker["gates"], "a gate that keeps the aura up is not a wait"
+assert release_waits(_waiter["gates"], {12579}) == _waiter["gates"], "waits on other auras stay"

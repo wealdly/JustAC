@@ -1747,6 +1747,25 @@ function BlizzardAPI.IsGlobalCooldownRunning()
     return gcdRunning
 end
 
+-- How soon after a wand shot or Auto Shot a GCD spell's cooldown may be the shot's lockout.
+-- The lockout reads at the first queue update after the shot (about 40 ms later in captures).
+local SHOT_LOCKOUT_WINDOW = 0.25
+-- The lockout and the swing timer end together (both are the shot's length); a little slack keeps
+-- a read taken a frame apart from deciding it.
+local SHOT_LOCKOUT_SLACK = 0.1
+
+--- Forever: is spellID's running cooldown only the lockout of the ranged shot just fired? true
+--- when a wand shot or Auto Shot landed within SHOT_LOCKOUT_WINDOW and the spell's own cooldown
+--- ends by the time that shot's swing does. An off-GCD spell is never locked by a shot.
+local function ShotLockoutOnly(spellID)
+    local start, finish = BlizzardAPI.GetSwingWindow(2)
+    if type(start) ~= "number" or type(finish) ~= "number" then return false end
+    local now = GetTime()
+    if now - start < 0 or now - start > SHOT_LOCKOUT_WINDOW or finish <= now then return false end
+    if IsOffGCD(spellID) then return false end
+    return BlizzardAPI.CooldownEndsWithin(spellID, finish - now + SHOT_LOCKOUT_SLACK) == true
+end
+
 --- Will this ability's own cooldown be over by the time the GCD ends?
 local function ReadyByGCDEnd(spellID)
     local secs = GCDLookahead()
@@ -1775,6 +1794,16 @@ function BlizzardAPI.IsSpellReady(spellID)
 
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cd then return true, "cooldown query failed (fail-open)" end
+
+    -- WoW Forever: a wand shot or Auto Shot locks every GCD spell for about the shot's length,
+    -- and the game reports that lockout as the spell's own cooldown through whichever flag it
+    -- happens to use (isOnGCD false for Mind Blast, unset for Shadow Word: Pain, captures
+    -- 2026-11-23). Read through one flag and not another, spells swapped places in the first
+    -- slot for a frame after every shot. A cooldown that ends by the end of the shot just fired
+    -- is that lockout, whatever the flags say, so every GCD spell is judged alike through it.
+    if cd.isActive and BlizzardAPI.IsForever() and ShotLockoutOnly(spellID) then
+        return true, "wand or Auto Shot lockout (Forever)"
+    end
 
     -- isOnGCD == true → GCD only for unflagged spells.
     -- However, unflagged spells with real CDs also show isOnGCD=true during
@@ -1829,9 +1858,10 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- rather than their own cooldown, and the queue thrashed as they all sank at once.
     -- The ignore-GCD duration object (documented on Forever) says whether a cooldown of
     -- the spell's own is running.
-    if cd.isActive and BlizzardAPI.IsForever() and C_Spell and C_Spell.GetSpellCooldownDuration
-       and not BlizzardAPI.IsSpellOnCooldown(spellID) then
-        return true, "isActive without own cooldown (Forever)"
+    if cd.isActive and BlizzardAPI.IsForever() and C_Spell and C_Spell.GetSpellCooldownDuration then
+        if not BlizzardAPI.IsSpellOnCooldown(spellID) then
+            return true, "isActive without own cooldown (Forever)"
+        end
     end
     return not cd.isActive, "isActive (in combat)"
 end

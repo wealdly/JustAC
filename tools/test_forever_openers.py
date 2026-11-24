@@ -93,7 +93,10 @@ BlizzardAPI = {
     GetDirectSpellHit = function(id) return hits[id] end,
     GetCachedSpellInfo = function(id) return {castTime = castTimes[RI.RankBase(id)] or 0} end,
 }
-function UnitExists() return targetExists end
+function UnitExists(unit)
+    if unit == "targettarget" then return targetOfTarget ~= false end
+    return targetExists
+end
 function UnitCanAttack() return hostile end
 function UnitIsDeadOrGhost() return targetDead end
 function NoteManaStarved() end
@@ -144,6 +147,7 @@ function Reset()
     maximum, resourceName, resourceReads = 5, "combo_points", 0
     capped, minimum, costAura, hasCostAura = false, 1, 0, false
     stealthed, targetingMe, talents, buffs = false, false, {}, {}
+    targetOfTarget = nil
     hits, unpriced, briefWait = {}, {}, {}
     castTimes = {[403] = 1500, [585] = 1500, [8092] = 1500, [14914] = 3500}
     secret = {}
@@ -1427,6 +1431,9 @@ def main():
         (priest, [585, 589], "Priest opens with Smite"),
         (priest + "pool = {591, 589}", [591, 589], "higher Smite ranks share the opener"),
         (priest + "b.inCombat = true", [589, 585], "Shadow Word: Pain leads once in combat"),
+        # The kill landed and combat lingers with no live target: the next pull's opener already.
+        (priest + "b.inCombat = true; b.betweenPulls = true", [585, 589],
+         "between pulls in combat (no live target): Smite opens the next pull"),
         (priest + "cooldown[585] = true", [589, 585], "unready Smite never leads"),
         (priest + "forever = false", [589, 585], "retail has no Smite opener"),
     ])
@@ -1450,13 +1457,17 @@ def main():
     """
     cases.extend([
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true""",
-         [1752, 53], "detected rear attack sinks behind the usable builder"),
+         [1752], "detected rear attack is left out, not sunk where it still showed"),
         ("""pool={11281,1752}; entries={{id=53},{id=1752}}; targetingMe=true""",
-         [1752, 11281], "higher Backstab ranks share the rear requirement"),
+         [1752], "higher Backstab ranks share the rear requirement"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; stealthed=true""",
          [53, 1752], "stealth opener keeps priority"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=false""",
          [53, 1752], "tank-held target keeps rear attack priority"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=false; targetOfTarget=false""",
+         [1752], "an enemy with no target out of stealth: it turns to face you, left out"),
+        ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=false; targetOfTarget=false; stealthed=true""",
+         [53, 1752], "an unaware enemy from stealth: the opener"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=nil""",
          [53, 1752], "unknown target-of-target fails open"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; stealthed=nil""",
@@ -1466,15 +1477,15 @@ def main():
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; forever=false""",
          [53, 1752], "retail rear attacks unchanged"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; capped=true""",
-         [1752, 53], "full-energy promotion cannot bypass rear gate"),
+         [1752], "full-energy promotion cannot bypass rear gate"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; procs[53]=true""",
-         [1752, 53], "proc promotion cannot bypass rear gate"),
+         [1752], "proc promotion cannot bypass rear gate"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; starved[1752]=true""",
-         [1752, 53], "blocked rear attack trails an energy-starved builder"),
+         [1752], "blocked rear attack is left out beside an energy-starved builder"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true; b.sinkCooldowns=false""",
          [53, 1752], "unavailable-last opt-out retains source order"),
         ("""pool={9830,1082}; entries={{id=5221},{id=1082}}; targetingMe=true""",
-         [1082, 9830], "Shred ranks sink behind Claw"),
+         [1082], "Shred ranks are left out while the enemy faces you"),
         ("""pool={5221,1082}; entries={{id=5221},{id=1082}}; targetingMe=true; buffs[1213171]=true""",
          [5221, 1082], "detected Shred set bonus waives the rear gate"),
         ("""pool={703,1752}; entries={{id=703},{id=1752}}; targetingMe=true; talents[14082]=true""",
@@ -1578,7 +1589,7 @@ def main():
     ])
     for rear, builder in ((703, 1752), (6785, 1082), (8676, 1752), (9005, 1082)):
         cases.append(("pool={%d,%d}; entries={{id=%d},{id=%d}}; targetingMe=true" % (rear, builder, rear, builder),
-                      [builder, rear], f"rear-required spell {rear} shares the gate"))
+                      [builder], f"rear-required spell {rear} shares the gate"))
     for resource in ("combo_points", "holy_power", "chi", "soul_shard", "runes", "essence", "arcane_charges"):
         for retail in (False, True):
             cases.append((rogue + f"""points=0; resourceName='{resource}';
@@ -1694,7 +1705,7 @@ def main():
         (rogue + "points=0; b.spellCount=1; b.recommendedSpells={999}", [999, 1752, 2098], "early injected suggestion prevents WAIT"),
         ("pool={}; entries={}", [], "empty pool never synthesizes WAIT"),
         ("""pool={53,1752}; entries={{id=53},{id=1752}}; targetingMe=true;
-            specKey='ROGUE_F'; starved[1752]=true; b.inCombat=true""", [wait, 1752, 53], "rear-blocked attack does not count as actionable"),
+            specKey='ROGUE_F'; starved[1752]=true; b.inCombat=true""", [wait, 1752], "rear-blocked attack does not count as actionable"),
     ]
     for filler in (75, 2480, 5019, 7918, 7919):
         spec = "HUNTER_F" if filler == 75 else "PRIEST_F" if filler == 5019 else "WARRIOR_F"

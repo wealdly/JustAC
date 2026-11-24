@@ -7,7 +7,7 @@ from wow_stubs import with_spellbook
 LuaRuntime = with_spellbook(_LuaRuntime)
 
 from test_combat_phase import group_helpers_lua
-from test_forever_openers import aura_clock_source
+from test_forever_openers import aura_clock_source
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -820,6 +820,21 @@ def main():
     ]:
         lead, reason, _, _ = run(setup + "\nSpellQueue._StageContext(b)")
         assert lead == expected, (setup, lead, expected, reason)
+    # Melee reach is read only against an enemy that can still be attacked: a dead target reads
+    # as out of reach, and sank every melee attack for a frame at each kill.
+    lua.execute("""
+        Reset()
+        local savedWithin, savedLive = SpellDB.IsTargetWithin, IsLiveAttackableTarget
+        SpellDB.IsTargetWithin = function() return false end
+        IsLiveAttackableTarget = function() return liveTarget end
+        liveTarget = true
+        SpellQueue._StageContext(b)
+        assert(b.ctxOutOfMelee == true, 'a live enemy beyond reach is out of melee')
+        liveTarget = false
+        SpellQueue._StageContext(b)
+        assert(not b.ctxOutOfMelee, 'a dead target: reach unknown, nothing sinks')
+        SpellDB.IsTargetWithin, IsLiveAttackableTarget = savedWithin, savedLive
+    """)
     lua.execute("""
         for _,retail in ipairs({false,true}) do
             Reset()

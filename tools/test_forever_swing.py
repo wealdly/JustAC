@@ -52,7 +52,8 @@ function Fire(event, ...)
         if f.events[event] and f.script then f.script(f, event, ...) end
     end
 end
-C_Spell = {}
+-- The cooldown read is captured when the file loads; tests set cdStub to answer it.
+C_Spell = { GetSpellCooldown = function(id) if cdStub then return cdStub(id) end end }
 inCombat = false
 function InCombatLockdown() return inCombat end
 function UnitAttackSpeed() return 2.0, nil end
@@ -225,6 +226,35 @@ def main():
     check(w and abs(w[0] - 409.15) < 1e-6 and abs(w[1] - 411.15) < 1e-6, "on after a long pause: due 0.15s later")
     at(411.3); lua.execute('Fire("PLAYER_SWING", 2.0, 2)')     # the real first shot replaces it
     check(B.GetSwingWindow(2) == (411.3, 413.3), "the shot itself takes over")
+
+    # A wand shot's lockout reads as each GCD spell's own cooldown for a moment, longer than one
+    # GCD: it is the shot's lockout, not the spell's cooldown, while the shot has just fired.
+    lua.execute("""
+        ownCd = {}
+        local B = LibStub("JustAC-BlizzardAPI")
+        -- In combat the timer fields are secret: the file's Unsecret turns them into nil.
+        cdStub = function(id) return { isActive = ownCd[id] ~= nil, isOnGCD = nil } end
+        C_Spell.GetSpellCooldownDuration = function(id) return ownCd[id] end
+        C_Spell.GetSpellInfo = function() return nil end
+        B.IsDurationBelowSeconds = function(d, s) return d.left <= s end
+        B.IsSpellOnCooldown = function(id) return ownCd[id] ~= nil end
+        B.CooldownEndsWithin = function(id, s) local d = ownCd[id]; return d == nil or d.left <= s end
+    """)
+    def ready(sid):
+        return B.IsSpellReady(sid)[0]
+    at(420); lua.execute('Fire("PLAYER_SWING", 1.565, 2)')
+    at(420.04)
+    lua.execute("ownCd[594] = { left = 1.525 }; ownCd[8092] = { left = 0.9 }; ownCd[34433] = { left = 30 }")
+    check(ready(594) is True, "Shadow Word: Pain under the shot's lockout: ready")
+    check(ready(8092) is True, "Mind Blast whose own cooldown ends inside it: ready too")
+    check(ready(34433) is False, "a cooldown longer than the shot is the spell's own")
+    lua.execute("cdStub = function(id) return { isActive = ownCd[id] ~= nil, isOnGCD = false } end")
+    check(ready(8092) is True, "the same lockout reported as a real cooldown (isOnGCD false): ready")
+    check(ready(34433) is False, "a real cooldown longer than the shot still is one")
+    lua.execute("cdStub = function(id) return { isActive = ownCd[id] ~= nil, isOnGCD = nil } end")
+    at(420.5)
+    lua.execute("ownCd[594] = { left = 1.065 }")
+    check(ready(594) is False, "long after the shot the reading is the spell's own again")
 
     lua.execute("""
         inCombat=false

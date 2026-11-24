@@ -265,7 +265,7 @@ so this is the rule to hold the line on:
 | A debuff that raises the damage the target takes | Sunder Armor, Faerie Fire, Curse of the Elements, Hunter's Mark | Yes (counts as damage) |
 | A slow, root or snare whose job is control | Frost Nova | No: the player's |
 | Mitigation on the enemy | Demoralizing Shout, Demoralizing Roar, Hex of Weakness | No: the defensive queue at low health, held while it runs |
-| Threat | Taunts | No: defensive queue for tanks (threat cues) |
+| Threat | Taunts | No: the Threat button (opt-in) |
 | Healing, including healing debuffs | Vampiric Embrace | No: defensive queue |
 | Crowd control | Polymorph, Sap, Fear | No: the player's |
 
@@ -282,6 +282,10 @@ Two consequences:
   each tier whose list does not name it, and the queue keeps it out there instead of offering it
   as an unranked filler (`RotationImport.IsLeftOut`). Custom lists, exact order and Always Show
   pins still show it.
+- A drop that removes the only entry keeping an aura up (cast while the aura is missing, short of
+  stacks or running out) also releases every other entry's wait on that aura
+  (`maintained_auras`, `release_waits` in the generator): Fire's Scorch stacked Fire
+  Vulnerability, and with Scorch left out Combustion would have waited for five stacks for good.
 - The lists are closed (2026-11-22): the automatic queue offers only class abilities the
   installed tree names in some tier (`RotationImport.IsNamed`, applied by
   `SpellQueue._IsLeftOut` in every stage that walks the pool). An unlisted ability used to rank
@@ -433,9 +437,11 @@ Inherited, evaluated by the existing code:
     behavior. See [capture semantics and controls](FOREVER_COMBAT_SIGNALS.md#priority-condition-coverage).
 - `cd`, `stack`, `stealth`: as retail. Target debuff stacks (Sunder Armor to 5) are unreadable:
   `delegated`, order only.
-  JustAC's own landed-stack count can still pace the applicator. In a solo ordinary fight,
-  Protection Sunder is suggested for one application; grouped, instance, elite or +1-level
-  contexts can allow further applications up to the spell's generated stack maximum.
+  JustAC's own landed-stack count can still pace the applicator. A tank tree applies a
+  threat-building armor reduction at once only when grouped; solo it waits for a worthwhile
+  fight like any slow payoff, and no tree applies a slow payoff to a confirmed dying last enemy.
+  Grouped, instance, elite or +1-level contexts can allow further applications up to the
+  spell's generated stack maximum.
   This affects only the applicator's own generated stack gate, not imported/custom lists.
 
 Spellbook proc events feed candidates into the shared tail categorizer, not directly into

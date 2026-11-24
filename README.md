@@ -40,7 +40,7 @@ activity colors, rather than class or spell-school colors:
 | Cyan | Cleanse an enemy enrage |
 | Orange | Offensive burst window or execute |
 | Violet | Buff/enchantment preparation |
-| Magenta | Threat cue (Forever, opt-in): drop threat, taunt or hold aggro |
+| Magenta | Threat button (Forever, opt-in): drop threat, taunt or hold aggro |
 
 Preparation and mitigation keep the same hue when their reminder ring escalates
 to a proc-style glow. Existing glow controls and recommendation priorities still
@@ -169,7 +169,7 @@ What works differently on Forever:
 - **WAIT** - with Unavailable Last and ranked ordering, the timer icon leads when every DPS ability is unavailable. The waiting abilities stay behind it, and an eligible suggestion replaces it. Out of combat this requires a live enemy you can attack; no-target previews are unchanged.
 - **Save burst for worthwhile fights** - automatic priorities reserve confirmed self-buffs with a base cooldown of at least two minutes until an elite, boss or multiple engaged enemies are confirmed. The reservation persists before and after combat and through missing encounter information; unknown spell classification or cooldown does not qualify a spell for reservation. Custom lists, Always Show, explicit Hold Until settings and custom burst triggers retain control. With no other eligible ability, WAIT leads instead of spending the cooldown.
 - **Between ranged shots** - while the enemy is confirmed beyond melee reach, an otherwise eligible Throw or ranged weapon filler keeps its first slot and cooldown swipe instead of alternating with WAIT. Any ready alternative takes precedence; blocked or unknown shot range still falls back to WAIT.
-- **Rear-required attacks** - Backstab, Shred and similar attacks step back when you are out of stealth and the enemy is targeting you. Stealth openers and enemies targeting your tank retain priority. This is a targeting heuristic, not a facing check; unreadable targeting information leaves the order unchanged.
+- **Rear-required attacks** - Backstab, Shred and similar attacks are left out of the queue while you are out of stealth and the enemy is targeting you, or has no target yet (it turns to face you with the first hit). They are offered in stealth or once the enemy turns to someone else (a tank or a pet). This is a targeting rule, not a facing check (the game gives no way to read facing); unreadable targeting information leaves them in, and turning off Unavailable Last keeps them in their place.
 - **Tiered damage finishers** - on normal enemies, aim for fewer combo points as the enemy weakens, and the minimum needed near death. Bosses and elites retain the imported point target. Fixed-cost spenders and duration-based finishers keep their own requirements.
 - **Swing timers** - Heroic Strike, Cleave, Raptor Strike and Maul show a bar filling to the swing they wait for, and a tick in place of the keybind while pressing again would do nothing. Attack, Auto Shot and wands show their swing timer while they run.
 - **Auto Shot and Attack** trade places as you move in and out of melee range.
@@ -177,7 +177,7 @@ What works differently on Forever:
 - **Resource presses** - Life Tap, Evocation and Innervate come forward when you can't afford your spells; Life Tap, Bloodrage and Hellfire only while your health is above half.
 - **Area abilities** lead when two or more enemies are fighting you; pack attacks such as Thunder Clap lead from three.
 - **Shared resources** - a cheaper ability never spends the rage, energy or mana a higher-priority one is waiting for, and while everything waits the first slot shows what comes next.
-- **Threat Cues** *(opt-in, Defensives)* - in a group or with your pet out, a magenta icon offers a threat drop when you are about to pull aggro, or a taunt or threat ability when you are tanking and losing it.
+- **Threat Button** *(opt-in, Defensives)* - in a group or with your pet out, a magenta button in the interrupt button's spot (an interrupt takes it first), hidden until threat needs a press: a threat drop when you are about to pull aggro, or a taunt or threat ability when you are tanking and losing it.
 - **Between pulls** - food, drink or a bandage when you need them, and the flasks, elixirs and scrolls you carry (Defensive Queue → Pre-Combat Buffs).
 - Options that only apply to Assisted Combat are greyed out.
 

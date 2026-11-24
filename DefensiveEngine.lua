@@ -74,7 +74,7 @@ local function PushEntry(results, spellID, isItem, isProcced, unusable, noResour
     e.spellID, e.isItem, e.isProcced = spellID, isItem, isProcced
     e.unusable, e.noResources = unusable, noResources
     e.precombat, e.topoff = precombat, topoff
-    e.waiting, e.storedID, e.threat = nil, nil, nil
+    e.waiting, e.storedID = nil, nil
     results[#results + 1] = e
     return e
 end
@@ -783,14 +783,18 @@ local function Unsecret(v)
 end
 
 --------------------------------------------------------------------------------
--- Threat cues (opt-in: profile.defensives.threatCues). The game's own threat reads on the
--- target, as Blizzard's frames use them (captured readable in a group, 2026-11-17):
+-- Threat button (opt-in: profile.defensives.threatCues). The game's own threat reads on the
+-- target, as Blizzard's frames and Details' threat plugin use them (UnitThreatSituation,
+-- UnitDetailedThreatSituation, UnitThreatLeadSituation; readable in a group, 2026-11-17 and
+-- 2026-11-23). Hidden until one of these applies:
 --   * a damage dealer or healer about to pull aggro (state 1) or holding it (2-3): a threat
 --     drop (Fade, Feint, Cower, Feign Death);
---   * a tank (a tank stance or form, or the Tank role) on the target's threat list but not
---     tanking it: a taunt; still tanking with its lead slipping (lead 1-2): a threat boost.
+--   * a tank (SpellDB.IsPlayerTank) on the target's threat list but not tanking it: a taunt; still
+--     tanking with its lead slipping (UnitThreatLeadSituation 1-2, yellow or orange above the
+--     second on threat): a threat boost.
 -- Only with somebody else to hold aggro (a group, or your own pet). Which spells qualify comes
--- from the spell data (SpellDB.GetThreatRole); an unknown or secret read offers nothing.
+-- from the spell data (SpellDB.GetThreatRole). Every read is plain or nothing: an unknown or
+-- secret read hides the button (including the target's own existence, secret in instances).
 --------------------------------------------------------------------------------
 local threatBases   -- role -> sorted rank-1 ids, built once from the data
 
@@ -821,14 +825,11 @@ local function PlainRead(fn, ...)
     return value
 end
 
-local function IsPlayerTank()
-    if PlainRead(UnitHasEffectivelyTankAura, "player") == true then return true end
-    return PlainRead(UnitGroupRolesAssigned, "player") == "TANK"
-end
-
 --- The threat role wanted on the target right now: "drop", "taunt", "boost", or nil.
 function DefensiveEngine.WantedThreatRole()
-    if not (UnitExists("target") and UnitCanAttack("player", "target")) then return nil end
+    if PlainRead(UnitExists, "target") ~= true or PlainRead(UnitCanAttack, "player", "target") ~= true then
+        return nil
+    end
     local others = BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true
     if not others and PlainRead(UnitExists, "pet") ~= true then return nil end
     if C_Secrets and C_Secrets.ShouldUnitThreatStateBeSecret
@@ -837,7 +838,7 @@ function DefensiveEngine.WantedThreatRole()
     end
     local state = PlainRead(UnitThreatSituation, "player", "target")
     if type(state) ~= "number" then return nil end   -- not on its threat list, or unknown
-    if not IsPlayerTank() then
+    if not SpellDB.IsPlayerTank() then
         if state >= 1 then return "drop" end
         return nil
     end
@@ -853,7 +854,9 @@ end
 --- The first ready, usable, in-range spell of that threat role you know (highest rank).
 local function ThreatSpell(role)
     local RI = LibStub("JustAC-RotationImport", true)
-    for _, base in ipairs(ThreatBases(role) or {}) do
+    local bases = ThreatBases(role)
+    if not bases then return nil end
+    for _, base in ipairs(bases) do
         local id
         if RI and RI.HighestKnownRank then
             id = RI.HighestKnownRank(base)
@@ -870,16 +873,15 @@ local function ThreatSpell(role)
     return nil
 end
 
-local function AppendThreatCue(profile, results, alreadyAdded, maxIcons)
-    if not (profile.defensives.threatCues == true and #results < maxIcons) then return end
+--- The Threat button's press (the spell for WantedThreatRole), or nil while nothing about
+--- threat needs a press, the button is off, or it is out of combat.
+function DefensiveEngine.GetThreatCue(profile, inCombat)
+    if not (inCombat and profile and profile.defensives and profile.defensives.threatCues == true) then
+        return nil
+    end
     local role = DefensiveEngine.WantedThreatRole()
-    local id = role and ThreatSpell(role)
-    if not id or alreadyAdded[id] then return end
-    local e = PushEntry(results, id, false, false, nil, nil, nil)
-    e.threat = role
-    alreadyAdded[id] = true
+    return role and ThreatSpell(role) or nil
 end
-DefensiveEngine._AppendThreatCue = AppendThreatCue   -- tests
 
 -- A pure heal over time (SpellDB.GetPureHotDuration: Renew, Rejuvenation) is held the same
 -- way after our own cast on ourselves: a recast while it ticks restarts it and wastes the
@@ -911,7 +913,9 @@ end
 
 -- A debuff that weakens the enemy (Demoralizing Shout, Hex of Weakness) is held like a heal
 -- over time: from your own confirmed cast, for its duration, since the enemy's debuffs are
--- unreadable in combat. Whoever it was cast on, and dropped on a new target (OnTargetChanged).
+-- unreadable in combat. Whoever it was cast on. A new target (OnTargetChanged) drops a
+-- single-target one; an area one (radius) stays held when the new target is within its
+-- radius, decided at the first read after the change (HeldLockoutEntry).
 local enemyHoldOf, enemyHoldByBase = {}, {}
 local function EnemyHoldEntry(spellID)
     local entry = enemyHoldOf[spellID]
@@ -926,7 +930,8 @@ local function EnemyHoldEntry(spellID)
     if RI and RI.RankBase then base = RI.RankBase(spellID) or spellID end
     entry = enemyHoldByBase[base]
     if not entry then
-        entry = { aura = base, enemy = true, selfOnly = true, dur = seconds }
+        entry = { aura = base, enemy = true, selfOnly = true, dur = seconds,
+                  radius = SpellDB.GetEnemyMitigationRadius and SpellDB.GetEnemyMitigationRadius(spellID) }
         enemyHoldByBase[base] = entry
     end
     enemyHoldOf[spellID] = entry
@@ -1010,6 +1015,18 @@ local function HeldLockoutEntry(spellID)
     if not next(selfLockedUntil) then return nil end
     local entry = LockoutEntry(spellID)
     if not entry or entry.applyOnly or selfLockedUntil[entry.aura] == nil then return nil end
+    -- An area debuff after a target change: inferred on the new target only while it stands
+    -- within the debuff's radius (the cast reached every enemy that close). Farther, or a
+    -- range nothing settles, offers it again. An inference: an enemy that walked in after the
+    -- cast is taken as covered, and is covered again by the next cast when the hold ends.
+    if entry.recheck then
+        entry.recheck = nil
+        if not (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius) == true) then
+            selfLockedUntil[entry.aura] = nil
+            if AuraClock then AuraClock.Touch() end
+            return nil
+        end
+    end
     if entry.hot and HotEndedEarly(entry, now) then
         selfLockedUntil[entry.aura] = nil
         if AuraClock then AuraClock.Touch() end
@@ -1018,12 +1035,18 @@ local function HeldLockoutEntry(spellID)
     return entry
 end
 
---- A new target: a debuff held on the last one says nothing about this one.
+--- A new target: a single-target debuff held on the last one says nothing about this one. An
+--- area one is checked against the new target's distance at the next read (the range read
+--- here could still describe the old target).
 function DefensiveEngine.OnTargetChanged()
     local dropped = false
-    for aura in pairs(enemyHoldByBase) do
+    for aura, entry in pairs(enemyHoldByBase) do
         if selfLockedUntil[aura] then
-            selfLockedUntil[aura], dropped = nil, true
+            if entry.radius then
+                entry.recheck = true
+            else
+                selfLockedUntil[aura], dropped = nil, true
+            end
         end
     end
     if dropped and AuraClock then AuraClock.Touch() end
@@ -1159,11 +1182,21 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
     -- PLAYER, not of any one spell, so it must not feed the per-spell ordering decisions
     -- below. The same wide predicate the offensive queue and the item check use.
     local locActive = BlizzardAPI.IsPlayerAbilityLockout and BlizzardAPI.IsPlayerAbilityLockout()
+    -- Rage and energy refill on their own within seconds, so a short wait for them is no
+    -- reason to reorder: a spell short of rage keeps its list place (it still renders as
+    -- unaffordable), as in the offensive queue, instead of swapping with the next entry on
+    -- every press and swing (2026-11-23 capture: Demoralizing Shout against a potion). Mana
+    -- does not come back by itself in a fight, so with mana a spell you cannot afford still
+    -- sinks behind what you can use. Read once per build; unknown keeps the old ordering.
+    local powerOk, powerType = pcall(UnitPowerType, "player")
+    local refills = powerOk and not BlizzardAPI.IsSecretValue(powerType) and Enum and Enum.PowerType
+        and (powerType == Enum.PowerType.Rage or powerType == Enum.PowerType.Energy)
 
     -- Single pass: categorize spells into three priority tiers:
     --   1. Procced (instant/free cast - highest priority)
-    --   2. Castable non-procced (usable, off CD - mid priority, user list order)
-    --   3. Unusable (on CD or lacking resources - de-prioritized to end)
+    --   2. Castable non-procced (usable, off CD - mid priority, user list order; with rage or
+    --      energy also one only short of it)
+    --   3. Unusable (on CD, or lacking mana - de-prioritized to end)
     -- Per-spell state comes from the per-tick memo; this loop is pure categorization.
     for _, entry in ipairs(spellList) do
         if entry and entry > 0
@@ -1176,7 +1209,11 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
             if m.usableGate and not alreadyAdded[entry] and not alreadyAdded[resolvedID]
                 and not usableAddedHere[resolvedID] then
                 if m.unusable then
-                    unusableBuffer[#unusableBuffer + 1] = m
+                    if refills and m.noResources == true then
+                        nonProccedBuffer[#nonProccedBuffer + 1] = m
+                    else
+                        unusableBuffer[#unusableBuffer + 1] = m
+                    end
                 elseif m.realProc then
                     -- Per-spell proc-priority pin (stored id first, then resolved - see helper)
                     local procPriority = ProcPriorityEnabled(profile, entry, resolvedID)
@@ -1724,9 +1761,6 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     if displayMode == "combatOnly" and not inCombat then
         return results, alreadyAdded
     end
-
-    -- Threat first: losing or pulling aggro is the most urgent thing this cluster can say.
-    if inCombat then AppendThreatCue(profile, results, alreadyAdded, maxIcons) end
 
     -- Procced spells shown at ANY health level
     if showProcs and ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then

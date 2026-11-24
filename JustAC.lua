@@ -200,7 +200,7 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
-            threatCues = false,       -- Forever, opt-in: threat drop / taunt / threat boost cues (DefensiveEngine)
+            threatCues = false,       -- Forever, opt-in: the Threat button (threat drop / taunt / threat boost)
             emergencyPotionChoice = 0, -- Emergency healing potion pick (0 = automatic/highest)
             position = "SIDE1",       -- SIDE1 (health bar side) or SIDE2 (legacy saved "LEADING" reads as SIDE1)
             showHealthBar = true,    -- Display compact health bar above main queue
@@ -1136,11 +1136,11 @@ function JustAC:OnProfileDeleted(event, db, deletedName)
 end
 
 -- Defensive Engine wrapper methods (delegated to DefensiveEngine module)
--- Threat cues (opt-in): your threat state moved, so rebuild the defensive icons now rather
--- than at the next in-combat refresh.
+-- Threat button (opt-in): your threat state moved, so redraw now rather than at the next
+-- in-combat refresh.
 function JustAC:OnThreatChanged()
     local p = self.db and self.db.profile
-    if p and p.defensives and p.defensives.threatCues == true then defensiveQueueDirty = true end
+    if p and p.defensives and p.defensives.threatCues == true then self:ForceUpdate() end
 end
 
 function JustAC:OnHealthChanged(event, unit)
@@ -2059,8 +2059,11 @@ function JustAC:OnNamePlateRemoved()
 end
 
 -- Delegated to TargetFrameAnchor module (thin wrappers for the options panel)
-function JustAC:IsStandardTargetFrame()
-    if TargetFrameAnchor then return TargetFrameAnchor.IsStandardTargetFrame(self) end
+--- A frame to dock to: Blizzard's TargetFrame or a supported unit-frame addon's replacement.
+function JustAC:HasTargetFrameAnchor()
+    if TargetFrameAnchor and TargetFrameAnchor.GetAnchorFrame then
+        return TargetFrameAnchor.GetAnchorFrame(self) ~= nil
+    end
     return false
 end
 function JustAC:UpdateTargetFrameAnchor()
@@ -2247,12 +2250,19 @@ function JustAC:OnPlayerCastDelayed(event, unit)
     self:MarkQueueDirty()
 end
 
--- An unabsorbed hit on the player (Forever only). Only the action and flag are read; the
--- amount is a secret value. A hit fully soaked by a shield carries the ABSORB flag.
+-- A hit on the player (Forever only). Only the action and flag are read; the amount is a secret
+-- value. A hit fully soaked by a shield carries the ABSORB flag: it pushes no cast back, and it
+-- shows a shield is absorbing now, so the unabsorbed hits before it no longer predict pushback.
 function JustAC:OnPlayerCombatHit(event, unit, action, flagText)
     if BlizzardAPI.IsSecretValue(unit) or unit ~= "player"
        or BlizzardAPI.IsSecretValue(action) or action ~= "WOUND"
-       or BlizzardAPI.IsSecretValue(flagText) or flagText == "ABSORB" then return end
+       or BlizzardAPI.IsSecretValue(flagText) then return end
+    if flagText == "ABSORB" then
+        if SpellQueue and SpellQueue.NoteAbsorbedHit and SpellQueue.NoteAbsorbedHit() then
+            self:MarkQueueDirty()
+        end
+        return
+    end
     if SpellQueue and SpellQueue.NoteIncomingHit and SpellQueue.NoteIncomingHit() then
         self:MarkQueueDirty()
     end

@@ -235,6 +235,23 @@ def main():
     check('DE.NoteSpellcastSucceeded("x2") == true and DE.IsSelfLockedOut(9035)')
     lua.execute("DE.OnTargetChanged()")
     check('not DE.IsSelfLockedOut(9035) and Queue() == "9035,2061"')
+    # An area debuff (Demoralizing Shout: every enemy within 10 yards) stays held on a new target
+    # within its radius; one farther away, or out of any range read, gets it offered again.
+    check("SpellDB.GetEnemyMitigationRadius(1160) == 10 and SpellDB.GetEnemyMitigationRadius(11556) == 10")
+    check("SpellDB.GetEnemyMitigationRadius(99) == 10 and SpellDB.GetEnemyMitigationRadius(9035) == nil")
+    lua.execute("within = {}; SpellDB.IsTargetWithin = function(y) return within[y] end")
+    lua.execute('DE.NoteSpellcastSent("", "s1", 1160)')
+    check('DE.NoteSpellcastSucceeded("s1") == true and DE.IsSelfLockedOut(1160)')
+    lua.execute("within[10] = true; DE.OnTargetChanged()")
+    check('DE.IsSelfLockedOut(1160)')
+    lua.execute("within[10] = nil; now = now + 1")
+    check('DE.IsSelfLockedOut(1160)')   # decided once, at the first read after the change
+    lua.execute("within[10] = false; DE.OnTargetChanged()")
+    check('not DE.IsSelfLockedOut(1160)')
+    lua.execute('DE.NoteSpellcastSent("", "s2", 1160)')
+    check('DE.NoteSpellcastSucceeded("s2") == true and DE.IsSelfLockedOut(1160)')
+    lua.execute("within[10] = nil; DE.OnTargetChanged()")
+    check('not DE.IsSelfLockedOut(1160)')   # no range read settles it: offered again
     # A heal over time held on yourself is not dropped by a new target.
     lua.execute("profile.defensives.classSpells.PRIEST_F.defensiveSpells = {139, 2061}")
     lua.execute('DE.NoteSpellcastSent("Me", "x3", 139)')

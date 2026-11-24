@@ -443,7 +443,17 @@ def main():
         return secs.get(m["DurationIndex"], 0) if m else 0
 
     # ENEMY_MITIGATION, every rank: how long the debuff runs after your cast.
+    # ENEMY_MITIGATION_RADIUS: for one that lands on every enemy around you (Demoralizing
+    # Shout), the radius in yards; a single-target debuff (Hex of Weakness) has none.
+    radii = {r["ID"]: float(r["Radius"] or 0) for r in cfa.rows("SpellRadius")}
+    area_radius = {}
+    for r in cfa.rows("SpellEffect"):
+        if r["Effect"] == APPLY_AURA_EFFECT and r.get("ImplicitTarget_0") != ENEMY_TARGET:
+            radius = max(radii.get(r["EffectRadiusIndex_0"], 0), radii.get(r["EffectRadiusIndex_1"], 0))
+            if radius > 0:
+                area_radius[r["SpellID"]] = max(radius, area_radius.get(r["SpellID"], 0))
     lines.append("local ENEMY_MITIGATION = {")
+    mitigation_radius = []
     for cls, mitigation in sorted(ENEMY_MITIGATION.items()):
         chains, _ = cfa.class_chains(cfa.CLASS_MASK[cls])
         for name in mitigation:
@@ -451,6 +461,12 @@ def main():
                 seconds = duration(sid)
                 assert seconds > 0, (cls, name, sid, "no duration in the data")
                 lines.append(f"    [{sid}] = {seconds:g},  -- {names.get(str(sid), '?')}")
+                if str(sid) in area_radius:
+                    mitigation_radius.append(
+                        f"    [{sid}] = {area_radius[str(sid)]:g},  -- {names.get(str(sid), '?')}")
+    lines.append("}")
+    lines.append("local ENEMY_MITIGATION_RADIUS = {")
+    lines.extend(mitigation_radius)
     lines.append("}")
     lines.append("local MAINTAINED = {")
     for cls in dict.fromkeys((*MAINTAINED, *PREPARATION)):
@@ -658,8 +674,11 @@ def main():
             lines.append(f"    [{sid}] = {{{gain[0]}, {gain[1]:g}}},  -- {names.get(str(sid), '?')}")
     lines.append("}")
     # What a cast does to threat, every rank: "tank" (puts on the effectively-tank aura),
-    # "taunt", "drop" (sheds threat) or "boost" (bonus threat). The first that applies wins, in
-    # that order. Data for the defensive queue's threat cues; the queue itself reads none.
+    # "taunt" (on the target), "groupTaunt" (every enemy around: Challenging Shout, a long
+    # cooldown kept for a whole pack), "drop" (sheds threat) or "boost" (bonus threat). The
+    # first that applies wins, in that order. Data for the Threat button; the queue reads none.
+    def is_taunt(e):
+        return e["Effect"] == TAUNT_EFFECT or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TAUNT_AURA)
     lines.append("local THREAT_ROLES = {")
     for sid in sorted(class_ids):
         fx = effects.get(str(sid), [])
@@ -670,9 +689,9 @@ def main():
         role = None
         if has(lambda e, _: e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TANK_AURA):
             role = "tank"
-        elif has(lambda e, _: e["Effect"] == TAUNT_EFFECT
-                 or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TAUNT_AURA)):
-            role = "taunt"
+        elif has(lambda e, _: is_taunt(e)):
+            single = has(lambda e, _: is_taunt(e) and e.get("ImplicitTarget_0") == ENEMY_TARGET)
+            role = "taunt" if single else "groupTaunt"
         elif has(lambda e, n: (e["Effect"] == THREAT_EFFECT and n < 0)
                  or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == TOTAL_THREAT_AURA and n < 0)
                  or (e["Effect"] == APPLY_AURA_EFFECT and e["EffectAura"] == FEIGN_DEATH_AURA)):
@@ -865,6 +884,7 @@ def main():
         "SpellDB.FOREVER_PREVIOUS_DEFENSIVE_DEFAULTS = PREVIOUS_DEFENSIVE",
         "SpellDB.FOREVER_DEFENSIVE_DEFAULTS_VERSION = %d" % DEFENSIVE_DEFAULTS_VERSION,
         "SpellDB.FOREVER_ENEMY_MITIGATION = ENEMY_MITIGATION",
+        "SpellDB.FOREVER_ENEMY_MITIGATION_RADIUS = ENEMY_MITIGATION_RADIUS",
         "SpellDB.FOREVER_ABILITY_ROLES = ABILITY_ROLES",
         "SpellDB.FOREVER_TOTEM_SLOTS = TOTEM_SLOTS",
         "SpellDB.FOREVER_MAINTAINED_PROTECTION = MAINTAINED_PROTECTION",

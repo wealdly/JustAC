@@ -9,6 +9,10 @@ local UnitChannelInfo = UnitChannelInfo
 local UnitCastingDuration = UnitCastingDuration
 local UnitChannelDuration = UnitChannelDuration
 
+-- A proc glow is drawn at this multiple of its icon, centred: it reaches (scale - 1) / 2 of an
+-- icon past each edge. Layout that puts two glowing icons side by side spaces them by it.
+UIAnimations.PROC_GLOW_SCALE = 1.4
+
 -- Flash animation constants
 local FLASH_DURATION = 0.2
 
@@ -64,7 +68,7 @@ local function CreateProcGlowFrame(parent, frameKey, skipHideScript)
     local procFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = procFrame
     procFrame:SetPoint("CENTER")
-    procFrame:SetSize(45 * 1.4, 45 * 1.4)
+    procFrame:SetSize(45 * UIAnimations.PROC_GLOW_SCALE, 45 * UIAnimations.PROC_GLOW_SCALE)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
     if parent.isOverlayIcon then
         procFrame:SetFrameStrata("BACKGROUND")

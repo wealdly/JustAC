@@ -277,11 +277,10 @@ RotationImport.RegisterForever({
     },
     fire = {  -- presets/mage/dps/fire
       st = {
-        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=400574,gates={{t="known",id=400574},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},{t="buff",id=400573,dur=18,neg=true}},delegated=true},  -- Arcane Blast
         {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
         {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
         {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
@@ -289,11 +288,10 @@ RotationImport.RegisterForever({
         {id=5019,gates={}},  -- Shoot
       },
       cleave = {
-        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=400574,gates={{t="known",id=400574},{t="targets",op="<",n=3},{t="all",g={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},{t="buff",id=400573,dur=18,neg=true}},delegated=true},  -- Arcane Blast
         {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
         {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
         {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
@@ -301,14 +299,13 @@ RotationImport.RegisterForever({
         {id=5019,gates={}},  -- Shoot
       },
       aoe = {
-        {id=11129,gates={{t="any",g={{t="known",id=11095,neg=true},{t="stack",id=22959,op="=",n=5,tgt=true}}}}},  -- Combustion
+        {id=11129,gates={}},  -- Combustion
         {id=12051,gates={{t="any",g={{t="power",res="mana",op="<",n=10,ispct=true},{t="starved"}}}},w=true},  -- Evocation
         {id=2120,gates={}},  -- Flamestrike
         {id=11113,gates={{t="near",n=10}},w=true},  -- Blast Wave
         {id=120,gates={{t="near",n=10}},w=true},  -- Cone of Cold
         {id=1449,gates={{t="near",n=10}},w=true},  -- Arcane Explosion
         {id=11366,gates={{t="known",id=400624},{t="stack",id=400625,op="=",n=3}}},  -- Pyroblast
-        {id=2948,gates={{t="known",id=11095},{t="any",g={{t="stack",id=22959,op="<",n=5,tgt=true},{t="debuff",id=22959,op="<=",n=5}}}},delegated=true},  -- Scorch
         {id=2136,gates={{t="any",g={{t="targets",op="<",n=3},{t="all",g={{t="any",g={{t="known",id=11213,neg=true},{t="buff",id=12536,dur=15,neg=true}}},{t="power",res="mana",op=">=",n=30,ispct=true}}}}}}},  -- Fire Blast
         {id=5143,gates={{t="known",id=400588},{t="buff",id=400589,dur=15}}},  -- Arcane Missiles
         {id=401502,gates={}},  -- Frostfire Bolt
@@ -487,11 +484,11 @@ RotationImport.RegisterForever({
     default = "combat",
     assassination = {  -- presets/rogue/dps/forever_mutilate
       st = {
+        {id=5171,gates={{t="buff",id=5171,dur=6,neg=true},{t="resource",res="combo_points",op=">=",n=1}}},  -- Slice and Dice
         {id=8676,gates={{t="stealth"}}},  -- Ambush
         {id=703,gates={{t="stealth"},{t="debuff",id=703,neg=true,refresh=true}}},  -- Garrote
         {id=1833,gates={{t="stealth"}}},  -- Cheap Shot
         {id=14251,gates={}},  -- Riposte
-        {id=5171,gates={{t="resource",res="combo_points",op=">=",n=1},{t="buff",id=5171,dur=6,neg=true}}},  -- Slice and Dice
         {id=1329283,gates={{t="power",res="energy",op="<",n=80}}},  -- Shank
         {id=14177,gates={{t="resource",res="combo_points",op=">=",n=4},{t="buff",id=5171,dur=6},{t="any",g={{t="known",id=16551,neg=true},{t="buff",id=16551,dur=3,neg=true}}}}},  -- Cold Blood
         {id=1943,gates={{t="resource",res="combo_points",op=">=",n=5},{t="debuff",id=1943,neg=true,refresh=true}}},  -- Rupture
@@ -503,11 +500,11 @@ RotationImport.RegisterForever({
     },
     combat = {  -- presets/rogue/dps/combat_sinister_strike
       st = {
+        {id=5171,gates={{t="resource",res="combo_points",op=">=",n=1},{t="buff",id=5171,dur=6,neg=true}}},  -- Slice and Dice
         {id=8676,gates={{t="stealth"}}},  -- Ambush
         {id=703,gates={{t="stealth"},{t="debuff",id=703,neg=true,refresh=true}}},  -- Garrote
         {id=1833,gates={{t="stealth"}}},  -- Cheap Shot
         {id=14251,gates={}},  -- Riposte
-        {id=5171,gates={{t="any",g={{t="all",g={{t="resource",res="combo_points",op=">=",n=1},{t="buff",id=5171,dur=6,neg=true}}},{t="all",g={{t="resource",res="combo_points",op=">=",n=5},{t="buff",id=5171,dur=6,neg=true}}}}}}},  -- Slice and Dice
         {id=13750,gates={{t="power",res="energy",op="<",n=59}},delegated=true},  -- Adrenaline Rush
         {id=1943,gates={{t="resource",res="combo_points",op=">=",n=5},{t="debuff",id=1943,neg=true,refresh=true}}},  -- Rupture
         {id=1329283,gates={{t="power",res="energy",op="<",n=80}}},  -- Shank
@@ -518,7 +515,7 @@ RotationImport.RegisterForever({
     },
     subtlety = {  -- presets/rogue/dps/forever_hemorrhage
       st = {
-        {id=5171,gates={{t="buff",id=5171,dur=6,neg=true}}},  -- Slice and Dice
+        {id=5171,gates={{t="buff",id=5171,dur=6,neg=true},{t="resource",res="combo_points",op=">=",n=1}}},  -- Slice and Dice
         {id=1833,gates={{t="stealth"}}},  -- Cheap Shot
         {id=14251,gates={}},  -- Riposte
         {id=14183,gates={{t="resource",res="combo_points",op="<",n=4}}},  -- Premeditation
@@ -1368,7 +1365,7 @@ RotationImport.RegisterForever({
   [14251] = 6,  -- Riposte
   [15237] = 0,  -- Holy Nova
   [16511] = 0,  -- Hemorrhage
-  [17364] = 6,  -- Stormstrike
+  [17364] = 8,  -- Stormstrike
   [19306] = 5,  -- Counterattack
   [19434] = 6,  -- Aimed Shot
   [23881] = 6,  -- Bloodthirst
@@ -1657,6 +1654,7 @@ RotationImport.RegisterForever({
 }, {
   -- Left out: class abilities a tree's list deliberately drops; the queue keeps them out
   -- wherever that tree's list does not name them, rather than offering an unranked filler.
+  ["MAGE_F"] = {fire={2948}},
   ["WARRIOR_F"] = {fury={1715},protection={1715,7386}},
 }, {
   -- Forms a class ability can be cast in (bit form-1, ShapeshiftMask): in a form it leaves

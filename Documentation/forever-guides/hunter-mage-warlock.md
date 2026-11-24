@@ -26,6 +26,12 @@ Cross-class facts that matter for a suggestion engine:
 - "Legacy" account perk (Talented rank 5) can grant up to 5 extra talent points
   at 30; every guide gives a separate recommendation for those points.
 
+**Fire: Scorch left to the player (JustAC, 2026-11-23).** The Fire list stacked Fire
+Vulnerability with Scorch once Improved Scorch was taken. Simulated at level 30 (pull model,
+wand rule), leaving it out was 8 to 15% faster on ordinary targets with Improved Scorch 3/3 and
+equal on elites, and 35 to 40% faster at 1/3 or 2/3, where a stack lands one cast in three. No
+change at 20 and 25. Combustion no longer waits for five stacks.
+
 **Left to the player (JustAC, 2026-11-22).** The automatic lists offer only what they name
 (tools/test_closed_lists.py). Damaging abilities no list names, and why:
 - Hunter: Explosive Trap (placed at your feet, so where the fight happens is yours); Black Arrow

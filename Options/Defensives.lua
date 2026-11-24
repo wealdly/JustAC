@@ -322,14 +322,13 @@ function Defensives.CreateTabArgs(addon)
                             return (not std or stdHB) and (not ov or ovHB)
                         end,
                     }),
-                    -- Opt-in: presses the player did not ask the damage queue for. The threat
-                    -- spells come from Forever's spell data, so the toggle is Forever only.
+                    -- Opt-in: the Threat button, presses the player did not ask the damage queue
+                    -- for. The threat spells come from Forever's spell data, so Forever only.
                     threatCues = W.toggle(addon, "defensives.threatCues", {
                         name = L["Threat Cues"], desc = L["Threat Cues desc"],
                         order = 3, width = "full", default = false,
-                        onSet = function() addon:ForceUpdateAll() end,
+                        onSet = function() addon:UpdateFrameSize() end,
                         hidden = not forever,
-                        disabled = defensivesUnreachable,
                     }),
                 },
             },

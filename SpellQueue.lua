@@ -916,7 +916,16 @@ local function IsRearAttackBlocked(spellID, readCache)
         return false
     end
     if BlizzardAPI.IsSecretValue(stealthed) or stealthed ~= false then return false end
-    if BlizzardAPI.SafeUnitIsUnit("targettarget", "player", nil) ~= true then return false end
+    local onMe = BlizzardAPI.SafeUnitIsUnit("targettarget", "player", nil)
+    if onMe == nil then return false end   -- unreadable: left in
+    if onMe == false then
+        -- On someone else (a tank, a pet): free to strike from behind. With no target at all
+        -- (an enemy not yet pulled), out of stealth it turns to you with the first hit, so the
+        -- attack is no opener either (a rogue cannot stay behind an enemy that turns to face
+        -- them). Only a readable "no target" counts.
+        local ok, exists = pcall(UnitExists, "targettarget")
+        if not ok or BlizzardAPI.IsSecretValue(exists) or exists then return false end
+    end
     if requirement.talent then
         local knownOk, known = pcall(C_SpellBook.IsSpellKnown, requirement.talent)
         if not knownOk then
@@ -1856,6 +1865,13 @@ function SpellQueue._IsLeftOut(displayID, sourceID, b)
     if pinnedAlwaysShow[displayID] or pinnedAlwaysShow[sourceID] or b.contextOrder == "off"
        or SpellQueue._rotationIsCustom or not RotationImport then return false end
     if RotationImport.IsLeftOut(displayID, b.simcCtx) then return true end
+    -- An attack made from behind (Backstab, Shred) while you are out of stealth and the enemy is
+    -- confirmed to be attacking you: it faces you, so the attack cannot land, and nothing the
+    -- client offers can confirm otherwise (no facing or position read for a unit). Left out, not
+    -- sunk to the back where it still showed. Shown again in stealth, once the enemy turns to
+    -- someone else (a tank, a pet) or has no target, and when that cannot be read.
+    -- "Unavailable last" switched off keeps every entry in source order, this one included.
+    if b.sinkCooldowns ~= false and IsRearAttackBlocked(displayID) then return true end
     if not RotationImport.IsNamed or displayID == AUTO_ATTACK_SPELL
        or (SpellDB.IsForeverRangedFiller and SpellDB.IsForeverRangedFiller(displayID)) then
         return false
@@ -1868,7 +1884,7 @@ end
 -- ready hardcast the damage model can price is an opener. An instant costs the same GCD in
 -- or out of combat and gains nothing here; it keeps its list rank.
 function SpellQueue._IsForeverOpener(spellID, simcRec, b)
-    if b.inCombat ~= false or b.contextOrder ~= "simc" or SpellQueue._rotationIsCustom
+    if not (b.inCombat == false or b.betweenPulls == true) or b.contextOrder ~= "simc" or SpellQueue._rotationIsCustom
        or not simcRec or not BlizzardAPI.IsForever() then return false end
     if not (RotationImport.GetDirectDamageEstimate and RotationImport.GetDirectDamageEstimate(spellID)) then
         return false
@@ -2007,21 +2023,25 @@ local function HoldAutomaticBurst(spellID, b)
             return false
         end
     end
-    -- A resource that keeps arriving after the cast (Bloodrage) is mostly lost on a confirmed
-    -- dying last enemy: the fight ends before it is paid out.
-    if b.ctxDying == true and SpellDB and SpellDB.GainsOverTime and SpellDB.GainsOverTime(spellID) then
+    -- Anything that pays out after the cast is mostly lost on a confirmed dying last enemy, in
+    -- every tree: a resource that keeps arriving (Bloodrage) or a slow payoff (Sunder Armor).
+    if b.ctxDying == true and SpellDB
+       and ((SpellDB.GainsOverTime and SpellDB.GainsOverTime(spellID))
+            or (SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID))) then
         return true
     end
     if SpellDB and SpellDB.IsDelayedPayoff and SpellDB.IsDelayedPayoff(spellID) then
         if SpellQueue._lowValueTarget then return true end
-        -- A threat-building armor reduction (Sunder Armor) is useful at once to a tank, and to a
-        -- tree whose physical hits repay it at once (Arms), so those do not hold it for the
-        -- long-fight threshold. Any other tree does: as damage, one application costs a global
-        -- cooldown and rage it does not pay back on an ordinary target.
+        -- A threat-building armor reduction (Sunder Armor) is useful at once to a tank in a group,
+        -- and to a tree whose physical hits repay it at once (Arms), so those do not hold it for
+        -- the long-fight threshold. Any other tree does, and so does a tank alone: with nobody
+        -- else to take the enemy, the threat buys nothing, and as damage one application costs
+        -- a global cooldown and rage it does not pay back on an ordinary target.
         if SpellDB.GetThreatRole and SpellDB.GetThreatRole(spellID) == "boost" then
             local tree = RotationImport and RotationImport.GetForeverTree and RotationImport.GetForeverTree()
-            if (SpellDB.IsTankTree and SpellDB.IsTankTree(spec, tree))
-               or (SpellDB.IsEarlyArmorTree and SpellDB.IsEarlyArmorTree(spec, tree)) then
+            local groupedTank = BlizzardAPI.IsGrouped and BlizzardAPI.IsGrouped() == true
+                and SpellDB.IsPlayerTank and SpellDB.IsPlayerTank()
+            if groupedTank or (SpellDB.IsEarlyArmorTree and SpellDB.IsEarlyArmorTree(spec, tree)) then
                 return false
             end
         end
@@ -2846,23 +2866,36 @@ function SpellQueue.OnTargetChanged()
     if FightWindow then FightWindow.TargetChanged() end
 end
 
---- Stage E - context inference: the AC pick's archetype/range/role/execute
---- tags, enemy-count promotion, sticky/latch temporal smoothing, the
---- out-of-melee probe, and the /jac inspect rank snapshot. Fills b.ctx*.
 --- Is the next main-hand swing more than one global cooldown away, counted from the moment the
 --- player can next press a spell on the global cooldown (when the running one ends)? The swing
 --- is plain on Forever while swinging (PLAYER_SWING tracker); the GCD length is the last one
 --- observed on the GCD reference spell (it follows haste and the GCD each spell triggers).
---- Decided for that moment, the answer holds while a GCD runs, because the swing and the GCD
---- count down together: it changes when a swing lands or the player acts, not as the timer
---- ticks. Asked of the clock, Heroic Strike and Hamstring swapped twice a swing on a dying
---- target (2026-11-20 capture, level 14 warrior). Either unknown answers false: no change.
+--- Decided once per swing and per global cooldown: a landed swing, a press (its GCD starting) or
+--- the GCD ending re-decides; the clock ticking between them does not. Asked of the clock,
+--- Heroic Strike swapped with another attack twice a swing on a dying target (2026-11-20 and
+--- 2026-11-23 captures, level 14 warrior: the second while no GCD ran, waiting on a cooldown or
+--- rage). Either unknown answers false: no change.
+local farSwingStart, farGcdStart, farAnswer
 function SpellQueue._SwingFarOff()
-    local remaining = BlizzardAPI.GetSwingRemaining and BlizzardAPI.GetSwingRemaining(0)
-    local gcd = BlizzardAPI.GetGCDLength and BlizzardAPI.GetGCDLength()
-    if remaining == nil or gcd == nil then return false end
-    return remaining - BlizzardAPI.GetGCDRemaining() > gcd
+    local swingStart, landAt = BlizzardAPI.GetSwingWindow(0)
+    local gcd = BlizzardAPI.GetGCDLength()
+    if swingStart == nil or gcd == nil then
+        farSwingStart = nil
+        return false
+    end
+    local gcdStart, gcdDuration = BlizzardAPI.GetGCDInfo()
+    if swingStart == farSwingStart and gcdStart == farGcdStart then return farAnswer end
+    local now = GetTime()
+    local gcdLeft = 0
+    if gcdDuration > 0 then gcdLeft = math.max(0, gcdStart + gcdDuration - now) end
+    farAnswer = math.max(0, landAt - now) - gcdLeft > gcd
+    farSwingStart, farGcdStart = swingStart, gcdStart
+    return farAnswer
 end
+
+--- Stage E - context inference: the AC pick's archetype/range/role/execute
+--- tags, enemy-count promotion, sticky/latch temporal smoothing, the
+--- out-of-melee probe, and the /jac inspect rank snapshot. Fills b.ctx*.
 
 function SpellQueue._StageContext(b)
     local primarySpellID, inCombat, now = b.primarySpellID, b.inCombat, b.now
@@ -2952,7 +2985,12 @@ function SpellQueue._StageContext(b)
     -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
     -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
     -- no demote (fail-safe). Lets us sink uncastable melee spells in positions 2+.
-    local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false
+    -- Only against an enemy that can still be attacked: the range probes read a dead or friendly
+    -- target as out of reach, which sank every melee attack and put Throw in the first slot for a
+    -- frame at every kill (2026-11-23 capture, level 11 rogue). With no live enemy, reach is
+    -- unknown, and unknown sinks nothing.
+    local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and IsLiveAttackableTarget()
+        and SpellDB.IsTargetWithin(5) == false
     -- A charge in flight (SpellQueue._LandingInFlight): melee reach is coming, so order for it.
     b.landingMelee = SpellQueue._LandingInFlight ~= nil and SpellQueue._LandingInFlight(now)
     if b.landingMelee then ctxOutOfMelee = false end
@@ -4073,6 +4111,11 @@ function SpellQueue.GetCurrentSpellQueue()
     local b = SpellQueue._b
     wipe(b)
     b.profile, b.blacklist, b.inCombat, b.now = profile, blacklist, inCombat, now
+    -- Between pulls: out of combat, or still in combat with no live enemy targeted (the kill just
+    -- landed and combat lingers a second). The next press is then the next pull's opener, chosen
+    -- as before a pull, so the first slot shows it at the kill instead of an in-combat press that
+    -- the opener replaces when combat ends (2026-11-23 capture: two first-slot changes per kill).
+    b.betweenPulls = not inCombat or (BlizzardAPI.IsForever() and not IsLiveAttackableTarget())
     b.addedSpellIDs, b.recommendedSpells = addedSpellIDs, recommendedSpells
     b.maxIcons, b.hideItems, b.bypassProcs = maxIcons, hideItems, bypassProcs
     b.spellCount = 0

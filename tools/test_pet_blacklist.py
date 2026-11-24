@@ -448,6 +448,47 @@ def test_surface_dispatch():
         """)
 
 
+def test_resource_short_order():
+    """A defensive short only of rage or energy keeps its list place (both refill within
+    seconds); short of mana, or on cooldown, it sinks behind what you can use."""
+    source = SOURCE.read_text(encoding="utf-8")
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(PRELUDE)
+    lua.execute("""
+        secret = {}
+        BlizzardAPI.IsSecretValue = function(v) return rawequal(v, secret) end
+        Enum = { PowerType = { Mana = 0, Rage = 1, Energy = 3 } }
+        powerType = 1
+        UnitPowerType = function() return powerType end
+        state = { [1160] = "short", [500] = "ready", [700] = "cooldown" }
+        function EvalDefensiveSpell(id)
+            local s = state[id]
+            return { spellID = id, usableGate = true, realProc = false, isProcced = false,
+                     unusable = s ~= "ready", noResources = s == "short" }
+        end
+        function Order()
+            local out = {}
+            for _, m in ipairs(GetUsableDefensiveSpells(addon, {1160, 500, 700}, 4, {}, false)) do
+                out[#out + 1] = m.spellID
+            end
+            return table.concat(out, ",")
+        end
+    """)
+    lua.execute(extract_get_usable(source))
+    for setup, want, why in (
+        ("powerType = 1", "1160,500,700", "short of rage: keeps its place"),
+        ("powerType = 3", "1160,500,700", "short of energy: keeps its place"),
+        ("powerType = 0", "500,1160,700", "short of mana: sinks behind what you can use"),
+        ("powerType = secret", "500,1160,700", "an unreadable power type keeps the old ordering"),
+        ("UnitPowerType = function() error('denied') end", "500,1160,700", "a denied read too"),
+    ):
+        lua.execute(setup)
+        got = lua.eval("Order()")
+        assert got == want, (setup, got, want, why)
+        flagged = lua.eval("GetUsableDefensiveSpells(addon, {1160}, 4, {}, false)[1]")
+        assert flagged.unusable is True and flagged.noResources is True, (setup, "still drawn as unaffordable")
+
+
 def test_primary_pet_recovery():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
@@ -714,6 +755,7 @@ def main():
     test_pet_status()
     test_surface_dispatch()
     test_primary_pet_recovery()
+    test_resource_short_order()
     print("pet reminders: complete/partial/denied/secret aura reads, tri-state pet status, both clients/surfaces passed")
     return 0
 

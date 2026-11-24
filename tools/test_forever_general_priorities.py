@@ -17,7 +17,8 @@ def check_pushback_events():
         BlizzardAPI = {IsSecretValue=function(v) return v == "secret" end}
         IsSecretValue = BlizzardAPI.IsSecretValue
         SpellQueue = {NotePushback=function() noted = noted + 1 end,
-            NoteIncomingHit=function() hits = hits + 1; return fresh end}
+            NoteIncomingHit=function() hits = hits + 1; return fresh end,
+            NoteAbsorbedHit=function() absorbed = absorbed + 1; return fresh end}
         JustAC = {MarkQueueDirty=function() dirty = dirty + 1 end}
         function UnitAffectingCombat() return combat end
         function UnitCastingInfo()
@@ -41,7 +42,7 @@ def check_pushback_events():
     assert 'uf:RegisterUnitEvent("UNIT_SPELLCAST_DELAYED", "player")' in core
     assert 'uf:RegisterUnitEvent("UNIT_COMBAT", "player")' in core
     lua.execute("""
-        hits, dirty, fresh = 0, 0, true
+        hits, dirty, fresh, absorbed = 0, 0, true, 0
         JustAC:OnPlayerCombatHit("UNIT_COMBAT", "player", "WOUND", "")
         JustAC:OnPlayerCombatHit("UNIT_COMBAT", "player", "WOUND", "CRITICAL")
         assert(hits == 2 and dirty == 2, 'unabsorbed hits count')
@@ -51,9 +52,10 @@ def check_pushback_events():
         JustAC:OnPlayerCombatHit("UNIT_COMBAT", "player", "secret", "")
         JustAC:OnPlayerCombatHit("UNIT_COMBAT", "player", "WOUND", "secret")
         assert(hits == 2, 'absorbed, avoided, other-unit and unreadable events do not count')
+        assert(absorbed == 1 and dirty == 3, 'an absorbed hit is noted as one and rebuilds')
         fresh = false
         JustAC:OnPlayerCombatHit("UNIT_COMBAT", "player", "WOUND", "")
-        assert(hits == 3 and dirty == 2, 'a hit inside the window does not rebuild again')
+        assert(hits == 3 and dirty == 3, 'a hit inside the window does not rebuild again')
     """)
     lua.execute("""
         noted, dirty, combat = 0, 0, true
@@ -424,6 +426,11 @@ def check_pushback_weapon_dps():
         assert(BuildWeaponFillers()==585, 'leaving or entering combat clears being hit')
         SpellQueue.NoteIncomingHit()
         assert(SpellQueue.NoteIncomingHit()==false, 'a hit inside the window is not a new spell')
+        assert(SpellQueue._BeingHit(clock)==true)
+        assert(SpellQueue.NoteAbsorbedHit()==true, 'an absorbed hit forgets the hits before it')
+        assert(SpellQueue._BeingHit(clock)==false, 'a shield absorbing now: no pushback expected')
+        assert(SpellQueue.NoteAbsorbedHit()==false, 'nothing left to forget')
+        assert(SpellQueue.NoteIncomingHit()==true, 'the first unabsorbed hit after it counts again')
         clock=103.01
         assert(SpellQueue.NoteIncomingHit()==true, 'a hit after the window starts a new spell')
         clock=100
@@ -1158,12 +1165,17 @@ def main():
         assert lua.globals().Gate(sid, 1) is True
         lua.globals().enemyCount = 2
         assert lua.globals().Gate(sid, 1) is False
+    # Fire no longer stacks Fire Vulnerability with Scorch (left out), so Combustion no longer
+    # waits for the stacks; a stack gate on the target is read on the target (Frost's Winter's Chill).
     lua.globals().Defaults("MAGE_F", "fire", "st")
-    lua.execute("unknownStacks=false; stackCounts.target[22959]=5")
-    assert lua.globals().Gate(11129, 1) is True
+    assert 2948 not in [e.id for e in lua.globals().entries.values()], "Fire leaves Scorch out"
+    assert len(lua.globals().RotationImport.GetEntry(11129).gates) == 0, "Combustion waits for no stacks"
+    lua.globals().Defaults("MAGE_F", "frost", "st")
+    lua.execute("unknownStacks=false; stackCounts.target[12579]=3")
+    assert lua.globals().Gate(120, 2) is True
     assert lua.globals().lastStackUnit == "target"
     lua.globals().unknownStacks = True
-    assert lua.globals().Gate(11129, 1) is None
+    assert lua.globals().Gate(120, 2) is None
 
     lua.globals().Defaults("PRIEST_F", "discipline", "st")
     penance = lua.globals().RotationImport.RankBase(1316995)

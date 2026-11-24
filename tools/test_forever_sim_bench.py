@@ -6,6 +6,7 @@ damage-taken and fixed-pull readings of a result.
 
 Run: python tools/test_forever_sim_bench.py
 """
+import os
 import sys
 from pathlib import Path
 
@@ -60,6 +61,50 @@ def main():
     bench.PULL.update(mobs=1)
     got = bench.summarize(result, 2.0)
     assert abs(got["kill"] - 19.0) < 1e-9 and got["taken"] == 400.0, got
+    assert got["clock"] == "target swings", "no real fight length in the result: the swing clock"
+    # A simulator that reports the real fight length: that is the kill time, whatever the swings say
+    # (a slowed target swings less often). A nominal duration is not a kill time.
+    got = bench.summarize(dict(result, avgIterationDuration=23.4), 2.0)
+    assert abs(got["kill"] - 23.4) < 1e-9 and got["clock"] == "simulator", got
+    assert abs(got["swing_kill"] - 19.0) < 1e-9, "the swing clock is kept beside it, to check one against the other"
+    assert abs(got["dps"] - 600.0 / 23.4) < 1e-9, got
+    for nominal in (600.0, 180.0):
+        got = bench.summarize(dict(result, avgIterationDuration=nominal), 2.0)
+        assert abs(got["kill"] - 19.0) < 1e-9 and got["clock"] == "target swings", (nominal, got)
+
+    # Levelling builds take Wand Specialization first; it adds 13% wand damage a rank.
+    shadow = bench.CLASSES["priest"]["trees"]["shadow"]
+    sim = os.path.join(os.path.dirname(bench.ROOT), "wow-forever-sim")
+    if os.path.isdir(sim):
+        assert bench.talents_for_level(sim, "priest", shadow, 11) == "02--", "the first two points go to Wand Specialization"
+        assert bench.talents_for_level(sim, "priest", shadow, 13) == "02--2", "then the build's main tree"
+    if os.path.isdir(sim):
+        assert abs(bench.wand_spec_bonus(sim, "priest", "02--2") - 0.26) < 1e-9
+        assert bench.wand_spec_bonus(sim, "priest", "--5") == 0
+        assert abs(bench.wand_spec_bonus(sim, "mage", "1-02-") - 0.13) < 1e-9
+        assert bench.wand_spec_bonus(sim, "warlock", "52") == 0, "a class without the talent"
+        assert bench.talents_for_level(sim, "mage", bench.CLASSES["mage"]["trees"]["fire"], 11) == "2--"
+    assert 1787 in bench.FIXED_IDS, "the rogue's Stealth aura, from its class entry"
+
+    # The weapon stage: pushback lengthens a cast (1.0 s, then 0.2 s less per hit, never under 0.2 s).
+    assert bench.pushed_cast_seconds(1.5, 2.0) == 1.5, "no swing lands inside a short cast"
+    assert abs(bench.pushed_cast_seconds(2.0, 2.0) - 3.0) < 1e-9, "one hit at 2 s pushes it 1 s"
+    assert abs(bench.pushed_cast_seconds(2.5, 1.0) - (2.5 + 1.0 + 0.8 + 0.6 + 0.4 + 0.2)) < 1e-9, "five hits land before the cast ends at 5.5 s"
+    cfg = dict(bench.CLASSES["priest"], engagement="caster")
+    smite = [(1, 0, 1.5, 12.0, 0.0), (6, 0, 2.0, 30.0, 0.0)]
+    real = bench.weapon_rule_spells
+    try:
+        bench.weapon_rule_spells = lambda cls: {585: smite}
+        entries = [{"id": 585, "gates": []}, {"id": 589, "gates": []}]
+        kept, notes = bench.weapon_rule_entries(entries, "priest", cfg, 10, 11.0, 2.9)
+        assert kept[0]["gates"] == [{"t": "bench_unhindered", "n": 2.9, "shield": 17}] and kept[1] == entries[1],             "a priest's Smite: before the target arrives or while the pre-pull shield holds"
+        kept, _ = bench.weapon_rule_entries(entries, "priest", cfg, 10, 5.0, 2.9)
+        assert kept == entries, "a cast that beats the wand under pushback is pressed as written"
+        kept, notes = bench.weapon_rule_entries(entries, "priest", cfg, 10, 25.0, 2.9)
+        assert [e["id"] for e in kept] == [589] and "left to the wand" in notes[0], (kept, notes)
+        assert bench.weapon_rule_entries(entries, "priest", cfg, 10, None, 2.9)[0] == entries, "no wand: as written"
+    finally:
+        bench.weapon_rule_spells = real
 
     # Recorded kills: solo ones only, with the creature's level range and kind.
     import tempfile
@@ -110,9 +155,10 @@ def main():
             source = tcfg.get("source_preset")
             assert not source or (Path(bench.PRESETS) / source).is_file(), (cls, tree, source)
     # Trees the simulator only has at its level brackets say so.
-    assert bench.CLASSES["rogue"]["levels"] == bench.BRACKET_LEVELS
-    assert bench.CLASSES["druid"]["trees"]["feral"]["levels"] == bench.BRACKET_LEVELS
-    assert "levels" not in bench.CLASSES["druid"]["trees"]["balance"]
+    # No tree is limited to the simulator's bracket levels any more: the local simulator changes
+    # give every class the rank its level has (tools/forever-sim-patches).
+    assert not any("levels" in cfg or any("levels" in tree for tree in cfg["trees"].values())
+                   for cfg in bench.CLASSES.values())
 
     # Spec options that follow the level reach the request.
     hunter = bench.build_request("hunter", 40, "", ([{}] * 17, [], {}), dict(scenario), {30: (1000.0, 10.0, 500.0)}, {}, 10, 1)
@@ -193,7 +239,13 @@ def main():
     assert held and "currentTime" in held["cmp"]["lhs"], "Fury holds Sunder until the fight has lasted"
     assert elite.hold(sunder)[0] is None, "an elite releases it"
     assert bench.RuntimeRules(data, "warrior", "arms", 0, False, False).hold(sunder)[0] is None, "Arms applies it at once"
-    assert bench.RuntimeRules(data, "warrior", "protection", 0, False, False).hold(sunder)[0] is None, "a tank too"
+    held, _ = bench.RuntimeRules(data, "warrior", "protection", 0, False, False).hold(sunder)
+    assert held is not None, "a tank alone holds it like the rest"
+    bench.GROUPED["on"] = True
+    try:
+        assert bench.RuntimeRules(data, "warrior", "protection", 0, False, False).hold(sunder)[0] is None,             "a grouped tank applies it at once"
+    finally:
+        bench.GROUPED["on"] = False
     # A major cooldown waits for a fight worth it: an elite or a pack at once, else a lasting fight.
     assert 1719 in data["burst"]["warrior"] and 3045 in data["burst"]["hunter"], data["burst"]
     reck = {"id": 1719, "gates": []}

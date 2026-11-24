@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: TargetFrameAnchor - Anchor main frame to Blizzard's TargetFrame
+-- JustAC: TargetFrameAnchor - Anchor main frame to the target frame: Blizzard's TargetFrame,
+-- or a supported unit-frame addon's replacement when that addon has taken it over.
 local TFA = LibStub:NewLibrary("JustAC-TargetFrameAnchor", 2)
 if not TFA then return end
 
@@ -21,9 +22,10 @@ local math_max = math.max
 -- straight through it.
 local DEFAULT_POINT, DEFAULT_X, DEFAULT_Y = "CENTER", 0, -150
 
---- Put the main frame back where the user last left it. Shared by every path that stops
---- docking to the target frame, so they can't drift apart.
+--- Put the main frame back where the user last left it, if it was docked. Shared by every path
+--- that stops docking to the target frame, so they can't drift apart.
 local function RestoreSavedPosition(addon, profile)
+    if not addon.targetframe_anchored then return end
     local pos = profile.framePosition
     local point = pos and pos.point or DEFAULT_POINT
     addon.targetframe_anchored = false
@@ -136,6 +138,35 @@ function TFA.InvalidateCache()
 end
 
 -------------------------------------------------------------------------------
+-- Replacement target frames
+-------------------------------------------------------------------------------
+
+-- Unit-frame addons that hide Blizzard's TargetFrame and draw their own, by the global name
+-- of their target frame. Checked only when the standard frame is not active, in this order.
+local REPLACEMENT_TARGET_FRAMES = {
+    "SUFUnittarget",   -- Shadowed Unit Frames (modules/units.lua: "SUFUnit" .. unit)
+}
+
+local function UsableFrame(frame)
+    if type(frame) ~= "table" or type(frame.GetPoint) ~= "function" then return false end
+    if type(frame.IsForbidden) == "function" and frame:IsForbidden() then return false end
+    -- Positioned: a frame with no anchor has no place on screen to dock to.
+    return frame:GetPoint() ~= nil
+end
+
+--- The frame to dock to: Blizzard's TargetFrame while it is the active one, else the first
+--- supported replacement that exists and is positioned. Second return: true for Blizzard's.
+--- Looked up per call, not cached: a replacement addon builds its frames at its own load.
+function TFA.GetAnchorFrame(addon)
+    if TFA.IsStandardTargetFrame(addon) then return TargetFrame, true end
+    for _, name in ipairs(REPLACEMENT_TARGET_FRAMES) do
+        local frame = _G[name]
+        if UsableFrame(frame) then return frame, false end
+    end
+    return nil, false
+end
+
+-------------------------------------------------------------------------------
 -- Sidebar offset calculation
 -------------------------------------------------------------------------------
 
@@ -198,17 +229,14 @@ function TFA.UpdateTargetFrameAnchor(addon)
     local anchor = profile.targetFrameAnchor
     if not anchor or anchor == "DISABLED" then
         -- Restore to saved position if we were previously anchored
-        if addon.targetframe_anchored then
-            RestoreSavedPosition(addon, profile)
-        end
+        RestoreSavedPosition(addon, profile)
         return
     end
 
-    -- Whitelist: only anchor to the genuine Blizzard TargetFrame
-    if not TFA.IsStandardTargetFrame(addon) then
-        if addon.targetframe_anchored then
-            RestoreSavedPosition(addon, profile)
-        end
+    -- The genuine Blizzard TargetFrame, or a supported addon's replacement for it
+    local frame, isStandard = TFA.GetAnchorFrame(addon)
+    if not frame then
+        RestoreSavedPosition(addon, profile)
         return
     end
 
@@ -221,8 +249,9 @@ function TFA.UpdateTargetFrameAnchor(addon)
     -- Deliberately per-pass, never latched: the option stays on, and this runs again
     -- on every target change / combat exit / layout pass, so the queue re-docks the
     -- moment the frame is visible again (e.g. the hiding addon is toggled off).
-    local hiddenExternally = TargetFrame:IsShown() and not TargetFrame:IsVisible()
-    if not hiddenExternally and not TargetFrame:IsShown() then
+    -- A replacement follows the same rule: its own unit watch hides it with no target.
+    local hiddenExternally = frame:IsShown() and not frame:IsVisible()
+    if not hiddenExternally and not frame:IsShown() then
         -- UnitExists can be secret in instanced contexts (secrecy is per-context, not
         -- per-combat, and a raw compare on a secret throws). Unreadable means we can't
         -- prove a target is up, and keeping the dock is the established behavior.
@@ -230,19 +259,17 @@ function TFA.UpdateTargetFrameAnchor(addon)
         hiddenExternally = not (issecretvalue and issecretvalue(exists)) and exists == true
     end
     if hiddenExternally then
-        if addon.targetframe_anchored then
-            RestoreSavedPosition(addon, profile)
-        end
+        RestoreSavedPosition(addon, profile)
         return
     end
 
     -- Guard: respect Edit Mode "Buffs on Top" setting.
     -- TOP anchor conflicts when buffs are above the target frame; BOTTOM conflicts when below.
+    -- Blizzard's frame only: a replacement places its auras by its own settings, so the side
+    -- the player picks is taken as chosen around them.
     local buffsOnTop = TargetFrame.buffsOnTop
-    if (buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM") then
-        if addon.targetframe_anchored then
-            RestoreSavedPosition(addon, profile)
-        end
+    if isStandard and ((buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM")) then
+        RestoreSavedPosition(addon, profile)
         return
     end
 
@@ -252,16 +279,16 @@ function TFA.UpdateTargetFrameAnchor(addon)
     addon.targetframe_anchored = true
     addon.mainFrame:ClearAllPoints()
     if anchor == "TOP" then
-        addon.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
+        addon.mainFrame:SetPoint("BOTTOM", frame, "TOP", 0, 2)
     elseif anchor == "BOTTOM" then
-        addon.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
+        addon.mainFrame:SetPoint("TOP", frame, "BOTTOM", 0, -2)
     elseif anchor == "LEFT" then
         local gap = 2
         if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "LEFT") end
-        addon.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -gap, 0)
+        addon.mainFrame:SetPoint("RIGHT", frame, "LEFT", -gap, 0)
     elseif anchor == "RIGHT" then
         local gap = 2
         if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "RIGHT") end
-        addon.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", gap, 0)
+        addon.mainFrame:SetPoint("LEFT", frame, "RIGHT", gap, 0)
     end
 end

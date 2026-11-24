@@ -203,7 +203,7 @@ From 16 (Shield Block) onward, consensus across Icy, KallTorak, Oli and wowtbc:
 4. **Revenge whenever it is lit.** Icy calls it the hardest hitter at 5 rage.
 5. Thunder Clap and Demoralizing Shout up. Icy and Oli say on hard mobs or multi-mob pulls only; wowtbc and KallTorak say keep both up. The queue treats Thunder Clap as damage: after Shield Slam and Revenge on one or two targets (leaving it out cost 6 to 15% at every level, 2026-11-20 simulation) and first against a pack.
 6. Rend on targets that will live.
-7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks. The queue places one application after Shield Slam, Revenge and Rend, stacks it to five on elites, higher-level enemies, groups and dungeons, and leaves it out against packs of three or more (2026-11-18 simulation, shield in Defensive Stance).
+7. Sunder Armor: Icy and Oli say stop under 50% HP while leveling, but stack 5 on elites and bosses. wowtbc keeps 5 stacks. The queue places one application after Shield Slam, Revenge and Rend, stacks it to five on elites, higher-level enemies, groups and dungeons, and leaves it out against packs of three or more (2026-11-18 simulation, shield in Defensive Stance). Solo against an ordinary target it waits like any slow payoff, since its threat buys nothing alone, and no tree applies it to a dying last enemy (2026-11-23 capture: Sunder at every solo pull and on a dying target).
 8. Victory Rush when lit (Oli: skip it above 90% HP).
 9. Shield Slam (when talented, deep tree) as burst threat [wowtbc, wow.gg].
 10. Heroic Strike (or Cleave) only with excess rage. Oli: only below 50% HP, and Sunder first because of Improved Sunder.
@@ -311,6 +311,7 @@ Disagreements:
 - Opener: Ambush (Icy) vs Cheap Shot (mobalytics). Both are valid; it depends on solo safety.
 - **Poison choice affects Mutilate.** wow.gg says Instant Poison leaves no lasting effect on the target, so it does *not* enable Mutilate's +20% vs poisoned. Icy's "Instant on both" leveling advice ignores this. For a Mutilate build, keep a lasting poison (Deadly) on one weapon.
 - Slice and Dice: wowtbc says always up. Icy says only on targets that live long enough. Icy also skips Improved Slice and Dice at 30 because mobs die too fast.
+- JustAC (2026-11-23): Slice and Dice first in every tree, from 1 combo point. Logged level 12 fights (median 11.7 s, about 60% of damage from auto attacks) fit inside its 9 s. At those fight lengths 1 point was 2 to 6% faster than 2 in simulation; 2 points paid only past about 14 s, and 3 or 5 points cost more.
 
 **AoE**: none specific. Assassination has no cleave; packs are handled with Sap, Blind and Evasion [mobalytics].
 

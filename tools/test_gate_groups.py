@@ -103,6 +103,7 @@ def check_automatic_burst():
             GetSpecKey=function() return 'ROGUE_F' end,
             GetThreatRole=function() return threatRole end,
             IsTankTree=function(_, tree) return tree == 'protection' end,
+            IsPlayerTank=function() return tree == 'protection' end,
             IsEarlyArmorTree=function(_, tree) return tree == 'arms' end,
         }
         RotationImport={GetForeverTree=function() return tree end}
@@ -113,8 +114,9 @@ def check_automatic_burst():
             GetTargetLevelDelta=function() return levelDelta end,
             PeekBaseCooldownSeconds=function() return seconds end,
             GetDisplaySpellID=function(id) return id end,
+            IsGrouped=function() return grouped end,
         }
-        levelDelta = nil
+        levelDelta = nil; grouped = false
         secret={}
     """ + extract("IsWorthwhileFight", SRC.read_text(encoding="utf-8"))
         + "\n" + extract("HoldAutomaticBurst", SRC.read_text(encoding="utf-8")))
@@ -158,9 +160,13 @@ def check_automatic_burst():
         ("delayed=false;selfBuff=false;levelDelta=1", False),
         ("delayed=true;selfBuff=false;SpellQueue._rotationIsCustom=true", False),
         ("delayed=true;selfBuff=false;b.contextOrder='off'", False),
-        # A threat-building armor reduction is not held in a tank tree; in any other tree it
-        # waits like the rest (Sunder Armor costs an Arms warrior damage on an ordinary target).
-        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection'", False),
+        # A threat-building armor reduction is not held in a tank tree in a group; alone, or in
+        # any other tree, it waits like the rest (Sunder Armor's threat buys a solo tank nothing,
+        # and as damage it does not repay its rage on an ordinary target).
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=true", False),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection'", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=nil", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';classification='elite'", False),
         ("delayed=true;selfBuff=false;threatRole='boost';tree='arms'", False),
         ("delayed=true;selfBuff=false;threatRole='boost';tree='fury'", True),
         ("delayed=true;selfBuff=false;threatRole=nil;tree='arms'", True),
@@ -199,12 +205,18 @@ def check_automatic_burst():
         ("overTime=true;selfBuff=false;b.ctxDying=false", False),
         ("overTime=true;selfBuff=false;b.ctxDying=nil", False),
         ("overTime=false;selfBuff=false;b.ctxDying=true", False),
+        # A slow payoff waits out a confirmed dying last enemy in every tree, grouped tank and
+        # early-armor tree included, even on an elite.
+        ("delayed=true;selfBuff=false;b.ctxDying=true;classification='elite'", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=true;b.ctxDying=true", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='arms';b.ctxDying=true", True),
+        ("delayed=true;selfBuff=false;threatRole='boost';tree='protection';grouped=true;b.ctxDying=nil", False),
     ]
     for setup, expected in cases:
         lua.execute("""
             b={inCombat=true,sinkCooldowns=true,contextOrder='simc',ctxEnemies=1,profile={}}
             boss=false;classification='normal';selfBuff=true;seconds=180;delayed=false;overTime=false
-            levelDelta=nil;threatRole=nil;tree=nil;targetDot=false
+            levelDelta=nil;threatRole=nil;tree=nil;targetDot=false;grouped=false
             LONG_FIGHT_SECONDS=20;targetFightStartedAt=nil
             pick=false;target=true;SpellQueue._rotationIsCustom=false;SpellQueue._lowValueTarget=nil
             BlizzardAPI.PeekBaseCooldownSeconds=function() return seconds end
@@ -266,6 +278,8 @@ def check_forever_lockout_readiness():
         function C_Spell_GetSpellCooldown() return cdInfo end
         function Unsecret() return nil end
         function ReadyByGCDEnd() return false end
+        shotLockout = false
+        function ShotLockoutOnly() return shotLockout end
         function GetTime() return 0 end
         BlizzardAPI.IsForever = function() return forever end
         BlizzardAPI.IsSpellOnCooldown = function() return ownCooldown end
@@ -273,6 +287,7 @@ def check_forever_lockout_readiness():
     cases = [
         ("", True, "Forever lockout without an own cooldown: ready"),
         ("ownCooldown = true", False, "Forever own cooldown under the lockout: not ready"),
+        ("ownCooldown = true; shotLockout = true", True, "a cooldown that is the shot's lockout: ready"),
         ("forever = false", False, "retail: isActive still means a real cooldown"),
         ("C_Spell.GetSpellCooldownDuration = nil", False, "no ignore-GCD read: unchanged"),
         ("cdInfo = {isActive = false}", True, "nothing active: ready"),
@@ -282,6 +297,7 @@ def check_forever_lockout_readiness():
         lua.execute("""forever, ownCooldown = true, false
             C_Spell.GetSpellCooldownDuration = function() end
             cdInfo = {isActive = true}
+            shotLockout = false
         """ + setup)
         got = lua.eval("(BlizzardAPI.IsSpellReady(585))")
         if got != want:

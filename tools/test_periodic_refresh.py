@@ -50,7 +50,9 @@ def main():
         assert m, name
         return {int(x) for x in re.findall(r"\[(\d+)\]", m.group(1))}
     stacking, heals = table("STACKING_AURAS"), table("PERIODIC_HEALS")
-    assert 414644 in stacking and 22959 in stacking, "Lacerate and Fire Vulnerability stack"
+    assert 414644 in stacking and 7386 in stacking, "Lacerate and Sunder Armor stack"
+    # Fire Vulnerability left the table with the Scorch line that stacked it (Fire leaves Scorch out).
+    assert 22959 not in stacking, "no list stacks Fire Vulnerability"
     assert 348 not in stacking and 772 not in stacking, "Immolate and Rend do not"
     assert {139, 774, 8936} <= heals and 2061 not in heals, "Renew, Rejuvenation, Regrowth; not Flash Heal"
     assert "SpellDB.RegisterPeriodicRefresh(STACKING_AURAS, PERIODIC_HEALS)" in defaults

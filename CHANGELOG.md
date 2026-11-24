@@ -3,6 +3,37 @@
 
 ## [Unreleased]
 
+## [6.6.0] - 2026-11-23
+
+### WoW Forever: new
+
+- **Threat button** (opt-in, under Defensives): threat cues now have their own button right before the queue, hidden until threat needs a press. It shares that spot with the interrupt button: an interrupt shows first, then the Threat button, then the enrage cleanse cue.
+  - As a tank: a taunt when a party member takes your target, or a threat ability when your lead slips. Group taunts such as Challenging Shout are never offered for one target.
+  - As damage or healer: a threat drop when you are about to pull aggro.
+  - Your Tank role decides who tanks. With no role assigned, a tank stance or tank talent tree counts, so swapping stances does not change it. A Damage or Healer role never counts as the tank.
+
+### WoW Forever: queue behavior
+
+- While you shoot a wand or Auto Shot, the first slot no longer flickers to another spell, such as Mind Blast, after each shot.
+- Right after a kill, the first slot shows the spell you will open the next pull with, instead of briefly showing another spell such as Throw.
+- When a shield such as Power Word: Shield absorbs the hits you take, casts are weighed against your wand at full speed instead of as if pushed back.
+- On an enemy about to die, the first slot no longer swaps between Heroic Strike and an instant attack as your next swing comes closer.
+
+### WoW Forever: classes
+
+- Backstab, Shred and other attacks from behind are no longer shown out of stealth while the enemy is attacking you or has not been pulled yet. They come back in stealth, or once the enemy turns to someone else.
+- Rogues keep Slice and Dice up first in every tree, from one combo point.
+- Fire mages no longer cast Scorch repeatedly to stack Fire Vulnerability, and Combustion no longer waits for those stacks.
+- Protection warriors fighting alone, or playing Damage in a group, no longer open every pull with Sunder Armor; it waits for a longer fight. No class applies Sunder Armor or another slow-paying debuff to an enemy about to die.
+- Demoralizing Shout and Demoralizing Roar are no longer offered again when you switch to an enemy within their 10 yards.
+
+### Both clients
+
+- Defensive icons no longer swap places each time your rage or energy dips and refills; a spell waiting only on rage or energy keeps its place, shown as unaffordable. With mana, a spell you cannot afford still moves behind ones you can use, such as a potion.
+- The interrupt button sits a little farther from the queue, so its glow no longer overlaps the first icon's glow.
+- The queue can dock to the Shadowed Unit Frames target frame.
+- Spell data refreshed for WoW Forever 1.60.1.71037 and Retail 12.1.5.70961, including Stormstrike's 8 second cooldown and Berserker Rage breaking Sap.
+
 ## [6.5.0] - 2026-11-22
 
 ### Both clients

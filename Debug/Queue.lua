@@ -754,7 +754,7 @@ function DebugCommands.SimcGateProbe(addon, arg)
 
     addon:Print(string.format("|cff00ff00=== simc gates (%s) ===|r thresholdGate=%s target=%s",
         ctx, tostring(BAPI.IsThresholdGateAvailable and BAPI.IsThresholdGateAvailable()),
-        UnitExists("target") and (UnitName("target") or "?") or "none"))
+        UnitExists("target") and SafeSecret(UnitName("target")) or "none"))
 
     -- Real inputs, so the verdict shown is the one the queue actually computes.
     local resCount, resMax, resName
